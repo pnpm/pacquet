@@ -23,7 +23,7 @@ impl RegistryManager {
         let package = Package::from_registry(&self.client, &url).await;
         let version_tag = package.get_latest_tag();
         let package_folder = self.cache_directory.join(&package.name);
-        let node_modules = env::current_dir().unwrap().join("node_modules");
+        let node_modules = env::current_dir()?.join("node_modules");
         let extract_destination = node_modules.join(package.get_latest_tag());
 
         std::fs::create_dir_all(package_folder.as_path()).expect("package folder creation failed");

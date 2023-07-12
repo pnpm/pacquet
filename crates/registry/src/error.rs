@@ -12,4 +12,12 @@ pub enum RegistryError {
     FileSystem(String),
     #[error("serialization failed: `${0}")]
     Serialization(String),
+    #[error("fetching current directory failed: `${0}")]
+    CurrentDir(String),
+}
+
+impl From<std::io::Error> for RegistryError {
+    fn from(value: std::io::Error) -> Self {
+        RegistryError::CurrentDir(value.to_string())
+    }
 }
