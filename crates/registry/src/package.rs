@@ -35,19 +35,20 @@ pub struct Package {
 }
 
 impl Package {
-    pub async fn from_registry(client: &Client, package_url: &str) -> Package {
+    pub async fn from_registry(
+        client: &Client,
+        package_url: &str,
+    ) -> Result<Package, RegistryError> {
         client
             .get(package_url)
             .header("user-agent", "pacquet-cli")
             .header("content-type", "application/json")
             .send()
             .await
-            .or(Err(RegistryError::Network(package_url.to_string())))
-            .unwrap()
+            .or(Err(RegistryError::Network(package_url.to_string())))?
             .json::<Package>()
             .await
             .or(Err(RegistryError::Serialization(package_url.to_string())))
-            .unwrap()
     }
 
     pub fn get_latest_tag(&self) -> &String {
