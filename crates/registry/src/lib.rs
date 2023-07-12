@@ -1,10 +1,7 @@
 mod error;
 mod package;
 
-use std::{
-    env,
-    path::{Path, PathBuf},
-};
+use std::{env, path::PathBuf};
 
 use pacquet_tarball::download_and_extract;
 use reqwest::Client;
@@ -17,8 +14,8 @@ pub struct RegistryManager {
 }
 
 impl RegistryManager {
-    pub fn new<P: AsRef<Path>>(path: P) -> RegistryManager {
-        RegistryManager { client: Client::new(), cache_directory: path.as_ref().to_owned() }
+    pub fn new<P: Into<PathBuf>>(path: P) -> RegistryManager {
+        RegistryManager { client: Client::new(), cache_directory: path.into() }
     }
 
     pub async fn get_package(&mut self, name: &String) -> Result<(), RegistryError> {
