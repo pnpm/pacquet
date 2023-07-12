@@ -1,0 +1,43 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+authors = ["Yagiz Nizipli <yagiz@nizipli.com"]
+description = "Pacquet"
+edition = "2021"
+homepage    = "https://github.com/anonrig/pacquet"
+keywords    = ["Node.js"]
+license     = "MIT"
+repository = "https://github.com/anonrig/pacquet"
+
+[workspace.dependencies]
+pacquet_cli = { version = "0.0.1", path = "crates/cli" }
+pacquet_registry = { version = "0.0.1", path = "crates/registry" }
+
+clap = { version = "4" }
+futures-util = { version = "0.3.28" }
+rayon = { version = "1.7.0" }
+reqwest = { version = "0.11", features = ["json", "stream"] }
+serde = { version = "1.0.164", features = ["derive"] }
+serde_json = { version = "1.0.99" }
+thiserror = { version = "1.0.40" }
+tokio = { version = "1"}
+
+[workspace.metadata.workspaces]
+allow_branch = "main"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+debug = false
+panic = "abort"   # Let it crash and force ourselves to write safe Rust.
+
+# Use the `--profile release-debug` flag to show symbols in release mode.
+# e.g. `cargo build --profile release-debug`
+[profile.release-debug]
+inherits = "release"
+strip = false
+debug = true

@@ -1,0 +1,22 @@
+[package]
+name = "pacquet_cli"
+version = "0.0.1"
+publish               = true
+authors.workspace     = true
+description.workspace = true
+edition.workspace     = true
+homepage.workspace    = true
+keywords.workspace    = true
+license.workspace     = true
+repository.workspace  = true
+
+[[bin]]
+name = "pacquet"
+path = "src/main.rs"
+
+[dependencies]
+pacquet_registry = { workspace = true }
+
+clap = { workspace = true }
+rayon = { workspace = true }
+tokio = { workspace = true }
