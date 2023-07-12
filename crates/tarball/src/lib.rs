@@ -36,10 +36,10 @@ pub async fn download_and_extract(
         .unwrap();
 
     while let Some(item) = stream.next().await {
-        let chunk = item
-            .or_else(|_| Err(TarballError::Network("error while downloading file".to_owned())))?;
+        let chunk =
+            item.map_err(|_| TarballError::Network("error while downloading file".to_owned()))?;
         file.write_all(&chunk)
-            .or_else(|_| Err(TarballError::FileSystem("error while writing to file".to_owned())))?;
+            .map_err(|_| TarballError::FileSystem("error while writing to file".to_owned()))?;
     }
 
     let tar_gz = File::open(&tarball_location).unwrap();
