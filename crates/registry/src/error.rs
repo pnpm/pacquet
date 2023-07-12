@@ -7,17 +7,21 @@ pub enum RegistryError {
     #[error("missing version `{0}` on package `${0}`")]
     MissingVersionRelease(String, String),
     #[error("network error while downloading `${0}`")]
-    Network(String),
-    #[error("filesystem error: `{0}`")]
-    FileSystem(String),
+    Network(reqwest::Error),
+    #[error("io error `${0}`")]
+    Io(std::io::Error),
     #[error("serialization failed: `${0}")]
     Serialization(String),
-    #[error("fetching current directory failed: `${0}")]
-    CurrentDir(String),
 }
 
 impl From<std::io::Error> for RegistryError {
     fn from(value: std::io::Error) -> Self {
-        RegistryError::CurrentDir(value.to_string())
+        RegistryError::Io(value)
+    }
+}
+
+impl From<reqwest::Error> for RegistryError {
+    fn from(value: reqwest::Error) -> Self {
+        RegistryError::Network(value)
     }
 }
