@@ -23,7 +23,7 @@ pub async fn download_and_extract(
 ) -> Result<(), TarballError> {
     // Place to save `.tar.gz` file
     // For now: ".pacquet/fast-querystring@1.0.0.tar.gz"
-    let tarball_location = cache_directory.join(name.to_owned() + "@" + version);
+    let tarball_location = cache_directory.join(format!("{name}@{version}"));
     // Place to extract the contents of the `.tar.gz` file
     // For now: .pacquet/fast-querystring/1.0.0
     let extract_location = cache_directory.join(name).join(version);
