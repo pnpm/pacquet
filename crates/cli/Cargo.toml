@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 pacquet_registry = { workspace = true }
+pacquet_package_json = { workspace = true }
 
 clap = { workspace = true }
 rayon = { workspace = true }
