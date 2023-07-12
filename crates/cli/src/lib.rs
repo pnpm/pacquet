@@ -1,5 +1,6 @@
 mod commands;
 
+use pacquet_package_json::PackageJson;
 use pacquet_registry::RegistryManager;
 
 use crate::commands::get_commands;
@@ -24,6 +25,9 @@ pub async fn run_commands() {
         if let Some(package_name) = subcommand.get_one::<String>("package") {
             registry_manager.get_package(package_name).await.expect("TODO: panic message");
         }
+    } else if matches.subcommand_matches("init").is_some() {
+        let pkg = PackageJson::from_current_directory();
+        pkg.create_if_needed();
     }
 }
 

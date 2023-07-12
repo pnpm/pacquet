@@ -11,7 +11,7 @@ TODO:
 
 Commands:
 
-- [ ] init
+- [x] init: `cargo run -- init`
 - [ ] add: `cargo run -- add fast-querystring`
   - [ ] flags... 
 - [ ] remove
