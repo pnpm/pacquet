@@ -61,7 +61,7 @@ pub async fn download_and_extract(
             std::fs::rename(&package_folder, &node_modules_path).unwrap();
         }
 
-        std::fs::remove_dir_all(&extract_location).unwrap();
+        std::fs::remove_dir_all(cache_directory.join(name)).unwrap();
     }
 
     Ok(())
