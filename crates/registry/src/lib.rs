@@ -26,13 +26,9 @@ impl RegistryManager {
         let node_modules = env::current_dir().unwrap().join("node_modules");
         let extract_destination = node_modules.join(package.get_latest_tag());
 
-        if !package_folder.exists() {
-            std::fs::create_dir(package_folder.as_path()).expect("package folder creation failed");
-        }
+        std::fs::create_dir_all(package_folder.as_path()).expect("package folder creation failed");
 
-        if !node_modules.exists() {
-            std::fs::create_dir_all(&node_modules).expect("node_modules folder creation failed");
-        }
+        std::fs::create_dir_all(&node_modules).expect("node_modules folder creation failed");
 
         if !extract_destination.exists() {
             let _ = download_and_extract(
