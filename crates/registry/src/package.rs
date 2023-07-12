@@ -39,16 +39,14 @@ impl Package {
         client: &Client,
         package_url: &str,
     ) -> Result<Package, RegistryError> {
-        client
+        Ok(client
             .get(package_url)
             .header("user-agent", "pacquet-cli")
             .header("content-type", "application/json")
             .send()
-            .await
-            .or(Err(RegistryError::Network(package_url.to_string())))?
+            .await?
             .json::<Package>()
-            .await
-            .or(Err(RegistryError::Serialization(package_url.to_string())))
+            .await?)
     }
 
     pub fn get_latest_tag(&self) -> Result<&String, RegistryError> {
