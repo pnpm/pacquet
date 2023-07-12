@@ -1,5 +1,5 @@
 [package]
-name = "pacquet_registry"
+name = "pacquet_tarball"
 version = "0.0.1"
 publish = false
 authors.workspace = true
@@ -11,12 +11,12 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-pacquet_tarball = { workspace = true }
-
+flate2 = { workspace = true }
 futures-util = { workspace = true }
 rayon = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tar = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
