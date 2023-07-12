@@ -6,6 +6,7 @@ use tar::Archive;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum TarballError {
     #[error("network error while downloading `${0}`")]
     Network(String),
