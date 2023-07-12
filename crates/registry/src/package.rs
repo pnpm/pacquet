@@ -28,8 +28,6 @@ struct PackageDistribution {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct PackageVersion {
-    #[serde(alias = "_hasShrinkwrap")]
-    pub has_shrink_wrap: bool,
     #[serde(alias = "_npmVersion")]
     pub npm_version: String,
     pub dist: PackageDistribution,
@@ -45,7 +43,7 @@ pub struct Package {
 
 impl Package {
     pub async fn new(client: &Client, package_url: &str) -> Package {
-        return client
+        client
             .get(package_url)
             .header("user-agent", "pacquet-cli")
             .header("content-type", "application/json")
@@ -56,7 +54,7 @@ impl Package {
             .json::<Package>()
             .await
             .or(Err(Error::Network(package_url.to_string())))
-            .unwrap();
+            .unwrap()
     }
 
     pub async fn install_tarball(&self, folder: &Path) -> Result<(), Error> {
@@ -65,6 +63,13 @@ impl Package {
             .get("latest")
             .ok_or(Error::MissingLatestTag(self.name.to_owned()))
             .unwrap();
+
+        let tarball_path = folder.join(self.name.to_owned() + "@" + latest_tag);
+
+        if tarball_path.exists() {
+            // Skip installing the same version since it's already downloaded.
+            return Ok(());
+        }
 
         let latest_tag_version = self
             .versions
@@ -77,8 +82,7 @@ impl Package {
             .or(Err(Error::Network(self.name.to_owned())))?
             .bytes_stream();
 
-        let path = folder.join(self.name.to_owned());
-        let mut file = File::create(path)
+        let mut file = File::create(tarball_path)
             .or(Err(Error::FileSystem("failed to create file".to_owned())))
             .unwrap();
 
