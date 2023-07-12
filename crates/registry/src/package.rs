@@ -54,8 +54,9 @@ impl Package {
     }
 
     pub fn get_latest_version(&self) -> Result<&PackageVersion, RegistryError> {
-        self.versions.get(self.get_latest_tag()?).ok_or(RegistryError::MissingVersionRelease(
-            self.get_latest_tag()?.to_owned(),
+        let latest_tag = self.get_latest_tag()?;
+        self.versions.get(latest_tag).ok_or(RegistryError::MissingVersionRelease(
+            latest_tag.to_owned(),
             self.name.to_owned(),
         ))
     }
