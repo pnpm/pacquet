@@ -45,7 +45,7 @@ pub async fn download_and_extract(
     let tar_gz = File::open(&tarball_location).unwrap();
     let tar = GzDecoder::new(tar_gz);
     let mut archive = Archive::new(tar);
-    let _ = archive.unpack(&extract_location);
+    archive.unpack(&extract_location).unwrap();
 
     std::fs::remove_file(&tarball_location)
         .or(Err(TarballError::FileSystem("removing tarball failed".to_owned())))
