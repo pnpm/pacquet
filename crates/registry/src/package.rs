@@ -62,6 +62,6 @@ impl Package {
     }
 
     pub fn get_tarball_url(&self) -> Result<&str, RegistryError> {
-        Ok(self.get_latest_version()?.to_owned().dist.tarball.as_str())
+        Ok(self.get_latest_version()?.dist.tarball.as_str())
     }
 }
