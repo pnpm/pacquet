@@ -17,7 +17,8 @@ pacquet_registry = { version = "0.0.1", path = "crates/registry" }
 pacquet_tarball = { version = "0.0.1", path = "crates/tarball" }
 pacquet_package_json = { version = "0.0.1", path = "crates/package_json" }
 
-clap = { version = "4" }
+anyhow = { version = "1.0.71" }
+clap = { version = "4", features = ["derive"] }
 flate2 = { version = "1.0.26" }
 futures-util = { version = "0.3.28" }
 rayon = { version = "1.7.0" }
