@@ -30,11 +30,3 @@ pub async fn run_commands() {
         pkg.create_if_needed();
     }
 }
-
-pub fn main() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(run_commands())
-}
