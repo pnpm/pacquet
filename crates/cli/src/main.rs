@@ -1,4 +1,6 @@
-pub fn main() {
+use anyhow::Result;
+
+pub fn main() -> Result<()> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
