@@ -20,7 +20,7 @@ impl RegistryManager {
 
     pub async fn get_package(&mut self, name: &str) -> Result<(), RegistryError> {
         let url = "https://registry.npmjs.com/".to_owned() + name;
-        let package = Package::from_registry(&self.client, url.as_str()).await;
+        let package = Package::from_registry(&self.client, &url).await;
         let version_tag = package.get_latest_tag();
         let package_folder = self.cache_directory.join(&package.name);
         let node_modules = env::current_dir().unwrap().join("node_modules");
