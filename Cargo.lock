@@ -737,6 +737,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pacquet_package_json"
+version = "0.0.1"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "pacquet_registry"
 version = "0.0.1"
 dependencies = [

@@ -15,6 +15,7 @@ repository = "https://github.com/anonrig/pacquet"
 pacquet_cli = { version = "0.0.1", path = "crates/cli" }
 pacquet_registry = { version = "0.0.1", path = "crates/registry" }
 pacquet_tarball = { version = "0.0.1", path = "crates/tarball" }
+pacquet_package_json = { version = "0.0.1", path = "crates/package_json" }
 
 clap = { version = "4" }
 flate2 = { version = "1.0.26" }
