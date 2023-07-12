@@ -21,20 +21,20 @@ impl RegistryManager {
     pub async fn get_package(&mut self, name: &str) -> Result<(), RegistryError> {
         let url = format!("https://registry.npmjs.com/{name}");
         let package = Package::from_registry(&self.client, &url).await?;
-        let version_tag = package.get_latest_tag();
+        let version_tag = package.get_latest_tag()?;
         let package_folder = self.cache_directory.join(&package.name);
         let node_modules = env::current_dir()?.join("node_modules");
-        let extract_destination = node_modules.join(package.get_latest_tag());
+        let extract_destination = node_modules.join(package.get_latest_tag()?);
 
-        std::fs::create_dir_all(package_folder.as_path()).expect("package folder creation failed");
+        std::fs::create_dir_all(package_folder.as_path())?;
 
-        std::fs::create_dir_all(&node_modules).expect("node_modules folder creation failed");
+        std::fs::create_dir_all(&node_modules)?;
 
         if !extract_destination.exists() {
             let _ = download_and_extract(
                 &package.name,
                 version_tag,
-                package.get_tarball_url(),
+                package.get_tarball_url()?,
                 &self.cache_directory,
                 node_modules.as_path(),
             )

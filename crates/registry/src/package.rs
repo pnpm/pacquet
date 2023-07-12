@@ -51,24 +51,18 @@ impl Package {
             .or(Err(RegistryError::Serialization(package_url.to_string())))
     }
 
-    pub fn get_latest_tag(&self) -> &String {
-        self.dist_tags
-            .get("latest")
-            .ok_or(RegistryError::MissingLatestTag(self.name.to_owned()))
-            .unwrap()
+    pub fn get_latest_tag(&self) -> Result<&String, RegistryError> {
+        self.dist_tags.get("latest").ok_or(RegistryError::MissingLatestTag(self.name.to_owned()))
     }
 
-    pub fn get_latest_version(&self) -> &PackageVersion {
-        self.versions
-            .get(self.get_latest_tag())
-            .ok_or(RegistryError::MissingVersionRelease(
-                self.get_latest_tag().to_owned(),
-                self.name.to_owned(),
-            ))
-            .unwrap()
+    pub fn get_latest_version(&self) -> Result<&PackageVersion, RegistryError> {
+        self.versions.get(self.get_latest_tag()?).ok_or(RegistryError::MissingVersionRelease(
+            self.get_latest_tag()?.to_owned(),
+            self.name.to_owned(),
+        ))
     }
 
-    pub fn get_tarball_url(&self) -> &str {
-        self.get_latest_version().to_owned().dist.tarball.as_str()
+    pub fn get_tarball_url(&self) -> Result<&str, RegistryError> {
+        Ok(self.get_latest_version()?.to_owned().dist.tarball.as_str())
     }
 }
