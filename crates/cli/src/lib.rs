@@ -1,13 +1,12 @@
 mod commands;
 
 use anyhow::{Context, Result};
+use clap::Parser;
+use commands::{Cli, Subcommands};
 use pacquet_package_json::PackageJson;
 use pacquet_registry::RegistryManager;
 
-use crate::commands::get_commands;
-
 pub async fn run_commands() -> Result<()> {
-    let matches = get_commands().get_matches();
     let current_directory =
         std::env::current_dir().context("problem fetching current directory")?;
     let cache_directory = current_directory.join(".pacquet").as_path().to_owned();
@@ -23,13 +22,16 @@ pub async fn run_commands() -> Result<()> {
 
     let mut registry_manager = RegistryManager::new(cache_directory);
 
-    if let Some(subcommand) = matches.subcommand_matches("add") {
-        if let Some(package_name) = subcommand.get_one::<String>("package") {
-            registry_manager.get_package(package_name).await.expect("TODO: panic message");
+    let cli = Cli::parse();
+
+    match &cli.subcommand {
+        Subcommands::Init => {
+            let pkg = PackageJson::from_current_directory();
+            pkg.create_if_needed();
         }
-    } else if matches.subcommand_matches("init").is_some() {
-        let pkg = PackageJson::from_current_directory();
-        pkg.create_if_needed();
+        Subcommands::Add(args) => {
+            registry_manager.get_package(&args.package).await?;
+        }
     }
 
     Ok(())

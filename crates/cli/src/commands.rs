@@ -1,18 +1,23 @@
-use clap::{Arg, Command};
+use clap::{Parser, Subcommand};
 
-fn init_package_command() -> Command {
-    Command::new("init").about("Initialize a package")
+/// Experimental package manager for node.js written in rust.
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub subcommand: Subcommands,
 }
 
-fn add_package_command() -> Command {
-    Command::new("add").about("Add a package").arg(Arg::new("package"))
+#[derive(Subcommand, Debug)]
+pub enum Subcommands {
+    Init,
+    Add(AddArgs),
 }
 
-pub fn get_commands() -> Command {
-    Command::new("pacquet")
-        .bin_name("pacquet")
-        .version("alpha")
-        .author("Yagiz Nizipli")
-        .arg_required_else_help(true)
-        .subcommands([add_package_command(), init_package_command()])
+#[derive(Parser, Debug)]
+/// Add a package
+pub struct AddArgs {
+    /// Name of the package
+    #[arg(short, long)]
+    pub package: String,
 }
