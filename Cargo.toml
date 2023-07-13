@@ -16,6 +16,7 @@ pacquet_cli = { version = "0.0.1", path = "crates/cli" }
 pacquet_registry = { version = "0.0.1", path = "crates/registry" }
 pacquet_tarball = { version = "0.0.1", path = "crates/tarball" }
 pacquet_package_json = { version = "0.0.1", path = "crates/package_json" }
+pacquet_lockfile = { version = "0.0.1", path = "crates/lockfile" }
 
 anyhow = { version = "1.0.71" }
 clap = { version = "4", features = ["derive"] }
@@ -23,6 +24,7 @@ flate2 = { version = "1.0.26" }
 futures-util = { version = "0.3.28" }
 reqwest = { version = "0.11", features = ["json", "stream"] }
 serde = { version = "1.0.164", features = ["derive"] }
+serde_yaml = { version = "0.9.1" }
 serde_json = { version = "1.0.99" }
 tar = { version = "0.4.38" }
 thiserror = { version = "1.0.40" }
