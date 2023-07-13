@@ -1,7 +1,5 @@
 use std::{collections::HashMap, env, ffi::OsStr, io::Write, path::PathBuf};
 
-use serde_json;
-
 pub struct PackageJson {
     path: PathBuf,
 }
