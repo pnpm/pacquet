@@ -40,7 +40,7 @@ jobs:
         uses: taiki-e/install-action@cargo-nextest
 
       - name: Cargo check
-        run: cargo check
+        run: cargo ck
 
       - name: Build cache by Cargo Check and Cargo Test
         if: runner.os == 'Windows'
@@ -128,7 +128,7 @@ jobs:
           clippy: true
 
       - name: Run Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo lint -- -D warnings
 
   doc:
     name: Doc
