@@ -40,7 +40,7 @@ fmt:
 
 # Run cargo check
 check:
-  cargo check
+  cargo ck
 
 # Run all the tests
 test:
@@ -48,7 +48,7 @@ test:
 
 # Lint the whole project
 lint:
-  cargo clippy -- --deny warnings
+  cargo lint -- --deny warnings
 
 # Run all the conformance tests. See `tasks/coverage`, `tasks/minsize`
 coverage:
