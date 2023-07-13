@@ -1,5 +1,7 @@
 mod error;
 mod package;
+mod package_name;
+mod version_pin;
 
 use std::{env, path::PathBuf};
 
