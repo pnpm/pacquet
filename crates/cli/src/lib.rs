@@ -26,8 +26,7 @@ pub async fn run_commands() -> Result<()> {
 
     match &cli.subcommand {
         Subcommands::Init => {
-            let pkg = PackageJson::from_current_directory();
-            pkg.create_if_needed();
+            PackageJson::create_if_needed()?;
         }
         Subcommands::Add(args) => {
             registry_manager.get_package(&args.package).await?;
