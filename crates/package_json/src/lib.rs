@@ -6,6 +6,7 @@ use std::{
     ffi::OsStr,
     fs,
     io::{Read, Write},
+    path::PathBuf,
 };
 
 use serde::{Deserialize, Serialize};
@@ -53,8 +54,35 @@ impl PackageJson {
         }
     }
 
+    pub fn path() -> Result<PathBuf, PackageJsonError> {
+        Ok(env::current_dir()?.join("package.json"))
+    }
+
+    pub fn create() -> Result<PackageJson, PackageJsonError> {
+        let path = PackageJson::path()?;
+        if path.exists() {
+            return Err(PackageJsonError::AlreadyExist);
+        }
+
+        let mut file = fs::File::create(&path)?;
+        let mut package = PackageJson::new();
+        if let Some(parent_folder) = path.parent() {
+            package.name = Some(
+                parent_folder
+                    .file_name()
+                    .unwrap_or(OsStr::new(""))
+                    .to_str()
+                    .unwrap_or("")
+                    .to_string(),
+            )
+        }
+        let contents = serde_json::to_string_pretty(&package)?;
+        file.write_all(contents.as_bytes()).unwrap();
+        Ok(package)
+    }
+
     pub fn create_if_needed() -> Result<PackageJson, PackageJsonError> {
-        let path = env::current_dir()?.join("package.json");
+        let path = PackageJson::path()?;
         if !path.exists() {
             let mut file = fs::File::create(&path)?;
             let mut package = PackageJson::new();
@@ -69,13 +97,13 @@ impl PackageJson {
                 )
             }
             let contents = serde_json::to_string_pretty(&package)?;
-            file.write_all(&contents.as_bytes())?;
+            file.write_all(contents.as_bytes()).unwrap();
             return Ok(package);
         }
 
         let mut file = fs::File::open(&path)?;
         let mut contents = String::new();
         file.read_to_string(&mut contents)?;
-        return Ok(serde_json::from_str(&contents)?);
+        Ok(serde_json::from_str(&contents)?)
     }
 }
