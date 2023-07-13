@@ -1,5 +1,3 @@
-use crate::error::RegistryError;
-
 #[derive(Debug, PartialEq)]
 pub enum PackageName {
     /// @example react

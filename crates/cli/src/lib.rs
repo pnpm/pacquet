@@ -26,7 +26,8 @@ pub async fn run_commands() -> Result<()> {
 
     match &cli.subcommand {
         Subcommands::Init => {
-            PackageJson::create_if_needed()?;
+            // init command throws an error if package.json file exist.
+            PackageJson::create()?;
         }
         Subcommands::Add(args) => {
             registry_manager.get_package(&args.package).await?;

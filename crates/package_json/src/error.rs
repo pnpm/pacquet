@@ -6,4 +6,6 @@ pub enum PackageJsonError {
     Serialization(#[from] serde_json::Error),
     #[error("io error: `{0}`")]
     Io(#[from] std::io::Error),
+    #[error("package.json file already exists")]
+    AlreadyExist,
 }
