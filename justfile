@@ -4,7 +4,8 @@ _default:
   just --list -u
 
 alias r := ready
-alias c := coverage
+alias c := codecov
+alias t := test
 
 # Initialize the project by installing all the necessary tools.
 # Make sure you have cargo-binstall installed.
@@ -49,11 +50,6 @@ test:
 # Lint the whole project
 lint:
   cargo lint -- --deny warnings
-
-# Run all the conformance tests. See `tasks/coverage`, `tasks/minsize`
-coverage:
-  cargo coverage
-  cargo minsize
 
 # Get code coverage
 codecov:
