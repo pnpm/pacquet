@@ -58,7 +58,7 @@ pub async fn download_and_extract(
     let mut archive = Archive::new(tar);
     archive.unpack(&extract_location)?;
 
-    std::fs::remove_file(&tarball_location).map_err(TarballError::Io)?;
+    std::fs::remove_file(&tarball_location)?;
 
     // Tarball contains the source code of the package inside a "package" folder
     // We need to move the contents of this folder to the appropriate node_modules folder.
