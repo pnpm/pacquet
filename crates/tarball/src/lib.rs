@@ -13,21 +13,9 @@ use thiserror::Error;
 #[non_exhaustive]
 pub enum TarballError {
     #[error("network error while downloading `${0}`")]
-    Network(reqwest::Error),
+    Network(#[from] reqwest::Error),
     #[error("io error: `{0}`")]
-    Io(io::Error),
-}
-
-impl From<io::Error> for TarballError {
-    fn from(value: io::Error) -> Self {
-        TarballError::Io(value)
-    }
-}
-
-impl From<reqwest::Error> for TarballError {
-    fn from(value: reqwest::Error) -> Self {
-        TarballError::Network(value)
-    }
+    Io(#[from] io::Error),
 }
 
 pub async fn download_and_extract(
