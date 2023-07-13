@@ -20,5 +20,4 @@ pacquet_package_json = { workspace = true }
 
 anyhow = { workspace = true }
 clap = { workspace = true }
-rayon = { workspace = true }
 tokio = { workspace = true }

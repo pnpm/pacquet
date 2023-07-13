@@ -21,7 +21,6 @@ anyhow = { version = "1.0.71" }
 clap = { version = "4", features = ["derive"] }
 flate2 = { version = "1.0.26" }
 futures-util = { version = "0.3.28" }
-rayon = { version = "1.7.0" }
 reqwest = { version = "0.11", features = ["json", "stream"] }
 serde = { version = "1.0.164", features = ["derive"] }
 serde_json = { version = "1.0.99" }
