@@ -58,13 +58,8 @@ impl PackageJson {
         Ok(env::current_dir()?.join("package.json"))
     }
 
-    pub fn create() -> Result<PackageJson, PackageJsonError> {
-        let path = PackageJson::path()?;
-        if path.exists() {
-            return Err(PackageJsonError::AlreadyExist);
-        }
-
-        let mut file = fs::File::create(&path)?;
+    fn write_to_file(path: &PathBuf) -> Result<PackageJson, PackageJsonError> {
+        let mut file = fs::File::create(path)?;
         let mut package = PackageJson::new();
         if let Some(parent_folder) = path.parent() {
             package.name = Some(
@@ -81,24 +76,19 @@ impl PackageJson {
         Ok(package)
     }
 
+    pub fn create() -> Result<PackageJson, PackageJsonError> {
+        let path = PackageJson::path()?;
+        if path.exists() {
+            return Err(PackageJsonError::AlreadyExist);
+        }
+
+        PackageJson::write_to_file(&path)
+    }
+
     pub fn create_if_needed() -> Result<PackageJson, PackageJsonError> {
         let path = PackageJson::path()?;
         if !path.exists() {
-            let mut file = fs::File::create(&path)?;
-            let mut package = PackageJson::new();
-            if let Some(parent_folder) = path.parent() {
-                package.name = Some(
-                    parent_folder
-                        .file_name()
-                        .unwrap_or(OsStr::new(""))
-                        .to_str()
-                        .unwrap_or("")
-                        .to_string(),
-                )
-            }
-            let contents = serde_json::to_string_pretty(&package)?;
-            file.write_all(contents.as_bytes()).unwrap();
-            return Ok(package);
+            return PackageJson::write_to_file(&path);
         }
 
         let mut file = fs::File::open(&path)?;
