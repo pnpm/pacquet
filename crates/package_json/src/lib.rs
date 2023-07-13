@@ -1,52 +1,61 @@
-use std::{collections::HashMap, env, ffi::OsStr, io::Write, path::PathBuf};
+mod error;
 
+use std::{
+    collections::HashMap,
+    env, fs,
+    io::{Read, Write},
+};
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::PackageJsonError;
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct PackageJson {
-    path: PathBuf,
+    name: Option<String>,
+    version: Option<String>,
+    description: Option<String>,
+    main: Option<String>,
+    author: Option<String>,
+    license: Option<String>,
+    dependencies: Option<HashMap<String, String>>,
+    #[serde(alias = "devDependencies")]
+    dev_dependencies: Option<HashMap<String, String>>,
+}
+
+impl Default for PackageJson {
+    fn default() -> Self {
+        PackageJson::new()
+    }
 }
 
 impl PackageJson {
-    pub fn from_current_directory() -> Self {
+    pub fn new() -> PackageJson {
         PackageJson {
-            path: env::current_dir()
-                .expect("current directory should exist")
-                .as_path()
-                .join("package.json"),
+            name: Some("".to_string()),
+            version: Some("1.0.0".to_string()),
+            description: Some("".to_string()),
+            main: Some("index.js".to_string()),
+            author: Some("".to_string()),
+            license: Some("MIT".to_string()),
+            dependencies: None,
+            dev_dependencies: None,
         }
     }
 
-    pub fn from_path(path: PathBuf) -> Self {
-        PackageJson { path }
-    }
-
-    pub fn create_if_needed(&self) {
-        if self.path.exists() {
-            return;
+    pub fn create_if_needed() -> Result<PackageJson, PackageJsonError> {
+        let path = env::current_dir()?.join("package.json");
+        if path.exists() {
+            let mut file = fs::File::create(&path)?;
+            let package = PackageJson::new();
+            let contents = serde_json::to_string_pretty(&package)?;
+            file.write_all(&contents.as_bytes())?;
+            return Ok(package);
         }
 
-        let folder_name = self
-            .path
-            .parent()
-            .expect("should have a parent folder")
-            .file_name()
-            .unwrap_or(OsStr::new(""));
-
-        let mut file = std::fs::File::create(&self.path).unwrap();
-        let empty_object: HashMap<String, String> = HashMap::new();
-        let mut scripts = HashMap::new();
-        scripts.insert("test", "echo \"Error: no test specified\" && exit 1");
-
-        let mut contents = HashMap::new();
-        contents.insert("name", serde_json::to_value(folder_name.to_str().unwrap()).unwrap());
-        contents.insert("version", serde_json::to_value("1.0.0").unwrap());
-        contents.insert("description", serde_json::to_value("").unwrap());
-        contents.insert("main", serde_json::to_value("index.js").unwrap());
-        contents.insert("author", serde_json::to_value("").unwrap());
-        contents.insert("license", serde_json::to_value("MIT").unwrap());
-        contents.insert("scripts", serde_json::to_value(&scripts).unwrap());
-        contents.insert("dependencies", serde_json::to_value(&empty_object).unwrap());
-        contents.insert("devDependencies", serde_json::to_value(&empty_object).unwrap());
-
-        let serialized = serde_json::to_string_pretty(&contents).unwrap();
-        file.write_all(serialized.as_bytes()).unwrap();
+        let mut file = fs::File::open(&path)?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+        return Ok(serde_json::from_str(&contents)?);
     }
 }
