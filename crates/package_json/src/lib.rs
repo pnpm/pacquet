@@ -2,7 +2,9 @@ mod error;
 
 use std::{
     collections::HashMap,
-    env, fs,
+    env,
+    ffi::OsStr,
+    fs,
     io::{Read, Write},
 };
 
@@ -12,13 +14,21 @@ use crate::error::PackageJsonError;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct PackageJson {
+    #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     main: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     author: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     license: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     dependencies: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(alias = "devDependencies")]
     dev_dependencies: Option<HashMap<String, String>>,
 }
@@ -45,9 +55,19 @@ impl PackageJson {
 
     pub fn create_if_needed() -> Result<PackageJson, PackageJsonError> {
         let path = env::current_dir()?.join("package.json");
-        if path.exists() {
+        if !path.exists() {
             let mut file = fs::File::create(&path)?;
-            let package = PackageJson::new();
+            let mut package = PackageJson::new();
+            if let Some(parent_folder) = path.parent() {
+                package.name = Some(
+                    parent_folder
+                        .file_name()
+                        .unwrap_or(OsStr::new(""))
+                        .to_str()
+                        .unwrap_or("")
+                        .to_string(),
+                )
+            }
             let contents = serde_json::to_string_pretty(&package)?;
             file.write_all(&contents.as_bytes())?;
             return Ok(package);
