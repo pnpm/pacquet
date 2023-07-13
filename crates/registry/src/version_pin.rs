@@ -26,15 +26,11 @@ pub fn get_version_pin(input: &str) -> VersionPin {
         return VersionPin::None;
     }
 
-    if let Some(starting) = input.chars().nth(starting_character) {
-        return match starting {
-            '~' => VersionPin::Minor,
-            '^' => VersionPin::Major,
-            _ => VersionPin::None,
-        };
+    match input.chars().nth(starting_character) {
+        Some('~') => VersionPin::Minor,
+        Some('^') => VersionPin::Major,
+        _ => VersionPin::None,
     }
-
-    VersionPin::None
 }
 
 #[cfg(test)]
