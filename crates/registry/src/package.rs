@@ -16,10 +16,8 @@ pub struct PackageDistribution {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PackageVersion {
-    #[serde(alias = "_npmVersion")]
-    pub npm_version: String,
-    #[serde(alias = "_nodeVersion")]
-    pub node_version: Option<String>,
+    pub name: String,
+    pub version: String,
     pub dist: PackageDistribution,
     pub dependencies: Option<HashMap<String, String>>,
     #[serde(alias = "devDependencies")]

@@ -60,12 +60,12 @@ pub async fn download_and_extract(
     let tarball_path = store_path.join(format!("{name}@{version}.tar.gz"));
     download_tarball(url, &tarball_path).await?;
 
-    let package_path =
-        store_path.join(format!("{0}/node_modules/{name}", normalize(package_identifier)));
+    let package_path = store_path
+        .join(format!("{0}/node_modules/{unsanitized_name}", normalize(package_identifier)));
     fs::create_dir_all(&package_path)?;
     extract_tarball(&tarball_path, &package_path)?;
 
-    let node_modules_path = node_modules.join(name);
+    let node_modules_path = node_modules.join(unsanitized_name);
 
     if !node_modules_path.exists() && should_symlink {
         // TODO: Installing @fastify/error fails because of missing @fastify folder.
