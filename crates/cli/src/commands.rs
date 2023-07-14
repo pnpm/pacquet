@@ -22,6 +22,5 @@ pub enum Subcommands {
 #[derive(Parser, Debug)]
 pub struct AddArgs {
     /// Name of the package
-    #[arg(short, long)]
     pub package: String,
 }
