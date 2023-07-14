@@ -3,11 +3,15 @@ mod package;
 mod package_name;
 mod version_pin;
 
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use async_recursion::async_recursion;
 use futures_util::future::join_all;
-use pacquet_tarball::download_and_extract;
+use pacquet_tarball::{download_direct_dependency, download_indirect_dependency};
 use reqwest::Client;
 
 use crate::{error::RegistryError, package::Package, version_pin::parse_version};
@@ -40,36 +44,28 @@ impl RegistryManager {
         let latest_version = package.get_latest_version()?;
         let id = format!("{name}@{0}", latest_version.version);
 
-        download_and_extract(
+        download_direct_dependency(
             &package.name,
             &latest_version.version,
             latest_version.get_tarball_url(),
-            &self.store_path,
             &self.node_modules_path,
-            true,
             &id,
         )
         .await?;
 
-        // Create an empty node_modules folder for every dependency we add to our project.
-        fs::create_dir_all(self.node_modules_path.join(&package.name).join("node_modules"))?;
-
-        let mut all_dependencies: HashMap<&String, &String> = HashMap::new();
-
-        // Install all dependencies of this dependency
-        if let Some(dependencies) = &latest_version.dependencies {
-            all_dependencies.extend(dependencies);
-        }
+        let all_dependencies: HashMap<String, String> =
+            latest_version.dependencies.clone().unwrap_or(HashMap::<String, String>::new());
 
         // TODO: Enable installing dev_dependencies as well.
         // if let Some(dev_dependencies) = &latest_version.dev_dependencies {
         //     all_dependencies.extend(dev_dependencies);
         // }
 
+        let package_node_modules_path = self.store_path.join(id).join("node_modules");
         join_all(
             all_dependencies
                 .iter()
-                .map(|(name, version)| self.add_package(name, version, &id))
+                .map(|(name, version)| self.add_package(name, version, &package_node_modules_path))
                 .collect::<Vec<_>>(),
         )
         .await;
@@ -80,47 +76,36 @@ impl RegistryManager {
     #[async_recursion]
     async fn add_package(
         &self,
-        name: &str,
-        version: &str,
-        dependency_of_identifier: &str,
+        name_field: &str,
+        version_field: &str,
+        symlink_path: &Path,
     ) -> Result<(), RegistryError> {
-        let url = format!("https://registry.npmjs.com/{name}");
-        let (_version_pin, serialized_version) = parse_version(version);
+        let url = format!("https://registry.npmjs.com/{name_field}");
+        let (_version_pin, version) = parse_version(version_field);
         let package = Package::from_registry(&self.client, &url).await?;
         // TODO: Make sure you get the correct version depending on version pin
-        let requested_version = package.versions.get(serialized_version).unwrap();
+        let package_version = package.versions.get(version).unwrap();
 
-        // TODO: Use a proper CLI tool to show the current state
-        println!("{}", format!("downloading package {name}@{serialized_version}"));
-
-        download_and_extract(
+        download_indirect_dependency(
             &package.name,
-            serialized_version,
-            requested_version.dist.tarball.as_str(),
-            &self.store_path,
+            &package_version.version,
+            package_version.get_tarball_url(),
             &self.node_modules_path,
-            false,
-            dependency_of_identifier,
+            &symlink_path.join(&package.name),
         )
         .await?;
 
-        let id = format!("{name}@{serialized_version}");
-        let mut all_dependencies: HashMap<&String, &String> = HashMap::new();
+        let all_dependencies: HashMap<String, String> =
+            package_version.dependencies.clone().unwrap_or(HashMap::<String, String>::new());
 
-        // Install all dependencies of this dependency
-        if let Some(dependencies) = &requested_version.dependencies {
-            all_dependencies.extend(dependencies);
-        }
-
-        // TODO: Enable installing dev_dependencies as well.
-        // if let Some(dev_dependencies) = &requested_version.dev_dependencies {
-        //     all_dependencies.extend(dev_dependencies);
-        // }
-
+        let store_folder_name =
+            format!("{0}@{1}", name_field.replace('/', "+"), package_version.version);
+        let package_node_modules_path =
+            self.store_path.join(store_folder_name).join("node_modules");
         join_all(
             all_dependencies
                 .iter()
-                .map(|(name, version)| self.add_package(name, version, &id))
+                .map(|(name, version)| self.add_package(name, version, &package_node_modules_path))
                 .collect::<Vec<_>>(),
         )
         .await;
