@@ -9,9 +9,10 @@ pub enum VersionPin {
 
 /// @see https://github.com/pnpm/pnpm/blob/main/packages/which-version-is-pinned/src/index.ts#L3
 pub fn parse_version(input: &str) -> (VersionPin, &str) {
-    match input.chars().nth(0) {
+    match input.chars().next() {
         Some('~') => (VersionPin::Minor, &input[1..]),
         Some('^') => (VersionPin::Major, &input[1..]),
+        Some('v') => (VersionPin::None, &input[1..]),
         _ => (VersionPin::None, input),
     }
 }
