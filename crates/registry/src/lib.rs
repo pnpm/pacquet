@@ -78,6 +78,7 @@ impl RegistryManager {
         // TODO: Make sure you get the correct version depending on version pin
         let requested_version = package.versions.get(serialized_version).unwrap();
 
+        // TODO: Use a proper CLI tool to show the current state
         println!("{}", format!("downloading package {name}@{serialized_version}"));
 
         download_and_extract(
