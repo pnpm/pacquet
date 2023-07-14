@@ -3,4 +3,3 @@
 ck = "check --workspace --all-targets --all-features --locked"
 lint = "clippy --workspace --all-targets --all-features"
 codecov = "llvm-cov nextest --workspace --ignore-filename-regex tasks"
-rule = "run -p rulegen"
