@@ -19,6 +19,7 @@ pub async fn download_and_extract(
     url: &str,
     store_path: &Path,
     node_modules: &Path,
+    should_symlink: bool,
 ) -> Result<(), TarballError> {
     // Place to save `.tar.gz` file
     // For now: node_modules/".pacquet/fast-querystring@1.0.0.tar.gz"
@@ -49,7 +50,9 @@ pub async fn download_and_extract(
 
     if !node_modules_path.exists() {
         fs::rename(package_folder, &package_store_path)?;
-        symlink_dir(&package_store_path, &node_modules_path)?;
+        if should_symlink {
+            symlink_dir(&package_store_path, &node_modules_path)?;
+        }
     }
 
     fs::remove_dir_all(&tarball_extract_location)?;
