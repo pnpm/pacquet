@@ -5,11 +5,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::RegistryError;
 
-pub enum PackageType {
-    Dependency,
-    DevDependency,
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PackageDistribution {
     pub integrity: String,
