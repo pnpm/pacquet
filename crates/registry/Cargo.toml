@@ -13,6 +13,7 @@ repository.workspace = true
 [dependencies]
 pacquet_tarball = { workspace = true }
 
+async-recursion = { workspace = true }
 futures-util = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }

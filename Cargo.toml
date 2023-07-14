@@ -19,6 +19,7 @@ pacquet_package_json = { version = "0.0.1", path = "crates/package_json" }
 pacquet_lockfile = { version = "0.0.1", path = "crates/lockfile" }
 
 anyhow = { version = "1.0.71" }
+async-recursion = { version = "1.0.4" }
 clap = { version = "4", features = ["derive"] }
 flate2 = { version = "1.0.26" }
 futures-util = { version = "0.3.28" }
@@ -29,6 +30,7 @@ serde_json = { version = "1.0.99" }
 tar = { version = "0.4.38" }
 thiserror = { version = "1.0.40" }
 tokio = { version = "1", features = ["rt", "macros"] }
+uuid = { version = "1.4.0", features = ["v4", "fast-rng"] }
 
 [workspace.metadata.workspaces]
 allow_branch = "main"
