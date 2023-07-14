@@ -19,7 +19,7 @@ pub fn normalize(input: &str) -> String {
     input.replace('/', "+")
 }
 
-async fn download_tarball(url: &str, tarball_path: &Path) -> Result<(), TarballError> {
+pub async fn download_tarball(url: &str, tarball_path: &Path) -> Result<(), TarballError> {
     let mut stream = reqwest::get(url).await?.bytes_stream();
     let mut file = File::create(tarball_path)?;
 
@@ -31,7 +31,7 @@ async fn download_tarball(url: &str, tarball_path: &Path) -> Result<(), TarballE
     Ok(())
 }
 
-fn extract_tarball(tarball_path: &Path, extract_path: &Path) -> Result<(), TarballError> {
+pub fn extract_tarball(tarball_path: &Path, extract_path: &Path) -> Result<(), TarballError> {
     let id = Uuid::new_v4();
     let unpack_path = env::temp_dir().join(id.to_string());
     fs::create_dir_all(&unpack_path)?;
@@ -45,34 +45,74 @@ fn extract_tarball(tarball_path: &Path, extract_path: &Path) -> Result<(), Tarba
     Ok(())
 }
 
-pub async fn download_and_extract(
-    unsanitized_name: &str,
+pub async fn download_direct_dependency(
+    name: &str,
     version: &str,
     url: &str,
-    store_path: &Path,
-    node_modules: &Path,
-    should_symlink: bool,
+    node_modules_path: &Path,
     // For example: fastify@1.1.0
     // For dependencies of fastify: fastify@1.1.0/node_modules/fastify
     package_identifier: &str,
 ) -> Result<(), TarballError> {
-    let name = normalize(unsanitized_name);
-    let tarball_path = store_path.join(format!("{name}@{version}.tar.gz"));
+    let store_folder_name = format!("{0}@{version}", normalize(name));
+
+    let store_path = node_modules_path.join(".pacquet");
+    let tarball_path = store_path.join(format!("{store_folder_name}.tar.gz"));
+    let package_path =
+        store_path.join(normalize(package_identifier)).join("node_modules").join(name);
+    let package_node_modules_folder_path = node_modules_path.join(name);
+
+    // Do not try to install dependency if this version already exists in package.json
+    if package_node_modules_folder_path.exists() {
+        symlink_dir(&package_path, &package_node_modules_folder_path)?;
+        return Ok(());
+    }
+
     download_tarball(url, &tarball_path).await?;
 
-    let package_path = store_path
-        .join(format!("{0}/node_modules/{unsanitized_name}", normalize(package_identifier)));
     fs::create_dir_all(&package_path)?;
     extract_tarball(&tarball_path, &package_path)?;
 
-    let node_modules_path = node_modules.join(unsanitized_name);
-
-    if !node_modules_path.exists() && should_symlink {
-        // TODO: Installing @fastify/error fails because of missing @fastify folder.
-        // TODO: Currently symlink paths are absolute paths.
-        // If you move the root folder to a different path, all symlinks will be broken.
-        symlink_dir(&package_path, &node_modules_path)?;
+    // If name contains `/` such as @fastify/error, we need to make sure that @fastify folder
+    // exists before we symlink to that directory.
+    if name.contains('/') {
+        fs::create_dir_all(package_node_modules_folder_path.parent().unwrap())?;
     }
+
+    // TODO: Currently symlink paths are absolute paths.
+    // If you move the root folder to a different path, all symlinks will be broken.
+    symlink_dir(&package_path, &package_node_modules_folder_path)?;
+
+    Ok(())
+}
+
+pub async fn download_indirect_dependency(
+    name: &str,
+    version: &str,
+    url: &str,
+    node_modules_path: &Path,
+    symlink_to: &Path,
+) -> Result<(), TarballError> {
+    let store_folder_name = format!("{0}@{version}", normalize(name));
+
+    let store_path = node_modules_path.join(".pacquet");
+    let tarball_path = store_path.join(format!("{store_folder_name}.tar.gz"));
+    let package_path = store_path.join(&store_folder_name).join("node_modules").join(name);
+
+    // Do not try to install dependency if this version already exists in package.json
+    if store_path.join(&store_folder_name).exists() {
+        symlink_dir(&package_path, &symlink_to.to_path_buf())?;
+        return Ok(());
+    }
+
+    download_tarball(url, &tarball_path).await?;
+
+    fs::create_dir_all(&package_path)?;
+    extract_tarball(&tarball_path, &package_path)?;
+
+    // TODO: Currently symlink paths are absolute paths.
+    // If you move the root folder to a different path, all symlinks will be broken.
+    symlink_dir(&package_path, &symlink_to.to_path_buf())?;
 
     Ok(())
 }
