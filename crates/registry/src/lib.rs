@@ -38,11 +38,11 @@ impl RegistryManager {
         let url = format!("https://registry.npmjs.com/{name}");
         let package = Package::from_registry(&self.client, &url).await?;
         let latest_version = package.get_latest_version()?;
-        let id = format!("{name}@{0}", latest_version.npm_version);
+        let id = format!("{name}@{0}", latest_version.version);
 
         download_and_extract(
             &package.name,
-            &latest_version.npm_version,
+            &latest_version.version,
             latest_version.get_tarball_url(),
             &self.store_path,
             &self.node_modules_path,
@@ -50,6 +50,9 @@ impl RegistryManager {
             &id,
         )
         .await?;
+
+        // Create an empty node_modules folder for every dependency we add to our project.
+        fs::create_dir_all(self.node_modules_path.join(&package.name).join("node_modules"))?;
 
         let mut all_dependencies: HashMap<&String, &String> = HashMap::new();
 
