@@ -7,5 +7,5 @@ pub fn symlink_dir(original: &PathBuf, link: &PathBuf) -> io::Result<()> {
 
 #[cfg(windows)]
 pub fn symlink_dir(original: &PathBuf, link: &PathBuf) -> io::Result<()> {
-    os::windows::fs::symlink_dir(original, link);
+    os::windows::fs::symlink_dir(original, link)
 }
