@@ -19,7 +19,8 @@ pub async fn run_commands() -> Result<()> {
         }
         Subcommands::Add(args) => {
             let mut registry_manager = RegistryManager::new(current_directory.join("node_modules"));
-            registry_manager.get_package(&args.package).await?;
+            registry_manager.prepare()?;
+            registry_manager.add_dependency(&args.package).await?;
         }
     }
 

@@ -7,29 +7,13 @@ pub enum VersionPin {
 }
 
 /// @see https://github.com/pnpm/pnpm/blob/main/packages/which-version-is-pinned/src/index.ts#L3
-pub fn get_version_pin(input: &str) -> VersionPin {
-    let mut starting_character = 0;
+pub fn parse_version(input: &str) -> (VersionPin, &str) {
+    let mut version = input;
 
-    if input.starts_with("workspace:") {
-        if input == "workspace:*" {
-            return VersionPin::Patch;
-        }
-
-        starting_character = 10;
-    } else if input.starts_with("npm:") {
-        if let Some(index) = input.rfind('@') {
-            starting_character = index + 1;
-        } else {
-            starting_character = 4;
-        }
-    } else if input == "*" {
-        return VersionPin::None;
-    }
-
-    match input.chars().nth(starting_character) {
-        Some('~') => VersionPin::Minor,
-        Some('^') => VersionPin::Major,
-        _ => VersionPin::None,
+    match version.chars().nth(0) {
+        Some('~') => (VersionPin::Minor, &version[1..]),
+        Some('^') => (VersionPin::Major, &version[1..]),
+        _ => (VersionPin::None, version),
     }
 }
 
@@ -38,16 +22,9 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_version_pin() {
-        assert_eq!(get_version_pin("workspace:*"), VersionPin::Patch);
-        assert_eq!(get_version_pin("workspace:~1.0.0"), VersionPin::Minor);
-        assert_eq!(get_version_pin("workspace:hello/*"), VersionPin::None);
-        assert_eq!(get_version_pin("npm:fast-querystring"), VersionPin::None);
-        assert_eq!(get_version_pin("npm:fast-querystring@1.0.0"), VersionPin::None);
-        assert_eq!(get_version_pin("npm:fast-querystring@^1.0.0"), VersionPin::Major);
-        assert_eq!(get_version_pin("npm:fast-querystring@~1.0.0"), VersionPin::Minor);
-        assert_eq!(get_version_pin("~1.0.0"), VersionPin::Minor);
-        assert_eq!(get_version_pin("^1.0.0"), VersionPin::Major);
-        assert_eq!(get_version_pin("1.0.0"), VersionPin::None);
+    fn test_version_parse() {
+        assert_eq!(parse_version("~1.0.0"), (VersionPin::Minor, "1.0.0"));
+        assert_eq!(parse_version("^1.0.0"), (VersionPin::Major, "1.0.0"));
+        assert_eq!(parse_version("1.0.0"), (VersionPin::None, "1.0.0"));
     }
 }

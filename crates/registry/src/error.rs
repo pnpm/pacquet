@@ -13,5 +13,5 @@ pub enum RegistryError {
     #[error("serialization failed: `{0}")]
     Serialization(String),
     #[error("tarball error: `{0}`")]
-    Tarball(#[from] pacquet_tarball::TarballError),
+    Tarball(#[from] pacquet_tarball::error::TarballError),
 }

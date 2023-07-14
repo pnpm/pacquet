@@ -1,22 +1,17 @@
+pub mod error;
+mod symlink;
+
 use std::{
     fs::{self, File},
-    io::{self, Write},
+    io::Write,
     path::Path,
 };
 
 use flate2::read::GzDecoder;
 use futures_util::StreamExt;
 use tar::Archive;
-use thiserror::Error;
 
-#[derive(Error, Debug)]
-#[non_exhaustive]
-pub enum TarballError {
-    #[error("network error while downloading `${0}`")]
-    Network(#[from] reqwest::Error),
-    #[error("io error: `{0}`")]
-    Io(#[from] io::Error),
-}
+use crate::{error::TarballError, symlink::symlink_dir};
 
 pub async fn download_and_extract(
     name: &str,
@@ -54,8 +49,7 @@ pub async fn download_and_extract(
 
     if !node_modules_path.exists() {
         fs::rename(package_folder, &package_store_path)?;
-        // TODO: Add support for Windows.
-        std::os::unix::fs::symlink(&package_store_path, &node_modules_path)?;
+        symlink_dir(&package_store_path, &node_modules_path)?;
     }
 
     fs::remove_dir_all(&tarball_extract_location)?;

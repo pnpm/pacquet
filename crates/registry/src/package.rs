@@ -5,6 +5,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::RegistryError;
 
+pub enum PackageType {
+    Dependency,
+    DevDependency,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PackageDistribution {
     pub integrity: String,
@@ -31,7 +36,7 @@ pub struct Package {
     pub name: String,
     #[serde(alias = "dist-tags")]
     dist_tags: HashMap<String, String>,
-    versions: HashMap<String, PackageVersion>,
+    pub versions: HashMap<String, PackageVersion>,
 }
 
 impl Package {
