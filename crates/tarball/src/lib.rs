@@ -22,19 +22,18 @@ pub async fn download_and_extract(
     name: &str,
     version: &str,
     url: &str,
-    cache_directory: &Path,
+    store_path: &Path,
     node_modules: &Path,
 ) -> Result<(), TarballError> {
     // Place to save `.tar.gz` file
-    // For now: ".pacquet/fast-querystring@1.0.0.tar.gz"
-    let tarball_location = cache_directory.join(format!("{name}@{version}"));
+    // For now: node_modules/".pacquet/fast-querystring@1.0.0.tar.gz"
+    let tarball_location = store_path.join(format!("{name}@{version}.tar.gz"));
     // Place to extract the contents of the `.tar.gz` file
-    // For now: .pacquet/fast-querystring/1.0.0
-    let extract_location = cache_directory.join(name).join(version);
+    // For now: node_modules/.pacquet/fast-querystring@1.0.0
+    let tarball_extract_location = store_path.join(format!("_{name}@{version}"));
 
-    let mut stream = reqwest::get(url).await.map_err(TarballError::Network)?.bytes_stream();
-
-    let mut file = File::create(&tarball_location).map_err(TarballError::Io)?;
+    let mut stream = reqwest::get(url).await?.bytes_stream();
+    let mut file = File::create(&tarball_location)?;
 
     while let Some(item) = stream.next().await {
         let chunk = item.map_err(TarballError::Network)?;
@@ -44,23 +43,22 @@ pub async fn download_and_extract(
     let tar_gz = File::open(&tarball_location)?;
     let tar = GzDecoder::new(tar_gz);
     let mut archive = Archive::new(tar);
-    archive.unpack(&extract_location)?;
-
-    std::fs::remove_file(&tarball_location)?;
+    archive.unpack(&tarball_extract_location)?;
+    fs::remove_file(&tarball_location)?;
 
     // Tarball contains the source code of the package inside a "package" folder
     // We need to move the contents of this folder to the appropriate node_modules folder.
-    let package_folder = extract_location.join("package");
+    let package_folder = tarball_extract_location.join("package");
+    let package_store_path = store_path.join(format!("{name}@{version}"));
+    let node_modules_path = node_modules.join(name);
 
-    if package_folder.exists() {
-        let node_modules_path = node_modules.to_owned().join(name);
-
-        if !node_modules_path.exists() {
-            fs::rename(&package_folder, &node_modules_path)?;
-        }
-
-        fs::remove_dir_all(cache_directory.join(name))?;
+    if !node_modules_path.exists() {
+        fs::rename(package_folder, &package_store_path)?;
+        // TODO: Add support for Windows.
+        std::os::unix::fs::symlink(&package_store_path, &node_modules_path)?;
     }
+
+    fs::remove_dir_all(&tarball_extract_location)?;
 
     Ok(())
 }
