@@ -1,7 +1,8 @@
 #[derive(Debug, PartialEq)]
 pub enum VersionPin {
     None,
-    Patch,
+    // TODO: Add patch for workspace:* support
+    // Patch,
     Minor,
     Major,
 }
