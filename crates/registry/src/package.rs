@@ -31,6 +31,12 @@ pub struct PackageVersion {
     pub dev_dependencies: Option<HashMap<String, String>>,
 }
 
+impl PackageVersion {
+    pub fn get_tarball_url(&self) -> &str {
+        self.dist.tarball.as_str()
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Package {
     pub name: String,
@@ -64,9 +70,5 @@ impl Package {
             latest_tag.to_owned(),
             self.name.to_owned(),
         ))
-    }
-
-    pub fn get_tarball_url(&self) -> Result<&str, RegistryError> {
-        Ok(self.get_latest_version()?.dist.tarball.as_str())
     }
 }

@@ -5,17 +5,11 @@ mod version_pin;
 
 use std::{fs, path::PathBuf};
 
+use futures_util::{future::join_all};
 use pacquet_tarball::download_and_extract;
 use reqwest::Client;
 
-use crate::{
-    error::RegistryError,
-    package::{
-        Package, PackageType,
-        PackageType::{Dependency, DevDependency},
-    },
-    version_pin::parse_version,
-};
+use crate::{error::RegistryError, package::Package, version_pin::parse_version};
 
 pub struct RegistryManager {
     client: Client,
@@ -42,38 +36,36 @@ impl RegistryManager {
     pub async fn add_dependency(&mut self, name: &str) -> Result<(), RegistryError> {
         let url = format!("https://registry.npmjs.com/{name}");
         let package = Package::from_registry(&self.client, &url).await?;
-        let version_tag = package.get_latest_tag()?;
         let latest_version = package.get_latest_version()?;
 
         download_and_extract(
             &package.name,
-            version_tag,
-            package.get_tarball_url()?,
+            &latest_version.npm_version,
+            latest_version.get_tarball_url(),
             &self.store_path,
             &self.node_modules_path,
+            true,
         )
         .await?;
 
         if let Some(dependencies) = &latest_version.dependencies {
-            dependencies
-                .iter()
-                .map(|(name, version)| {
-                    tokio::spawn(async move {
-                        self.add_package(name, version).await
-                    })
-                })
-                .collect::<Vec<_>>();
+            join_all(
+                dependencies
+                    .iter()
+                    .map(|(name, version)| self.add_package(name, version))
+                    .collect::<Vec<_>>(),
+            )
+            .await;
         }
 
-        if let Some(dev_dependencies) = &latest_version.dev_dependencies {
-            dev_dependencies
-                .iter()
-                .map(|(name, version)| {
-                    tokio::spawn(async move {
-                        self.add_package(name, version).await
-                    })
-                })
-                .collect::<Vec<_>>();
+        if let Some(dependencies) = &latest_version.dev_dependencies {
+            join_all(
+                dependencies
+                    .iter()
+                    .map(|(name, version)| self.add_package(name, version))
+                    .collect::<Vec<_>>(),
+            )
+            .await;
         }
 
         Ok(())
@@ -81,10 +73,12 @@ impl RegistryManager {
 
     async fn add_package(&self, name: &str, version: &str) -> Result<(), RegistryError> {
         let url = format!("https://registry.npmjs.com/{name}");
-        let (version_pin, serialized_version) = parse_version(&version);
+        let (_version_pin, serialized_version) = parse_version(&version);
         let package = Package::from_registry(&self.client, &url).await?;
         // TODO: Make sure you get the correct version depending on version pin
         let requested_version = package.versions.get(serialized_version).unwrap();
+
+        println!("{}", format!("downloading package {name}@{serialized_version}"));
 
         download_and_extract(
             &package.name,
@@ -92,6 +86,7 @@ impl RegistryManager {
             requested_version.dist.tarball.as_str(),
             &self.store_path,
             &self.node_modules_path,
+            false,
         )
         .await?;
         Ok(())
