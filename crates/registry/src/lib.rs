@@ -28,12 +28,13 @@ impl RegistryManager {
     pub fn new<P: Into<PathBuf>>(
         node_modules_path: P,
         store_path: P,
+        package_json_path: P,
     ) -> Result<RegistryManager, RegistryError> {
         Ok(RegistryManager {
             client: Client::new(),
             node_modules_path: node_modules_path.into(),
             store_path: store_path.into(),
-            package_json: PackageJson::create_if_needed()?,
+            package_json: PackageJson::create_if_needed(&package_json_path.into())?,
         })
     }
 
@@ -76,7 +77,7 @@ impl RegistryManager {
         )
         .await;
 
-        self.package_json.add_dependency(name, &format!("^{0}", &latest_version.version));
+        self.package_json.add_dependency(name, &format!("^{0}", &latest_version.version))?;
         self.package_json.save()?;
 
         Ok(())
