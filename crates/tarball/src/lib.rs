@@ -25,7 +25,7 @@ pub async fn download_tarball(url: &str, tarball_path: &Path) -> Result<(), Tarb
 
     while let Some(item) = stream.next().await {
         let chunk = item.map_err(TarballError::Network)?;
-        file.write_all(&chunk).map_err(TarballError::Io)?;
+        file.write_all(&chunk)?;
     }
 
     Ok(())
@@ -62,6 +62,12 @@ pub async fn download_direct_dependency(
         store_path.join(normalize(package_identifier)).join("node_modules").join(name);
     let package_node_modules_folder_path = node_modules_path.join(name);
 
+    // If name contains `/` such as @fastify/error, we need to make sure that @fastify folder
+    // exists before we symlink to that directory.
+    if name.contains('/') {
+        fs::create_dir_all(package_node_modules_folder_path.parent().unwrap())?;
+    }
+
     // Do not try to install dependency if this version already exists in package.json
     if package_path.exists() {
         // Package might be installed into the virtual store, but not symlinked.
@@ -75,12 +81,6 @@ pub async fn download_direct_dependency(
 
     fs::create_dir_all(&package_path)?;
     extract_tarball(&tarball_path, &package_path)?;
-
-    // If name contains `/` such as @fastify/error, we need to make sure that @fastify folder
-    // exists before we symlink to that directory.
-    if name.contains('/') {
-        fs::create_dir_all(package_node_modules_folder_path.parent().unwrap())?;
-    }
 
     // TODO: Currently symlink paths are absolute paths.
     // If you move the root folder to a different path, all symlinks will be broken.
@@ -100,6 +100,12 @@ pub async fn download_indirect_dependency(
 
     let tarball_path = store_path.join(format!("{store_folder_name}.tar.gz"));
     let package_path = store_path.join(&store_folder_name).join("node_modules").join(name);
+
+    // If name contains `/` such as @fastify/error, we need to make sure that @fastify folder
+    // exists before we symlink to that directory.
+    if name.contains('/') {
+        fs::create_dir_all(symlink_to.parent().unwrap())?;
+    }
 
     // Do not try to install dependency if this version already exists in package.json
     if store_path.join(&store_folder_name).exists() {
