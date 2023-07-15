@@ -769,7 +769,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
- "tokio",
 ]
 
 [[package]]
@@ -779,11 +778,8 @@ dependencies = [
  "flate2",
  "futures-util",
  "reqwest",
- "serde",
- "serde_json",
  "tar",
  "thiserror",
- "tokio",
  "uuid",
 ]
 
