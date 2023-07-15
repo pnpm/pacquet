@@ -763,6 +763,7 @@ version = "0.0.1"
 dependencies = [
  "async-recursion",
  "futures-util",
+ "pacquet_package_json",
  "pacquet_tarball",
  "reqwest",
  "serde",
