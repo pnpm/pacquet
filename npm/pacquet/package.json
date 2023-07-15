@@ -1,0 +1,25 @@
+{
+  "name": "pacquet",
+  "version": "0.0.1",
+  "description": "experimental package manager for node.js",
+  "keywords": [],
+  "author": {
+    "name": "Yagiz Nizipli",
+    "email": "yagiz@nizipli.com"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/anonrig/pacquet",
+  "bugs": "https://github.com/anonrig/pacquet/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anonrig/pacquet",
+    "directory": "npm/pacquet"
+  },
+  "bin": "bin/pacquet",
+  "engines": {
+    "node": ">=18.*"
+  },
+  "files": [
+    "bin/pacquet"
+  ]
+}
