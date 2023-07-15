@@ -50,13 +50,13 @@ pub async fn download_direct_dependency(
     version: &str,
     url: &str,
     node_modules_path: &Path,
+    store_path: &Path,
     // For example: fastify@1.1.0
     // For dependencies of fastify: fastify@1.1.0/node_modules/fastify
     package_identifier: &str,
 ) -> Result<(), TarballError> {
     let store_folder_name = format!("{0}@{version}", normalize(name));
 
-    let store_path = node_modules_path.join(".pacquet");
     let tarball_path = store_path.join(format!("{store_folder_name}.tar.gz"));
     let package_path =
         store_path.join(normalize(package_identifier)).join("node_modules").join(name);
@@ -90,12 +90,11 @@ pub async fn download_indirect_dependency(
     name: &str,
     version: &str,
     url: &str,
-    node_modules_path: &Path,
+    store_path: &Path,
     symlink_to: &Path,
 ) -> Result<(), TarballError> {
     let store_folder_name = format!("{0}@{version}", normalize(name));
 
-    let store_path = node_modules_path.join(".pacquet");
     let tarball_path = store_path.join(format!("{store_folder_name}.tar.gz"));
     let package_path = store_path.join(&store_folder_name).join("node_modules").join(name);
 

@@ -23,12 +23,11 @@ pub struct RegistryManager {
 }
 
 impl RegistryManager {
-    pub fn new<P: Into<PathBuf>>(path: P) -> RegistryManager {
-        let path_into = path.into();
+    pub fn new<P: Into<PathBuf>>(node_modules_path: P, store_path: P) -> RegistryManager {
         RegistryManager {
             client: Client::new(),
-            node_modules_path: path_into.clone(),
-            store_path: path_into.join(".pacquet"),
+            node_modules_path: node_modules_path.into(),
+            store_path: store_path.into(),
         }
     }
 
@@ -49,6 +48,7 @@ impl RegistryManager {
             &latest_version.version,
             latest_version.get_tarball_url(),
             &self.node_modules_path,
+            &self.store_path,
             &id,
         )
         .await?;
@@ -90,7 +90,7 @@ impl RegistryManager {
             &package.name,
             &package_version.version,
             package_version.get_tarball_url(),
-            &self.node_modules_path,
+            &self.store_path,
             &symlink_path.join(&package.name),
         )
         .await?;

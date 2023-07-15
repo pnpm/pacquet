@@ -23,4 +23,8 @@ pub enum Subcommands {
 pub struct AddArgs {
     /// Name of the package
     pub package: String,
+    /// The directory with links to the store (default is node_modules/.pacquet).
+    /// All direct and indirect dependencies of the project are linked into this directory
+    #[arg(long = "virtual-store-dir", default_value = "node_modules/.pacquet")]
+    pub virtual_store_dir: String,
 }
