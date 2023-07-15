@@ -63,8 +63,11 @@ pub async fn download_direct_dependency(
     let package_node_modules_folder_path = node_modules_path.join(name);
 
     // Do not try to install dependency if this version already exists in package.json
-    if package_node_modules_folder_path.exists() {
-        symlink_dir(&package_path, &package_node_modules_folder_path)?;
+    if package_path.exists() {
+        // Package might be installed into the virtual store, but not symlinked.
+        if !package_node_modules_folder_path.exists() {
+            symlink_dir(&package_path, &package_node_modules_folder_path)?;
+        }
         return Ok(());
     }
 

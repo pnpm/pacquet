@@ -1,4 +1,4 @@
-mod error;
+pub mod error;
 
 use std::{
     collections::HashMap,
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::PackageJsonError;
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PackageJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
@@ -72,7 +72,7 @@ impl PackageJson {
             )
         }
         let contents = serde_json::to_string_pretty(&package)?;
-        file.write_all(contents.as_bytes()).unwrap();
+        file.write_all(contents.as_bytes())?;
         Ok(package)
     }
 
@@ -95,5 +95,23 @@ impl PackageJson {
         let mut contents = String::new();
         file.read_to_string(&mut contents)?;
         Ok(serde_json::from_str(&contents)?)
+    }
+
+    pub fn save(&mut self) -> Result<(), PackageJsonError> {
+        let path = PackageJson::path()?;
+        let mut file = fs::File::create(path)?;
+        let contents = serde_json::to_string_pretty(&self)?;
+        file.write_all(contents.as_bytes())?;
+        Ok(())
+    }
+
+    pub fn add_dependency(&mut self, name: &str, version: &str) {
+        if let Some(dependencies) = self.dependencies.as_mut() {
+            dependencies.insert(name.to_string(), version.to_string());
+        } else {
+            let mut dependencies = HashMap::<String, String>::new();
+            dependencies.insert(name.to_string(), version.to_string());
+            self.dependencies = Some(dependencies);
+        }
     }
 }

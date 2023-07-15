@@ -21,7 +21,7 @@ pub async fn run_commands() -> Result<()> {
             let mut registry_manager = RegistryManager::new(
                 current_directory.join("node_modules"),
                 current_directory.join(&args.virtual_store_dir),
-            );
+            )?;
             registry_manager.prepare()?;
             registry_manager.add_dependency(&args.package).await?;
         }

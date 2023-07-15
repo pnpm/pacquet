@@ -11,6 +11,7 @@ use std::{
 
 use async_recursion::async_recursion;
 use futures_util::future::join_all;
+use pacquet_package_json::PackageJson;
 use pacquet_tarball::{download_direct_dependency, download_indirect_dependency};
 use reqwest::Client;
 
@@ -20,15 +21,20 @@ pub struct RegistryManager {
     client: Client,
     node_modules_path: PathBuf,
     store_path: PathBuf,
+    package_json: PackageJson,
 }
 
 impl RegistryManager {
-    pub fn new<P: Into<PathBuf>>(node_modules_path: P, store_path: P) -> RegistryManager {
-        RegistryManager {
+    pub fn new<P: Into<PathBuf>>(
+        node_modules_path: P,
+        store_path: P,
+    ) -> Result<RegistryManager, RegistryError> {
+        Ok(RegistryManager {
             client: Client::new(),
             node_modules_path: node_modules_path.into(),
             store_path: store_path.into(),
-        }
+            package_json: PackageJson::create_if_needed()?,
+        })
     }
 
     pub fn prepare(&self) -> Result<(), RegistryError> {
@@ -69,6 +75,9 @@ impl RegistryManager {
                 .collect::<Vec<_>>(),
         )
         .await;
+
+        self.package_json.add_dependency(name, &format!("^{0}", &latest_version.version));
+        self.package_json.save()?;
 
         Ok(())
     }
