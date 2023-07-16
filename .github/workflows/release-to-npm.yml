@@ -1,4 +1,4 @@
-name: Release Oxlint
+name: Release Pacquet
 
 # When main is pushed and npm/pacquet/package.json has been changed,
 # trigger the jobs after the ci workflow has been passed.
