@@ -132,3 +132,77 @@ pub async fn download_indirect_dependency(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    fn create_folders() -> PathBuf {
+        let id = Uuid::new_v4();
+        let parent_folder = env::temp_dir().join(id.to_string());
+        fs::create_dir_all(parent_folder.join("store")).expect("failed to create folder");
+        fs::create_dir_all(parent_folder.join("node_modules")).expect("failed to create folder");
+        parent_folder
+    }
+
+    #[tokio::test]
+    async fn ensure_organization_packages_work_as_indirect_dependency() {
+        let parent_folder = create_folders();
+        let store_path = parent_folder.join("store");
+        let node_modules_path = parent_folder.join("node_modules");
+        let symlink_path = node_modules_path.join("@fastify/error");
+
+        download_indirect_dependency(
+            "@fastify/error",
+            "3.3.0",
+            "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
+            &store_path.to_path_buf(),
+            &symlink_path.to_path_buf(),
+        )
+        .await
+        .unwrap();
+
+        // Validate if we delete the tar.gz file
+        assert!(!store_path.join(format!("@fastify+error@3.3.0.tar.gz")).exists());
+        // Make sure we create store path with normalized name
+        assert!(store_path.join("@fastify+error@3.3.0").is_dir());
+        // Make sure we create a symlink on node_modules folder
+        assert!(symlink_path.exists());
+        assert!(symlink_path.is_symlink());
+        //Make sure we create a @fastify folder inside node_modules
+        assert!(node_modules_path.join("@fastify").is_dir());
+
+        fs::remove_dir_all(&parent_folder).unwrap();
+    }
+
+    #[tokio::test]
+    async fn do_not_download_existing_indirect_dependency() {
+        let parent_folder = create_folders();
+        let store_path = parent_folder.join("store");
+        let node_modules_path = parent_folder.join("node_modules");
+        let symlink_path = node_modules_path.join("@fastify/error");
+
+        // Create a folder to check if we don't download
+        fs::create_dir_all(store_path.join("@fastify+error@3.3.0")).unwrap();
+
+        // Deliberately put an invalid URL which fails when trying to download.
+        download_indirect_dependency(
+            "@fastify/error",
+            "3.3.0",
+            "https://!!!",
+            &store_path.to_path_buf(),
+            &symlink_path.to_path_buf(),
+        )
+        .await
+        .unwrap();
+
+        // Make sure we create a symlink on node_modules folder
+        assert!(symlink_path.is_symlink());
+        //Make sure we create a @fastify folder inside node_modules
+        assert!(node_modules_path.join("@fastify").is_dir());
+
+        fs::remove_dir_all(&parent_folder).unwrap();
+    }
+}
