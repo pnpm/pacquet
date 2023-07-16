@@ -2,7 +2,6 @@ mod error;
 mod http_client;
 mod package;
 mod package_name;
-mod version_pin;
 
 use std::{
     collections::HashMap,
@@ -15,7 +14,7 @@ use futures_util::future::join_all;
 use pacquet_package_json::PackageJson;
 use pacquet_tarball::{download_direct_dependency, download_indirect_dependency};
 
-use crate::{error::RegistryError, http_client::HttpClient, version_pin::parse_version};
+use crate::{error::RegistryError, http_client::HttpClient};
 
 pub struct RegistryManager {
     client: HttpClient,
@@ -51,7 +50,7 @@ impl RegistryManager {
 
         download_direct_dependency(
             &package.name,
-            &latest_version.version,
+            &latest_version.version.to_string(),
             latest_version.get_tarball_url(),
             &self.node_modules_path,
             &self.store_path,
@@ -93,13 +92,11 @@ impl RegistryManager {
         symlink_path: &Path,
     ) -> Result<(), RegistryError> {
         let package = self.client.get_package(name_field).await?;
-        let (_version_pin, version) = parse_version(version_field);
-        // TODO: Make sure you get the correct version depending on version pin
-        let package_version = package.versions.get(version).unwrap();
+        let package_version = package.get_suitable_version_of(version_field)?.unwrap();
 
         download_indirect_dependency(
             &package.name,
-            &package_version.version,
+            &package_version.version.to_string(),
             package_version.get_tarball_url(),
             &self.store_path,
             &symlink_path.join(&package.name),
