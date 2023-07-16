@@ -6,8 +6,10 @@ pub enum RegistryError {
     MissingLatestTag(String),
     #[error("missing version {0} on package {0}")]
     MissingVersionRelease(String, String),
-    #[error("network error while downloading {0}")]
+    #[error("network error while fetching {0}")]
     Network(#[from] reqwest::Error),
+    #[error("network middleware error")]
+    NetworkMiddleware(#[from] reqwest_middleware::Error),
     #[error("io error {0}")]
     Io(#[from] std::io::Error),
     #[error("serialization failed: {0}")]
