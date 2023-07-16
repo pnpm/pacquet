@@ -1,4 +1,3 @@
-pub mod error;
 mod symlink;
 
 use std::{
@@ -11,9 +10,18 @@ use std::{
 use flate2::read::GzDecoder;
 use futures_util::StreamExt;
 use tar::Archive;
+use thiserror::Error;
 use uuid::Uuid;
 
-use crate::{error::TarballError, symlink::symlink_dir};
+use crate::symlink::symlink_dir;
+
+#[derive(Error, Debug)]
+pub enum TarballError {
+    #[error("network error while downloading {0}")]
+    Network(#[from] reqwest::Error),
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+}
 
 pub fn normalize(input: &str) -> String {
     input.replace('/', "+")

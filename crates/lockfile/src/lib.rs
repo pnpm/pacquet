@@ -1,4 +1,3 @@
-mod error;
 mod package;
 
 use std::{
@@ -9,8 +8,17 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
-use crate::{error::LockfileError, package::LockfilePackage};
+use crate::package::LockfilePackage;
+
+#[derive(Error, Debug)]
+pub enum LockfileError {
+    #[error("filesystem error: `{0}`")]
+    FileSystem(#[from] std::io::Error),
+    #[error("serialization error: `{0}")]
+    Serialization(#[from] serde_yaml::Error),
+}
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct LockfileDependency {
