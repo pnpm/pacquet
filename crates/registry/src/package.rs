@@ -16,7 +16,7 @@ pub struct PackageDistribution {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PackageVersion {
     pub name: String,
-    pub version: String,
+    pub version: node_semver::Version,
     pub dist: PackageDistribution,
     pub dependencies: Option<HashMap<String, String>>,
     #[serde(alias = "devDependencies")]
@@ -48,5 +48,24 @@ impl Package {
             latest_tag.to_owned(),
             self.name.to_owned(),
         ))
+    }
+
+    pub fn get_suitable_version_of(
+        &self,
+        version_field: &str,
+    ) -> Result<Option<&PackageVersion>, RegistryError> {
+        let range: node_semver::Range = version_field.parse().unwrap();
+        let mut satisfied_versions = self
+            .versions
+            .values()
+            .filter(|v| v.version.satisfies(&range))
+            .collect::<Vec<&PackageVersion>>()
+            .clone();
+
+        satisfied_versions.sort_by(|a, b| a.version.partial_cmp(&b.version).unwrap());
+
+        // Optimization opportunity:
+        // We can store this in a cache to remove filter operation and make this a O(1) operation.
+        Ok(satisfied_versions.last().copied())
     }
 }
