@@ -985,6 +985,7 @@ dependencies = [
  "reqwest",
  "tar",
  "thiserror",
+ "tokio",
  "uuid",
 ]
 
