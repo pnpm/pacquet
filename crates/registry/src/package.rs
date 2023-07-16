@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::error::RegistryError;
@@ -39,20 +38,6 @@ pub struct Package {
 }
 
 impl Package {
-    pub async fn from_registry(
-        client: &Client,
-        package_url: &str,
-    ) -> Result<Package, RegistryError> {
-        Ok(client
-            .get(package_url)
-            .header("user-agent", "pacquet-cli")
-            .header("content-type", "application/json")
-            .send()
-            .await?
-            .json::<Package>()
-            .await?)
-    }
-
     pub fn get_latest_tag(&self) -> Result<&String, RegistryError> {
         self.dist_tags.get("latest").ok_or(RegistryError::MissingLatestTag(self.name.to_owned()))
     }

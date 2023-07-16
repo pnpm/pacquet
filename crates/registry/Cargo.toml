@@ -15,8 +15,12 @@ pacquet_package_json = { workspace = true }
 pacquet_tarball = { workspace = true }
 
 async-recursion = { workspace = true }
+elsa = { workspace = true }
 futures-util = { workspace = true }
 reqwest = { workspace = true }
+reqwest-middleware = { workspace = true }
+reqwest-retry = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tokio = { workspace = true }
 thiserror = { workspace = true }
