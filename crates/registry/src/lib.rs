@@ -12,7 +12,7 @@ use std::{
 use async_recursion::async_recursion;
 use futures_util::future::join_all;
 use pacquet_package_json::PackageJson;
-use pacquet_tarball::{download_direct_dependency, download_indirect_dependency};
+use pacquet_tarball::{download_dependency, get_package_store_folder_name};
 
 use crate::{error::RegistryError, http_client::HttpClient};
 
@@ -46,15 +46,18 @@ impl RegistryManager {
     pub async fn add_dependency(&mut self, name: &str) -> Result<(), RegistryError> {
         let package = self.client.get_package(name).await?;
         let latest_version = package.get_latest_version()?;
-        let id = format!("{name}@{0}", latest_version.version);
+        let dependency_store_folder_name =
+            get_package_store_folder_name(name, &latest_version.version.to_string());
 
-        download_direct_dependency(
-            &package.name,
-            &latest_version.version.to_string(),
+        let save_path =
+            self.store_path.join(dependency_store_folder_name).join("node_modules").join(name);
+        let symlink_to = self.node_modules_path.join(name);
+
+        download_dependency(
+            name,
             latest_version.get_tarball_url(),
-            &self.node_modules_path,
-            &self.store_path,
-            &id,
+            save_path.as_ref(),
+            symlink_to.as_ref(),
         )
         .await?;
 
@@ -69,11 +72,10 @@ impl RegistryManager {
         //     all_dependencies.extend(dev_dependencies);
         // }
 
-        let package_node_modules_path = self.store_path.join(id).join("node_modules");
         join_all(
             all_dependencies
                 .into_iter()
-                .map(|(name, version)| self.add_package(name, version, &package_node_modules_path))
+                .map(|(name, version)| self.add_package(name, version, save_path.parent().unwrap()))
                 .collect::<Vec<_>>(),
         )
         .await;
@@ -87,18 +89,21 @@ impl RegistryManager {
     #[async_recursion(?Send)]
     async fn add_package(
         &self,
-        name_field: &str,
-        version_field: &str,
+        name: &str,
+        version: &str,
         symlink_path: &Path,
     ) -> Result<(), RegistryError> {
-        let package = self.client.get_package(name_field).await?;
-        let package_version = package.get_suitable_version_of(version_field)?.unwrap();
+        let package = self.client.get_package(name).await?;
+        let package_version = package.get_suitable_version_of(version)?.unwrap();
+        let dependency_store_folder_name =
+            get_package_store_folder_name(name, &package_version.version.to_string());
+        let save_path =
+            self.store_path.join(dependency_store_folder_name).join("node_modules").join(name);
 
-        download_indirect_dependency(
-            &package.name,
-            &package_version.version.to_string(),
+        download_dependency(
+            name,
             package_version.get_tarball_url(),
-            &self.store_path,
+            save_path.as_ref(),
             &symlink_path.join(&package.name),
         )
         .await?;
@@ -106,14 +111,19 @@ impl RegistryManager {
         let all_dependencies: HashMap<String, String> =
             package_version.dependencies.clone().unwrap_or(HashMap::<String, String>::new());
 
-        let store_folder_name =
-            format!("{0}@{1}", name_field.replace('/', "+"), package_version.version);
-        let package_node_modules_path =
-            self.store_path.join(store_folder_name).join("node_modules");
+        let mut symlink_path = save_path.parent().unwrap();
+
+        // If package is under an organization such as @fastify/error
+        // We need to go 2 folders to find the correct node_modules folder.
+        // For example symlink_path should be node_modules for node_modules/@fastify/error.
+        if name.contains('/') {
+            symlink_path = symlink_path.parent().unwrap();
+        }
+
         join_all(
             all_dependencies
                 .iter()
-                .map(|(name, version)| self.add_package(name, version, &package_node_modules_path))
+                .map(|(name, version)| self.add_package(name, version, symlink_path))
                 .collect::<Vec<_>>(),
         )
         .await;
