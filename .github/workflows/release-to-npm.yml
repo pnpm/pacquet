@@ -155,7 +155,7 @@ jobs:
 
       - name: Publish npm packages as latest
         # NOTE: The trailing slash on $package/ changes it to publishing the directory
-        run: npm publish npm/pacquet/ --tag latest --access public --provenance
+        run: for package in npm/pacquet*; do npm publish $package/ --tag latest --access public --provenance; done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
