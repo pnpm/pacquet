@@ -20,4 +20,7 @@ pacquet_package_json = { workspace = true }
 
 anyhow = { workspace = true }
 clap = { workspace = true }
+tracing = { workspace = true }
+tracing-chrome = { workspace = true }
+tracing-subscriber = { workspace = true }
 tokio = { workspace = true }
