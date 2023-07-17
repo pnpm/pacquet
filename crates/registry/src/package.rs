@@ -38,18 +38,6 @@ pub struct Package {
 }
 
 impl Package {
-    pub fn get_latest_tag(&self) -> Result<&String, RegistryError> {
-        self.dist_tags.get("latest").ok_or(RegistryError::MissingLatestTag(self.name.to_owned()))
-    }
-
-    pub fn get_latest_version(&self) -> Result<&PackageVersion, RegistryError> {
-        let latest_tag = self.get_latest_tag()?;
-        self.versions.get(latest_tag).ok_or(RegistryError::MissingVersionRelease(
-            latest_tag.to_owned(),
-            self.name.to_owned(),
-        ))
-    }
-
     pub fn get_suitable_version_of(
         &self,
         version_field: &str,

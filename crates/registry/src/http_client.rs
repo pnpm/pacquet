@@ -1,7 +1,10 @@
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
 
-use crate::{error::RegistryError, package::Package};
+use crate::{
+    error::RegistryError,
+    package::{Package, PackageVersion},
+};
 
 pub struct HttpClient {
     client: ClientWithMiddleware,
@@ -36,5 +39,21 @@ impl HttpClient {
         let package = self.cache.insert(name.to_string(), Box::new(package));
 
         Ok(package)
+    }
+
+    pub async fn get_package_by_version(
+        &self,
+        name: &str,
+        version: &str,
+    ) -> Result<PackageVersion, RegistryError> {
+        Ok(self
+            .client
+            .get(format!("https://registry.npmjs.com/{name}/{version}"))
+            .header("user-agent", "pacquet-cli")
+            .header("content-type", "application/json")
+            .send()
+            .await?
+            .json::<PackageVersion>()
+            .await?)
     }
 }

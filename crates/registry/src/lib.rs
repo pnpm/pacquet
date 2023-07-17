@@ -43,8 +43,7 @@ impl RegistryManager {
     }
 
     pub async fn add_dependency(&mut self, name: &str) -> Result<(), RegistryError> {
-        let package = self.client.get_package(name).await?;
-        let latest_version = package.get_latest_version()?;
+        let latest_version = self.client.get_package_by_version(name, "latest").await?;
         let dependency_store_folder_name =
             get_package_store_folder_name(name, &latest_version.version.to_string());
 
