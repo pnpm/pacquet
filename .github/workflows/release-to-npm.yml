@@ -121,6 +121,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
+      contents: write
+      discussions: write
     needs:
       - build
     steps:
