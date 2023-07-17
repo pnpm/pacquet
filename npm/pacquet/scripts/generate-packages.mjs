@@ -34,7 +34,11 @@ function generateNativePackage(platform, arch) {
     version,
     os: [platform],
     cpu: [arch],
-  });
+    repository: {
+      type: "git",
+      url: "https://github.com/anonrig/pacquet",
+    },
+  }, null, 2);
 
   const manifestPath = resolve(packageRoot, "package.json");
   console.log(`Create manifest ${manifestPath}`);
