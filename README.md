@@ -2,19 +2,36 @@
 
 Experimental package manager for node.js written in rust.
 
-TODO:
+**Disclaimer**: This is mostly a playground for me to learn Rust and understand how package managers work.
+
+### Features
 
 - [x] Tarball installation & extraction
 - [x] Install all dependencies of a package
-- [ ] Update package.json
+- [x] Update package.json
 - [ ] Create a shrink file like `pnpm-lock.json` or `package-lock.json`
+- [ ] Workspace support
+- [ ] `.npmrc` support
 
-Commands:
+### Commands
 
-- [x] init: `cargo run -- init`
-- [ ] add: `cargo run -- add fast-querystring`
-  - [ ] flags... 
-- [ ] remove
-- [ ] run
+- [x] `init`
+- [x] `add <pkg>`
+- [ ] `install`
+- [ ] `update`
+- [ ] `remove`
+- [ ] `audit`
+- [ ] `list`
+- [ ] `outdated`
+- [ ] `why`
+- [ ] `licenses`
+- [ ] `run`
+- [ ] `test`
+- [ ] `exec`
 
-**Disclaimer**: This is mostly a playground for me to learn Rust and understand how package managers work.
+## Debugging
+
+```shell
+TRACE=pacquet_tarball cargo run -- add fastify
+```
+
