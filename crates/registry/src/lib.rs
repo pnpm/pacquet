@@ -1,7 +1,6 @@
 mod error;
 mod http_client;
 mod package;
-mod package_name;
 
 use std::{
     collections::HashMap,
@@ -49,7 +48,7 @@ impl RegistryManager {
         let dependency_store_folder_name =
             get_package_store_folder_name(name, &latest_version.version.to_string());
 
-        let save_path =
+        let mut save_path =
             self.store_path.join(dependency_store_folder_name).join("node_modules").join(name);
         let symlink_to = self.node_modules_path.join(name);
 
@@ -67,15 +66,17 @@ impl RegistryManager {
             all_dependencies.extend(deps);
         }
 
-        // TODO: Enable installing dev_dependencies as well.
-        // if let Some(dev_dependencies) = &latest_version.dev_dependencies {
-        //     all_dependencies.extend(dev_dependencies);
-        // }
+        // If package is under an organization such as @fastify/error
+        // We need to go 2 folders to find the correct node_modules folder.
+        // For example symlink_path should be node_modules for node_modules/@fastify/error.
+        if name.contains('/') {
+            save_path = save_path.parent().unwrap().to_path_buf();
+        }
 
         join_all(
             all_dependencies
                 .into_iter()
-                .map(|(name, version)| self.add_package(name, version, save_path.parent().unwrap()))
+                .map(|(name, version)| self.add_package(name, version, &save_path))
                 .collect::<Vec<_>>(),
         )
         .await;
