@@ -138,7 +138,7 @@ mod tests {
         .unwrap();
 
         // Validate if we delete the tar.gz file
-        assert!(!store_path.join(format!("@fastify+error@3.3.0.tar.gz")).exists());
+        assert!(!store_path.join("@fastify+error@3.3.0.tar.gz").exists());
         // Make sure we create store path with normalized name
         assert!(store_path.join("@fastify+error@3.3.0").is_dir());
         // Make sure we create a symlink on node_modules folder
