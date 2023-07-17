@@ -1,4 +1,5 @@
 mod commands;
+mod tracing;
 
 use std::env;
 
@@ -8,7 +9,11 @@ use commands::{Cli, Subcommands};
 use pacquet_package_json::PackageJson;
 use pacquet_registry::RegistryManager;
 
+use crate::tracing::{enable_tracing_by_env, enable_tracing_by_env_with_chrome_layer};
+
 pub async fn run_commands() -> Result<()> {
+    enable_tracing_by_env();
+    enable_tracing_by_env_with_chrome_layer();
     let current_directory = env::current_dir().context("problem fetching current directory")?;
     let package_json_path = current_directory.join("package.json");
     let cli = Cli::parse();
