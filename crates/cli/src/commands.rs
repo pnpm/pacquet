@@ -5,7 +5,7 @@ use pacquet_package_json::DependencyGroup;
 #[derive(Parser, Debug)]
 #[command(name = "pacquet")]
 #[command(bin_name = "pacquet")]
-#[command(version = "0.0.1")]
+#[command(version = "0.0.8")]
 #[command(about = "Experimental package manager for node.js")]
 pub struct Cli {
     #[command(subcommand)]
