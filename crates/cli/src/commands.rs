@@ -20,6 +20,9 @@ pub enum Subcommands {
     Add(AddArgs),
     /// Runs a package's "test" script, if one was provided.
     Test,
+    /// Runs a defined package script.
+    #[clap(name = "run")]
+    RunScript(RunScriptArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -48,4 +51,10 @@ impl AddArgs {
             DependencyGroup::Default
         }
     }
+}
+
+#[derive(Parser, Debug)]
+pub struct RunScriptArgs {
+    /// A pre-defined package script.
+    pub command: String,
 }

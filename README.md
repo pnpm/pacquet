@@ -25,7 +25,7 @@ Experimental package manager for node.js written in rust.
 - [ ] `outdated`
 - [ ] `why`
 - [ ] `licenses`
-- [ ] `run`
+- [x] `run`
 - [x] `test`
 - [ ] `exec`
 

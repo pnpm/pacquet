@@ -35,6 +35,10 @@ pub async fn run_commands() -> Result<()> {
         Subcommands::Test => {
             PackageJson::from_path(&package_json_path)?.execute_command("test")?;
         }
+        Subcommands::RunScript(args) => {
+            let command = &args.command;
+            PackageJson::from_path(&package_json_path)?.execute_command(command)?;
+        }
     }
 
     Ok(())
