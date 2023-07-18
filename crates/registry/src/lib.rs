@@ -10,7 +10,7 @@ use std::{
 
 use async_recursion::async_recursion;
 use futures_util::future::join_all;
-use pacquet_package_json::PackageJson;
+use pacquet_package_json::{DependencyGroup, PackageJson};
 use pacquet_tarball::{download_dependency, get_package_store_folder_name};
 
 use crate::{error::RegistryError, http_client::HttpClient};
@@ -42,7 +42,11 @@ impl RegistryManager {
         Ok(())
     }
 
-    pub async fn add_dependency(&mut self, name: &str) -> Result<(), RegistryError> {
+    pub async fn add_dependency(
+        &mut self,
+        name: &str,
+        dependency_group: DependencyGroup,
+    ) -> Result<(), RegistryError> {
         let latest_version = self.client.get_package_by_version(name, "latest").await?;
         let dependency_store_folder_name =
             get_package_store_folder_name(name, &latest_version.version.to_string());
@@ -80,7 +84,11 @@ impl RegistryManager {
         )
         .await;
 
-        self.package_json.add_dependency(name, &format!("^{0}", &latest_version.version))?;
+        self.package_json.add_dependency(
+            name,
+            &format!("^{0}", &latest_version.version),
+            dependency_group,
+        )?;
         self.package_json.save()?;
 
         Ok(())

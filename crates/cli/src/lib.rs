@@ -30,7 +30,9 @@ pub async fn run_commands() -> Result<()> {
                 package_json_path,
             )?;
             registry_manager.prepare()?;
-            registry_manager.add_dependency(&args.package).await?;
+            // TODO if a package already exists in another dependency group, we don't remove
+            // the existing entry.
+            registry_manager.add_dependency(&args.package, args.get_dependency_group()).await?;
         }
     }
 
