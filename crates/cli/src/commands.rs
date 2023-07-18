@@ -18,6 +18,8 @@ pub enum Subcommands {
     Init,
     /// Add a package
     Add(AddArgs),
+    /// Runs a package's "test" script, if one was provided.
+    Test,
 }
 
 #[derive(Parser, Debug)]

@@ -6,6 +6,7 @@ use std::{
     fs,
     io::{Read, Write},
     path::PathBuf,
+    process::{Command, Stdio},
 };
 
 use serde_json::{json, Map, Value};
@@ -77,6 +78,14 @@ impl PackageJson {
         Ok(())
     }
 
+    pub fn from_path(path: &PathBuf) -> Result<PackageJson, PackageJsonError> {
+        if !path.exists() {
+            return Err(PackageJsonError::NoImporterManifestFound(path.display().to_string()));
+        }
+
+        Ok(PackageJson { path: path.to_path_buf(), value: PackageJson::read_from_file(path)? })
+    }
+
     pub fn create_if_needed(path: &PathBuf) -> Result<PackageJson, PackageJsonError> {
         let value = if path.exists() {
             PackageJson::read_from_file(path)?
@@ -115,5 +124,30 @@ impl PackageJson {
             self.value[dependency_type] = Value::Object(dependencies);
         }
         Ok(())
+    }
+
+    pub fn execute_command(&self, command: &str) -> Result<(), PackageJsonError> {
+        match self
+            .value
+            .get("scripts")
+            .unwrap_or(&Value::default())
+            .get(command)
+            .unwrap_or(&Value::default())
+            .as_str()
+        {
+            Some(command) => {
+                let mut cmd = Command::new(command)
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .stdin(Stdio::inherit())
+                    .spawn()
+                    .unwrap();
+
+                cmd.wait().unwrap();
+
+                Ok(())
+            }
+            None => Err(PackageJsonError::NoScript(command.to_string())),
+        }
     }
 }

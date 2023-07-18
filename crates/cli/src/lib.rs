@@ -32,6 +32,9 @@ pub async fn run_commands() -> Result<()> {
             // the existing entry.
             registry_manager.add_dependency(&args.package, args.get_dependency_group()).await?;
         }
+        Subcommands::Test => {
+            PackageJson::from_path(&package_json_path)?.execute_command("test")?;
+        }
     }
 
     Ok(())
