@@ -29,7 +29,6 @@ pub async fn run_commands() -> Result<()> {
                 current_directory.join(&args.virtual_store_dir),
                 package_json_path,
             )?;
-            registry_manager.prepare()?;
             // TODO if a package already exists in another dependency group, we don't remove
             // the existing entry.
             registry_manager.add_dependency(&args.package, args.get_dependency_group()).await?;
