@@ -10,4 +10,8 @@ pub enum PackageJsonError {
     AlreadyExist,
     #[error("invalid attribute: {0}")]
     InvalidAttribute(String),
+    #[error("No package.json was found in {0}")]
+    NoImporterManifestFound(String),
+    #[error("Missing script: \"{0}\"")]
+    NoScript(String),
 }
