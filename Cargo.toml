@@ -44,7 +44,6 @@ serde_json = { version = "1.0.99" }
 tar = { version = "0.4.38" }
 thiserror = { version = "1.0.40" }
 tracing = { version = "0.1.37" }
-tracing-chrome = { version = "0.7.1" }
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
 uuid = { version = "1.4.0", features = ["v4", "fast-rng"] }

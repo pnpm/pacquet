@@ -1,7 +1,6 @@
 use std::{str::FromStr, sync::atomic::AtomicBool};
 
 use tracing::Level;
-use tracing_chrome::FlushGuard;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::Filter, EnvFilter, Layer};
 
 static IS_TRACING_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -18,7 +17,7 @@ impl<S> Filter<S> for FilterEvent {
         !meta.is_event()
     }
 }
-pub fn enable_tracing_by_env() -> Option<FlushGuard> {
+pub fn enable_tracing_by_env() {
     let trace_var = std::env::var("TRACE").ok();
     let is_enable_tracing = trace_var.is_some();
 
@@ -32,7 +31,6 @@ pub fn enable_tracing_by_env() -> Option<FlushGuard> {
             .init();
         tracing::trace!("enable_tracing_by_env");
     }
-    None
 }
 
 fn generate_common_layers(
@@ -59,25 +57,4 @@ fn generate_common_layers(
         layers.push(env_layer.boxed());
     }
     layers
-}
-
-pub fn enable_tracing_by_env_with_chrome_layer() -> Option<FlushGuard> {
-    let trace_var = std::env::var("TRACE").ok();
-    let is_enable_tracing = trace_var.is_some();
-    if is_enable_tracing && !IS_TRACING_ENABLED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        use tracing_chrome::ChromeLayerBuilder;
-        use tracing_subscriber::prelude::*;
-
-        let (chrome_layer, guard) = ChromeLayerBuilder::new().include_args(true).build();
-        let layers = generate_common_layers(trace_var);
-        // If we don't do this. chrome_layer will collect nothing.
-        // std::mem::forget(guard);
-        tracing_subscriber::registry()
-            .with(layers)
-            .with(chrome_layer.with_filter(FilterEvent {}))
-            .init();
-        Some(guard)
-    } else {
-        None
-    }
 }
