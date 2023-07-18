@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use async_recursion::async_recursion;
 use futures_util::future::join_all;
 use pacquet_package_json::{DependencyGroup, PackageJson};
-use pacquet_tarball::{download_dependency, get_package_store_folder_name};
+use pacquet_tarball::{get_package_store_folder_name, TarballManager};
 
 use crate::{error::RegistryError, http_client::HttpClient};
 
@@ -16,6 +16,7 @@ pub struct RegistryManager {
     node_modules_path: PathBuf,
     store_path: PathBuf,
     package_json: Box<PackageJson>,
+    tarball_manager: Box<TarballManager>,
 }
 
 impl RegistryManager {
@@ -29,6 +30,7 @@ impl RegistryManager {
             node_modules_path: node_modules_path.into(),
             store_path: store_path.into(),
             package_json: Box::new(PackageJson::create_if_needed(&package_json_path.into())?),
+            tarball_manager: Box::new(TarballManager::new()),
         })
     }
 
@@ -51,13 +53,14 @@ impl RegistryManager {
         let package_node_modules_path =
             self.store_path.join(dependency_store_folder_name).join("node_modules");
 
-        download_dependency(
-            name,
-            latest_version.get_tarball_url(),
-            &package_node_modules_path.join(name),
-            &self.node_modules_path.join(name),
-        )
-        .await?;
+        self.tarball_manager
+            .download_dependency(
+                name,
+                latest_version.get_tarball_url(),
+                &package_node_modules_path.join(name),
+                &self.node_modules_path.join(name),
+            )
+            .await?;
 
         if let Some(dependencies) = latest_version.dependencies.as_ref() {
             join_all(
@@ -97,13 +100,14 @@ impl RegistryManager {
 
         // TODO: We shouldn't call this function for multiple same packages.
         // There needs to be some sort of thread safety.
-        download_dependency(
-            name,
-            package_version.get_tarball_url(),
-            &package_node_modules_path.join(name),
-            &symlink_path.join(&package.name),
-        )
-        .await?;
+        self.tarball_manager
+            .download_dependency(
+                name,
+                package_version.get_tarball_url(),
+                &package_node_modules_path.join(name),
+                &symlink_path.join(&package.name),
+            )
+            .await?;
 
         if let Some(dependencies) = package_version.dependencies.as_ref() {
             join_all(
