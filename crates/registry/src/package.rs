@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 
 use crate::error::RegistryError;
 
@@ -35,6 +36,9 @@ pub struct Package {
     #[serde(alias = "dist-tags")]
     dist_tags: HashMap<String, String>,
     pub versions: HashMap<String, PackageVersion>,
+
+    #[serde(skip_serializing, skip_deserializing)]
+    pub mutex: Arc<Mutex<u8>>,
 }
 
 impl Package {

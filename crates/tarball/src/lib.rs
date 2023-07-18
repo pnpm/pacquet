@@ -62,13 +62,7 @@ impl TarballManager {
         archive.unpack(&unpack_path)?;
         fs::remove_file(tarball_path)?;
         fs::create_dir_all(extract_path)?;
-        // Check if extract_path is empty or not.
-        // This is due by a race condition causing 2 different threads to download and
-        // extract to the same folder. Likely be fixed with mutex locks.
-        // TODO: Remove this when we have some sort of thread safety
-        if extract_path.read_dir()?.next().is_none() {
-            fs::rename(unpack_path.join("package"), extract_path)?;
-        }
+        fs::rename(unpack_path.join("package"), extract_path)?;
         fs::remove_dir_all(&unpack_path)?;
         Ok(())
     }
@@ -81,15 +75,17 @@ impl TarballManager {
         save_path: &Path,
         symlink_to: &Path,
     ) -> Result<(), TarballError> {
+        let symlink_exists = symlink_to.is_symlink();
+
         // If name contains `/` such as @fastify/error, we need to make sure that @fastify folder
         // exists before we symlink to that directory.
-        if name.contains('/') {
+        if name.contains('/') && !symlink_exists {
             fs::create_dir_all(symlink_to.parent().unwrap())?;
         }
 
         // Do not try to install dependency if this version already exists in package.json
-        if save_path.exists() {
-            if !symlink_to.is_symlink() {
+        if save_path.exists() || symlink_exists {
+            if !symlink_exists {
                 symlink_dir(&save_path.to_path_buf(), &symlink_to.to_path_buf())?;
             }
             return Ok(());
@@ -102,9 +98,7 @@ impl TarballManager {
 
         // TODO: Currently symlink paths are absolute paths.
         // If you move the root folder to a different path, all symlinks will be broken.
-        if !symlink_to.is_symlink() {
-            symlink_dir(&save_path.to_path_buf(), &symlink_to.to_path_buf())?;
-        }
+        symlink_dir(&save_path.to_path_buf(), &symlink_to.to_path_buf())?;
 
         Ok(())
     }
