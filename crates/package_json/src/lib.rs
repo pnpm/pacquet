@@ -1,6 +1,7 @@
 pub mod error;
 
 use std::{
+    convert::Into,
     ffi::OsStr,
     fs,
     io::{Read, Write},
@@ -14,6 +15,26 @@ use crate::error::PackageJsonError;
 pub struct PackageJson {
     path: PathBuf,
     value: Value,
+}
+
+pub enum DependencyGroup {
+    Default,
+    Dev,
+    Optional,
+    Peer,
+    Bundled,
+}
+
+impl From<DependencyGroup> for &str {
+    fn from(value: DependencyGroup) -> Self {
+        match value {
+            DependencyGroup::Default => "dependencies",
+            DependencyGroup::Dev => "devDependencies",
+            DependencyGroup::Optional => "optionalDependencies",
+            DependencyGroup::Peer => "peerDependencies",
+            DependencyGroup::Bundled => "bundledDependencies",
+        }
+    }
 }
 
 impl PackageJson {
@@ -73,8 +94,14 @@ impl PackageJson {
         Ok(())
     }
 
-    pub fn add_dependency(&mut self, name: &str, version: &str) -> Result<(), PackageJsonError> {
-        if let Some(field) = self.value.get_mut("dependencies") {
+    pub fn add_dependency(
+        &mut self,
+        name: &str,
+        version: &str,
+        dependency_group: DependencyGroup,
+    ) -> Result<(), PackageJsonError> {
+        let dependency_type: &str = dependency_group.into();
+        if let Some(field) = self.value.get_mut(dependency_type) {
             if let Some(dependencies) = field.as_object_mut() {
                 dependencies.insert(name.to_string(), Value::String(version.to_string()));
             } else {
@@ -85,7 +112,7 @@ impl PackageJson {
         } else {
             let mut dependencies = Map::<String, Value>::new();
             dependencies.insert(name.to_string(), Value::String(version.to_string()));
-            self.value["dependencies"] = Value::Object(dependencies);
+            self.value[dependency_type] = Value::Object(dependencies);
         }
         Ok(())
     }
