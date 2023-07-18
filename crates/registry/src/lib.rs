@@ -98,8 +98,10 @@ impl RegistryManager {
         let package_node_modules_path =
             self.store_path.join(dependency_store_folder_name).join("node_modules");
 
-        // TODO: We shouldn't call this function for multiple same packages.
-        // There needs to be some sort of thread safety.
+        // Make sure to lock the package's mutex so we don't install the same package's tarball
+        // in different threads.
+        let mutex_guard = package.mutex.lock().await;
+
         self.tarball_manager
             .download_dependency(
                 name,
@@ -108,6 +110,8 @@ impl RegistryManager {
                 &symlink_path.join(&package.name),
             )
             .await?;
+
+        drop(mutex_guard);
 
         if let Some(dependencies) = package_version.dependencies.as_ref() {
             join_all(
