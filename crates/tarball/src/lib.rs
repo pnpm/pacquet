@@ -46,13 +46,19 @@ pub async fn download_tarball(url: &str, tarball_path: &Path) -> Result<(), Tarb
 pub fn extract_tarball(tarball_path: &Path, extract_path: &Path) -> Result<(), TarballError> {
     let unpack_path = env::temp_dir().join(Uuid::new_v4().to_string());
     event!(Level::DEBUG, "unpacking tarball to {}", unpack_path.display());
-    fs::create_dir_all(&unpack_path)?;
     let tar_gz = File::open(tarball_path)?;
     let tar = GzDecoder::new(tar_gz);
     let mut archive = Archive::new(tar);
     archive.unpack(&unpack_path)?;
     fs::remove_file(tarball_path)?;
-    fs::rename(unpack_path.join("package"), extract_path)?;
+    fs::create_dir_all(extract_path)?;
+    // Check if extract_path is empty or not.
+    // This is due by a race condition causing 2 different threads to download and
+    // extract to the same folder. Likely be fixed with mutex locks.
+    // TODO: Remove this when we have some sort of thread safety
+    if extract_path.read_dir()?.next().is_none() {
+        fs::rename(unpack_path.join("package"), extract_path)?;
+    }
     fs::remove_dir_all(&unpack_path)?;
     Ok(())
 }
@@ -67,8 +73,7 @@ pub async fn download_dependency(
     // If name contains `/` such as @fastify/error, we need to make sure that @fastify folder
     // exists before we symlink to that directory.
     if name.contains('/') {
-        let directory_path = symlink_to.parent().unwrap();
-        fs::create_dir_all(directory_path)?;
+        fs::create_dir_all(symlink_to.parent().unwrap())?;
     }
 
     // Do not try to install dependency if this version already exists in package.json
@@ -82,7 +87,6 @@ pub async fn download_dependency(
     let tarball_path = env::temp_dir().join(Uuid::new_v4().to_string());
     download_tarball(url, &tarball_path).await?;
 
-    fs::create_dir_all(save_path)?;
     extract_tarball(&tarball_path, save_path)?;
 
     // TODO: Currently symlink paths are absolute paths.
