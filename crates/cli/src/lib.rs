@@ -97,6 +97,9 @@ async fn run_commands(cli: Cli) -> Result<()> {
                 }
             }
         }
+        Subcommands::ListCommand((args)) => {
+            println!("Command goes here")
+        }
     }
 
     Ok(())
