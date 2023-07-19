@@ -14,4 +14,3 @@ repository.workspace = true
 home = { workspace = true }
 serde = { workspace = true }
 serde_ini = { workspace = true }
-thiserror = { workspace = true }

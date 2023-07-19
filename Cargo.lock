@@ -1010,7 +1010,6 @@ dependencies = [
  "home",
  "serde",
  "serde_ini",
- "thiserror",
 ]
 
 [[package]]
