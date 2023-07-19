@@ -23,11 +23,13 @@ pacquet_registry = { path = "crates/registry" }
 pacquet_tarball = { path = "crates/tarball" }
 pacquet_package_json = { path = "crates/package_json" }
 pacquet_lockfile = { path = "crates/lockfile" }
+pacquet_npmrc = { path = "crates/npmrc" }
 
 anyhow = { version = "1.0.71" }
 async-recursion = { version = "1.0.4" }
 clap = { version = "4", features = ["derive"] }
 elsa = { version = "1.8.1" }
+home = { version = "0.5.5" }
 flate2 = { version = "1.0.26" }
 futures-util = { version = "0.3.28" }
 reqwest = { version = "0.11", default-features = false, features = [
@@ -39,8 +41,9 @@ reqwest-middleware = { version = "0.2.2" }
 reqwest-retry = { version = "0.2.2" }
 node-semver = { version = "2.1.0" }
 serde = { version = "1.0.164", features = ["derive"] }
-serde_yaml = { version = "0.9.1" }
+serde_ini = { version = "0.2.0" }
 serde_json = { version = "1.0.99" }
+serde_yaml = { version = "0.9.1" }
 tar = { version = "0.4.38" }
 thiserror = { version = "1.0.40" }
 tracing = { version = "0.1.37" }
