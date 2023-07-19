@@ -11,7 +11,7 @@ Experimental package manager for node.js written in rust.
 - [x] Update package.json
 - [ ] Create a shrink file like `pnpm-lock.json` or `package-lock.json`
 - [ ] Workspace support
-- [ ] `.npmrc` support
+- [x] `.npmrc` support
 
 ### Commands
 
