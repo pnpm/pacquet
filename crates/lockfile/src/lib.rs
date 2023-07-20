@@ -13,6 +13,7 @@ use thiserror::Error;
 use crate::package::LockfilePackage;
 
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum LockfileError {
     #[error("filesystem error: `{0}`")]
     FileSystem(#[from] std::io::Error),
