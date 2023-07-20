@@ -3,14 +3,13 @@
 mod symlink;
 
 use std::{
-    backtrace::Backtrace,
     env,
     fs::{self},
     io::Cursor,
     path::PathBuf,
 };
 
-use libdeflater::DecompressionError;
+use libdeflater::{DecompressionError, Decompressor};
 use ssri::{Algorithm, IntegrityOpts};
 use tar::Archive;
 use thiserror::Error;
@@ -20,27 +19,17 @@ use uuid::Uuid;
 use crate::symlink::symlink_dir;
 
 #[derive(Error, Debug)]
+#[non_exhaustive]
+#[error(transparent)]
 pub enum TarballError {
-    #[error("network error while downloading {source}")]
-    Network {
-        #[from]
-        source: reqwest::Error,
-        backtrace: Backtrace,
-    },
-    #[error("io error: {source}")]
-    Io {
-        #[from]
-        source: std::io::Error,
-        backtrace: Backtrace,
-    },
+    #[error("network error")]
+    Network(#[from] reqwest::Error),
+    #[error("io error")]
+    Io(#[from] std::io::Error),
     #[error("checksum mismatch. provided {provided} should match {expected}")]
     ChecksumMismatch { provided: String, expected: String },
-    #[error("decompression error: {source}")]
-    Decompression {
-        #[from]
-        source: DecompressionError,
-        backtrace: Backtrace,
-    },
+    #[error("decompression error")]
+    Decompression(#[from] DecompressionError),
 }
 
 #[derive(Debug)]
@@ -91,16 +80,15 @@ impl TarballManager {
     fn decompress_gzip(&self, gz_data: &[u8]) -> Result<Vec<u8>, TarballError> {
         // gzip RFC1952: a valid gzip file has an ISIZE field in the
         // footer, which is a little-endian u32 number representing the
-        // decompressed size. This is ideal for libdeflate, which needs
-        // preallocating the decompressed buffer.
+        // decompressed size. This is ideal for lib-deflate, which needs
+        // pre-allocating the decompressed buffer.
         let isize = {
             let isize_start = gz_data.len() - 4;
             let isize_bytes: [u8; 4] = gz_data[isize_start..].try_into().unwrap();
             u32::from_le_bytes(isize_bytes) as usize
         };
 
-        let mut decompressor = libdeflater::Decompressor::new();
-
+        let mut decompressor = Decompressor::new();
         let mut outbuf = vec![0; isize];
         decompressor.gzip_decompress(gz_data, &mut outbuf)?;
         Ok(outbuf)
@@ -209,6 +197,30 @@ mod tests {
         assert!(node_modules_path.join("@fastify").is_dir());
         assert!(node_modules_path.join("@fastify/error").is_symlink());
         assert!(node_modules_path.join("@fastify/error/package.json").is_file());
+
+        env::set_current_dir(current_path).unwrap();
+        fs::remove_dir_all(&parent_folder).unwrap();
+    }
+
+    #[tokio::test]
+    async fn should_throw_error_on_checksum_mismatch() {
+        let current_path = env::current_dir().unwrap();
+        let parent_folder = create_folders();
+        let store_path = parent_folder.join("store");
+        let node_modules_path = parent_folder.join("node_modules");
+
+        // Try calling default as well
+        let manager = TarballManager::default();
+
+        manager
+            .download_dependency(
+                "sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
+                "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
+                &store_path.join("@fastify+error@3.3.0"),
+                &node_modules_path.join("@fastify/error"),
+            )
+            .await
+            .expect_err("checksum mismatch");
 
         env::set_current_dir(current_path).unwrap();
         fs::remove_dir_all(&parent_folder).unwrap();

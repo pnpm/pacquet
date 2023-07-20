@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum RegistryError {
     #[error("missing latest tag on {0}")]
     MissingLatestTag(String),

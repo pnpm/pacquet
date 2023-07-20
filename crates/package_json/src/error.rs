@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum PackageJsonError {
     #[error("serialization failed: {0}")]
     Serialization(#[from] serde_json::Error),
