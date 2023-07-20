@@ -11,11 +11,16 @@ use pacquet_registry::RegistryManager;
 
 use crate::tracing::enable_tracing_by_env;
 
-pub async fn run_commands() -> Result<()> {
+pub async fn run_cli() -> Result<()> {
     enable_tracing_by_env();
+    let cli = Cli::parse();
+    run_commands(cli).await?;
+    Ok(())
+}
+
+async fn run_commands(cli: Cli) -> Result<()> {
     let current_directory = env::current_dir().context("problem fetching current directory")?;
     let package_json_path = current_directory.join("package.json");
-    let cli = Cli::parse();
 
     match &cli.subcommand {
         Subcommands::Init => {
@@ -38,4 +43,41 @@ pub async fn run_commands() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, io::Write, path::PathBuf};
+
+    use uuid::Uuid;
+
+    use super::*;
+
+    fn prepare() -> PathBuf {
+        let parent_folder = env::temp_dir().join(Uuid::new_v4().to_string());
+        fs::create_dir_all(&parent_folder).unwrap();
+        env::set_current_dir(&parent_folder).unwrap();
+        parent_folder
+    }
+
+    #[tokio::test]
+    async fn init_command_should_create_package_json() {
+        let parent_folder = prepare();
+        let cli = Cli::parse_from(["", "init"]);
+        run_commands(cli).await.unwrap();
+
+        assert!(parent_folder.join("package.json").exists());
+        fs::remove_dir_all(&parent_folder).unwrap();
+    }
+
+    #[tokio::test]
+    async fn init_command_should_throw_on_existing_file() {
+        let parent_folder = prepare();
+        let mut file = fs::File::create(parent_folder.join("package.json")).unwrap();
+        file.write_all("{}".as_bytes()).unwrap();
+        assert!(parent_folder.join("package.json").exists());
+        let cli = Cli::parse_from(["", "init"]);
+        run_commands(cli).await.expect_err("should have thrown");
+        fs::remove_dir_all(&parent_folder).unwrap();
+    }
 }
