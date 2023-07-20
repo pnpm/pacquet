@@ -1,13 +1,13 @@
 mod custom_deserializer;
 
-use std::{env, fs};
+use std::{env, fs, path::PathBuf};
 
 use serde::Deserialize;
 
 use crate::custom_deserializer::{
     bool_true, default_hoist_pattern, default_modules_cache_max_age, default_modules_dir,
     default_public_hoist_pattern, default_registry, default_store_dir, default_virtual_store_dir,
-    deserialize_bool, deserialize_u64,
+    deserialize_bool, deserialize_pathbuf, deserialize_u64,
 };
 
 #[derive(Debug, Deserialize, Default, PartialEq)]
@@ -85,12 +85,14 @@ pub struct Npmrc {
     pub shamefully_hoist: bool,
 
     /// The location where all the packages are saved on the disk.
-    #[serde(rename = "store-dir", default = "default_store_dir")]
-    pub store_dir: String,
+    #[serde(rename = "store-dir")]
+    #[serde(default = "default_store_dir", deserialize_with = "deserialize_pathbuf")]
+    pub store_dir: PathBuf,
 
     /// The directory in which dependencies will be installed (instead of node_modules).
-    #[serde(rename = "modules-dir", default = "default_modules_dir")]
-    pub modules_dir: String,
+    #[serde(rename = "modules-dir")]
+    #[serde(default = "default_modules_dir", deserialize_with = "deserialize_pathbuf")]
+    pub modules_dir: PathBuf,
 
     /// Defines what linker should be used for installing Node packages.
     #[serde(rename = "node-linker", default)]
@@ -103,8 +105,9 @@ pub struct Npmrc {
 
     /// The directory with links to the store. All direct and indirect dependencies of the
     /// project are linked into this directory.
-    #[serde(rename = "virtual-store-dir", default = "default_virtual_store_dir")]
-    pub virtual_store_dir: String,
+    #[serde(rename = "virtual-store-dir")]
+    #[serde(default = "default_virtual_store_dir", deserialize_with = "deserialize_pathbuf")]
+    pub virtual_store_dir: PathBuf,
 
     /// Controls the way packages are imported from the store (if you want to disable symlinks
     /// inside node_modules, then you need to change the node-linker setting, not this one).
@@ -168,7 +171,7 @@ pub fn get_current_npmrc() -> Npmrc {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
+    use std::{env, str::FromStr};
 
     use super::*;
 
@@ -212,19 +215,34 @@ mod tests {
     pub fn should_use_pacquet_home_env_var() {
         env::set_var("$PACQUET_HOME", "/hello");
         let value: Npmrc = serde_ini::from_str("").unwrap();
-        assert_eq!(value.store_dir, "/hello/store");
+        assert_eq!(value.store_dir, PathBuf::from_str("/hello/store").unwrap());
     }
 
     #[test]
     pub fn should_use_xdg_data_home_env_var() {
         env::set_var("$XDG_DATA_HOME", "/hello");
         let value: Npmrc = serde_ini::from_str("").unwrap();
-        assert_eq!(value.store_dir, "/hello/pacquet/store");
+        assert_eq!(value.store_dir, PathBuf::from_str("/hello/pacquet/store").unwrap());
     }
 
     #[test]
     pub fn should_return_npmrc() {
         let value = get_current_npmrc();
         assert!(value.symlink);
+    }
+
+    #[test]
+    pub fn should_use_relative_virtual_store_dir() {
+        let value: Npmrc = serde_ini::from_str("virtual-store-dir=node_modules/.pacquet").unwrap();
+        assert_eq!(
+            value.virtual_store_dir,
+            env::current_dir().unwrap().join("node_modules/.pacquet")
+        );
+    }
+
+    #[test]
+    pub fn should_use_absolute_virtual_store_dir() {
+        let value: Npmrc = serde_ini::from_str("virtual-store-dir=/node_modules/.pacquet").unwrap();
+        assert_eq!(value.virtual_store_dir, PathBuf::from_str("/node_modules/.pacquet").unwrap());
     }
 }
