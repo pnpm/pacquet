@@ -62,22 +62,26 @@ mod tests {
 
     #[tokio::test]
     async fn init_command_should_create_package_json() {
+        let current_directory = env::current_dir().unwrap();
         let parent_folder = prepare();
         let cli = Cli::parse_from(["", "init"]);
         run_commands(cli).await.unwrap();
 
         assert!(parent_folder.join("package.json").exists());
+        env::set_current_dir(&current_directory).unwrap();
         fs::remove_dir_all(&parent_folder).unwrap();
     }
 
     #[tokio::test]
     async fn init_command_should_throw_on_existing_file() {
+        let current_directory = env::current_dir().unwrap();
         let parent_folder = prepare();
         let mut file = fs::File::create(parent_folder.join("package.json")).unwrap();
         file.write_all("{}".as_bytes()).unwrap();
         assert!(parent_folder.join("package.json").exists());
         let cli = Cli::parse_from(["", "init"]);
         run_commands(cli).await.expect_err("should have thrown");
+        env::set_current_dir(&current_directory).unwrap();
         fs::remove_dir_all(&parent_folder).unwrap();
     }
 }
