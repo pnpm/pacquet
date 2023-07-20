@@ -7,7 +7,7 @@ use serde::Deserialize;
 use crate::custom_deserializer::{
     bool_true, default_hoist_pattern, default_modules_cache_max_age, default_modules_dir,
     default_public_hoist_pattern, default_registry, default_store_dir, default_virtual_store_dir,
-    deserialize_bool, deserialize_pathbuf, deserialize_u64,
+    deserialize_bool, deserialize_pathbuf, deserialize_registry, deserialize_u64,
 };
 
 #[derive(Debug, Deserialize, Default, PartialEq)]
@@ -140,7 +140,7 @@ pub struct Npmrc {
     pub lockfile_include_tarball_url: bool,
 
     /// The base URL of the npm package registry (trailing slash included).
-    #[serde(default = "default_registry")]
+    #[serde(default = "default_registry", deserialize_with = "deserialize_registry")]
     pub registry: String,
 }
 
@@ -244,5 +244,11 @@ mod tests {
     pub fn should_use_absolute_virtual_store_dir() {
         let value: Npmrc = serde_ini::from_str("virtual-store-dir=/node_modules/.pacquet").unwrap();
         assert_eq!(value.virtual_store_dir, PathBuf::from_str("/node_modules/.pacquet").unwrap());
+    }
+
+    #[test]
+    pub fn add_slash_to_registry_end() {
+        let value: Npmrc = serde_ini::from_str("registry=https://yagiz.co").unwrap();
+        assert_eq!(value.registry, "https://yagiz.co/");
     }
 }

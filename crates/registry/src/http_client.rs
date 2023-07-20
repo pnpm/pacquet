@@ -9,16 +9,17 @@ use crate::{
 pub struct HttpClient {
     client: ClientWithMiddleware,
     cache: elsa::FrozenMap<String, Box<Package>>,
+    registry: String,
 }
 
 impl HttpClient {
-    pub fn new() -> Self {
+    pub fn new(registry: &str) -> Self {
         let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
         let client = ClientBuilder::new(reqwest::Client::new())
             .with(RetryTransientMiddleware::new_with_policy(retry_policy))
             .build();
 
-        HttpClient { client, cache: elsa::FrozenMap::new() }
+        HttpClient { client, cache: elsa::FrozenMap::new(), registry: registry.to_string() }
     }
 
     pub async fn get_package(&self, name: &str) -> Result<&Package, RegistryError> {
@@ -28,7 +29,7 @@ impl HttpClient {
 
         let package: Package = self
             .client
-            .get(format!("https://registry.npmjs.com/{name}"))
+            .get(format!("{0}{name}", &self.registry))
             .header("user-agent", "pacquet-cli")
             .header("content-type", "application/json")
             .send()
@@ -48,7 +49,7 @@ impl HttpClient {
     ) -> Result<PackageVersion, RegistryError> {
         Ok(self
             .client
-            .get(format!("https://registry.npmjs.com/{name}/{version}"))
+            .get(format!("{0}{name}/{version}", &self.registry))
             .header("user-agent", "pacquet-cli")
             .header("content-type", "application/json")
             .send()
