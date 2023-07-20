@@ -1,4 +1,8 @@
-use std::{env, path::Path, str::FromStr};
+use std::{
+    env,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use serde::{de, Deserialize, Deserializer};
 
@@ -21,30 +25,30 @@ pub fn default_public_hoist_pattern() -> Vec<String> {
 /// On Windows: ~/AppData/Local/pacquet/store
 /// On macOS: ~/Library/pacquet/store
 /// On Linux: ~/.local/share/pacquet/store
-pub fn default_store_dir() -> String {
+pub fn default_store_dir() -> PathBuf {
     if let Ok(pacquet_home) = env::var("$PACQUET_HOME") {
-        return Path::new(&pacquet_home).join("store").as_path().display().to_string();
+        return Path::new(&pacquet_home).join("store");
     }
 
     if let Ok(xdg_data_home) = env::var("$XDG_DATA_HOME") {
-        return Path::new(&xdg_data_home).join("pacquet/store").as_path().display().to_string();
+        return Path::new(&xdg_data_home).join("pacquet/store");
     }
 
     // https://doc.rust-lang.org/std/env/consts/constant.OS.html
     match env::consts::OS {
-        "linux" => "~/.local/share/pacquet/store".to_string(),
-        "macos" => "~/Library/pacquet/store".to_string(),
-        "windows" => "~/AppData/Local/pacquet/store".to_string(),
+        "linux" => Path::new("~/.local/share/pacquet/store").to_path_buf(),
+        "macos" => Path::new("~/Library/pacquet/store").to_path_buf(),
+        "windows" => Path::new("~/AppData/Local/pacquet/store").to_path_buf(),
         _ => panic!("unsupported operating system: {0}", env::consts::OS),
     }
 }
 
-pub fn default_modules_dir() -> String {
-    "node_modules".to_string()
+pub fn default_modules_dir() -> PathBuf {
+    Path::new("node_modules").to_path_buf()
 }
 
-pub fn default_virtual_store_dir() -> String {
-    "node_modules/.pacquet".to_string()
+pub fn default_virtual_store_dir() -> PathBuf {
+    Path::new("node_modules/.pacquet").to_path_buf()
 }
 
 pub fn default_registry() -> String {
@@ -69,4 +73,18 @@ where
 {
     let s = String::deserialize(deserializer)?;
     u64::from_str(&s).map_err(de::Error::custom)
+}
+
+pub fn deserialize_pathbuf<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    let path = PathBuf::from_str(&s).map_err(de::Error::custom)?;
+
+    if path.is_absolute() {
+        return Ok(path);
+    }
+
+    Ok(env::current_dir().map_err(de::Error::custom)?.join(path))
 }
