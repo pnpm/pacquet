@@ -51,7 +51,7 @@ impl RegistryManager {
 
         self.tarball_manager
             .download_dependency(
-                name,
+                &latest_version.dist.integrity,
                 latest_version.get_tarball_url(),
                 &package_node_modules_path.join(name),
                 &self.config.modules_dir.join(name),
@@ -100,7 +100,7 @@ impl RegistryManager {
 
         self.tarball_manager
             .download_dependency(
-                name,
+                &package_version.dist.integrity,
                 package_version.get_tarball_url(),
                 &package_node_modules_path.join(name),
                 &symlink_path.join(&package.name),
