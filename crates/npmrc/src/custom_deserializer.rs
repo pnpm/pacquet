@@ -44,14 +44,11 @@ pub fn default_store_dir() -> PathBuf {
 }
 
 pub fn default_modules_dir() -> PathBuf {
-    env::current_dir().expect("current directory is unavailable").join("node_modules").to_path_buf()
+    env::current_dir().expect("current directory is unavailable").join("node_modules")
 }
 
 pub fn default_virtual_store_dir() -> PathBuf {
-    env::current_dir()
-        .expect("current directory is unavailable")
-        .join("node_modules/.pacquet")
-        .to_path_buf()
+    env::current_dir().expect("current directory is unavailable").join("node_modules/.pacquet")
 }
 
 pub fn default_registry() -> String {
