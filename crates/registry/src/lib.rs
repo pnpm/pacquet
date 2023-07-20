@@ -14,16 +14,17 @@ use crate::{error::RegistryError, http_client::HttpClient};
 
 pub struct RegistryManager {
     client: Box<HttpClient>,
-    config: Npmrc,
+    config: Box<Npmrc>,
     package_json: Box<PackageJson>,
     tarball_manager: Box<TarballManager>,
 }
 
 impl RegistryManager {
     pub fn new<P: Into<PathBuf>>(package_json_path: P) -> Result<RegistryManager, RegistryError> {
+        let config = get_current_npmrc();
         Ok(RegistryManager {
-            client: Box::new(HttpClient::new()),
-            config: get_current_npmrc(),
+            client: Box::new(HttpClient::new(&config.registry)),
+            config: Box::new(config),
             package_json: Box::new(PackageJson::create_if_needed(&package_json_path.into())?),
             tarball_manager: Box::new(TarballManager::new()),
         })

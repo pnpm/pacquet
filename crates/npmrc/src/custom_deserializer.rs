@@ -88,3 +88,17 @@ where
 
     Ok(env::current_dir().map_err(de::Error::custom)?.join(path))
 }
+
+/// This deserializer adds a trailing "/" if not exist to make our life easier.
+pub fn deserialize_registry<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+
+    if s.ends_with('/') {
+        return Ok(s);
+    }
+
+    Ok(format!("{s}/"))
+}
