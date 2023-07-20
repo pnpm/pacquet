@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use async_recursion::async_recursion;
 use futures_util::future::join_all;
+use pacquet_npmrc::{get_current_npmrc, Npmrc};
 use pacquet_package_json::{DependencyGroup, PackageJson};
 use pacquet_tarball::{get_package_store_folder_name, TarballManager};
 
@@ -13,22 +14,16 @@ use crate::{error::RegistryError, http_client::HttpClient};
 
 pub struct RegistryManager {
     client: Box<HttpClient>,
-    node_modules_path: PathBuf,
-    store_path: PathBuf,
+    config: Npmrc,
     package_json: Box<PackageJson>,
     tarball_manager: Box<TarballManager>,
 }
 
 impl RegistryManager {
-    pub fn new<P: Into<PathBuf>>(
-        node_modules_path: P,
-        store_path: P,
-        package_json_path: P,
-    ) -> Result<RegistryManager, RegistryError> {
+    pub fn new<P: Into<PathBuf>>(package_json_path: P) -> Result<RegistryManager, RegistryError> {
         Ok(RegistryManager {
             client: Box::new(HttpClient::new()),
-            node_modules_path: node_modules_path.into(),
-            store_path: store_path.into(),
+            config: get_current_npmrc(),
             package_json: Box::new(PackageJson::create_if_needed(&package_json_path.into())?),
             tarball_manager: Box::new(TarballManager::new()),
         })
@@ -51,14 +46,14 @@ impl RegistryManager {
             get_package_store_folder_name(name, &latest_version.version.to_string());
 
         let package_node_modules_path =
-            self.store_path.join(dependency_store_folder_name).join("node_modules");
+            self.config.virtual_store_dir.join(dependency_store_folder_name).join("node_modules");
 
         self.tarball_manager
             .download_dependency(
                 name,
                 latest_version.get_tarball_url(),
                 &package_node_modules_path.join(name),
-                &self.node_modules_path.join(name),
+                &self.config.modules_dir.join(name),
             )
             .await?;
 
@@ -96,7 +91,7 @@ impl RegistryManager {
         let dependency_store_folder_name =
             get_package_store_folder_name(name, &package_version.version.to_string());
         let package_node_modules_path =
-            self.store_path.join(dependency_store_folder_name).join("node_modules");
+            self.config.virtual_store_dir.join(dependency_store_folder_name).join("node_modules");
 
         // Make sure to lock the package's mutex so we don't install the same package's tarball
         // in different threads.

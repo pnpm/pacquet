@@ -987,7 +987,6 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "clap",
- "pacquet_npmrc",
  "pacquet_package_json",
  "pacquet_registry",
  "tokio",
@@ -1030,6 +1029,7 @@ dependencies = [
  "elsa",
  "futures-util",
  "node-semver",
+ "pacquet_npmrc",
  "pacquet_package_json",
  "pacquet_tarball",
  "reqwest",
