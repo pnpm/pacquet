@@ -6,6 +6,7 @@ use std::env;
 use anyhow::{Context, Result};
 use clap::Parser;
 use commands::{Cli, Subcommands};
+use pacquet_npmrc::get_current_npmrc;
 use pacquet_package_json::PackageJson;
 use pacquet_registry::RegistryManager;
 
@@ -15,6 +16,7 @@ pub async fn run_commands() -> Result<()> {
     enable_tracing_by_env();
     let current_directory = env::current_dir().context("problem fetching current directory")?;
     let package_json_path = current_directory.join("package.json");
+    let config = get_current_npmrc();
     let cli = Cli::parse();
 
     match &cli.subcommand {
@@ -24,8 +26,8 @@ pub async fn run_commands() -> Result<()> {
         }
         Subcommands::Add(args) => {
             let mut registry_manager = RegistryManager::new(
-                current_directory.join("node_modules"),
-                current_directory.join(&args.virtual_store_dir),
+                config.modules_dir,
+                config.virtual_store_dir,
                 package_json_path,
             )?;
             // TODO if a package already exists in another dependency group, we don't remove
