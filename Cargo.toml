@@ -46,12 +46,12 @@ serde_json = { version = "1.0.99" }
 serde_yaml = { version = "0.9.1" }
 ssri = { version = "9.0.0" }
 tar = { version = "0.4.38" }
+tempfile = { version = "3.6.0" }
 thiserror = { version = "1.0.40" }
 tracing = { version = "0.1.37" }
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
 libdeflater = { version = "0.14.0" }
-uuid = { version = "1.4.0", features = ["v4", "fast-rng"] }
 
 [workspace.metadata.workspaces]
 allow_branch = "main"

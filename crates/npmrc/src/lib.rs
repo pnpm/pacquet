@@ -54,7 +54,7 @@ pub enum PackageImportMethod {
     CloneOrCopy,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
 pub struct Npmrc {
     /// When true, all dependencies are hoisted to node_modules/.pnpm/node_modules.
     /// This makes unlisted dependencies accessible to all packages inside node_modules.
@@ -151,6 +151,12 @@ impl Npmrc {
     }
 }
 
+impl Default for Npmrc {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn get_current_npmrc() -> Npmrc {
     // Look for current folder `.npmrc` and if not found, look for home directory.
     let path = match env::current_dir() {
@@ -171,7 +177,9 @@ pub fn get_current_npmrc() -> Npmrc {
 
 #[cfg(test)]
 mod tests {
-    use std::{env, str::FromStr};
+    use std::{env, io::Write, str::FromStr};
+
+    use tempfile::tempdir;
 
     use super::*;
 
@@ -248,7 +256,35 @@ mod tests {
 
     #[test]
     pub fn add_slash_to_registry_end() {
-        let value: Npmrc = serde_ini::from_str("registry=https://yagiz.co").unwrap();
-        assert_eq!(value.registry, "https://yagiz.co/");
+        let without_slash: Npmrc = serde_ini::from_str("registry=https://yagiz.co").unwrap();
+        assert_eq!(without_slash.registry, "https://yagiz.co/");
+
+        let without_slash: Npmrc = serde_ini::from_str("registry=https://yagiz.co/").unwrap();
+        assert_eq!(without_slash.registry, "https://yagiz.co/");
+    }
+
+    #[test]
+    pub fn test_current_folder_for_npmrc() {
+        let tmp = tempdir().unwrap();
+        let current_directory = env::current_dir().unwrap();
+        let mut f = fs::File::create(tmp.path().join(".npmrc")).expect("Unable to create file");
+        f.write_all(b"symlink=false").unwrap();
+        env::set_current_dir(tmp.path()).unwrap();
+        let config = get_current_npmrc();
+        assert!(!config.symlink);
+        env::set_current_dir(current_directory).unwrap();
+    }
+
+    #[test]
+    pub fn test_current_folder_for_invalid_npmrc() {
+        let tmp = tempdir().unwrap();
+        let current_directory = env::current_dir().unwrap();
+        let mut f = fs::File::create(tmp.path().join(".npmrc")).expect("Unable to create file");
+        // write invalid utf-8 value to npmrc
+        f.write_all(b"Hello \xff World").unwrap();
+        env::set_current_dir(tmp.path()).unwrap();
+        let config = get_current_npmrc();
+        assert!(config.symlink);
+        env::set_current_dir(current_directory).unwrap();
     }
 }
