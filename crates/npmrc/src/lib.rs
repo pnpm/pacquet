@@ -213,14 +213,14 @@ mod tests {
 
     #[test]
     pub fn should_use_pacquet_home_env_var() {
-        env::set_var("$PACQUET_HOME", "/hello");
+        env::set_var("PACQUET_HOME", "/hello");
         let value: Npmrc = serde_ini::from_str("").unwrap();
         assert_eq!(value.store_dir, PathBuf::from_str("/hello/store").unwrap());
     }
 
     #[test]
     pub fn should_use_xdg_data_home_env_var() {
-        env::set_var("$XDG_DATA_HOME", "/hello");
+        env::set_var("XDG_DATA_HOME", "/hello");
         let value: Npmrc = serde_ini::from_str("").unwrap();
         assert_eq!(value.store_dir, PathBuf::from_str("/hello/pacquet/store").unwrap());
     }
