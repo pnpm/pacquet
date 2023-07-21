@@ -81,9 +81,11 @@ where
 {
     let s = String::deserialize(deserializer)?;
     let path = PathBuf::from_str(&s).map_err(de::Error::custom)?;
+
     if path.is_absolute() {
         return Ok(path);
     }
+
     Ok(env::current_dir().map_err(de::Error::custom)?.join(path))
 }
 
@@ -93,9 +95,11 @@ where
     D: Deserializer<'de>,
 {
     let s = String::deserialize(deserializer)?;
+
     if s.ends_with('/') {
         return Ok(s);
     }
+
     Ok(format!("{s}/"))
 }
 
