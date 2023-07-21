@@ -3,9 +3,8 @@
 mod symlink;
 
 use std::{
-    env,
     fs::{self},
-    io::Cursor,
+    io::{Cursor, Read, Write},
     path::PathBuf,
 };
 
@@ -13,7 +12,7 @@ use libdeflater::{DecompressionError, Decompressor};
 use ssri::{Algorithm, IntegrityOpts};
 use tar::Archive;
 use thiserror::Error;
-use tracing::{event, instrument, Level};
+use tracing::instrument;
 
 use crate::symlink::symlink_dir;
 
@@ -54,13 +53,26 @@ impl TarballManager {
         integrity: &str,
         extract_path: &PathBuf,
     ) -> Result<(), TarballError> {
-        let unpack_path = env::temp_dir().join(integrity);
-        event!(Level::DEBUG, "unpacking tarball to {}", unpack_path.display());
         let mut archive = Archive::new(Cursor::new(data));
-        archive.unpack(&unpack_path)?;
-        fs::create_dir_all(extract_path)?;
-        fs::rename(unpack_path.join("package"), extract_path)?;
-        fs::remove_dir_all(&unpack_path)?;
+
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+
+            // Read the contents of the entry
+            let mut buffer = Vec::with_capacity(entry.size() as usize);
+            entry.read_to_end(&mut buffer)?;
+
+            let entry_path = entry.path().unwrap();
+            let cleaned_entry_path: PathBuf = entry_path.components().skip(1).collect();
+            let file_path = extract_path.join(cleaned_entry_path);
+
+            if !file_path.exists() {
+                let parent_dir = file_path.parent().unwrap();
+                fs::create_dir_all(parent_dir)?;
+                let mut file = fs::File::create(&file_path)?;
+                file.write_all(&buffer)?;
+            }
+        }
         Ok(())
     }
 
