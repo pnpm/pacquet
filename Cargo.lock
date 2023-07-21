@@ -1025,10 +1025,10 @@ dependencies = [
  "clap",
  "pacquet_package_json",
  "pacquet_registry",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]
@@ -1047,6 +1047,7 @@ dependencies = [
  "home",
  "serde",
  "serde_ini",
+ "tempfile",
 ]
 
 [[package]]
@@ -1055,6 +1056,7 @@ version = "0.0.1"
 dependencies = [
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
 ]
 
@@ -1074,6 +1076,7 @@ dependencies = [
  "reqwest-retry",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
 ]
@@ -1088,10 +1091,10 @@ dependencies = [
  "reqwest",
  "ssri",
  "tar",
+ "tempfile",
  "thiserror",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -1849,16 +1852,6 @@ name = "utf8parse"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "711b9620af191e0cdc7468a8d14e709c3dcdb115b36f838e601583af800a370a"
-
-[[package]]
-name = "uuid"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79daa5ed5740825c40b389c5e50312b9c86df53fccd33f281df655642b43869d"
-dependencies = [
- "getrandom",
- "rand",
-]
 
 [[package]]
 name = "valuable"

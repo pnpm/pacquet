@@ -47,41 +47,34 @@ async fn run_commands(cli: Cli) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, io::Write, path::PathBuf};
+    use std::{fs, io::Write};
 
-    use uuid::Uuid;
+    use tempfile::tempdir;
 
     use super::*;
 
-    fn prepare() -> PathBuf {
-        let parent_folder = env::temp_dir().join(Uuid::new_v4().to_string());
-        fs::create_dir_all(&parent_folder).unwrap();
-        env::set_current_dir(&parent_folder).unwrap();
-        parent_folder
-    }
-
     #[tokio::test]
     async fn init_command_should_create_package_json() {
+        let parent_folder = tempdir().unwrap();
         let current_directory = env::current_dir().unwrap();
-        let parent_folder = prepare();
+        env::set_current_dir(parent_folder.path()).unwrap();
         let cli = Cli::parse_from(["", "init"]);
         run_commands(cli).await.unwrap();
 
-        assert!(parent_folder.join("package.json").exists());
+        assert!(parent_folder.path().join("package.json").exists());
         env::set_current_dir(&current_directory).unwrap();
-        fs::remove_dir_all(&parent_folder).unwrap();
     }
 
     #[tokio::test]
     async fn init_command_should_throw_on_existing_file() {
+        let parent_folder = tempdir().unwrap();
         let current_directory = env::current_dir().unwrap();
-        let parent_folder = prepare();
-        let mut file = fs::File::create(parent_folder.join("package.json")).unwrap();
+        env::set_current_dir(&parent_folder).unwrap();
+        let mut file = fs::File::create(parent_folder.path().join("package.json")).unwrap();
         file.write_all("{}".as_bytes()).unwrap();
-        assert!(parent_folder.join("package.json").exists());
+        assert!(parent_folder.path().join("package.json").exists());
         let cli = Cli::parse_from(["", "init"]);
         run_commands(cli).await.expect_err("should have thrown");
         env::set_current_dir(&current_directory).unwrap();
-        fs::remove_dir_all(&parent_folder).unwrap();
     }
 }
