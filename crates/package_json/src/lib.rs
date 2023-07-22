@@ -1,6 +1,7 @@
 pub mod error;
 
 use std::{
+    collections::HashMap,
     convert::Into,
     ffi::OsStr,
     fs,
@@ -104,6 +105,23 @@ impl PackageJson {
         Ok(())
     }
 
+    pub fn get_dependencies(&self, group: DependencyGroup) -> HashMap<&str, &str> {
+        let mut dependencies = HashMap::<&str, &str>::new();
+        let group_key: &str = group.into();
+
+        if let Some(value) = self.value.get(group_key) {
+            if let Some(entries) = value.as_object() {
+                for (key, value) in entries {
+                    if let Some(value) = value.as_str() {
+                        dependencies.insert(key.as_str(), value);
+                    }
+                }
+            }
+        }
+
+        dependencies
+    }
+
     pub fn add_dependency(
         &mut self,
         name: &str,
@@ -203,19 +221,10 @@ mod tests {
         let tmp = dir.path().join("package.json");
         let mut package_json = PackageJson::create_if_needed(&tmp).unwrap();
         package_json.add_dependency("fastify", "1.0.0", DependencyGroup::Default).unwrap();
-        assert_eq!(
-            package_json
-                .value
-                .get("dependencies")
-                .unwrap()
-                .as_object()
-                .unwrap()
-                .get("fastify")
-                .unwrap()
-                .as_str()
-                .unwrap(),
-            "1.0.0"
-        );
+
+        let dependencies = package_json.get_dependencies(DependencyGroup::Default);
+        assert!(dependencies.contains_key("fastify"));
+        assert_eq!(dependencies.get("fastify").unwrap(), &"1.0.0");
         package_json.save().unwrap();
         assert!(read_to_string(tmp).unwrap().contains("fastify"));
     }
