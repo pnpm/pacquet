@@ -252,4 +252,25 @@ mod tests {
         package_json.execute_command("test").unwrap();
         package_json.execute_command("invalid").expect_err("invalid command should not exist");
     }
+
+    #[test]
+    fn get_dependencies_should_return_peers() {
+        let data = r#"
+        {
+            "dependencies": {
+                "fastify": "1.0.0"
+            },
+            "peerDependencies": {
+                "fast-querystring": "1.0.0"
+            }
+        }
+        "#;
+        let tmp = NamedTempFile::new().unwrap();
+        write!(tmp.as_file(), "{}", data).unwrap();
+        let package_json = PackageJson::create_if_needed(&tmp.path().to_path_buf()).unwrap();
+        assert!(
+            package_json.get_dependencies(DependencyGroup::Peer).contains_key("fast-querystring")
+        );
+        assert!(package_json.get_dependencies(DependencyGroup::Default).contains_key("fastify"));
+    }
 }
