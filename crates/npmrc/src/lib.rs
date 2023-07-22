@@ -142,6 +142,11 @@ pub struct Npmrc {
     /// The base URL of the npm package registry (trailing slash included).
     #[serde(default = "default_registry", deserialize_with = "deserialize_registry")]
     pub registry: String,
+
+    /// When true, any missing non-optional peer dependencies are automatically installed.
+    #[serde(rename = "auto-install-peers")]
+    #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
+    pub auto_install_peers: bool,
 }
 
 impl Npmrc {

@@ -58,17 +58,14 @@ impl RegistryManager {
             )
             .await?;
 
-        if let Some(dependencies) = latest_version.dependencies.as_ref() {
-            join_all(
-                dependencies
-                    .iter()
-                    .map(|(name, version)| {
-                        self.add_package(name, version, &package_node_modules_path)
-                    })
-                    .collect::<Vec<_>>(),
-            )
-            .await;
-        }
+        join_all(
+            latest_version
+                .get_dependencies(self.config.auto_install_peers)
+                .iter()
+                .map(|(name, version)| self.add_package(name, version, &package_node_modules_path))
+                .collect::<Vec<_>>(),
+        )
+        .await;
 
         self.package_json.add_dependency(
             name,
@@ -109,17 +106,14 @@ impl RegistryManager {
 
         drop(mutex_guard);
 
-        if let Some(dependencies) = package_version.dependencies.as_ref() {
-            join_all(
-                dependencies
-                    .iter()
-                    .map(|(name, version)| {
-                        self.add_package(name, version, &package_node_modules_path)
-                    })
-                    .collect::<Vec<_>>(),
-            )
-            .await;
-        }
+        join_all(
+            package_version
+                .get_dependencies(self.config.auto_install_peers)
+                .iter()
+                .map(|(name, version)| self.add_package(name, version, &package_node_modules_path))
+                .collect::<Vec<_>>(),
+        )
+        .await;
 
         Ok(())
     }
