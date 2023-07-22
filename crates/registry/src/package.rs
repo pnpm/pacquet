@@ -83,3 +83,39 @@ impl Package {
         Ok(satisfied_versions.last().copied())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use node_semver::Version;
+
+    use crate::package::{PackageDistribution, PackageVersion};
+
+    #[test]
+    pub fn package_version_should_include_peers() {
+        let mut dependencies = HashMap::<String, String>::new();
+        dependencies.insert("fastify".to_string(), "1.0.0".to_string());
+        let mut peer_dependencies = HashMap::<String, String>::new();
+        peer_dependencies.insert("fast-querystring".to_string(), "1.0.0".to_string());
+        let version = PackageVersion {
+            name: "".to_string(),
+            version: Version::parse("1.0.0").unwrap(),
+            dist: PackageDistribution {
+                integrity: "".to_string(),
+                npm_signature: None,
+                shasum: "".to_string(),
+                tarball: "".to_string(),
+            },
+            dependencies: Some(dependencies),
+            dev_dependencies: None,
+            peer_dependencies: Some(peer_dependencies),
+        };
+
+        assert!(version.get_dependencies(false).contains_key("fastify"));
+        assert!(!version.get_dependencies(false).contains_key("fast-querystring"));
+        assert!(version.get_dependencies(true).contains_key("fastify"));
+        assert!(version.get_dependencies(true).contains_key("fast-querystring"));
+        assert!(!version.get_dependencies(true).contains_key("hello-world"));
+    }
+}
