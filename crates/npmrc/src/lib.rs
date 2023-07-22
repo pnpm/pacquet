@@ -147,6 +147,24 @@ pub struct Npmrc {
     #[serde(rename = "auto-install-peers")]
     #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
     pub auto_install_peers: bool,
+
+    /// When this setting is set to true, packages with peer dependencies will be deduplicated after peers resolution.
+    #[serde(rename = "dedupe-peer-dependents")]
+    #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
+    pub dedupe_peer_dependents: bool,
+
+    /// If this is enabled, commands will fail if there is a missing or invalid peer dependency in the tree.
+    #[serde(rename = "strict-peer-dependencies")]
+    #[serde(default, deserialize_with = "deserialize_bool")]
+    pub strict_peer_dependencies: bool,
+
+    /// When enabled, dependencies of the root workspace project are used to resolve peer
+    /// dependencies of any projects in the workspace. It is a useful feature as you can install
+    /// your peer dependencies only in the root of the workspace, and you can be sure that all
+    /// projects in the workspace use the same versions of the peer dependencies.
+    #[serde(rename = "resolve-peers-from-workspace-root")]
+    #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
+    pub resolve_peers_from_workspace_root: bool,
 }
 
 impl Npmrc {
