@@ -22,11 +22,33 @@ pub struct PackageVersion {
     pub dependencies: Option<HashMap<String, String>>,
     #[serde(alias = "devDependencies")]
     pub dev_dependencies: Option<HashMap<String, String>>,
+    #[serde(alias = "peerDependencies")]
+    pub peer_dependencies: Option<HashMap<String, String>>,
 }
 
 impl PackageVersion {
     pub fn get_tarball_url(&self) -> &str {
         self.dist.tarball.as_str()
+    }
+
+    pub fn get_dependencies(&self, with_peer_dependencies: bool) -> HashMap<&str, &str> {
+        let mut dependencies = HashMap::<&str, &str>::new();
+
+        if let Some(deps) = self.dependencies.as_ref() {
+            for dep in deps {
+                dependencies.insert(dep.0.as_str(), dep.1.as_str());
+            }
+        }
+
+        if with_peer_dependencies {
+            if let Some(deps) = self.peer_dependencies.as_ref() {
+                for dep in deps {
+                    dependencies.insert(dep.0.as_str(), dep.1.as_str());
+                }
+            }
+        }
+
+        dependencies
     }
 }
 
