@@ -36,19 +36,12 @@ jobs:
           save-cache: ${{ github.ref_name == 'main' }}
 
       - name: Install cargo-nextest
-        if: runner.os != 'Windows'
         uses: taiki-e/install-action@cargo-nextest
 
       - name: Cargo check
         run: cargo ck
 
       - name: Build cache by Cargo Check and Cargo Test
-        if: runner.os == 'Windows'
-        run: |
-          cargo test run --workspace --all-targets --all-features --no-run
-
-      - name: Build cache by Cargo Check and Cargo Test
-        if: runner.os != 'Windows'
         run: |
           cargo nextest run --workspace --all-targets --all-features --no-run
 
@@ -163,8 +156,4 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@cargo-nextest
 
-      - if: runner.os == 'Windows'
-        run: cargo test
-
-      - if: runner.os != 'Windows'
-        run: cargo nextest run
+      - run: cargo nextest run

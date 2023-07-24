@@ -1,6 +1,7 @@
 pub mod error;
 
 use std::{
+    collections::HashMap,
     convert::Into,
     ffi::OsStr,
     fs,
@@ -13,11 +14,7 @@ use serde_json::{json, Map, Value};
 
 use crate::error::PackageJsonError;
 
-pub struct PackageJson {
-    path: PathBuf,
-    value: Value,
-}
-
+#[derive(Debug, PartialEq)]
 pub enum DependencyGroup {
     Default,
     Dev,
@@ -36,6 +33,11 @@ impl From<DependencyGroup> for &str {
             DependencyGroup::Bundled => "bundledDependencies",
         }
     }
+}
+
+pub struct PackageJson {
+    path: PathBuf,
+    value: Value,
 }
 
 impl PackageJson {
@@ -103,6 +105,23 @@ impl PackageJson {
         Ok(())
     }
 
+    pub fn get_dependencies(&self, group: DependencyGroup) -> HashMap<&str, &str> {
+        let mut dependencies = HashMap::<&str, &str>::new();
+        let group_key: &str = group.into();
+
+        if let Some(value) = self.value.get(group_key) {
+            if let Some(entries) = value.as_object() {
+                for (key, value) in entries {
+                    if let Some(value) = value.as_str() {
+                        dependencies.insert(key.as_str(), value);
+                    }
+                }
+            }
+        }
+
+        dependencies
+    }
+
     pub fn add_dependency(
         &mut self,
         name: &str,
@@ -149,5 +168,109 @@ impl PackageJson {
             }
             None => Err(PackageJsonError::NoScript(command.to_string())),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs::read_to_string;
+
+    use tempfile::{tempdir, NamedTempFile};
+
+    use super::*;
+    use crate::DependencyGroup;
+
+    #[test]
+    fn test_dependency_group_into() {
+        assert_eq!(<DependencyGroup as Into<&str>>::into(DependencyGroup::Default), "dependencies");
+        assert_eq!(<DependencyGroup as Into<&str>>::into(DependencyGroup::Dev), "devDependencies");
+        assert_eq!(
+            <DependencyGroup as Into<&str>>::into(DependencyGroup::Optional),
+            "optionalDependencies"
+        );
+        assert_eq!(
+            <DependencyGroup as Into<&str>>::into(DependencyGroup::Peer),
+            "peerDependencies"
+        );
+        assert_eq!(
+            <DependencyGroup as Into<&str>>::into(DependencyGroup::Bundled),
+            "bundledDependencies"
+        );
+    }
+
+    #[test]
+    fn init_should_throw_if_exists() {
+        let tmp = NamedTempFile::new().unwrap();
+        write!(tmp.as_file(), "hello world").unwrap();
+        PackageJson::init(&tmp.path().to_path_buf()).expect_err("package.json already exist");
+    }
+
+    #[test]
+    fn init_should_create_package_json_if_not_exist() {
+        let dir = tempdir().unwrap();
+        let tmp = dir.path().join("package.json");
+        PackageJson::init(&tmp).unwrap();
+        assert!(tmp.exists());
+        assert!(tmp.is_file());
+        assert_eq!(PackageJson::from_path(&tmp).unwrap().path, tmp);
+    }
+
+    #[test]
+    fn should_add_dependency() {
+        let dir = tempdir().unwrap();
+        let tmp = dir.path().join("package.json");
+        let mut package_json = PackageJson::create_if_needed(&tmp).unwrap();
+        package_json.add_dependency("fastify", "1.0.0", DependencyGroup::Default).unwrap();
+
+        let dependencies = package_json.get_dependencies(DependencyGroup::Default);
+        assert!(dependencies.contains_key("fastify"));
+        assert_eq!(dependencies.get("fastify").unwrap(), &"1.0.0");
+        package_json.save().unwrap();
+        assert!(read_to_string(tmp).unwrap().contains("fastify"));
+    }
+
+    #[test]
+    fn should_throw_on_missing_command() {
+        let dir = tempdir().unwrap();
+        let tmp = dir.path().join("package.json");
+        let package_json = PackageJson::create_if_needed(&tmp).unwrap();
+        package_json.execute_command("test").expect_err("test command should not exist");
+    }
+
+    #[test]
+    fn should_execute_a_command() {
+        let data = r#"
+        {
+            "scripts": {
+                "test": "echo"
+            }
+        }
+        "#;
+        let tmp = NamedTempFile::new().unwrap();
+        write!(tmp.as_file(), "{}", data).unwrap();
+        let package_json = PackageJson::create_if_needed(&tmp.path().to_path_buf()).unwrap();
+        package_json.execute_command("test").unwrap();
+        package_json.execute_command("invalid").expect_err("invalid command should not exist");
+    }
+
+    #[test]
+    fn get_dependencies_should_return_peers() {
+        let data = r#"
+        {
+            "dependencies": {
+                "fastify": "1.0.0"
+            },
+            "peerDependencies": {
+                "fast-querystring": "1.0.0"
+            }
+        }
+        "#;
+        let tmp = NamedTempFile::new().unwrap();
+        write!(tmp.as_file(), "{}", data).unwrap();
+        let package_json = PackageJson::create_if_needed(&tmp.path().to_path_buf()).unwrap();
+        assert!(
+            package_json.get_dependencies(DependencyGroup::Peer).contains_key("fast-querystring")
+        );
+        assert!(package_json.get_dependencies(DependencyGroup::Default).contains_key("fastify"));
     }
 }

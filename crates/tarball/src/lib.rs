@@ -3,9 +3,8 @@
 mod symlink;
 
 use std::{
-    env,
     fs::{self},
-    io::Cursor,
+    io::{Cursor, Read, Write},
     path::PathBuf,
 };
 
@@ -13,8 +12,7 @@ use libdeflater::{DecompressionError, Decompressor};
 use ssri::{Algorithm, IntegrityOpts};
 use tar::Archive;
 use thiserror::Error;
-use tracing::{event, instrument, Level};
-use uuid::Uuid;
+use tracing::instrument;
 
 use crate::symlink::symlink_dir;
 
@@ -49,14 +47,32 @@ impl TarballManager {
     }
 
     #[instrument]
-    fn extract(&self, data: Vec<u8>, extract_path: &PathBuf) -> Result<(), TarballError> {
-        let unpack_path = env::temp_dir().join(Uuid::new_v4().to_string());
-        event!(Level::DEBUG, "unpacking tarball to {}", unpack_path.display());
+    fn extract(
+        &self,
+        data: Vec<u8>,
+        integrity: &str,
+        extract_path: &PathBuf,
+    ) -> Result<(), TarballError> {
         let mut archive = Archive::new(Cursor::new(data));
-        archive.unpack(&unpack_path)?;
-        fs::create_dir_all(extract_path)?;
-        fs::rename(unpack_path.join("package"), extract_path)?;
-        fs::remove_dir_all(&unpack_path)?;
+
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+
+            // Read the contents of the entry
+            let mut buffer = Vec::with_capacity(entry.size() as usize);
+            entry.read_to_end(&mut buffer)?;
+
+            let entry_path = entry.path().unwrap();
+            let cleaned_entry_path: PathBuf = entry_path.components().skip(1).collect();
+            let file_path = extract_path.join(cleaned_entry_path);
+
+            if !file_path.exists() {
+                let parent_dir = file_path.parent().unwrap();
+                fs::create_dir_all(parent_dir)?;
+                let mut file = fs::File::create(&file_path)?;
+                file.write_all(&buffer)?;
+            }
+        }
         Ok(())
     }
 
@@ -121,7 +137,7 @@ impl TarballManager {
         let response = self.http_client.get(url).send().await?.bytes().await?;
         self.verify_checksum(&response, integrity)?;
         let data = self.decompress_gzip(&response)?;
-        self.extract(data, save_path)?;
+        self.extract(data, integrity, save_path)?;
 
         // TODO: Currently symlink paths are absolute paths.
         // If you move the root folder to a different path, all symlinks will be broken.
@@ -137,18 +153,9 @@ pub fn get_package_store_folder_name(input: &str, version: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use tempfile::tempdir;
 
     use super::*;
-
-    fn create_folders() -> PathBuf {
-        let id = Uuid::new_v4();
-        let parent_folder = env::temp_dir().join(id.to_string());
-        fs::create_dir_all(parent_folder.join("store")).expect("failed to create folder");
-        fs::create_dir_all(parent_folder.join("node_modules")).expect("failed to create folder");
-        env::set_current_dir(&parent_folder).unwrap();
-        parent_folder
-    }
 
     #[test]
     fn generate_correct_package_name() {
@@ -164,16 +171,12 @@ mod tests {
 
     #[tokio::test]
     async fn packages_under_orgs_should_work() {
-        let current_path = env::current_dir().unwrap();
-        let parent_folder = create_folders();
-        let store_path = parent_folder.join("store");
-        let node_modules_path = parent_folder.join("node_modules");
-        let save_path = store_path.join("@fastify+error@3.3.0");
-        let symlink_path = node_modules_path.join("@fastify/error");
+        let store_path = tempdir().unwrap();
+        let node_modules_path = tempdir().unwrap();
+        let save_path = store_path.path().join("@fastify+error@3.3.0");
+        let symlink_path = node_modules_path.path().join("@fastify/error");
 
-        let manager = TarballManager::new();
-
-        manager
+        TarballManager::new()
             .download_dependency(
                 "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
                 "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
@@ -184,7 +187,7 @@ mod tests {
             .unwrap();
 
         // Validate if we delete the tar.gz file
-        assert!(!store_path.join("@fastify+error@3.3.0.tar.gz").exists());
+        assert!(!store_path.path().join("@fastify+error@3.3.0.tar.gz").exists());
         // Make sure we create store path with normalized name
         assert!(save_path.as_path().is_dir());
         assert!(save_path.join("package.json").is_file());
@@ -193,36 +196,26 @@ mod tests {
         assert!(symlink_path.is_symlink());
         // Make sure the symlink is looking to the correct place
         assert_eq!(fs::read_link(&symlink_path).unwrap(), save_path);
-        //Make sure we create a @fastify folder inside node_modules
-        assert!(node_modules_path.join("@fastify").is_dir());
-        assert!(node_modules_path.join("@fastify/error").is_symlink());
-        assert!(node_modules_path.join("@fastify/error/package.json").is_file());
-
-        env::set_current_dir(current_path).unwrap();
-        fs::remove_dir_all(&parent_folder).unwrap();
+        // Make sure we create a @fastify folder inside node_modules
+        assert!(node_modules_path.path().join("@fastify").is_dir());
+        assert!(node_modules_path.path().join("@fastify/error").is_symlink());
+        assert!(node_modules_path.path().join("@fastify/error/package.json").is_file());
     }
 
     #[tokio::test]
     async fn should_throw_error_on_checksum_mismatch() {
-        let current_path = env::current_dir().unwrap();
-        let parent_folder = create_folders();
-        let store_path = parent_folder.join("store");
-        let node_modules_path = parent_folder.join("node_modules");
+        let store_path = tempdir().unwrap();
+        let node_modules_path = tempdir().unwrap();
 
         // Try calling default as well
-        let manager = TarballManager::default();
-
-        manager
+        TarballManager::default()
             .download_dependency(
                 "sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
                 "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
-                &store_path.join("@fastify+error@3.3.0"),
-                &node_modules_path.join("@fastify/error"),
+                &store_path.path().join("@fastify+error@3.3.0"),
+                &node_modules_path.path().join("@fastify/error"),
             )
             .await
             .expect_err("checksum mismatch");
-
-        env::set_current_dir(current_path).unwrap();
-        fs::remove_dir_all(&parent_folder).unwrap();
     }
 }

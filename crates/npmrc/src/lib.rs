@@ -54,7 +54,7 @@ pub enum PackageImportMethod {
     CloneOrCopy,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
 pub struct Npmrc {
     /// When true, all dependencies are hoisted to node_modules/.pnpm/node_modules.
     /// This makes unlisted dependencies accessible to all packages inside node_modules.
@@ -142,12 +142,41 @@ pub struct Npmrc {
     /// The base URL of the npm package registry (trailing slash included).
     #[serde(default = "default_registry", deserialize_with = "deserialize_registry")]
     pub registry: String,
+
+    /// When true, any missing non-optional peer dependencies are automatically installed.
+    #[serde(rename = "auto-install-peers")]
+    #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
+    pub auto_install_peers: bool,
+
+    /// When this setting is set to true, packages with peer dependencies will be deduplicated after peers resolution.
+    #[serde(rename = "dedupe-peer-dependents")]
+    #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
+    pub dedupe_peer_dependents: bool,
+
+    /// If this is enabled, commands will fail if there is a missing or invalid peer dependency in the tree.
+    #[serde(rename = "strict-peer-dependencies")]
+    #[serde(default, deserialize_with = "deserialize_bool")]
+    pub strict_peer_dependencies: bool,
+
+    /// When enabled, dependencies of the root workspace project are used to resolve peer
+    /// dependencies of any projects in the workspace. It is a useful feature as you can install
+    /// your peer dependencies only in the root of the workspace, and you can be sure that all
+    /// projects in the workspace use the same versions of the peer dependencies.
+    #[serde(rename = "resolve-peers-from-workspace-root")]
+    #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
+    pub resolve_peers_from_workspace_root: bool,
 }
 
 impl Npmrc {
     pub fn new() -> Self {
         let config: Npmrc = serde_ini::from_str("").unwrap();
         config
+    }
+}
+
+impl Default for Npmrc {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -171,7 +200,9 @@ pub fn get_current_npmrc() -> Npmrc {
 
 #[cfg(test)]
 mod tests {
-    use std::{env, str::FromStr};
+    use std::{env, io::Write, str::FromStr};
+
+    use tempfile::tempdir;
 
     use super::*;
 
@@ -241,6 +272,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "windows"))]
     pub fn should_use_absolute_virtual_store_dir() {
         let value: Npmrc = serde_ini::from_str("virtual-store-dir=/node_modules/.pacquet").unwrap();
         assert_eq!(value.virtual_store_dir, PathBuf::from_str("/node_modules/.pacquet").unwrap());
@@ -248,7 +280,35 @@ mod tests {
 
     #[test]
     pub fn add_slash_to_registry_end() {
-        let value: Npmrc = serde_ini::from_str("registry=https://yagiz.co").unwrap();
-        assert_eq!(value.registry, "https://yagiz.co/");
+        let without_slash: Npmrc = serde_ini::from_str("registry=https://yagiz.co").unwrap();
+        assert_eq!(without_slash.registry, "https://yagiz.co/");
+
+        let without_slash: Npmrc = serde_ini::from_str("registry=https://yagiz.co/").unwrap();
+        assert_eq!(without_slash.registry, "https://yagiz.co/");
+    }
+
+    #[test]
+    pub fn test_current_folder_for_npmrc() {
+        let tmp = tempdir().unwrap();
+        let current_directory = env::current_dir().unwrap();
+        let mut f = fs::File::create(tmp.path().join(".npmrc")).expect("Unable to create file");
+        f.write_all(b"symlink=false").unwrap();
+        env::set_current_dir(tmp.path()).unwrap();
+        let config = get_current_npmrc();
+        assert!(!config.symlink);
+        env::set_current_dir(current_directory).unwrap();
+    }
+
+    #[test]
+    pub fn test_current_folder_for_invalid_npmrc() {
+        let tmp = tempdir().unwrap();
+        let current_directory = env::current_dir().unwrap();
+        let mut f = fs::File::create(tmp.path().join(".npmrc")).expect("Unable to create file");
+        // write invalid utf-8 value to npmrc
+        f.write_all(b"Hello \xff World").unwrap();
+        env::set_current_dir(tmp.path()).unwrap();
+        let config = get_current_npmrc();
+        assert!(config.symlink);
+        env::set_current_dir(current_directory).unwrap();
     }
 }

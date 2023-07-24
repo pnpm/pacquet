@@ -40,18 +40,18 @@ reqwest = { version = "0.11", default-features = false, features = [
 reqwest-middleware = { version = "0.2.2" }
 reqwest-retry = { version = "0.2.2" }
 node-semver = { version = "2.1.0" }
-serde = { version = "1.0.164", features = ["derive"] }
+serde = { version = "1.0.174", features = ["derive"] }
 serde_ini = { version = "0.2.0" }
 serde_json = { version = "1.0.99" }
 serde_yaml = { version = "0.9.1" }
 ssri = { version = "9.0.0" }
 tar = { version = "0.4.38" }
-thiserror = { version = "1.0.40" }
+tempfile = { version = "3.6.0" }
+thiserror = { version = "1.0.44" }
 tracing = { version = "0.1.37" }
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
 libdeflater = { version = "0.14.0" }
-uuid = { version = "1.4.0", features = ["v4", "fast-rng"] }
 
 [workspace.metadata.workspaces]
 allow_branch = "main"
