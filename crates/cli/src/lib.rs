@@ -36,11 +36,12 @@ async fn run_commands(cli: Cli) -> Result<()> {
                 .await?;
         }
         Subcommands::Test => {
-            PackageJson::from_path(&package_json_path)?.execute_command("test")?;
+            PackageJson::from_path(&package_json_path)?.execute_command("test", false)?;
         }
         Subcommands::RunScript(args) => {
             let command = &args.command;
-            PackageJson::from_path(&package_json_path)?.execute_command(command)?;
+            PackageJson::from_path(&package_json_path)?
+                .execute_command(command, args.if_present)?;
         }
     }
 

@@ -64,4 +64,9 @@ impl AddArgs {
 pub struct RunScriptArgs {
     /// A pre-defined package script.
     pub command: String,
+    /// You can use the --if-present flag to avoid exiting with a non-zero exit code when the
+    /// script is undefined. This lets you run potentially undefined scripts without breaking the
+    /// execution chain.
+    #[arg(long = "if-present")]
+    pub if_present: bool,
 }
