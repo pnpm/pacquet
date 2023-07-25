@@ -41,6 +41,7 @@ impl RegistryManager {
         &mut self,
         name: &str,
         dependency_group: DependencyGroup,
+        save_exact: bool,
     ) -> Result<(), RegistryError> {
         let latest_version = self.client.get_package_by_version(name, "latest").await?;
         let dependency_store_folder_name =
@@ -69,7 +70,7 @@ impl RegistryManager {
 
         self.package_json.add_dependency(
             name,
-            &format!("^{0}", &latest_version.version),
+            &latest_version.serialize(save_exact),
             dependency_group,
         )?;
         self.package_json.save()?;
