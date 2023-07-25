@@ -6,7 +6,7 @@
 PACQUET="../target/release/pacquet add fastify"
 PNPM="pnpm add fastify --silent"
 YARN="yarn add fastify --silent"
-BUN="bun add fastify --no-cache --no-save --silent"
+BUN="bun add fastify --no-cache --silent --backend=symlink"
 
 FILE_CLEAN="rm -rf package.json node_modules .yarn yarn.lock .pnp* && echo {} > package.json || true"
 PNPM_CLEAN="pnpm store prune"
