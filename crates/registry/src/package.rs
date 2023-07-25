@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use crate::error::RegistryError;
+use crate::RegistryError;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PackageDistribution {

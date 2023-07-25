@@ -13,6 +13,7 @@ Experimental package manager for node.js written in rust.
 - [ ] Workspace support
 - [ ] Full sync with [pnpm error codes](https://pnpm.io/errors)
 - [ ] Generate a `node_modules/.bin` folder
+- [ ] Add CLI report
 
 ## Debugging
 
