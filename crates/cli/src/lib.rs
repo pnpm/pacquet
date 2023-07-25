@@ -97,8 +97,10 @@ async fn run_commands(cli: Cli) -> Result<()> {
                 }
             }
         }
-        Subcommands::ListCommand((args)) => {
-            println!("Command goes here")
+        Subcommands::List(args) => {
+            let group = args.get_scope();
+            let depth = args.get_depth();
+            PackageJson::from_path(&package_json_path)?.list(group, &node_modules_path, depth)?;
         }
     }
 

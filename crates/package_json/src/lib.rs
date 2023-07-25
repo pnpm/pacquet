@@ -197,6 +197,27 @@ impl PackageJson {
             Err(PackageJsonError::NoScript(command.to_string()))
         }
     }
+
+    pub fn list(&self, dependency_group: DependencyGroup, node_modules_path: &PathBuf, depth: u32) -> Result<(), PackageJsonError> {
+        
+        let scope: &str;
+        match dependency_group {
+            DependencyGroup::Dev => scope = "devDependencies",
+            DependencyGroup::Default => scope = "dependencies",
+            _ => scope = "dependencies"
+        }
+
+        let binding = Value::default();
+        let mut dependencies = self.value.get(scope).unwrap_or(&binding).as_object().into_iter();
+
+        let dep = dependencies.next();
+        // while !dep.is_none() {
+        
+        // }
+
+        Ok(())
+    }
+
 }
 
 #[cfg(test)]
