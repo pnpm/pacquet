@@ -145,7 +145,7 @@ impl PackageJson {
         Ok(())
     }
 
-    pub fn execute_command(&self, command: &str) -> Result<(), PackageJsonError> {
+    pub fn execute_command(&self, command: &str, if_present: bool) -> Result<(), PackageJsonError> {
         match self
             .value
             .get("scripts")
@@ -166,7 +166,13 @@ impl PackageJson {
 
                 Ok(())
             }
-            None => Err(PackageJsonError::NoScript(command.to_string())),
+            None => {
+                if if_present {
+                    Ok(())
+                } else {
+                    Err(PackageJsonError::NoScript(command.to_string()))
+                }
+            }
         }
     }
 }
@@ -234,7 +240,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let tmp = dir.path().join("package.json");
         let package_json = PackageJson::create_if_needed(&tmp).unwrap();
-        package_json.execute_command("test").expect_err("test command should not exist");
+        package_json.execute_command("test", false).expect_err("test command should not exist");
     }
 
     #[test]
@@ -249,8 +255,11 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "{}", data).unwrap();
         let package_json = PackageJson::create_if_needed(&tmp.path().to_path_buf()).unwrap();
-        package_json.execute_command("test").unwrap();
-        package_json.execute_command("invalid").expect_err("invalid command should not exist");
+        package_json.execute_command("test", false).unwrap();
+        package_json
+            .execute_command("invalid", false)
+            .expect_err("invalid command should not exist");
+        package_json.execute_command("invalid", true).unwrap();
     }
 
     #[test]
