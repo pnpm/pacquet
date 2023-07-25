@@ -105,15 +105,18 @@ impl PackageJson {
         Ok(())
     }
 
-    pub fn get_dependencies(&self, group: DependencyGroup) -> HashMap<&str, &str> {
+    pub fn get_dependencies(&self, groups: Vec<DependencyGroup>) -> HashMap<&str, &str> {
         let mut dependencies = HashMap::<&str, &str>::new();
-        let group_key: &str = group.into();
 
-        if let Some(value) = self.value.get(group_key) {
-            if let Some(entries) = value.as_object() {
-                for (key, value) in entries {
-                    if let Some(value) = value.as_str() {
-                        dependencies.insert(key.as_str(), value);
+        for group in groups {
+            let group_key: &str = group.into();
+
+            if let Some(value) = self.value.get(group_key) {
+                if let Some(entries) = value.as_object() {
+                    for (key, value) in entries {
+                        if let Some(value) = value.as_str() {
+                            dependencies.insert(key.as_str(), value);
+                        }
                     }
                 }
             }
@@ -228,7 +231,7 @@ mod tests {
         let mut package_json = PackageJson::create_if_needed(&tmp).unwrap();
         package_json.add_dependency("fastify", "1.0.0", DependencyGroup::Default).unwrap();
 
-        let dependencies = package_json.get_dependencies(DependencyGroup::Default);
+        let dependencies = package_json.get_dependencies(vec![DependencyGroup::Default]);
         assert!(dependencies.contains_key("fastify"));
         assert_eq!(dependencies.get("fastify").unwrap(), &"1.0.0");
         package_json.save().unwrap();
@@ -278,8 +281,12 @@ mod tests {
         write!(tmp.as_file(), "{}", data).unwrap();
         let package_json = PackageJson::create_if_needed(&tmp.path().to_path_buf()).unwrap();
         assert!(
-            package_json.get_dependencies(DependencyGroup::Peer).contains_key("fast-querystring")
+            package_json
+                .get_dependencies(vec![DependencyGroup::Peer])
+                .contains_key("fast-querystring")
         );
-        assert!(package_json.get_dependencies(DependencyGroup::Default).contains_key("fastify"));
+        assert!(
+            package_json.get_dependencies(vec![DependencyGroup::Default]).contains_key("fastify")
+        );
     }
 }
