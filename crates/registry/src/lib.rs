@@ -1,152 +1,81 @@
-mod error;
-mod http_client;
-mod package;
+pub mod package;
 
-use std::path::{Path, PathBuf};
+use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
+use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
+use thiserror::Error;
 
-use async_recursion::async_recursion;
-use futures_util::future::join_all;
-use pacquet_npmrc::{get_current_npmrc, Npmrc};
-use pacquet_package_json::{DependencyGroup, PackageJson};
-use pacquet_tarball::{get_package_store_folder_name, TarballManager};
+use crate::package::{Package, PackageVersion};
 
-use crate::{error::RegistryError, http_client::HttpClient};
+#[derive(Error, Debug)]
+#[non_exhaustive]
+pub enum RegistryError {
+    #[error("missing latest tag on {0}")]
+    MissingLatestTag(String),
+    #[error("missing version {0} on package {0}")]
+    MissingVersionRelease(String, String),
+    #[error("network error while fetching {0}")]
+    Network(#[from] reqwest::Error),
+    #[error("network middleware error")]
+    NetworkMiddleware(#[from] reqwest_middleware::Error),
+    #[error("io error {0}")]
+    Io(#[from] std::io::Error),
+    #[error("serialization failed: {0}")]
+    Serialization(String),
+    #[error("tarball error: {0}")]
+    Tarball(#[from] pacquet_tarball::TarballError),
+    #[error("package.json error: {0}")]
+    PackageJson(#[from] pacquet_package_json::error::PackageJsonError),
+}
 
 pub struct RegistryManager {
-    client: Box<HttpClient>,
-    config: Box<Npmrc>,
-    package_json: Box<PackageJson>,
-    tarball_manager: Box<TarballManager>,
+    client: ClientWithMiddleware,
+    cache: elsa::FrozenMap<String, Box<Package>>,
+    registry: String,
 }
 
 impl RegistryManager {
-    pub fn new<P: Into<PathBuf>>(package_json_path: P) -> Result<RegistryManager, RegistryError> {
-        let config = get_current_npmrc();
-        Ok(RegistryManager {
-            client: Box::new(HttpClient::new(&config.registry)),
-            config: Box::new(config),
-            package_json: Box::new(PackageJson::create_if_needed(&package_json_path.into())?),
-            tarball_manager: Box::new(TarballManager::new()),
-        })
+    pub fn new(registry: &str) -> Self {
+        let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
+        let client = ClientBuilder::new(reqwest::Client::new())
+            .with(RetryTransientMiddleware::new_with_policy(retry_policy))
+            .build();
+
+        Self { client, cache: elsa::FrozenMap::new(), registry: registry.to_string() }
     }
 
-    /// Here is a brief overview of what this package does.
-    /// 1. Get a dependency
-    /// 2. Save the dependency to node_modules/.pacquet/pkg@version/node_modules/pkg
-    /// 3. Create a symlink to node_modules/pkg
-    /// 4. Download all dependencies to node_modules/.pacquet
-    /// 5. Symlink all dependencies to node_modules/.pacquet/pkg@version/node_modules
-    /// 6. Update package.json
-    pub async fn add(
-        &mut self,
-        name: &str,
-        dependency_group: DependencyGroup,
-        save_exact: bool,
-    ) -> Result<(), RegistryError> {
-        let latest_version = self.client.get_package_by_version(name, "latest").await?;
-        let dependency_store_folder_name =
-            get_package_store_folder_name(name, &latest_version.version.to_string());
+    pub async fn get_package(&self, name: &str) -> Result<&Package, RegistryError> {
+        if let Some(package) = &self.cache.get(name) {
+            return Ok(package);
+        }
 
-        let package_node_modules_path =
-            self.config.virtual_store_dir.join(dependency_store_folder_name).join("node_modules");
-
-        self.tarball_manager
-            .download_dependency(
-                &latest_version.dist.integrity,
-                latest_version.get_tarball_url(),
-                &package_node_modules_path.join(name),
-                &self.config.modules_dir.join(name),
-            )
+        let package: Package = self
+            .client
+            .get(format!("{0}{name}", &self.registry))
+            .header("user-agent", "pacquet-cli")
+            .header("content-type", "application/json")
+            .send()
+            .await?
+            .json::<Package>()
             .await?;
 
-        join_all(
-            latest_version
-                .get_dependencies(self.config.auto_install_peers)
-                .iter()
-                .map(|(name, version)| {
-                    self.install_package(name, version, &package_node_modules_path)
-                })
-                .collect::<Vec<_>>(),
-        )
-        .await;
+        let package = self.cache.insert(name.to_string(), Box::new(package));
 
-        self.package_json.add_dependency(
-            name,
-            &latest_version.serialize(save_exact),
-            dependency_group,
-        )?;
-        self.package_json.save()?;
-
-        Ok(())
+        Ok(package)
     }
 
-    #[async_recursion(?Send)]
-    async fn install_package(
+    pub async fn get_package_by_version(
         &self,
         name: &str,
         version: &str,
-        symlink_path: &Path,
-    ) -> Result<(), RegistryError> {
-        let package = self.client.get_package(name).await?;
-        let package_version = package.get_suitable_version_of(version)?.unwrap();
-        let dependency_store_folder_name =
-            get_package_store_folder_name(name, &package_version.version.to_string());
-        let package_node_modules_path =
-            self.config.virtual_store_dir.join(dependency_store_folder_name).join("node_modules");
-
-        // Make sure to lock the package's mutex so we don't install the same package's tarball
-        // in different threads.
-        let mutex_guard = package.mutex.lock().await;
-
-        self.tarball_manager
-            .download_dependency(
-                &package_version.dist.integrity,
-                package_version.get_tarball_url(),
-                &package_node_modules_path.join(name),
-                &symlink_path.join(&package.name),
-            )
-            .await?;
-
-        drop(mutex_guard);
-
-        join_all(
-            package_version
-                .get_dependencies(self.config.auto_install_peers)
-                .iter()
-                .map(|(name, version)| {
-                    self.install_package(name, version, &package_node_modules_path)
-                })
-                .collect::<Vec<_>>(),
-        )
-        .await;
-
-        Ok(())
-    }
-
-    pub async fn install(
-        &mut self,
-        install_dev_dependencies: bool,
-        install_optional_dependencies: bool,
-    ) -> Result<(), RegistryError> {
-        let mut dependency_groups = vec![DependencyGroup::Default, DependencyGroup::Optional];
-        if install_dev_dependencies {
-            dependency_groups.push(DependencyGroup::Dev);
-        };
-        if !install_optional_dependencies {
-            dependency_groups.remove(1);
-        }
-        let dependencies = self.package_json.get_dependencies(dependency_groups);
-
-        join_all(
-            dependencies
-                .iter()
-                .map(|(name, version)| {
-                    self.install_package(name, version, &self.config.modules_dir)
-                })
-                .collect::<Vec<_>>(),
-        )
-        .await;
-
-        Ok(())
+    ) -> Result<PackageVersion, RegistryError> {
+        Ok(self
+            .client
+            .get(format!("{0}{name}/{version}", &self.registry))
+            .header("user-agent", "pacquet-cli")
+            .header("content-type", "application/json")
+            .send()
+            .await?
+            .json::<PackageVersion>()
+            .await?)
     }
 }

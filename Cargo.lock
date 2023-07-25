@@ -1024,7 +1024,7 @@ dependencies = [
  "anyhow",
  "clap",
  "pacquet_package_json",
- "pacquet_registry",
+ "pacquet_package_manager",
  "tempfile",
  "tokio",
  "tracing",
@@ -1058,6 +1058,28 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "pacquet_package_manager"
+version = "0.0.1"
+dependencies = [
+ "async-recursion",
+ "elsa",
+ "futures-util",
+ "node-semver",
+ "pacquet_npmrc",
+ "pacquet_package_json",
+ "pacquet_registry",
+ "pacquet_tarball",
+ "reqwest",
+ "reqwest-middleware",
+ "reqwest-retry",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

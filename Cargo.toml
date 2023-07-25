@@ -12,18 +12,13 @@ license = "MIT"
 repository = "https://github.com/anonrig/pacquet"
 
 [workspace.dependencies]
-# Release:
-# * Edit these versions, commit
-# * cargo ws version --amend --no-git-tag --no-git-push
-# publish = true
-pacquet_cli = { version = "0.0.1", path = "crates/cli" }
-
-# publish = false
+pacquet_cli = { path = "crates/cli" }
 pacquet_registry = { path = "crates/registry" }
 pacquet_tarball = { path = "crates/tarball" }
 pacquet_package_json = { path = "crates/package_json" }
 pacquet_lockfile = { path = "crates/lockfile" }
 pacquet_npmrc = { path = "crates/npmrc" }
+pacquet_package_manager = { path = "crates/package_manager" }
 
 anyhow = { version = "1.0.71", features = ["backtrace"] }
 async-recursion = { version = "1.0.4" }

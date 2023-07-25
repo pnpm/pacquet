@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use commands::{Cli, Subcommands};
 use pacquet_package_json::PackageJson;
-use pacquet_registry::RegistryManager;
+use pacquet_package_manager::PackageManager;
 
 use crate::tracing::enable_tracing_by_env;
 
@@ -28,16 +28,16 @@ async fn run_commands(cli: Cli) -> Result<()> {
             PackageJson::init(&package_json_path)?;
         }
         Subcommands::Add(args) => {
-            let mut registry_manager = RegistryManager::new(package_json_path)?;
+            let mut package_manager = PackageManager::new(package_json_path)?;
             // TODO if a package already exists in another dependency group, we don't remove
             // the existing entry.
-            registry_manager
+            package_manager
                 .add(&args.package, args.get_dependency_group(), args.save_exact)
                 .await?;
         }
         Subcommands::Install(args) => {
-            let mut registry_manager = RegistryManager::new(package_json_path)?;
-            registry_manager.install(args.dev, !args.no_optional).await?;
+            let mut package_manager = PackageManager::new(package_json_path)?;
+            package_manager.install(args.dev, !args.no_optional).await?;
         }
         Subcommands::Test => {
             PackageJson::from_path(&package_json_path)?.execute_command("test", false)?;
