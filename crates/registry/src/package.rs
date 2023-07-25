@@ -50,6 +50,11 @@ impl PackageVersion {
 
         dependencies
     }
+
+    pub fn serialize(&self, save_exact: bool) -> String {
+        let prefix = if save_exact { "" } else { "^" };
+        format!("{0}{1}", prefix, self.version)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -117,5 +122,25 @@ mod tests {
         assert!(version.get_dependencies(true).contains_key("fastify"));
         assert!(version.get_dependencies(true).contains_key("fast-querystring"));
         assert!(!version.get_dependencies(true).contains_key("hello-world"));
+    }
+
+    #[test]
+    pub fn serialized_according_to_params() {
+        let version = PackageVersion {
+            name: "".to_string(),
+            version: Version { major: 3, minor: 2, patch: 1, build: vec![], pre_release: vec![] },
+            dist: PackageDistribution {
+                integrity: "".to_string(),
+                npm_signature: None,
+                shasum: "".to_string(),
+                tarball: "".to_string(),
+            },
+            dependencies: None,
+            dev_dependencies: None,
+            peer_dependencies: None,
+        };
+
+        assert_eq!(version.serialize(true), "3.2.1");
+        assert_eq!(version.serialize(false), "^3.2.1");
     }
 }

@@ -31,7 +31,9 @@ async fn run_commands(cli: Cli) -> Result<()> {
             let mut registry_manager = RegistryManager::new(package_json_path)?;
             // TODO if a package already exists in another dependency group, we don't remove
             // the existing entry.
-            registry_manager.add_dependency(&args.package, args.get_dependency_group()).await?;
+            registry_manager
+                .add_dependency(&args.package, args.get_dependency_group(), args.save_exact)
+                .await?;
         }
         Subcommands::Test => {
             PackageJson::from_path(&package_json_path)?.execute_command("test")?;

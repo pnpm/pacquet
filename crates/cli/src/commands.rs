@@ -29,12 +29,19 @@ pub enum Subcommands {
 pub struct AddArgs {
     /// Name of the package
     pub package: String,
-    /// Add the package as a dev dependency
+    /// Install the specified packages as regular dependencies.
+    #[arg(short = 'P', long = "save-prod", group = "dependency_group")]
+    save_prod: bool,
+    /// Install the specified packages as devDependencies.
     #[arg(short = 'D', long = "save-dev", group = "dependency_group")]
-    dev: bool,
-    /// Add the package as a optional dependency
+    save_dev: bool,
+    /// Install the specified packages as optionalDependencies.
     #[arg(short = 'O', long = "save-optional", group = "dependency_group")]
-    optional: bool,
+    save_optional: bool,
+    /// Saved dependencies will be configured with an exact version rather than using
+    /// pacquet's default semver range operator.
+    #[arg(short = 'E', long = "save-exact")]
+    pub save_exact: bool,
     /// The directory with links to the store (default is node_modules/.pacquet).
     /// All direct and indirect dependencies of the project are linked into this directory
     #[arg(long = "virtual-store-dir", default_value = "node_modules/.pacquet")]
@@ -43,9 +50,9 @@ pub struct AddArgs {
 
 impl AddArgs {
     pub fn get_dependency_group(&self) -> DependencyGroup {
-        if self.dev {
+        if self.save_dev {
             DependencyGroup::Dev
-        } else if self.optional {
+        } else if self.save_optional {
             DependencyGroup::Optional
         } else {
             DependencyGroup::Default
