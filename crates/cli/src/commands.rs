@@ -18,6 +18,8 @@ pub enum Subcommands {
     Init,
     /// Add a package
     Add(AddArgs),
+    /// Install packages
+    Install(InstallArgs),
     /// Runs a package's "test" script, if one was provided.
     Test,
     /// Runs a defined package script.
@@ -46,6 +48,23 @@ pub struct AddArgs {
     /// All direct and indirect dependencies of the project are linked into this directory
     #[arg(long = "virtual-store-dir", default_value = "node_modules/.pacquet")]
     pub virtual_store_dir: String,
+}
+
+#[derive(Parser, Debug)]
+pub struct InstallArgs {
+    /// pacquet will not install any package listed in devDependencies and will remove those insofar
+    /// they were already installed, if the NODE_ENV environment variable is set to production.
+    /// Use this flag to instruct pacquet to ignore NODE_ENV and take its production status from this
+    /// flag instead.
+    #[arg(short = 'P', long = "prod")]
+    pub prod: bool,
+    /// Only devDependencies are installed and dependencies are removed insofar they were
+    /// already installed, regardless of the NODE_ENV.
+    #[arg(short = 'D', long = "dev")]
+    pub dev: bool,
+    /// optionalDependencies are not installed.
+    #[arg(long = "no-optional")]
+    pub no_optional: bool,
 }
 
 impl AddArgs {

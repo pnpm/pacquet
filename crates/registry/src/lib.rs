@@ -37,7 +37,7 @@ impl RegistryManager {
     /// 4. Download all dependencies to node_modules/.pacquet
     /// 5. Symlink all dependencies to node_modules/.pacquet/pkg@version/node_modules
     /// 6. Update package.json
-    pub async fn add_dependency(
+    pub async fn add(
         &mut self,
         name: &str,
         dependency_group: DependencyGroup,
@@ -63,7 +63,9 @@ impl RegistryManager {
             latest_version
                 .get_dependencies(self.config.auto_install_peers)
                 .iter()
-                .map(|(name, version)| self.add_package(name, version, &package_node_modules_path))
+                .map(|(name, version)| {
+                    self.install_package(name, version, &package_node_modules_path)
+                })
                 .collect::<Vec<_>>(),
         )
         .await;
@@ -79,7 +81,7 @@ impl RegistryManager {
     }
 
     #[async_recursion(?Send)]
-    async fn add_package(
+    async fn install_package(
         &self,
         name: &str,
         version: &str,
@@ -111,7 +113,36 @@ impl RegistryManager {
             package_version
                 .get_dependencies(self.config.auto_install_peers)
                 .iter()
-                .map(|(name, version)| self.add_package(name, version, &package_node_modules_path))
+                .map(|(name, version)| {
+                    self.install_package(name, version, &package_node_modules_path)
+                })
+                .collect::<Vec<_>>(),
+        )
+        .await;
+
+        Ok(())
+    }
+
+    pub async fn install(
+        &mut self,
+        install_dev_dependencies: bool,
+        install_optional_dependencies: bool,
+    ) -> Result<(), RegistryError> {
+        let mut dependency_groups = vec![DependencyGroup::Default, DependencyGroup::Optional];
+        if install_dev_dependencies {
+            dependency_groups.push(DependencyGroup::Dev);
+        };
+        if !install_optional_dependencies {
+            dependency_groups.remove(1);
+        }
+        let dependencies = self.package_json.get_dependencies(dependency_groups);
+
+        join_all(
+            dependencies
+                .iter()
+                .map(|(name, version)| {
+                    self.install_package(name, version, &self.config.modules_dir)
+                })
                 .collect::<Vec<_>>(),
         )
         .await;
