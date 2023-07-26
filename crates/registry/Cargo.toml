@@ -13,9 +13,7 @@ repository.workspace = true
 [dependencies]
 pacquet_package_json = { workspace = true }
 pacquet_tarball = { workspace = true }
-pacquet_npmrc = { workspace = true }
 
-async-recursion = { workspace = true }
 elsa = { workspace = true }
 futures-util = { workspace = true }
 reqwest = { workspace = true }

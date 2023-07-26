@@ -1086,11 +1086,9 @@ dependencies = [
 name = "pacquet_registry"
 version = "0.0.1"
 dependencies = [
- "async-recursion",
  "elsa",
  "futures-util",
  "node-semver",
- "pacquet_npmrc",
  "pacquet_package_json",
  "pacquet_tarball",
  "reqwest",
