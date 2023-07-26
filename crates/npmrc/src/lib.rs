@@ -247,6 +247,7 @@ mod tests {
         env::set_var("PACQUET_HOME", "/hello");
         let value: Npmrc = serde_ini::from_str("").unwrap();
         assert_eq!(value.store_dir, PathBuf::from_str("/hello/store").unwrap());
+        env::remove_var("PACQUET_HOME");
     }
 
     #[test]
@@ -254,6 +255,7 @@ mod tests {
         env::set_var("XDG_DATA_HOME", "/hello");
         let value: Npmrc = serde_ini::from_str("").unwrap();
         assert_eq!(value.store_dir, PathBuf::from_str("/hello/pacquet/store").unwrap());
+        env::remove_var("XDG_DATA_HOME");
     }
 
     #[test]
