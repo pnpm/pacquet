@@ -72,3 +72,9 @@
 ## `pacquet start`
 
 [pnpm documentation](https://pnpm.io/cli/start)
+
+# Misc.
+
+## `pacquet init`
+
+[pnpm documentation](https://pnpm.io/cli/init)
