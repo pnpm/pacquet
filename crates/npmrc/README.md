@@ -33,7 +33,7 @@ For more information, read [pnpm docs about .npmrc](https://pnpm.io/npmrc)
 
 | Done | Field              | Notes |
 |------|--------------------|-------|
-|      | registry           |       |
+| ✅    | registry           |       |
 |      | <URL>:_authToken   |       |
 |      | <URL>:_tokenHelper |       |
 
