@@ -12,11 +12,11 @@ pub mod install;
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum PackageManagerError {
-    #[error("tarball error: {0}")]
+    #[error("tarball error")]
     Tarball(#[from] pacquet_tarball::TarballError),
-    #[error("package.json error: {0}")]
+    #[error("package.json error")]
     PackageJson(#[from] pacquet_package_json::error::PackageJsonError),
-    #[error("registry error: {0}")]
+    #[error("registry error")]
     Registry(#[from] pacquet_registry::RegistryError),
 }
 

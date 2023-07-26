@@ -15,9 +15,9 @@ use crate::package::LockfilePackage;
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum LockfileError {
-    #[error("filesystem error: `{0}`")]
+    #[error("filesystem error")]
     FileSystem(#[from] std::io::Error),
-    #[error("serialization error: `{0}")]
+    #[error("serialization error")]
     Serialization(#[from] serde_yaml::Error),
 }
 

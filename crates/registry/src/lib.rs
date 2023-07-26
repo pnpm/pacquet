@@ -11,19 +11,19 @@ use crate::package::{Package, PackageVersion};
 pub enum RegistryError {
     #[error("missing latest tag on {0}")]
     MissingLatestTag(String),
-    #[error("missing version {0} on package {0}")]
+    #[error("missing version {0} on package {1}")]
     MissingVersionRelease(String, String),
     #[error("network error while fetching {0}")]
     Network(#[from] reqwest::Error),
-    #[error("network middleware error")]
+    #[error("network middleware error with {0}")]
     NetworkMiddleware(#[from] reqwest_middleware::Error),
-    #[error("io error {0}")]
+    #[error("io error with {0}")]
     Io(#[from] std::io::Error),
-    #[error("serialization failed: {0}")]
+    #[error("serialization failed")]
     Serialization(String),
-    #[error("tarball error: {0}")]
+    #[error("tarball error with {0}")]
     Tarball(#[from] pacquet_tarball::TarballError),
-    #[error("package.json error: {0}")]
+    #[error("package.json error")]
     PackageJson(#[from] pacquet_package_json::error::PackageJsonError),
 }
 
