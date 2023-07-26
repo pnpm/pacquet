@@ -50,13 +50,23 @@ mod tests {
         let mut package_json = PackageJson::create_if_needed(&package_json_path).unwrap();
 
         package_json.add_dependency("is-odd", "3.0.1", DependencyGroup::Default).unwrap();
+        package_json
+            .add_dependency("fast-decode-uri-component", "1.0.1", DependencyGroup::Dev)
+            .unwrap();
 
         package_json.save().unwrap();
 
         let mut package_manager = PackageManager::new(&package_json_path).unwrap();
-        package_manager.install(false, false).await.unwrap();
-
+        package_manager.install(true, false).await.unwrap();
+        // Make sure the package is installed
         assert!(dir.path().join("node_modules/is-odd").is_symlink());
+        assert!(dir.path().join("node_modules/.pacquet/is-odd@3.0.1").exists());
+        // Make sure it installs direct dependencies
+        assert!(!dir.path().join("node_modules/is-number").exists());
+        assert!(dir.path().join("node_modules/.pacquet/is-number@6.0.0").exists());
+        // Make sure we install dev-dependencies as well
+        assert!(dir.path().join("node_modules/fast-decode-uri-component").is_symlink());
+        assert!(dir.path().join("node_modules/.pacquet/fast-decode-uri-component@1.0.1").is_dir());
 
         env::set_current_dir(&current_directory).unwrap();
     }
