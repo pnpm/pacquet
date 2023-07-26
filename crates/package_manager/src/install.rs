@@ -30,3 +30,34 @@ impl crate::PackageManager {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::env;
+
+    use pacquet_package_json::{DependencyGroup, PackageJson};
+    use tempfile::tempdir;
+
+    use crate::PackageManager;
+
+    #[tokio::test]
+    pub async fn should_install_dependencies() {
+        let dir = tempdir().unwrap();
+        let current_directory = env::current_dir().unwrap();
+        env::set_current_dir(dir.path()).unwrap();
+
+        let package_json_path = dir.path().join("package.json");
+        let mut package_json = PackageJson::create_if_needed(&package_json_path).unwrap();
+
+        package_json.add_dependency("is-odd", "3.0.1", DependencyGroup::Default).unwrap();
+
+        package_json.save().unwrap();
+
+        let mut package_manager = PackageManager::new(&package_json_path).unwrap();
+        package_manager.install(false, false).await.unwrap();
+
+        assert!(dir.path().join("node_modules/is-odd").is_symlink());
+
+        env::set_current_dir(&current_directory).unwrap();
+    }
+}

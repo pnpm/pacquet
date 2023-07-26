@@ -102,3 +102,38 @@ impl crate::PackageManager {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::env;
+
+    use pacquet_package_json::PackageJson;
+    use tempfile::tempdir;
+
+    use super::*;
+    use crate::PackageManager;
+
+    #[tokio::test]
+    pub async fn should_add_a_package_with_no_dependencies() {
+        let dir = tempdir().unwrap();
+        let current_directory = env::current_dir().unwrap();
+        env::set_current_dir(&dir).unwrap();
+        let package_json = dir.path().join("package.json");
+        let mut manager = PackageManager::new(&package_json).unwrap();
+
+        // It should create a package_json if not exist
+        assert!(package_json.exists());
+
+        manager.add("is-odd", DependencyGroup::Default, false).await.unwrap();
+
+        let package_path = dir.path().join("node_modules/is-odd");
+        assert!(package_path.exists());
+        assert!(package_path.is_symlink());
+        assert!(package_path.join("package.json").exists());
+
+        let file = PackageJson::from_path(&dir.path().join("package.json")).unwrap();
+        assert!(file.get_dependencies(vec![DependencyGroup::Default]).contains_key("is-odd"));
+
+        env::set_current_dir(&current_directory).unwrap();
+    }
+}
