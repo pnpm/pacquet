@@ -3,9 +3,9 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum PackageJsonError {
-    #[error("serialization failed: {0}")]
+    #[error("serialization failed with {0}")]
     Serialization(#[from] serde_json::Error),
-    #[error("io error: `{0}`")]
+    #[error("io error")]
     Io(#[from] std::io::Error),
     #[error("package.json file already exists")]
     AlreadyExist,
