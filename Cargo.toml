@@ -19,6 +19,7 @@ pacquet_package_json = { path = "crates/package_json" }
 pacquet_lockfile = { path = "crates/lockfile" }
 pacquet_npmrc = { path = "crates/npmrc" }
 pacquet_package_manager = { path = "crates/package_manager" }
+pacquet_executor = { path = "crates/executor" }
 
 anyhow = { version = "1.0.71", features = ["backtrace"] }
 async-recursion = { version = "1.0.4" }

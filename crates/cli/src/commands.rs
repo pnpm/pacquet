@@ -23,8 +23,9 @@ pub enum Subcommands {
     /// Runs a package's "test" script, if one was provided.
     Test,
     /// Runs a defined package script.
-    #[clap(name = "run")]
-    RunScript(RunScriptArgs),
+    Run(RunArgs),
+    /// Runs an arbitrary command specified in the package's start property of its scripts object.
+    Start,
 }
 
 #[derive(Parser, Debug)]
@@ -80,7 +81,7 @@ impl AddArgs {
 }
 
 #[derive(Parser, Debug)]
-pub struct RunScriptArgs {
+pub struct RunArgs {
     /// A pre-defined package script.
     pub command: String,
     /// You can use the --if-present flag to avoid exiting with a non-zero exit code when the
