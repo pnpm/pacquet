@@ -68,3 +68,7 @@
 ## `pacquet test`
 
 [pnpm documentation](https://pnpm.io/cli/test)
+
+## `pacquet start`
+
+[pnpm documentation](https://pnpm.io/cli/start)

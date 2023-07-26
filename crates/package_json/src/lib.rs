@@ -7,7 +7,6 @@ use std::{
     fs,
     io::{Read, Write},
     path::PathBuf,
-    process::{Command, Stdio},
 };
 
 use serde_json::{json, Map, Value};
@@ -148,35 +147,20 @@ impl PackageJson {
         Ok(())
     }
 
-    pub fn execute_command(&self, command: &str, if_present: bool) -> Result<(), PackageJsonError> {
-        match self
-            .value
-            .get("scripts")
-            .unwrap_or(&Value::default())
-            .get(command)
-            .unwrap_or(&Value::default())
-            .as_str()
-        {
-            Some(command) => {
-                let mut cmd = Command::new(command)
-                    .stdout(Stdio::inherit())
-                    .stderr(Stdio::inherit())
-                    .stdin(Stdio::inherit())
-                    .spawn()
-                    .unwrap();
-
-                cmd.wait().unwrap();
-
-                Ok(())
-            }
-            None => {
-                if if_present {
-                    Ok(())
-                } else {
-                    Err(PackageJsonError::NoScript(command.to_string()))
+    pub fn get_script(
+        &self,
+        command: &str,
+        if_present: bool,
+    ) -> Result<Option<&str>, PackageJsonError> {
+        if let Some(scripts) = self.value.get("scripts") {
+            if let Some(script) = scripts.get(command) {
+                if let Some(script_str) = script.as_str() {
+                    return Ok(Some(script_str));
                 }
             }
         }
+
+        if if_present { Ok(None) } else { Err(PackageJsonError::NoScript(command.to_string())) }
     }
 }
 
@@ -243,7 +227,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let tmp = dir.path().join("package.json");
         let package_json = PackageJson::create_if_needed(&tmp).unwrap();
-        package_json.execute_command("test", false).expect_err("test command should not exist");
+        package_json.get_script("test", false).expect_err("test command should not exist");
     }
 
     #[test]
@@ -258,11 +242,9 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "{}", data).unwrap();
         let package_json = PackageJson::create_if_needed(&tmp.path().to_path_buf()).unwrap();
-        package_json.execute_command("test", false).unwrap();
-        package_json
-            .execute_command("invalid", false)
-            .expect_err("invalid command should not exist");
-        package_json.execute_command("invalid", true).unwrap();
+        package_json.get_script("test", false).unwrap();
+        package_json.get_script("invalid", false).expect_err("invalid command should not exist");
+        package_json.get_script("invalid", true).unwrap();
     }
 
     #[test]

@@ -6,6 +6,7 @@ use std::env;
 use anyhow::{Context, Result};
 use clap::Parser;
 use commands::{Cli, Subcommands};
+use pacquet_executor::execute_shell;
 use pacquet_package_json::PackageJson;
 use pacquet_package_manager::PackageManager;
 
@@ -40,12 +41,28 @@ async fn run_commands(cli: Cli) -> Result<()> {
             package_manager.install(args.dev, !args.no_optional).await?;
         }
         Subcommands::Test => {
-            PackageJson::from_path(&package_json_path)?.execute_command("test", false)?;
+            let package_json = PackageJson::from_path(&package_json_path)?;
+            if let Some(script) = package_json.get_script("test", false)? {
+                execute_shell(script)?;
+            }
         }
-        Subcommands::RunScript(args) => {
-            let command = &args.command;
-            PackageJson::from_path(&package_json_path)?
-                .execute_command(command, args.if_present)?;
+        Subcommands::Run(args) => {
+            let package_json = PackageJson::from_path(&package_json_path)?;
+            if let Some(script) = package_json.get_script(&args.command, args.if_present)? {
+                execute_shell(script)?;
+            }
+        }
+        Subcommands::Start => {
+            // Runs an arbitrary command specified in the package's start property of its scripts
+            // object. If no start property is specified on the scripts object, it will attempt to
+            // run node server.js as a default, failing if neither are present.
+            // The intended usage of the property is to specify a command that starts your program.
+            let package_json = PackageJson::from_path(&package_json_path)?;
+            if let Some(script) = package_json.get_script("start", true)? {
+                execute_shell(script)?;
+            } else {
+                execute_shell("node server.js")?;
+            }
         }
     }
 
