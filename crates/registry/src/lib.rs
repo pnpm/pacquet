@@ -1,10 +1,12 @@
 pub mod package;
+pub mod package_distribution;
+pub mod package_version;
 
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
 use thiserror::Error;
 
-use crate::package::{Package, PackageVersion};
+use crate::{package::Package, package_version::PackageVersion};
 
 #[derive(Error, Debug)]
 #[non_exhaustive]

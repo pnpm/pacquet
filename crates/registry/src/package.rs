@@ -3,59 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use crate::RegistryError;
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PackageDistribution {
-    pub integrity: String,
-    #[serde(alias = "npm-signature")]
-    pub npm_signature: Option<String>,
-    pub shasum: String,
-    pub tarball: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PackageVersion {
-    pub name: String,
-    pub version: node_semver::Version,
-    pub dist: PackageDistribution,
-    pub dependencies: Option<HashMap<String, String>>,
-    #[serde(alias = "devDependencies")]
-    pub dev_dependencies: Option<HashMap<String, String>>,
-    #[serde(alias = "peerDependencies")]
-    pub peer_dependencies: Option<HashMap<String, String>>,
-}
-
-impl PackageVersion {
-    pub fn get_tarball_url(&self) -> &str {
-        self.dist.tarball.as_str()
-    }
-
-    pub fn get_dependencies(&self, with_peer_dependencies: bool) -> HashMap<&str, &str> {
-        let mut dependencies = HashMap::<&str, &str>::new();
-
-        if let Some(deps) = self.dependencies.as_ref() {
-            for dep in deps {
-                dependencies.insert(dep.0.as_str(), dep.1.as_str());
-            }
-        }
-
-        if with_peer_dependencies {
-            if let Some(deps) = self.peer_dependencies.as_ref() {
-                for dep in deps {
-                    dependencies.insert(dep.0.as_str(), dep.1.as_str());
-                }
-            }
-        }
-
-        dependencies
-    }
-
-    pub fn serialize(&self, save_exact: bool) -> String {
-        let prefix = if save_exact { "" } else { "^" };
-        format!("{0}{1}", prefix, self.version)
-    }
-}
+use crate::{package_version::PackageVersion, RegistryError};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Package {
@@ -95,7 +43,8 @@ mod tests {
 
     use node_semver::Version;
 
-    use crate::package::{PackageDistribution, PackageVersion};
+    use super::*;
+    use crate::package_distribution::PackageDistribution;
 
     #[test]
     pub fn package_version_should_include_peers() {
@@ -106,12 +55,7 @@ mod tests {
         let version = PackageVersion {
             name: "".to_string(),
             version: Version::parse("1.0.0").unwrap(),
-            dist: PackageDistribution {
-                integrity: "".to_string(),
-                npm_signature: None,
-                shasum: "".to_string(),
-                tarball: "".to_string(),
-            },
+            dist: PackageDistribution::empty(),
             dependencies: Some(dependencies),
             dev_dependencies: None,
             peer_dependencies: Some(peer_dependencies),
