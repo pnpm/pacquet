@@ -15,13 +15,16 @@ impl PackageManager {
         match self.config.package_import_method {
             PackageImportMethod::Auto => {
                 for (cleaned_entry, integrity) in cas_files {
-                    let data = cacache::read_hash_sync(&self.config.store_dir, integrity)?;
                     let save_with_cleaned_entry = save_path.join(cleaned_entry);
 
                     // Create parent folder
                     fs::create_dir_all(save_with_cleaned_entry.parent().unwrap()).unwrap();
 
-                    fs::write(save_with_cleaned_entry, data)?;
+                    cacache::copy_hash_sync(
+                        &self.config.store_dir,
+                        integrity,
+                        save_with_cleaned_entry,
+                    )?;
                 }
 
                 if !symlink_to.exists() {
