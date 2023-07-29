@@ -92,7 +92,7 @@ impl PackageManager {
             &symlink_path.join(&package.name),
         )
         .await
-        .expect(format!("package {0} failed", name).as_str());
+        .unwrap_or_else(|_| panic!("package {0} failed", name));
 
         drop(mutex_guard);
 
