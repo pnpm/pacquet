@@ -17,6 +17,7 @@ pacquet_npmrc = { workspace = true }
 pacquet_tarball = { workspace = true }
 
 async-recursion = { workspace = true }
+cacache = { workspace = true }
 elsa = { workspace = true }
 futures-util = { workspace = true }
 reqwest = { workspace = true }
@@ -25,6 +26,7 @@ reqwest-retry = { workspace = true }
 node-semver = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+ssri = { workspace = true }
 tokio = { workspace = true }
 thiserror = { workspace = true }
 

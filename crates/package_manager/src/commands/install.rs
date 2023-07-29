@@ -2,7 +2,9 @@ use futures_util::future::join_all;
 use pacquet_package_json::DependencyGroup;
 use pacquet_registry::RegistryError;
 
-impl crate::PackageManager {
+use crate::PackageManager;
+
+impl PackageManager {
     pub async fn install(
         &mut self,
         install_dev_dependencies: bool,

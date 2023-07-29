@@ -6,8 +6,9 @@ use pacquet_registry::RegistryManager;
 use pacquet_tarball::TarballManager;
 use thiserror::Error;
 
-pub mod add;
-pub mod install;
+mod commands;
+mod package_import;
+mod symlink;
 
 #[derive(Error, Debug)]
 #[non_exhaustive]
@@ -18,6 +19,10 @@ pub enum PackageManagerError {
     PackageJson(#[from] pacquet_package_json::error::PackageJsonError),
     #[error("registry error")]
     Registry(#[from] pacquet_registry::RegistryError),
+    #[error("filesystem error")]
+    FileSystem(#[from] std::io::Error),
+    #[error("content addressable store error")]
+    Cache(#[from] cacache::Error),
 }
 
 pub struct PackageManager {
@@ -32,9 +37,9 @@ impl PackageManager {
         let config = get_current_npmrc();
         Ok(PackageManager {
             registry: Box::new(RegistryManager::new(&config.registry)),
+            tarball: Box::new(TarballManager::new(&config.store_dir)),
             config: Box::new(config),
             package_json: Box::new(PackageJson::create_if_needed(&package_json_path.into())?),
-            tarball: Box::new(TarballManager::new()),
         })
     }
 }

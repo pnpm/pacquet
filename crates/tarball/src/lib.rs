@@ -1,20 +1,16 @@
 #![feature(error_generic_member_access, provide_any)]
 
-mod symlink;
-
 use std::{
-    fs::{self},
-    io::{Cursor, Read, Write},
+    collections::HashMap,
+    io::{Cursor, Read},
     path::PathBuf,
 };
 
 use libdeflater::{DecompressionError, Decompressor};
-use ssri::{Algorithm, IntegrityOpts};
+use ssri::{Algorithm, Integrity, IntegrityOpts};
 use tar::Archive;
 use thiserror::Error;
 use tracing::instrument;
-
-use crate::symlink::symlink_dir;
 
 #[derive(Error, Debug)]
 #[non_exhaustive]
@@ -32,48 +28,16 @@ pub enum TarballError {
 
 #[derive(Debug)]
 pub struct TarballManager {
-    http_client: reqwest::Client,
-}
-
-impl Default for TarballManager {
-    fn default() -> Self {
-        Self::new()
-    }
+    http_client: Box<reqwest::Client>,
+    store_dir: PathBuf,
 }
 
 impl TarballManager {
-    pub fn new() -> Self {
-        TarballManager { http_client: reqwest::Client::new() }
-    }
-
-    #[instrument]
-    fn extract(
-        &self,
-        data: Vec<u8>,
-        integrity: &str,
-        extract_path: &PathBuf,
-    ) -> Result<(), TarballError> {
-        let mut archive = Archive::new(Cursor::new(data));
-
-        for entry in archive.entries()? {
-            let mut entry = entry?;
-
-            // Read the contents of the entry
-            let mut buffer = Vec::with_capacity(entry.size() as usize);
-            entry.read_to_end(&mut buffer)?;
-
-            let entry_path = entry.path().unwrap();
-            let cleaned_entry_path: PathBuf = entry_path.components().skip(1).collect();
-            let file_path = extract_path.join(cleaned_entry_path);
-
-            if !file_path.exists() {
-                let parent_dir = file_path.parent().unwrap();
-                fs::create_dir_all(parent_dir)?;
-                let mut file = fs::File::create(&file_path)?;
-                file.write_all(&buffer)?;
-            }
+    pub fn new<P: Into<PathBuf>>(store_dir: P) -> Self {
+        TarballManager {
+            http_client: Box::new(reqwest::Client::new()),
+            store_dir: store_dir.into(),
         }
-        Ok(())
     }
 
     #[instrument]
@@ -115,35 +79,29 @@ impl TarballManager {
         &self,
         integrity: &str,
         url: &str,
-        save_path: &PathBuf,
-        symlink_to: &PathBuf,
-    ) -> Result<(), TarballError> {
-        let symlink_exists = symlink_to.is_symlink();
-
-        // If name contains `/` such as @fastify/error, we need to make sure that @fastify folder
-        // exists before we symlink to that directory.
-        if let Some(parent_folder) = symlink_to.parent() {
-            fs::create_dir_all(parent_folder)?;
-        }
-
-        // Do not try to install dependency if this version already exists in package.json
-        if save_path.exists() || symlink_exists {
-            if !symlink_exists {
-                symlink_dir(&save_path, &symlink_to)?;
-            }
-            return Ok(());
-        }
+    ) -> Result<HashMap<String, Integrity>, TarballError> {
+        let mut cas_files = HashMap::<String, Integrity>::new();
 
         let response = self.http_client.get(url).send().await?.bytes().await?;
         self.verify_checksum(&response, integrity)?;
         let data = self.decompress_gzip(&response)?;
-        self.extract(data, integrity, save_path)?;
+        let mut archive = Archive::new(Cursor::new(data));
 
-        // TODO: Currently symlink paths are absolute paths.
-        // If you move the root folder to a different path, all symlinks will be broken.
-        symlink_dir(&save_path, &symlink_to)?;
+        for entry in archive.entries()? {
+            let mut entry = entry?;
 
-        Ok(())
+            // Read the contents of the entry
+            let mut buffer = Vec::with_capacity(entry.size() as usize);
+            entry.read_to_end(&mut buffer)?;
+
+            let entry_path = entry.path().unwrap();
+            let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>();
+            let integrity = cacache::write_hash_sync(&self.store_dir, &buffer).unwrap();
+
+            cas_files.insert(cleaned_entry_path.to_str().unwrap().to_string(), integrity);
+        }
+
+        Ok(cas_files)
     }
 }
 
@@ -153,6 +111,8 @@ pub fn get_package_store_folder_name(input: &str, version: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use tempfile::tempdir;
 
     use super::*;
@@ -172,22 +132,20 @@ mod tests {
     #[tokio::test]
     async fn packages_under_orgs_should_work() {
         let store_path = tempdir().unwrap();
+        let virtual_store_path = tempdir().unwrap();
         let node_modules_path = tempdir().unwrap();
-        let save_path = store_path.path().join("@fastify+error@3.3.0");
+        let save_path = virtual_store_path.path().join("@fastify+error@3.3.0");
         let symlink_path = node_modules_path.path().join("@fastify/error");
 
-        TarballManager::new()
-            .download_dependency(
-                "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
-                "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
-                &save_path,
-                &symlink_path,
-            )
-            .await
-            .unwrap();
+        let manager = TarballManager::new(store_path.path());
+
+        let _cas_files = manager.download_dependency(
+            "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
+            "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
+        ).await.unwrap();
 
         // Validate if we delete the tar.gz file
-        assert!(!store_path.path().join("@fastify+error@3.3.0.tar.gz").exists());
+        assert!(!virtual_store_path.path().join("@fastify+error@3.3.0.tar.gz").exists());
         // Make sure we create store path with normalized name
         assert!(save_path.as_path().is_dir());
         assert!(save_path.join("package.json").is_file());
@@ -205,15 +163,12 @@ mod tests {
     #[tokio::test]
     async fn should_throw_error_on_checksum_mismatch() {
         let store_path = tempdir().unwrap();
-        let node_modules_path = tempdir().unwrap();
 
         // Try calling default as well
-        TarballManager::default()
+        TarballManager::new(store_path.path())
             .download_dependency(
                 "sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
                 "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
-                &store_path.path().join("@fastify+error@3.3.0"),
-                &node_modules_path.path().join("@fastify/error"),
             )
             .await
             .expect_err("checksum mismatch");
