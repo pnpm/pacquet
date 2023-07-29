@@ -41,9 +41,9 @@ pub fn default_store_dir() -> PathBuf {
 
     // https://doc.rust-lang.org/std/env/consts/constant.OS.html
     match env::consts::OS {
-        "linux" => home_dir.join(".local/share/pacquet/store").to_path_buf(),
-        "macos" => home_dir.join("Library/pacquet/store").to_path_buf(),
-        "windows" => home_dir.join("AppData/Local/pacquet/store").to_path_buf(),
+        "linux" => home_dir.join(".local/share/pacquet/store"),
+        "macos" => home_dir.join("Library/pacquet/store"),
+        "windows" => home_dir.join("AppData/Local/pacquet/store"),
         _ => panic!("unsupported operating system: {0}", env::consts::OS),
     }
 }
