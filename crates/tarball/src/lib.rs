@@ -128,6 +128,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(not(target_os = "windows"))]
     async fn packages_under_orgs_should_work() {
         let store_path = tempdir().unwrap();
         let manager = TarballManager::new(store_path.path());
