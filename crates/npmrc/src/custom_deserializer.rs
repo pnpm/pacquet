@@ -26,6 +26,7 @@ pub fn default_public_hoist_pattern() -> Vec<String> {
 /// On macOS: ~/Library/pacquet/store
 /// On Linux: ~/.local/share/pacquet/store
 pub fn default_store_dir() -> PathBuf {
+    // TODO: If env variables start with ~, make sure to resolve it into home_dir.
     if let Ok(pacquet_home) = env::var("PACQUET_HOME") {
         return Path::new(&pacquet_home).join("store");
     }
@@ -34,11 +35,15 @@ pub fn default_store_dir() -> PathBuf {
         return Path::new(&xdg_data_home).join("pacquet/store");
     }
 
+    // Using ~ (tilde) for defining home path is not supported in Rust and
+    // needs to be resolved into an absolute path.
+    let home_dir = home::home_dir().expect("Home directory is not available");
+
     // https://doc.rust-lang.org/std/env/consts/constant.OS.html
     match env::consts::OS {
-        "linux" => Path::new("~/.local/share/pacquet/store").to_path_buf(),
-        "macos" => Path::new("~/Library/pacquet/store").to_path_buf(),
-        "windows" => Path::new("~/AppData/Local/pacquet/store").to_path_buf(),
+        "linux" => home_dir.join(".local/share/pacquet/store").to_path_buf(),
+        "macos" => home_dir.join("Library/pacquet/store").to_path_buf(),
+        "windows" => home_dir.join("AppData/Local/pacquet/store").to_path_buf(),
         _ => panic!("unsupported operating system: {0}", env::consts::OS),
     }
 }
