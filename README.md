@@ -8,7 +8,7 @@ Experimental package manager for node.js written in rust.
 
 - [x] `.npmrc` support (for supported features [readme.md](./crates/npmrc/README.md))
 - [x] CLI commands (for supported features [readme.md](./crates/cli/README.md))
-- [ ] Global store support
+- [x] Content addressable file store support
 - [ ] Shrink-file support in sync with `pnpm-lock.yml`
 - [ ] Workspace support
 - [ ] Full sync with [pnpm error codes](https://pnpm.io/errors)
