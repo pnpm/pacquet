@@ -11,15 +11,15 @@ For more information, read [pnpm docs about .npmrc](https://pnpm.io/npmrc)
 
 # Node-Modules Settings
 
-| Done | Field                 | Notes |
-|------|-----------------------|-------|
-|      | store_dir             |       |
-| ✅    | modules_dir           |       |
-|      | node_linker           |       |
-|      | symlink               |       |
-| ✅    | virtual_store_dir     |       |
-|      | package_import_method |       |
-|      | modules_cache_max_age |       |
+| Done | Field                 | Notes                               |
+|------|-----------------------|-------------------------------------|
+| ✅    | store_dir             |                                     |
+| ✅    | modules_dir           |                                     |
+|      | node_linker           |                                     |
+|      | symlink               |                                     |
+| ✅    | virtual_store_dir     |                                     |
+| ~    | package_import_method | Only "auto" is implemented for now. |
+|      | modules_cache_max_age |                                     |
 
 # Lockfile Settings
 
