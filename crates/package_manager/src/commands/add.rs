@@ -6,9 +6,9 @@ use pacquet_package_json::DependencyGroup;
 use pacquet_registry::RegistryError;
 use pacquet_tarball::get_package_store_folder_name;
 
-use crate::PackageManagerError;
+use crate::{PackageManager, PackageManagerError};
 
-impl crate::PackageManager {
+impl PackageManager {
     /// Here is a brief overview of what this package does.
     /// 1. Get a dependency
     /// 2. Save the dependency to node_modules/.pacquet/pkg@version/node_modules/pkg
@@ -29,14 +29,18 @@ impl crate::PackageManager {
         let package_node_modules_path =
             self.config.virtual_store_dir.join(dependency_store_folder_name).join("node_modules");
 
-        self.tarball
-            .download_dependency(
-                &latest_version.dist.integrity,
-                latest_version.get_tarball_url(),
-                &package_node_modules_path.join(name),
-                &self.config.modules_dir.join(name),
-            )
+        let cas_paths = self
+            .tarball
+            .download_dependency(&latest_version.dist.integrity, latest_version.get_tarball_url())
             .await?;
+
+        self.import_packages(
+            &cas_paths,
+            &package_node_modules_path.join(name),
+            &self.config.modules_dir.join(name),
+        )
+        .await
+        .unwrap();
 
         join_all(
             latest_version
@@ -77,14 +81,18 @@ impl crate::PackageManager {
         // in different threads.
         let mutex_guard = package.mutex.lock().await;
 
-        self.tarball
-            .download_dependency(
-                &package_version.dist.integrity,
-                package_version.get_tarball_url(),
-                &package_node_modules_path.join(name),
-                &symlink_path.join(&package.name),
-            )
+        let cas_paths = self
+            .tarball
+            .download_dependency(&package_version.dist.integrity, package_version.get_tarball_url())
             .await?;
+
+        self.import_packages(
+            &cas_paths,
+            &package_node_modules_path.join(name),
+            &symlink_path.join(&package.name),
+        )
+        .await
+        .expect(format!("package {0} failed", name).as_str());
 
         drop(mutex_guard);
 

@@ -24,6 +24,9 @@ pacquet_executor = { path = "crates/executor" }
 anyhow = { version = "1.0.71", features = ["backtrace"] }
 async-recursion = { version = "1.0.4" }
 bytes = { version = "1.4.0" }
+cacache = { version = "*", default-features = false, features = [
+  "tokio-runtime",
+] }
 clap = { version = "4", features = ["derive"] }
 elsa = { version = "1.8.1" }
 home = { version = "0.5.5" }

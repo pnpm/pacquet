@@ -12,6 +12,7 @@ repository.workspace = true
 
 [dependencies]
 bytes = { workspace = true }
+cacache = { workspace = true }
 futures-util = { workspace = true }
 reqwest = { workspace = true }
 ssri = { workspace = true }
