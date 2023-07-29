@@ -111,8 +111,6 @@ pub fn get_package_store_folder_name(input: &str, version: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use tempfile::tempdir;
 
     use super::*;
@@ -132,32 +130,34 @@ mod tests {
     #[tokio::test]
     async fn packages_under_orgs_should_work() {
         let store_path = tempdir().unwrap();
-        let virtual_store_path = tempdir().unwrap();
-        let node_modules_path = tempdir().unwrap();
-        let save_path = virtual_store_path.path().join("@fastify+error@3.3.0");
-        let symlink_path = node_modules_path.path().join("@fastify/error");
-
         let manager = TarballManager::new(store_path.path());
 
-        let _cas_files = manager.download_dependency(
+        let cas_files = manager.download_dependency(
             "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
             "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
         ).await.unwrap();
 
-        // Validate if we delete the tar.gz file
-        assert!(!virtual_store_path.path().join("@fastify+error@3.3.0.tar.gz").exists());
-        // Make sure we create store path with normalized name
-        assert!(save_path.as_path().is_dir());
-        assert!(save_path.join("package.json").is_file());
-        // Make sure we create a symlink on node_modules folder
-        assert!(symlink_path.exists());
-        assert!(symlink_path.is_symlink());
-        // Make sure the symlink is looking to the correct place
-        assert_eq!(fs::read_link(&symlink_path).unwrap(), save_path);
-        // Make sure we create a @fastify folder inside node_modules
-        assert!(node_modules_path.path().join("@fastify").is_dir());
-        assert!(node_modules_path.path().join("@fastify/error").is_symlink());
-        assert!(node_modules_path.path().join("@fastify/error/package.json").is_file());
+        let mut filenames = cas_files.keys().collect::<Vec<_>>();
+        filenames.sort();
+        assert_eq!(
+            filenames,
+            vec![
+                ".github/dependabot.yml",
+                ".github/workflows/ci.yml",
+                ".taprc",
+                "LICENSE",
+                "README.md",
+                "benchmarks/create.js",
+                "benchmarks/instantiate.js",
+                "benchmarks/no-stack.js",
+                "benchmarks/toString.js",
+                "index.js",
+                "package.json",
+                "test/index.test.js",
+                "types/index.d.ts",
+                "types/index.test-d.ts"
+            ]
+        );
     }
 
     #[tokio::test]
