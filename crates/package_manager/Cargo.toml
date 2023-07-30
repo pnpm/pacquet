@@ -17,7 +17,6 @@ pacquet_npmrc = { workspace = true }
 pacquet_tarball = { workspace = true }
 
 async-recursion = { workspace = true }
-cacache = { workspace = true }
 elsa = { workspace = true }
 futures-util = { workspace = true }
 reqwest = { workspace = true }
