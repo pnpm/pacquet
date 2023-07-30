@@ -11,4 +11,5 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+miette = { workspace = true }
 thiserror = { workspace = true }

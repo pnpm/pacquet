@@ -1,11 +1,13 @@
 use std::process::Command;
 
+use miette::{Diagnostic, Result};
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
 pub enum ExecutorError {
-    #[error("io error")]
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_executor::io_error))]
     Io(#[from] std::io::Error),
 }
 

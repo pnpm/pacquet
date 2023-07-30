@@ -7,24 +7,33 @@ use std::{
 };
 
 use libdeflater::{DecompressionError, Decompressor};
+use miette::Diagnostic;
 use ssri::{Algorithm, IntegrityOpts};
 use tar::Archive;
 use thiserror::Error;
 use tracing::instrument;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
-#[error(transparent)]
 pub enum TarballError {
-    #[error("network error")]
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_tarball::network_error))]
     Network(#[from] reqwest::Error),
-    #[error("io error")]
+
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_tarball::io_error))]
     Io(#[from] std::io::Error),
+
     #[error("checksum mismatch. provided {provided} should match {expected}")]
+    #[diagnostic(code(pacquet_tarball::checksum_mismatch_error))]
     ChecksumMismatch { provided: String, expected: String },
-    #[error("decompression error")]
+
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_tarball::decompression_error))]
     Decompression(#[from] DecompressionError),
-    #[error("cafs error")]
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
     Cafs(#[from] pacquet_cafs::CafsError),
 }
 

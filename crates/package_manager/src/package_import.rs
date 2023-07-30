@@ -17,7 +17,11 @@ impl PackageManager {
                     let save_with_cleaned_entry = save_path.join(cleaned_entry);
 
                     // Create parent folder
-                    fs::create_dir_all(save_with_cleaned_entry.parent().unwrap()).unwrap();
+                    if let Some(parent_folder) = save_with_cleaned_entry.parent() {
+                        if !parent_folder.exists() {
+                            fs::create_dir_all(parent_folder)?;
+                        }
+                    }
 
                     fs::write(&save_with_cleaned_entry, buffer)?;
                 }
