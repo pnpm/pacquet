@@ -1033,6 +1033,7 @@ dependencies = [
  "anyhow",
  "clap",
  "pacquet_executor",
+ "pacquet_npmrc",
  "pacquet_package_json",
  "pacquet_package_manager",
  "tempfile",

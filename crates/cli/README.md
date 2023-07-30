@@ -75,6 +75,17 @@
 
 # Misc.
 
+## `pacquet store`
+
+[pnpm documentation](https://pnpm.io/cli/store)
+
+| Done | Command | Notes |
+|------|---------|-------|
+|      | status  |       |
+|      | add     |       |
+|      | prune   |       |
+| ✅    | path    |       |
+
 ## `pacquet init`
 
 [pnpm documentation](https://pnpm.io/cli/init)
