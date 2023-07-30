@@ -20,8 +20,9 @@ pacquet_package_manager = { workspace = true }
 pacquet_executor = { workspace = true }
 pacquet_npmrc = { workspace = true }
 
-anyhow = { workspace = true }
 clap = { workspace = true }
+miette = { workspace = true }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tokio = { workspace = true }

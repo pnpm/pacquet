@@ -1,5 +1,3 @@
-pub mod error;
-
 use std::{
     collections::HashMap,
     convert::Into,
@@ -9,9 +7,40 @@ use std::{
     path::PathBuf,
 };
 
+use miette::Diagnostic;
 use serde_json::{json, Map, Value};
+use thiserror::Error;
 
-use crate::error::PackageJsonError;
+#[derive(Error, Debug, Diagnostic)]
+#[non_exhaustive]
+pub enum PackageJsonError {
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_package_json::serialization_error))]
+    Serialization(#[from] serde_json::Error),
+
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_package_json::io_error))]
+    Io(#[from] std::io::Error),
+
+    #[error("package.json file already exists")]
+    #[diagnostic(
+        code(pacquet_package_json::already_exist_error),
+        help("Your current working directory already has a package.json file.")
+    )]
+    AlreadyExist,
+
+    #[error("invalid attribute: {0}")]
+    #[diagnostic(code(pacquet_package_json::invalid_attribute))]
+    InvalidAttribute(String),
+
+    #[error("No package.json was found in {0}")]
+    #[diagnostic(code(pacquet_package_json::no_import_manifest_found))]
+    NoImporterManifestFound(String),
+
+    #[error("Missing script: \"{0}\"")]
+    #[diagnostic(code(pacquet_package_json::no_script_error))]
+    NoScript(String),
+}
 
 #[derive(Debug, PartialEq)]
 pub enum DependencyGroup {

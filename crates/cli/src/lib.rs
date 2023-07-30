@@ -3,67 +3,72 @@ mod tracing;
 
 use std::env;
 
-use anyhow::{Context, Result};
 use clap::Parser;
 use commands::{Cli, Subcommands};
-use pacquet_executor::execute_shell;
+use miette::{Diagnostic, IntoDiagnostic, Result};
+use pacquet_executor::{execute_shell, ExecutorError};
 use pacquet_npmrc::get_current_npmrc;
-use pacquet_package_json::PackageJson;
-use pacquet_package_manager::PackageManager;
+use pacquet_package_json::{PackageJson, PackageJsonError};
+use pacquet_package_manager::{PackageManager, PackageManagerError};
+use thiserror::Error;
 
 use crate::{commands::StoreSubcommands, tracing::enable_tracing_by_env};
+
+#[derive(Error, Debug, Diagnostic)]
+#[non_exhaustive]
+pub enum CliError {
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    PackageManager(#[from] PackageManagerError),
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Executor(#[from] ExecutorError),
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    PackageJson(#[from] PackageJsonError),
+
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_cli::io_error))]
+    Io(#[from] std::io::Error),
+}
 
 pub async fn run_cli() -> Result<()> {
     enable_tracing_by_env();
     let cli = Cli::parse();
-    run_commands(cli).await?;
-    Ok(())
+    run_commands(cli).await
 }
 
 async fn run_commands(cli: Cli) -> Result<()> {
-    let current_directory = env::current_dir().context("problem fetching current directory")?;
+    let current_directory = env::current_dir().expect("Getting current directory failed");
     let package_json_path = current_directory.join("package.json");
 
     match &cli.subcommand {
         Subcommands::Init => {
             // init command throws an error if package.json file exist.
-            PackageJson::init(&package_json_path).with_context(|| {
-                format!("Failed to initialize package.json at path {:?}", &package_json_path)
-            })?;
+            PackageJson::init(&package_json_path)?;
         }
         Subcommands::Add(args) => {
-            let mut package_manager =
-                PackageManager::new(&package_json_path).with_context(|| {
-                    format!("Failed to read package.json at path {:?}", &package_json_path)
-                })?;
+            let mut package_manager = PackageManager::new(&package_json_path)?;
             // TODO if a package already exists in another dependency group, we don't remove
             // the existing entry.
             package_manager
                 .add(&args.package, args.get_dependency_group(), args.save_exact)
-                .await
-                .with_context(|| format!("Failed to add package {}", &args.package))?;
+                .await?;
         }
         Subcommands::Install(args) => {
-            let mut package_manager =
-                PackageManager::new(&package_json_path).with_context(|| {
-                    format!("Failed to read package.json at path {:?}", &package_json_path)
-                })?;
-            package_manager.install(args.dev, !args.no_optional).await.with_context(|| {
-                format!("Failed to install packages on {:?}", package_json_path)
-            })?;
+            let mut package_manager = PackageManager::new(&package_json_path)?;
+            package_manager.install(args.dev, !args.no_optional).await.into_diagnostic()?;
         }
         Subcommands::Test => {
-            let package_json = PackageJson::from_path(&package_json_path).with_context(|| {
-                format!("Failed to read package.json at path {:?}", &package_json_path)
-            })?;
+            let package_json = PackageJson::from_path(&package_json_path)?;
             if let Some(script) = package_json.get_script("test", false)? {
                 execute_shell(script)?;
             }
         }
         Subcommands::Run(args) => {
-            let package_json = PackageJson::from_path(&package_json_path).with_context(|| {
-                format!("Failed to read package.json at path {:?}", &package_json_path)
-            })?;
+            let package_json = PackageJson::from_path(&package_json_path)?;
             if let Some(script) = package_json.get_script(&args.command, args.if_present)? {
                 execute_shell(script)?;
             }
@@ -73,9 +78,7 @@ async fn run_commands(cli: Cli) -> Result<()> {
             // object. If no start property is specified on the scripts object, it will attempt to
             // run node server.js as a default, failing if neither are present.
             // The intended usage of the property is to specify a command that starts your program.
-            let package_json = PackageJson::from_path(&package_json_path).with_context(|| {
-                format!("Failed to read package.json at path {:?}", &package_json_path)
-            })?;
+            let package_json = PackageJson::from_path(&package_json_path)?;
             if let Some(script) = package_json.get_script("start", true)? {
                 execute_shell(script)?;
             } else {

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use miette::Diagnostic;
 use pacquet_npmrc::{get_current_npmrc, Npmrc};
 use pacquet_package_json::PackageJson;
 use pacquet_registry::RegistryManager;
@@ -10,17 +11,24 @@ mod commands;
 mod package_import;
 mod symlink;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
 pub enum PackageManagerError {
-    #[error("tarball error")]
+    #[error(transparent)]
+    #[diagnostic(transparent)]
     Tarball(#[from] pacquet_tarball::TarballError),
-    #[error("package.json error")]
-    PackageJson(#[from] pacquet_package_json::error::PackageJsonError),
-    #[error("registry error")]
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    PackageJson(#[from] pacquet_package_json::PackageJsonError),
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
     Registry(#[from] pacquet_registry::RegistryError),
-    #[error("filesystem error")]
-    FileSystem(#[from] std::io::Error),
+
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_package_manager::io_error))]
+    Io(#[from] std::io::Error),
 }
 
 pub struct PackageManager {

@@ -2,31 +2,47 @@ pub mod package;
 pub mod package_distribution;
 pub mod package_version;
 
+use miette::Diagnostic;
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
 use thiserror::Error;
 
 use crate::{package::Package, package_version::PackageVersion};
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
 pub enum RegistryError {
     #[error("missing latest tag on {0}")]
+    #[diagnostic(code(pacquet_registry::missing_latest_tag))]
     MissingLatestTag(String),
+
     #[error("missing version {0} on package {1}")]
+    #[diagnostic(code(pacquet_registry::missing_version_release))]
     MissingVersionRelease(String, String),
-    #[error("network error while fetching {0}")]
+
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_registry::network_error))]
     Network(#[from] reqwest::Error),
-    #[error("network middleware error with {0}")]
+
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_registry::network_middleware_error))]
     NetworkMiddleware(#[from] reqwest_middleware::Error),
-    #[error("io error with {0}")]
+
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_registry::io_error))]
     Io(#[from] std::io::Error),
-    #[error("serialization failed")]
+
+    #[error("serialization failed: {0}")]
+    #[diagnostic(code(pacquet_registry::serialization_error))]
     Serialization(String),
-    #[error("tarball error with {0}")]
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
     Tarball(#[from] pacquet_tarball::TarballError),
-    #[error("package.json error")]
-    PackageJson(#[from] pacquet_package_json::error::PackageJsonError),
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    PackageJson(#[from] pacquet_package_json::PackageJsonError),
 }
 
 pub struct RegistryManager {

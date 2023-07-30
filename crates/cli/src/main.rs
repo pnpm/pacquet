@@ -1,4 +1,4 @@
-use anyhow::Result;
+use miette::Result;
 
 #[tokio::main(flavor = "current_thread")]
 pub async fn main() -> Result<()> {

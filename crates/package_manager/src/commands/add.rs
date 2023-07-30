@@ -3,7 +3,6 @@ use std::path::Path;
 use async_recursion::async_recursion;
 use futures_util::future::join_all;
 use pacquet_package_json::DependencyGroup;
-use pacquet_registry::RegistryError;
 use pacquet_tarball::get_package_store_folder_name;
 
 use crate::{PackageManager, PackageManagerError};
@@ -39,8 +38,7 @@ impl PackageManager {
             &package_node_modules_path.join(name),
             &self.config.modules_dir.join(name),
         )
-        .await
-        .unwrap();
+        .await?;
 
         join_all(
             latest_version
@@ -69,7 +67,7 @@ impl PackageManager {
         name: &str,
         version: &str,
         symlink_path: &Path,
-    ) -> Result<(), RegistryError> {
+    ) -> Result<(), PackageManagerError> {
         let package = self.registry.get_package(name).await?;
         let package_version = package.get_suitable_version_of(version)?.unwrap();
         let dependency_store_folder_name =
@@ -91,8 +89,7 @@ impl PackageManager {
             &package_node_modules_path.join(name),
             &symlink_path.join(&package.name),
         )
-        .await
-        .unwrap_or_else(|_| panic!("package {0} failed", name));
+        .await?;
 
         drop(mutex_guard);
 

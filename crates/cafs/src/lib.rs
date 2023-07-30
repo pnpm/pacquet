@@ -1,16 +1,19 @@
+#![allow(unused)]
+
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
+use miette::Diagnostic;
 use ssri::{Algorithm, IntegrityOpts};
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
-#[error(transparent)]
 pub enum CafsError {
-    #[error("io error")]
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_cafs::io_error))]
     Io(#[from] std::io::Error),
 }
 

@@ -22,13 +22,13 @@ pacquet_package_manager = { path = "crates/package_manager" }
 pacquet_executor = { path = "crates/executor" }
 pacquet_cafs = { path = "crates/cafs" }
 
-anyhow = { version = "1.0.71", features = ["backtrace"] }
 async-recursion = { version = "1.0.4" }
 bytes = { version = "1.4.0" }
 clap = { version = "4", features = ["derive"] }
 elsa = { version = "1.8.1" }
 home = { version = "0.5.5" }
 futures-util = { version = "0.3.28" }
+miette = { version = "5.9.0", features = ["fancy"] }
 reqwest = { version = "0.11", default-features = false, features = [
   "json",
   "stream",

@@ -7,17 +7,21 @@ use std::{
     path::PathBuf,
 };
 
+use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::package::LockfilePackage;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
 pub enum LockfileError {
-    #[error("filesystem error")]
-    FileSystem(#[from] std::io::Error),
-    #[error("serialization error")]
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_lockfile::io_error))]
+    Io(#[from] std::io::Error),
+
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_lockfile::serialization_error))]
     Serialization(#[from] serde_yaml::Error),
 }
 
