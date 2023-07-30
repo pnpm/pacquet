@@ -79,12 +79,12 @@
 
 [pnpm documentation](https://pnpm.io/cli/store)
 
-| Done | Command | Notes |
-|------|---------|-------|
-|      | status  |       |
-|      | add     |       |
-|      | prune   |       |
-| ✅    | path    |       |
+| Done | Command | Notes                                                     |
+|------|---------|-----------------------------------------------------------|
+|      | status  |                                                           |
+|      | add     |                                                           |
+| ~    | prune   | Currently prune removes all packages inside the directory |
+| ✅    | path    |                                                           |
 
 ## `pacquet init`
 
