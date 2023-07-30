@@ -19,6 +19,7 @@ pacquet_package_json = { workspace = true }
 pacquet_package_manager = { workspace = true }
 pacquet_executor = { workspace = true }
 pacquet_npmrc = { workspace = true }
+pacquet_cafs = { workspace = true }
 
 clap = { workspace = true }
 miette = { workspace = true }

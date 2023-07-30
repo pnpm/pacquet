@@ -1074,6 +1074,7 @@ version = "0.0.1"
 dependencies = [
  "clap",
  "miette",
+ "pacquet_cafs",
  "pacquet_executor",
  "pacquet_npmrc",
  "pacquet_package_json",

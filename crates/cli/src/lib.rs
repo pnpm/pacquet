@@ -95,7 +95,7 @@ async fn run_commands(cli: Cli) -> Result<()> {
                     panic!("Not implemented")
                 }
                 StoreSubcommands::Prune => {
-                    panic!("Not implemented")
+                    pacquet_cafs::prune_sync(&config.store_dir)?;
                 }
                 StoreSubcommands::Path => {
                     println!("{}", config.store_dir.display());

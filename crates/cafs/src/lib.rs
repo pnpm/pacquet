@@ -51,8 +51,19 @@ pub fn write_sync(store_dir: &Path, buffer: &Vec<u8>) -> Result<String, CafsErro
     Ok(file_path.to_string_lossy().into_owned())
 }
 
+pub fn prune_sync(store_dir: &Path) -> Result<(), CafsError> {
+    // TODO: This should remove unreferenced packages, not all packages.
+    // Ref: https://pnpm.io/cli/store#prune
+    fs::remove_dir_all(store_dir)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use std::{env, str::FromStr};
+
+    use tempfile::tempdir;
+
     use super::*;
 
     #[test]
@@ -69,5 +80,16 @@ mod tests {
             content_path_from_hex(FileType::Index, "1234567890abcdef1234567890abcdef12345678"),
             PathBuf::from("12/34567890abcdef1234567890abcdef12345678-index.json")
         );
+    }
+
+    #[test]
+    fn should_write_and_clear() {
+        let dir = tempdir().unwrap();
+        let buffer = vec![0, 1, 2, 3, 4, 5, 6];
+        let saved_file_path = write_sync(dir.path(), &buffer).unwrap();
+        let path = PathBuf::from_str(&saved_file_path).unwrap();
+        assert!(path.exists());
+        prune_sync(dir.path()).unwrap();
+        assert!(!path.exists());
     }
 }
