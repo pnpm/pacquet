@@ -18,6 +18,7 @@ path = "src/main.rs"
 pacquet_package_json = { workspace = true }
 pacquet_package_manager = { workspace = true }
 pacquet_executor = { workspace = true }
+pacquet_npmrc = { workspace = true }
 
 anyhow = { workspace = true }
 clap = { workspace = true }

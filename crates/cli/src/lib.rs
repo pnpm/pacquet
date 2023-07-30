@@ -7,10 +7,11 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use commands::{Cli, Subcommands};
 use pacquet_executor::execute_shell;
+use pacquet_npmrc::get_current_npmrc;
 use pacquet_package_json::PackageJson;
 use pacquet_package_manager::PackageManager;
 
-use crate::tracing::enable_tracing_by_env;
+use crate::{commands::StoreSubcommands, tracing::enable_tracing_by_env};
 
 pub async fn run_cli() -> Result<()> {
     enable_tracing_by_env();
@@ -81,6 +82,23 @@ async fn run_commands(cli: Cli) -> Result<()> {
                 execute_shell("node server.js")?;
             }
         }
+        Subcommands::Store(subcommand) => {
+            let config = get_current_npmrc();
+            match subcommand {
+                StoreSubcommands::Store => {
+                    panic!("Not implemented")
+                }
+                StoreSubcommands::Add => {
+                    panic!("Not implemented")
+                }
+                StoreSubcommands::Prune => {
+                    panic!("Not implemented")
+                }
+                StoreSubcommands::Path => {
+                    println!("{}", config.store_dir.display());
+                }
+            }
+        }
     }
 
     Ok(())
@@ -115,6 +133,16 @@ mod tests {
         assert!(parent_folder.path().join("package.json").exists());
         let cli = Cli::parse_from(["", "init"]);
         run_commands(cli).await.expect_err("should have thrown");
+        env::set_current_dir(&current_directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn should_get_store_path() {
+        let parent_folder = tempdir().unwrap();
+        let current_directory = env::current_dir().unwrap();
+        env::set_current_dir(parent_folder.path()).unwrap();
+        let cli = Cli::parse_from(["", "store", "path"]);
+        run_commands(cli).await.unwrap();
         env::set_current_dir(&current_directory).unwrap();
     }
 }

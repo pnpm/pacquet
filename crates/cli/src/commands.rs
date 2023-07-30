@@ -26,6 +26,9 @@ pub enum Subcommands {
     Run(RunArgs),
     /// Runs an arbitrary command specified in the package's start property of its scripts object.
     Start,
+    /// Managing the package store.
+    #[clap(subcommand)]
+    Store(StoreSubcommands),
 }
 
 #[derive(Parser, Debug)]
@@ -89,4 +92,20 @@ pub struct RunArgs {
     /// execution chain.
     #[arg(long = "if-present")]
     pub if_present: bool,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum StoreSubcommands {
+    /// Checks for modified packages in the store.
+    Store,
+    /// Functionally equivalent to pnpm add, except this adds new packages to the store directly
+    /// without modifying any projects or files outside of the store.
+    Add,
+    /// Removes unreferenced packages from the store.
+    /// Unreferenced packages are packages that are not used by any projects on the system.
+    /// Packages can become unreferenced after most installation operations, for instance when
+    /// dependencies are made redundant.
+    Prune,
+    /// Returns the path to the active store directory.
+    Path,
 }
