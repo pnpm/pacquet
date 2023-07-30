@@ -1,5 +1,5 @@
 [package]
-name = "pacquet_tarball"
+name = "pacquet_cafs"
 version = "0.0.1"
 publish = false
 authors.workspace = true
@@ -11,17 +11,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-pacquet_cafs = { workspace = true }
-
-bytes = { workspace = true }
-futures-util = { workspace = true }
-reqwest = { workspace = true }
 ssri = { workspace = true }
-tar = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
-libdeflater = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

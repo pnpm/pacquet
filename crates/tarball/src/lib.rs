@@ -7,7 +7,7 @@ use std::{
 };
 
 use libdeflater::{DecompressionError, Decompressor};
-use ssri::{Algorithm, Integrity, IntegrityOpts};
+use ssri::{Algorithm, IntegrityOpts};
 use tar::Archive;
 use thiserror::Error;
 use tracing::instrument;
@@ -24,6 +24,42 @@ pub enum TarballError {
     ChecksumMismatch { provided: String, expected: String },
     #[error("decompression error")]
     Decompression(#[from] DecompressionError),
+    #[error("cafs error")]
+    Cafs(#[from] pacquet_cafs::CafsError),
+}
+
+#[instrument]
+fn decompress_gzip(gz_data: &[u8]) -> Result<Vec<u8>, TarballError> {
+    // gzip RFC1952: a valid gzip file has an ISIZE field in the
+    // footer, which is a little-endian u32 number representing the
+    // decompressed size. This is ideal for lib-deflate, which needs
+    // pre-allocating the decompressed buffer.
+    let isize = {
+        let isize_start = gz_data.len() - 4;
+        let isize_bytes: [u8; 4] = gz_data[isize_start..].try_into().unwrap();
+        u32::from_le_bytes(isize_bytes) as usize
+    };
+
+    let mut decompressor = Decompressor::new();
+    let mut outbuf = vec![0; isize];
+    decompressor.gzip_decompress(gz_data, &mut outbuf)?;
+    Ok(outbuf)
+}
+
+#[instrument]
+fn verify_checksum(data: &bytes::Bytes, integrity: &str) -> Result<(), TarballError> {
+    let expected = if integrity.starts_with("sha1-") {
+        let hash = IntegrityOpts::new().algorithm(Algorithm::Sha1).chain(data).result();
+        format!("sha1-{}", hash.to_hex().1)
+    } else {
+        IntegrityOpts::new().algorithm(Algorithm::Sha512).chain(data).result().to_string()
+    };
+
+    if integrity != expected {
+        Err(TarballError::ChecksumMismatch { provided: integrity.to_string(), expected })
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -41,50 +77,16 @@ impl TarballManager {
     }
 
     #[instrument]
-    fn verify_checksum(&self, data: &bytes::Bytes, integrity: &str) -> Result<(), TarballError> {
-        let expected = if integrity.starts_with("sha1-") {
-            let hash = IntegrityOpts::new().algorithm(Algorithm::Sha1).chain(data).result();
-            format!("sha1-{}", hash.to_hex().1)
-        } else {
-            IntegrityOpts::new().algorithm(Algorithm::Sha512).chain(data).result().to_string()
-        };
-
-        if integrity != expected {
-            Err(TarballError::ChecksumMismatch { provided: integrity.to_string(), expected })
-        } else {
-            Ok(())
-        }
-    }
-
-    #[instrument]
-    fn decompress_gzip(&self, gz_data: &[u8]) -> Result<Vec<u8>, TarballError> {
-        // gzip RFC1952: a valid gzip file has an ISIZE field in the
-        // footer, which is a little-endian u32 number representing the
-        // decompressed size. This is ideal for lib-deflate, which needs
-        // pre-allocating the decompressed buffer.
-        let isize = {
-            let isize_start = gz_data.len() - 4;
-            let isize_bytes: [u8; 4] = gz_data[isize_start..].try_into().unwrap();
-            u32::from_le_bytes(isize_bytes) as usize
-        };
-
-        let mut decompressor = Decompressor::new();
-        let mut outbuf = vec![0; isize];
-        decompressor.gzip_decompress(gz_data, &mut outbuf)?;
-        Ok(outbuf)
-    }
-
-    #[instrument]
     pub async fn download_dependency(
         &self,
         integrity: &str,
         url: &str,
-    ) -> Result<HashMap<String, Integrity>, TarballError> {
-        let mut cas_files = HashMap::<String, Integrity>::new();
+    ) -> Result<HashMap<String, Vec<u8>>, TarballError> {
+        let mut cas_files = HashMap::<String, Vec<u8>>::new();
 
         let response = self.http_client.get(url).send().await?.bytes().await?;
-        self.verify_checksum(&response, integrity)?;
-        let data = self.decompress_gzip(&response)?;
+        verify_checksum(&response, integrity)?;
+        let data = decompress_gzip(&response)?;
         let mut archive = Archive::new(Cursor::new(data));
 
         for entry in archive.entries()? {
@@ -94,11 +96,11 @@ impl TarballManager {
             let mut buffer = Vec::with_capacity(entry.size() as usize);
             entry.read_to_end(&mut buffer)?;
 
-            let entry_path = entry.path().unwrap();
+            let entry_path = entry.path()?;
             let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>();
-            let integrity = cacache::write_hash_sync(&self.store_dir, &buffer).unwrap();
+            pacquet_cafs::write_sync(&self.store_dir, &buffer)?;
 
-            cas_files.insert(cleaned_entry_path.to_str().unwrap().to_string(), integrity);
+            cas_files.insert(cleaned_entry_path.to_str().unwrap().to_string(), buffer);
         }
 
         Ok(cas_files)

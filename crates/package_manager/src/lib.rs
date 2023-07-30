@@ -21,8 +21,6 @@ pub enum PackageManagerError {
     Registry(#[from] pacquet_registry::RegistryError),
     #[error("filesystem error")]
     FileSystem(#[from] std::io::Error),
-    #[error("content addressable store error")]
-    Cache(#[from] cacache::Error),
 }
 
 pub struct PackageManager {
