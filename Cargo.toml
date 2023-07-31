@@ -1,75 +1,71 @@
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members  = ["crates/*", "tasks/*"]
 
 [workspace.package]
-authors = ["Yagiz Nizipli <yagiz@nizipli.com"]
+authors     = ["Yagiz Nizipli <yagiz@nizipli.com"]
 description = "Pacquet"
-edition = "2021"
-homepage = "https://github.com/anonrig/pacquet"
-keywords = ["Node.js"]
-license = "MIT"
-repository = "https://github.com/anonrig/pacquet"
+edition     = "2021"
+homepage    = "https://github.com/anonrig/pacquet"
+keywords    = ["Node.js"]
+license     = "MIT"
+repository  = "https://github.com/anonrig/pacquet"
 
 [workspace.dependencies]
-pacquet_cli = { path = "crates/cli" }
-pacquet_registry = { path = "crates/registry" }
-pacquet_tarball = { path = "crates/tarball" }
-pacquet_package_json = { path = "crates/package_json" }
-pacquet_lockfile = { path = "crates/lockfile" }
-pacquet_npmrc = { path = "crates/npmrc" }
+pacquet_cli             = { path = "crates/cli" }
+pacquet_registry        = { path = "crates/registry" }
+pacquet_tarball         = { path = "crates/tarball" }
+pacquet_package_json    = { path = "crates/package_json" }
+pacquet_lockfile        = { path = "crates/lockfile" }
+pacquet_npmrc           = { path = "crates/npmrc" }
 pacquet_package_manager = { path = "crates/package_manager" }
-pacquet_executor = { path = "crates/executor" }
-pacquet_cafs = { path = "crates/cafs" }
+pacquet_executor        = { path = "crates/executor" }
+pacquet_cafs            = { path = "crates/cafs" }
 
-async-recursion = { version = "1.0.4" }
-bytes = { version = "1.4.0" }
-clap = { version = "4", features = ["derive"] }
-elsa = { version = "1.8.1" }
-home = { version = "0.5.5" }
-futures-util = { version = "0.3.28" }
-miette = { version = "5.9.0", features = ["fancy"] }
-reflink-copy = { version = "0.1.5" }
-reqwest = { version = "0.11", default-features = false, features = [
-  "json",
-  "stream",
-  "native-tls-vendored",
-] }
+async-recursion    = { version = "1.0.4" }
+bytes              = { version = "1.4.0" }
+clap               = { version = "4", features = ["derive"] }
+elsa               = { version = "1.8.1" }
+home               = { version = "0.5.5" }
+futures-util       = { version = "0.3.28" }
+miette             = { version = "5.9.0", features = ["fancy"] }
+reflink-copy       = { version = "0.1.5" }
+reqwest            = { version = "0.11", default-features = false, features = ["json", "stream", "native-tls-vendored"] }
 reqwest-middleware = { version = "0.2.2" }
-reqwest-retry = { version = "0.2.2" }
-node-semver = { version = "2.1.0" }
-serde = { version = "1.0.179", features = ["derive"] }
-serde_ini = { version = "0.2.0" }
-serde_json = { version = "1.0.99" }
-serde_yaml = { version = "0.9.1" }
-ssri = { version = "9.0.0" }
-tar = { version = "0.4.38" }
-tempfile = { version = "3.6.0" }
-thiserror = { version = "1.0.44" }
-tracing = { version = "0.1.37" }
+reqwest-retry      = { version = "0.2.2" }
+node-semver        = { version = "2.1.0" }
+serde              = { version = "1.0.179", features = ["derive"] }
+serde_ini          = { version = "0.2.0" }
+serde_json         = { version = "1.0.99" }
+serde_yaml         = { version = "0.9.1" }
+ssri               = { version = "9.0.0" }
+tar                = { version = "0.4.38" }
+thiserror          = { version = "1.0.44" }
+tracing            = { version = "0.1.37" }
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
-tokio = { version = "1", features = [
-  "rt",
-  "macros",
-  "rt-multi-thread",
-  "test-util",
-] }
-libdeflater = { version = "0.14.0" }
+tokio              = { version = "1", features = ["rt", "macros", "rt-multi-thread", "test-util"] }
+libdeflater        = { version = "0.14.0" }
+
+# Dev dependencies
+criterion = { version = "0.5.1", features = ["async_tokio"] }
+tempfile  = { version = "3.6.0" }
+mockito   = { version = "1.1.0" }
+pico-args = { version = "0.5.0" }
 
 [workspace.metadata.workspaces]
 allow_branch = "main"
 
 [profile.release]
-opt-level = 3
-lto = "fat"
+opt-level     = 3
+lto           = "fat"
 codegen-units = 1
-strip = "symbols"
-debug = false
-panic = "abort"   # Let it crash and force ourselves to write safe Rust.
+strip         = "symbols"
+debug         = false
+panic         = "abort"   # Let it crash and force ourselves to write safe Rust.
 
 # Use the `--profile release-debug` flag to show symbols in release mode.
 # e.g. `cargo build --profile release-debug`
 [profile.release-debug]
 inherits = "release"
-strip = false
-debug = true
+strip    = false
+debug    = true
