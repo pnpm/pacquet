@@ -20,6 +20,7 @@ async-recursion = { workspace = true }
 elsa = { workspace = true }
 futures-util = { workspace = true }
 miette = { workspace = true }
+reflink-copy = { workspace = true }
 reqwest = { workspace = true }
 reqwest-middleware = { workspace = true }
 reqwest-retry = { workspace = true }
