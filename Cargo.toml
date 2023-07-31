@@ -12,6 +12,7 @@ license     = "MIT"
 repository  = "https://github.com/anonrig/pacquet"
 
 [workspace.dependencies]
+# Crates
 pacquet_cli             = { path = "crates/cli" }
 pacquet_registry        = { path = "crates/registry" }
 pacquet_tarball         = { path = "crates/tarball" }
@@ -22,6 +23,10 @@ pacquet_package_manager = { path = "crates/package_manager" }
 pacquet_executor        = { path = "crates/executor" }
 pacquet_cafs            = { path = "crates/cafs" }
 
+# Tasks
+pacquet_benchmark = { path = "tasks/benchmark" }
+
+# Dependencies
 async-recursion    = { version = "1.0.4" }
 bytes              = { version = "1.4.0" }
 clap               = { version = "4", features = ["derive"] }
@@ -30,7 +35,7 @@ home               = { version = "0.5.5" }
 futures-util       = { version = "0.3.28" }
 miette             = { version = "5.9.0", features = ["fancy"] }
 reflink-copy       = { version = "0.1.5" }
-reqwest            = { version = "0.11", default-features = false, features = ["json", "stream", "native-tls-vendored"] }
+reqwest            = { version = "0.11", default-features = false, features = ["json", "native-tls-vendored"] }
 reqwest-middleware = { version = "0.2.2" }
 reqwest-retry      = { version = "0.2.2" }
 node-semver        = { version = "2.1.0" }
@@ -43,7 +48,7 @@ tar                = { version = "0.4.38" }
 thiserror          = { version = "1.0.44" }
 tracing            = { version = "0.1.37" }
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
-tokio              = { version = "1", features = ["rt", "macros", "rt-multi-thread", "test-util"] }
+tokio              = { version = "1", features = ["rt", "macros", "test-util"] }
 libdeflater        = { version = "0.14.0" }
 
 # Dev dependencies
