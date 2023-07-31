@@ -1,13 +1,13 @@
-use std::{env, fs};
+use std::{fs, path::PathBuf};
 
 use criterion::{Criterion, Throughput};
 use mockito::ServerGuard;
 use pico_args::Arguments;
+use project_root::get_project_root;
 use tempfile::tempdir;
 
-fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard) {
+fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &PathBuf) {
     let mut group = c.benchmark_group("tarball");
-    let fixtures_folder = env::current_dir().unwrap().join("tasks/benchmark/fixtures");
     let file = fs::read(fixtures_folder.join("@fastify+error-3.3.0.tgz")).unwrap();
     server.mock("GET", "/@fastify+error-3.3.0.tgz").with_status(201).with_body(&file).create();
 
@@ -34,6 +34,8 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard) {
 pub fn main() -> Result<(), String> {
     let mut server = mockito::Server::new();
     let mut args = Arguments::from_env();
+    let root = get_project_root().unwrap();
+    let fixtures_folder = root.join("tasks/benchmark/fixtures");
     let baseline: Option<String> = args.opt_value_from_str("--save-baseline").unwrap();
 
     let mut criterion = Criterion::default().without_plots();
@@ -41,7 +43,7 @@ pub fn main() -> Result<(), String> {
         criterion = criterion.save_baseline(baseline.to_string());
     }
 
-    bench_tarball(&mut criterion, &mut server);
+    bench_tarball(&mut criterion, &mut server, &fixtures_folder);
 
     Ok(())
 }
