@@ -6,7 +6,7 @@ use crate::PackageManager;
 
 impl PackageManager {
     pub async fn install(
-        &mut self,
+        &self,
         install_dev_dependencies: bool,
         install_optional_dependencies: bool,
     ) -> Result<(), RegistryError> {
@@ -58,7 +58,7 @@ mod tests {
 
         package_json.save().unwrap();
 
-        let mut package_manager = PackageManager::new(&package_json_path).unwrap();
+        let package_manager = PackageManager::new(&package_json_path).unwrap();
         package_manager.install(true, false).await.unwrap();
         // Make sure the package is installed
         assert!(dir.path().join("node_modules/is-odd").is_symlink());

@@ -5,7 +5,7 @@ use std::env;
 
 use clap::Parser;
 use commands::{Cli, Subcommands};
-use miette::{Diagnostic, IntoDiagnostic, Result};
+use miette::{Diagnostic, IntoDiagnostic, Result, WrapErr};
 use pacquet_executor::{execute_shell, ExecutorError};
 use pacquet_npmrc::get_current_npmrc;
 use pacquet_package_json::{PackageJson, PackageJsonError};
@@ -47,34 +47,43 @@ async fn run_commands(cli: Cli) -> Result<()> {
     match &cli.subcommand {
         Subcommands::Init => {
             // init command throws an error if package.json file exist.
-            PackageJson::init(&package_json_path)?;
+            PackageJson::init(&package_json_path).wrap_err("initialize package.json")?;
         }
         Subcommands::Add(args) => {
-            let mut package_manager = PackageManager::new(&package_json_path)?;
+            let mut package_manager = PackageManager::new(&package_json_path)
+                .wrap_err("initializing the package manager")?;
             // TODO if a package already exists in another dependency group, we don't remove
             // the existing entry.
             package_manager
                 .add(&args.package, args.get_dependency_group(), args.save_exact)
-                .await?;
+                .await
+                .wrap_err("adding a new package")?;
         }
         Subcommands::Install(args) => {
-            let mut package_manager = PackageManager::new(&package_json_path)?;
-            package_manager.install(args.dev, !args.no_optional).await.into_diagnostic()?;
+            let package_manager = PackageManager::new(&package_json_path)
+                .wrap_err("initializing the package manager")?;
+            package_manager
+                .install(args.dev, !args.no_optional)
+                .await
+                .into_diagnostic()
+                .wrap_err("installing dependencies")?;
         }
         Subcommands::Test => {
-            let package_json = PackageJson::from_path(&package_json_path)?;
+            let package_json = PackageJson::from_path(&package_json_path)
+                .wrap_err("getting the package.json in current directory")?;
             if let Some(script) = package_json.get_script("test", false)? {
-                execute_shell(script)?;
+                execute_shell(script).wrap_err(format!("executing command: \"{0}\"", script))?;
             }
         }
         Subcommands::Run(args) => {
-            let package_json = PackageJson::from_path(&package_json_path)?;
+            let package_json = PackageJson::from_path(&package_json_path)
+                .wrap_err("getting the package.json in current directory")?;
             if let Some(script) = package_json.get_script(&args.command, args.if_present)? {
                 let mut command = script.to_string();
                 // append an empty space between script and additional args
                 command.push(' ');
                 // then append the additional args
-                command.push_str(args.args.join(" ").as_str());
+                command.push_str(&args.args.join(" "));
                 execute_shell(command.trim())?;
             }
         }
@@ -83,12 +92,14 @@ async fn run_commands(cli: Cli) -> Result<()> {
             // object. If no start property is specified on the scripts object, it will attempt to
             // run node server.js as a default, failing if neither are present.
             // The intended usage of the property is to specify a command that starts your program.
-            let package_json = PackageJson::from_path(&package_json_path)?;
-            if let Some(script) = package_json.get_script("start", true)? {
-                execute_shell(script)?;
+            let package_json = PackageJson::from_path(&package_json_path)
+                .wrap_err("getting the package.json in current directory")?;
+            let command = if let Some(script) = package_json.get_script("start", true)? {
+                script
             } else {
-                execute_shell("node server.js")?;
-            }
+                "node server.js"
+            };
+            execute_shell(command).wrap_err(format!("executing command: \"{0}\"", command))?;
         }
         Subcommands::Store(subcommand) => {
             let config = get_current_npmrc();
@@ -100,7 +111,7 @@ async fn run_commands(cli: Cli) -> Result<()> {
                     panic!("Not implemented")
                 }
                 StoreSubcommands::Prune => {
-                    pacquet_cafs::prune_sync(&config.store_dir)?;
+                    pacquet_cafs::prune_sync(&config.store_dir).wrap_err("pruning store")?;
                 }
                 StoreSubcommands::Path => {
                     println!("{}", config.store_dir.display());
