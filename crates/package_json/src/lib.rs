@@ -189,7 +189,11 @@ impl PackageJson {
             }
         }
 
-        if if_present { Ok(None) } else { Err(PackageJsonError::NoScript(command.to_string())) }
+        if if_present {
+            Ok(None)
+        } else {
+            Err(PackageJsonError::NoScript(command.to_string()))
+        }
     }
 }
 
@@ -291,13 +295,11 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "{}", data).unwrap();
         let package_json = PackageJson::create_if_needed(&tmp.path().to_path_buf()).unwrap();
-        assert!(
-            package_json
-                .get_dependencies(vec![DependencyGroup::Peer])
-                .contains_key("fast-querystring")
-        );
-        assert!(
-            package_json.get_dependencies(vec![DependencyGroup::Default]).contains_key("fastify")
-        );
+        assert!(package_json
+            .get_dependencies(vec![DependencyGroup::Peer])
+            .contains_key("fast-querystring"));
+        assert!(package_json
+            .get_dependencies(vec![DependencyGroup::Default])
+            .contains_key("fastify"));
     }
 }
