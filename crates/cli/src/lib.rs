@@ -70,7 +70,12 @@ async fn run_commands(cli: Cli) -> Result<()> {
         Subcommands::Run(args) => {
             let package_json = PackageJson::from_path(&package_json_path)?;
             if let Some(script) = package_json.get_script(&args.command, args.if_present)? {
-                execute_shell(script)?;
+                let mut command = script.to_string();
+                // append an empty space between script and additional args
+                command.push(' ');
+                // then append the additional args
+                command.push_str(args.args.join(" ").as_str());
+                execute_shell(command.trim())?;
             }
         }
         Subcommands::Start => {
