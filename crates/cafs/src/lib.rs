@@ -36,11 +36,11 @@ fn content_path_from_hex(file_type: FileType, hex: &str) -> PathBuf {
     p.join(format!("{}{}", &hex[2..], extension))
 }
 
-pub fn write_sync(store_dir: &Path, buffer: &Vec<u8>) -> Result<String, CafsError> {
+pub fn write_sync(store_dir: &Path, buffer: &Vec<u8>) -> Result<PathBuf, CafsError> {
     let hex_integrity =
         IntegrityOpts::new().algorithm(Algorithm::Sha512).chain(buffer).result().to_hex().1;
-
-    let file_path = store_dir.join(content_path_from_hex(FileType::NonExec, &hex_integrity));
+    let content_path = content_path_from_hex(FileType::NonExec, &hex_integrity);
+    let file_path = store_dir.join(&content_path);
 
     if !file_path.exists() {
         let parent_dir = file_path.parent().unwrap();
@@ -48,7 +48,7 @@ pub fn write_sync(store_dir: &Path, buffer: &Vec<u8>) -> Result<String, CafsErro
         fs::write(&file_path, buffer)?;
     }
 
-    Ok(file_path.to_string_lossy().into_owned())
+    Ok(content_path)
 }
 
 pub fn prune_sync(store_dir: &Path) -> Result<(), CafsError> {
@@ -87,9 +87,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let buffer = vec![0, 1, 2, 3, 4, 5, 6];
         let saved_file_path = write_sync(dir.path(), &buffer).unwrap();
-        let path = PathBuf::from_str(&saved_file_path).unwrap();
-        assert!(path.exists());
+        let store_path = dir.path().join(saved_file_path);
+        assert!(store_path.exists());
         prune_sync(dir.path()).unwrap();
-        assert!(!path.exists());
+        assert!(!store_path.exists());
     }
 }

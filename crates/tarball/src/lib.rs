@@ -90,8 +90,8 @@ impl TarballManager {
         &self,
         integrity: &str,
         url: &str,
-    ) -> Result<HashMap<String, Vec<u8>>, TarballError> {
-        let mut cas_files = HashMap::<String, Vec<u8>>::new();
+    ) -> Result<HashMap<String, PathBuf>, TarballError> {
+        let mut cas_files = HashMap::<String, PathBuf>::new();
 
         let response = self.http_client.get(url).send().await?.bytes().await?;
         verify_checksum(&response, integrity)?;
@@ -107,9 +107,9 @@ impl TarballManager {
 
             let entry_path = entry.path()?;
             let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>();
-            pacquet_cafs::write_sync(&self.store_dir, &buffer)?;
+            let integrity = pacquet_cafs::write_sync(&self.store_dir, &buffer)?;
 
-            cas_files.insert(cleaned_entry_path.to_str().unwrap().to_string(), buffer);
+            cas_files.insert(cleaned_entry_path.to_str().unwrap().to_string(), integrity);
         }
 
         Ok(cas_files)
