@@ -54,3 +54,7 @@ lint:
 # Get code coverage
 codecov:
   cargo codecov --html
+
+# Run the benchmarks. See `tasks/benchmark`
+bench:
+  cargo benchmark
