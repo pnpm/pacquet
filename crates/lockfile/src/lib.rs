@@ -98,7 +98,11 @@ impl Lockfile {
 
     pub fn create_or_open() -> Result<Lockfile, LockfileError> {
         let yaml_path = Lockfile::path()?;
-        if yaml_path.exists() { Ok(Lockfile::open()?) } else { Ok(Lockfile::create()?) }
+        if yaml_path.exists() {
+            Ok(Lockfile::open()?)
+        } else {
+            Ok(Lockfile::create()?)
+        }
     }
 
     pub fn save(&self) -> Result<(), LockfileError> {
