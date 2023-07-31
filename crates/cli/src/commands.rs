@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 use pacquet_package_json::DependencyGroup;
 
@@ -10,6 +12,10 @@ use pacquet_package_json::DependencyGroup;
 pub struct Cli {
     #[command(subcommand)]
     pub subcommand: Subcommands,
+
+    /// Run as if pacquet was started in <path> instead of the current working directory.
+    #[arg(short = 'C', long = "dir")]
+    pub current_dir: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Debug)]

@@ -41,7 +41,8 @@ pub async fn run_cli() -> Result<()> {
 }
 
 async fn run_commands(cli: Cli) -> Result<()> {
-    let current_directory = env::current_dir().expect("Getting current directory failed");
+    let current_directory =
+        cli.current_dir.unwrap_or(env::current_dir().expect("getting current directory failed"));
     let package_json_path = current_directory.join("package.json");
 
     match &cli.subcommand {
@@ -134,34 +135,26 @@ mod tests {
     #[tokio::test]
     async fn init_command_should_create_package_json() {
         let parent_folder = tempdir().unwrap();
-        let current_directory = env::current_dir().unwrap();
-        env::set_current_dir(parent_folder.path()).unwrap();
-        let cli = Cli::parse_from(["", "init"]);
+        let cli = Cli::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "init"]);
         run_commands(cli).await.unwrap();
         assert!(parent_folder.path().join("package.json").exists());
-        env::set_current_dir(&current_directory).unwrap();
     }
 
     #[tokio::test]
     async fn init_command_should_throw_on_existing_file() {
         let parent_folder = tempdir().unwrap();
-        let current_directory = env::current_dir().unwrap();
-        env::set_current_dir(&parent_folder).unwrap();
         let mut file = fs::File::create(parent_folder.path().join("package.json")).unwrap();
         file.write_all("{}".as_bytes()).unwrap();
         assert!(parent_folder.path().join("package.json").exists());
-        let cli = Cli::parse_from(["", "init"]);
+        let cli = Cli::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "init"]);
         run_commands(cli).await.expect_err("should have thrown");
-        env::set_current_dir(&current_directory).unwrap();
     }
 
     #[tokio::test]
     async fn should_get_store_path() {
         let parent_folder = tempdir().unwrap();
-        let current_directory = env::current_dir().unwrap();
-        env::set_current_dir(parent_folder.path()).unwrap();
-        let cli = Cli::parse_from(["", "store", "path"]);
+        let cli =
+            Cli::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "store", "path"]);
         run_commands(cli).await.unwrap();
-        env::set_current_dir(&current_directory).unwrap();
     }
 }
