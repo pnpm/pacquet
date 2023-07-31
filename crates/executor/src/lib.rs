@@ -12,7 +12,7 @@ pub enum ExecutorError {
 }
 
 pub fn execute_shell(command: &str) -> Result<(), ExecutorError> {
-    let mut cmd = Command::new(command).spawn()?;
+    let mut cmd = Command::new("sh").arg("-c").arg(command).spawn()?;
 
     cmd.wait()?;
 
