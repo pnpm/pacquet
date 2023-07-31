@@ -1,3 +1,12 @@
+# Options
+
+[pnpm documentation](https://pnpm.io/pnpm-cli#options)
+
+| Done | Command                 | Notes |
+|------|-------------------------|-------|
+| ✅    | -C <path>, --dir <path> |       |
+|      | -w, --workspace-root    |       |
+
 # Manage dependencies
 
 ## `pacquet add <pkg>`
