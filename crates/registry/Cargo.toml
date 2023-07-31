@@ -15,7 +15,6 @@ pacquet_package_json = { workspace = true }
 pacquet_tarball      = { workspace = true }
 
 elsa               = { workspace = true }
-futures-util       = { workspace = true }
 reqwest            = { workspace = true }
 reqwest-middleware = { workspace = true }
 reqwest-retry      = { workspace = true }

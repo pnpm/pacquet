@@ -17,7 +17,6 @@ pacquet_npmrc        = { workspace = true }
 pacquet_tarball      = { workspace = true }
 
 async-recursion    = { workspace = true }
-elsa               = { workspace = true }
 futures-util       = { workspace = true }
 miette             = { workspace = true }
 reflink-copy       = { workspace = true }
@@ -27,9 +26,8 @@ reqwest-retry      = { workspace = true }
 node-semver        = { workspace = true }
 serde              = { workspace = true }
 serde_json         = { workspace = true }
-ssri               = { workspace = true }
-tokio              = { workspace = true }
 thiserror          = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+tokio    = { workspace = true }

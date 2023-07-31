@@ -1331,7 +1331,6 @@ name = "pacquet_package_manager"
 version = "0.0.1"
 dependencies = [
  "async-recursion",
- "elsa",
  "futures-util",
  "miette",
  "node-semver",
@@ -1345,7 +1344,6 @@ dependencies = [
  "reqwest-retry",
  "serde",
  "serde_json",
- "ssri",
  "tempfile",
  "thiserror",
  "tokio",
@@ -1356,7 +1354,6 @@ name = "pacquet_registry"
 version = "0.0.1"
 dependencies = [
  "elsa",
- "futures-util",
  "miette",
  "node-semver",
  "pacquet_package_json",
@@ -1376,7 +1373,6 @@ name = "pacquet_tarball"
 version = "0.0.1"
 dependencies = [
  "bytes",
- "futures-util",
  "libdeflater",
  "miette",
  "pacquet_cafs",
