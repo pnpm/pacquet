@@ -1,5 +1,3 @@
-#![feature(error_generic_member_access, provide_any)]
-
 use std::{
     collections::HashMap,
     io::{Cursor, Read},
