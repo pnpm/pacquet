@@ -5,12 +5,13 @@ use std::{
     path::PathBuf,
 };
 
-use libdeflater::{DecompressionError, Decompressor};
 use miette::Diagnostic;
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
 use thiserror::Error;
 use tracing::instrument;
+use zune_inflate::errors::InflateDecodeErrors;
+use zune_inflate::{DeflateDecoder, DeflateOptions};
 
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
@@ -33,7 +34,7 @@ pub enum TarballError {
 
     #[error(transparent)]
     #[diagnostic(code(pacquet_tarball::decompression_error))]
-    Decompression(#[from] DecompressionError),
+    Decompression(#[from] InflateDecodeErrors),
 
     #[error(transparent)]
     #[diagnostic(transparent)]
@@ -42,20 +43,11 @@ pub enum TarballError {
 
 #[instrument]
 fn decompress_gzip(gz_data: &[u8]) -> Result<Vec<u8>, TarballError> {
-    // gzip RFC1952: a valid gzip file has an ISIZE field in the
-    // footer, which is a little-endian u32 number representing the
-    // decompressed size. This is ideal for lib-deflate, which needs
-    // pre-allocating the decompressed buffer.
-    let isize = {
-        let isize_start = gz_data.len() - 4;
-        let isize_bytes: [u8; 4] = gz_data[isize_start..].try_into().unwrap();
-        u32::from_le_bytes(isize_bytes) as usize
-    };
+    let options = DeflateOptions::default().set_confirm_checksum(false);
+    let mut decoder = DeflateDecoder::new_with_options(gz_data, options);
+    let decompressed = decoder.decode_gzip()?;
 
-    let mut decompressor = Decompressor::new();
-    let mut outbuf = vec![0; isize];
-    decompressor.gzip_decompress(gz_data, &mut outbuf)?;
-    Ok(outbuf)
+    Ok(decompressed)
 }
 
 #[instrument]
