@@ -25,7 +25,6 @@ pacquet_cafs            = { path = "crates/cafs" }
 
 # Dependencies
 async-recursion    = { version = "1.0.4" }
-bytes              = { version = "1.4.0" }
 clap               = { version = "4", features = ["derive"] }
 elsa               = { version = "1.8.1" }
 home               = { version = "0.5.5" }

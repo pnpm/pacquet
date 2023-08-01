@@ -56,7 +56,7 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
 }
 
 #[instrument]
-fn verify_checksum(data: &bytes::Bytes, integrity: &str) -> Result<(), TarballError> {
+fn verify_checksum(data: &[u8], integrity: &str) -> Result<(), TarballError> {
     let validation = IntegrityChecker::new(Integrity::from_str(integrity)?).chain(data).result();
 
     if validation.is_err() {
