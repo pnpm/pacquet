@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::{
     collections::HashMap,
     io::{Cursor, Read},
@@ -6,7 +7,7 @@ use std::{
 
 use libdeflater::{DecompressionError, Decompressor};
 use miette::Diagnostic;
-use ssri::{Algorithm, IntegrityOpts};
+use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
 use thiserror::Error;
 use tracing::instrument;
@@ -22,9 +23,13 @@ pub enum TarballError {
     #[diagnostic(code(pacquet_tarball::io_error))]
     Io(#[from] std::io::Error),
 
-    #[error("checksum mismatch. provided {provided} should match {expected}")]
+    #[error("checksum mismatch")]
     #[diagnostic(code(pacquet_tarball::checksum_mismatch_error))]
-    ChecksumMismatch { provided: String, expected: String },
+    ChecksumMismatch,
+
+    #[error("integrity creation failed")]
+    #[diagnostic(code(pacquet_tarball::integrity_error))]
+    Integrity(#[from] ssri::Error),
 
     #[error(transparent)]
     #[diagnostic(code(pacquet_tarball::decompression_error))]
@@ -55,15 +60,10 @@ fn decompress_gzip(gz_data: &[u8]) -> Result<Vec<u8>, TarballError> {
 
 #[instrument]
 fn verify_checksum(data: &bytes::Bytes, integrity: &str) -> Result<(), TarballError> {
-    let expected = if integrity.starts_with("sha1-") {
-        let hash = IntegrityOpts::new().algorithm(Algorithm::Sha1).chain(data).result();
-        format!("sha1-{}", hash.to_hex().1)
-    } else {
-        IntegrityOpts::new().algorithm(Algorithm::Sha512).chain(data).result().to_string()
-    };
+    let validation = IntegrityChecker::new(Integrity::from_str(integrity)?).chain(data).result();
 
-    if integrity != expected {
-        Err(TarballError::ChecksumMismatch { provided: integrity.to_string(), expected })
+    if validation.is_err() {
+        Err(TarballError::ChecksumMismatch)
     } else {
         Ok(())
     }
