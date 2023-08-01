@@ -73,12 +73,7 @@ mod tests {
         let version = PackageVersion {
             name: "".to_string(),
             version: Version { major: 3, minor: 2, patch: 1, build: vec![], pre_release: vec![] },
-            dist: PackageDistribution {
-                integrity: "".to_string(),
-                npm_signature: None,
-                shasum: "".to_string(),
-                tarball: "".to_string(),
-            },
+            dist: PackageDistribution::empty(),
             dependencies: None,
             dev_dependencies: None,
             peer_dependencies: None,

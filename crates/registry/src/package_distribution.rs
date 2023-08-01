@@ -7,6 +7,10 @@ pub struct PackageDistribution {
     pub npm_signature: Option<String>,
     pub shasum: String,
     pub tarball: String,
+    #[serde(alias = "fileCount")]
+    pub file_count: Option<usize>,
+    #[serde(alias = "unpackedSize")]
+    pub unpacked_size: Option<usize>,
 }
 
 impl PackageDistribution {
@@ -16,6 +20,8 @@ impl PackageDistribution {
             npm_signature: None,
             shasum: "".to_string(),
             tarball: "".to_string(),
+            file_count: Some(0),
+            unpacked_size: Some(0),
         }
     }
 }

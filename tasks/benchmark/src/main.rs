@@ -15,6 +15,7 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
 
     let integrity = "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==";
     let url = &format!("{0}/@fastify+error-3.3.0.tgz", server.url());
+    let unpacked_size = 16697;
 
     group.throughput(Throughput::Bytes(file.len() as u64));
     group.bench_function("download_dependency", |b| {
@@ -22,7 +23,8 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
             let dir = tempdir().unwrap();
             let manager = pacquet_tarball::TarballManager::new(dir.path());
 
-            let cas_map = manager.download_dependency(integrity, url).await.unwrap();
+            let cas_map =
+                manager.download_dependency(integrity, url, Some(unpacked_size)).await.unwrap();
             drop(dir);
             cas_map.len()
         });
