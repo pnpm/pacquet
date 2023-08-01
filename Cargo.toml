@@ -46,7 +46,8 @@ thiserror          = { version = "1.0.44" }
 tracing            = { version = "0.1.37" }
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 tokio              = { version = "1", features = ["rt", "macros"] }
-libdeflater        = { version = "0.14.0" }
+zune-inflate       = { version = "0.2.54" }
+
 
 # Dev dependencies
 criterion    = { version = "0.5.1", features = ["async_tokio"] }
