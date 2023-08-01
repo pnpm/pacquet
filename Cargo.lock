@@ -1354,7 +1354,6 @@ dependencies = [
 name = "pacquet_tarball"
 version = "0.0.1"
 dependencies = [
- "bytes",
  "miette",
  "pacquet_cafs",
  "reqwest",

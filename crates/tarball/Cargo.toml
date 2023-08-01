@@ -13,7 +13,6 @@ repository.workspace  = true
 [dependencies]
 pacquet_cafs = { workspace = true }
 
-bytes        = { workspace = true }
 miette       = { workspace = true }
 reqwest      = { workspace = true }
 ssri         = { workspace = true }
