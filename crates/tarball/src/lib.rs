@@ -42,8 +42,13 @@ pub enum TarballError {
 }
 
 #[instrument]
-fn decompress_gzip(gz_data: &[u8]) -> Result<Vec<u8>, TarballError> {
-    let options = DeflateOptions::default().set_confirm_checksum(false);
+fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u8>, TarballError> {
+    let mut options = DeflateOptions::default().set_confirm_checksum(false);
+
+    if let Some(size) = unpacked_size {
+        options = options.set_size_hint(size);
+    }
+
     let mut decoder = DeflateDecoder::new_with_options(gz_data, options);
     let decompressed = decoder.decode_gzip()?;
 
@@ -80,12 +85,13 @@ impl TarballManager {
         &self,
         integrity: &str,
         url: &str,
+        unpacked_size: Option<usize>,
     ) -> Result<HashMap<String, PathBuf>, TarballError> {
         let mut cas_files = HashMap::<String, PathBuf>::new();
 
         let response = self.http_client.get(url).send().await?.bytes().await?;
         verify_checksum(&response, integrity)?;
-        let data = decompress_gzip(&response)?;
+        let data = decompress_gzip(&response, unpacked_size)?;
         let mut archive = Archive::new(Cursor::new(data));
 
         for entry in archive.entries()? {
@@ -137,6 +143,7 @@ mod tests {
         let cas_files = manager.download_dependency(
             "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
             "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
+            Some(16697),
         ).await.unwrap();
 
         let mut filenames = cas_files.keys().collect::<Vec<_>>();
@@ -171,6 +178,7 @@ mod tests {
             .download_dependency(
                 "sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
                 "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
+                Some(16697),
             )
             .await
             .expect_err("checksum mismatch");

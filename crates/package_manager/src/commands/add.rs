@@ -30,7 +30,11 @@ impl PackageManager {
 
         let cas_paths = self
             .tarball
-            .download_dependency(&latest_version.dist.integrity, latest_version.get_tarball_url())
+            .download_dependency(
+                &latest_version.dist.integrity,
+                latest_version.get_tarball_url(),
+                latest_version.dist.unpacked_size,
+            )
             .await?;
 
         self.import_packages(
@@ -81,7 +85,11 @@ impl PackageManager {
 
         let cas_paths = self
             .tarball
-            .download_dependency(&package_version.dist.integrity, package_version.get_tarball_url())
+            .download_dependency(
+                &package_version.dist.integrity,
+                package_version.get_tarball_url(),
+                package_version.dist.unpacked_size,
+            )
             .await?;
 
         self.import_packages(
