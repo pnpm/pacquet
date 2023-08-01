@@ -5,34 +5,13 @@ use std::env;
 
 use clap::Parser;
 use commands::{Cli, Subcommands};
-use miette::{Diagnostic, IntoDiagnostic, Result, WrapErr};
-use pacquet_executor::{execute_shell, ExecutorError};
+use miette::{IntoDiagnostic, Result, WrapErr};
+use pacquet_executor::execute_shell;
 use pacquet_npmrc::get_current_npmrc;
-use pacquet_package_json::{PackageJson, PackageJsonError};
-use pacquet_package_manager::{PackageManager, PackageManagerError};
-use thiserror::Error;
+use pacquet_package_json::PackageJson;
+use pacquet_package_manager::PackageManager;
 
 use crate::{commands::StoreSubcommands, tracing::enable_tracing_by_env};
-
-#[derive(Error, Debug, Diagnostic)]
-#[non_exhaustive]
-pub enum CliError {
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    PackageManager(#[from] PackageManagerError),
-
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    Executor(#[from] ExecutorError),
-
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    PackageJson(#[from] PackageJsonError),
-
-    #[error(transparent)]
-    #[diagnostic(code(pacquet_cli::io_error))]
-    Io(#[from] std::io::Error),
-}
 
 pub async fn run_cli() -> Result<()> {
     enable_tracing_by_env();
