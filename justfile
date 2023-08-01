@@ -58,3 +58,6 @@ codecov:
 # Run the benchmarks. See `tasks/benchmark`
 bench:
   cargo benchmark
+
+cli +args:
+  cargo run --bin pacquet -- {{args}}

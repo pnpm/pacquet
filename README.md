@@ -18,6 +18,6 @@ Experimental package manager for node.js written in rust.
 ## Debugging
 
 ```shell
-TRACE=pacquet_tarball cargo run -- add fastify
+TRACE=pacquet_tarball just cli add fastify
 ```
 
