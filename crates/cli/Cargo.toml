@@ -23,7 +23,6 @@ pacquet_cafs            = { workspace = true }
 
 clap               = { workspace = true }
 miette             = { workspace = true }
-thiserror          = { workspace = true }
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 tokio              = { workspace = true }

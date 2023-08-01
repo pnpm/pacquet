@@ -1282,7 +1282,6 @@ dependencies = [
  "pacquet_package_json",
  "pacquet_package_manager",
  "tempfile",
- "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
