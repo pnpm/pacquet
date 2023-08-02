@@ -1320,6 +1320,7 @@ dependencies = [
  "pacquet_package_json",
  "pacquet_registry",
  "pacquet_tarball",
+ "rayon",
  "reflink-copy",
  "reqwest",
  "reqwest-middleware",
