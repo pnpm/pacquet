@@ -1,8 +1,8 @@
-use std::str::FromStr;
 use std::{
     collections::HashMap,
     io::{Cursor, Read},
     path::PathBuf,
+    str::FromStr,
 };
 
 use miette::Diagnostic;
@@ -87,26 +87,27 @@ impl TarballManager {
         url: &str,
         unpacked_size: Option<usize>,
     ) -> Result<HashMap<String, PathBuf>, TarballError> {
-        let mut cas_files = HashMap::<String, PathBuf>::new();
-
         let response = self.http_client.get(url).send().await?.bytes().await?;
         verify_checksum(&response, integrity)?;
         let data = decompress_gzip(&response, unpacked_size)?;
         let mut archive = Archive::new(Cursor::new(data));
 
-        for entry in archive.entries()? {
-            let mut entry = entry?;
+        let cas_files = archive
+            .entries()?
+            .map(|entry| {
+                let mut entry = entry.unwrap();
 
-            // Read the contents of the entry
-            let mut buffer = Vec::with_capacity(entry.size() as usize);
-            entry.read_to_end(&mut buffer)?;
+                // Read the contents of the entry
+                let mut buffer = Vec::with_capacity(entry.size() as usize);
+                entry.read_to_end(&mut buffer).unwrap();
 
-            let entry_path = entry.path()?;
-            let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>();
-            let integrity = pacquet_cafs::write_sync(&self.store_dir, &buffer)?;
+                let entry_path = entry.path().unwrap();
+                let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>();
+                let integrity = pacquet_cafs::write_sync(&self.store_dir, &buffer).unwrap();
 
-            cas_files.insert(cleaned_entry_path.to_str().unwrap().to_string(), integrity);
-        }
+                (cleaned_entry_path.to_string_lossy().to_string(), integrity)
+            })
+            .collect::<HashMap<String, PathBuf>>();
 
         Ok(cas_files)
     }
