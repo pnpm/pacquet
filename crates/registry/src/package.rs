@@ -55,7 +55,7 @@ mod tests {
         let version = PackageVersion {
             name: "".to_string(),
             version: Version::parse("1.0.0").unwrap(),
-            dist: PackageDistribution::empty(),
+            dist: PackageDistribution::default(),
             dependencies: Some(dependencies),
             dev_dependencies: None,
             peer_dependencies: Some(peer_dependencies),
@@ -73,7 +73,7 @@ mod tests {
         let version = PackageVersion {
             name: "".to_string(),
             version: Version { major: 3, minor: 2, patch: 1, build: vec![], pre_release: vec![] },
-            dist: PackageDistribution::empty(),
+            dist: PackageDistribution::default(),
             dependencies: None,
             dev_dependencies: None,
             peer_dependencies: None,
