@@ -1,6 +1,11 @@
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use pacquet_npmrc::PackageImportMethod;
+use rayon::prelude::*;
 
 use crate::{symlink::symlink_dir, PackageManager, PackageManagerError};
 
@@ -13,21 +18,15 @@ impl PackageManager {
     ) -> Result<(), PackageManagerError> {
         match self.config.package_import_method {
             PackageImportMethod::Auto => {
-                for (cleaned_entry, store_path) in cas_files {
-                    let original_path = self.config.store_dir.join(store_path);
-                    let save_with_cleaned_entry = save_path.join(cleaned_entry);
-
-                    if !save_with_cleaned_entry.exists() {
-                        // Create parent folder
-                        if let Some(parent_folder) = save_with_cleaned_entry.parent() {
-                            if !parent_folder.exists() {
-                                fs::create_dir_all(parent_folder)?;
-                            }
-                        }
-
-                        reflink_copy::reflink_or_copy(original_path, &save_with_cleaned_entry)?;
-                    }
-                }
+                cas_files
+                    .into_par_iter()
+                    .try_for_each(|(cleaned_entry, store_path)| {
+                        auto_import(
+                            self.config.store_dir.join(store_path),
+                            save_path.join(cleaned_entry),
+                        )
+                    })
+                    .expect("expected no write errors");
 
                 if !symlink_to.is_symlink() {
                     fs::create_dir_all(symlink_to.parent().unwrap())?;
@@ -38,4 +37,22 @@ impl PackageManager {
         }
         Ok(())
     }
+}
+
+fn auto_import<P: AsRef<Path>>(
+    original_path: P,
+    save_with_cleaned_entry: P,
+) -> Result<(), PackageManagerError> {
+    if !save_with_cleaned_entry.as_ref().exists() {
+        // Create parent folder
+        if let Some(parent_folder) = &save_with_cleaned_entry.as_ref().parent() {
+            if !parent_folder.exists() {
+                fs::create_dir_all(parent_folder)?;
+            }
+        }
+
+        reflink_copy::reflink_or_copy(original_path, &save_with_cleaned_entry)?;
+    }
+
+    Ok(())
 }

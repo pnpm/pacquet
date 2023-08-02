@@ -19,6 +19,7 @@ pacquet_tarball      = { workspace = true }
 async-recursion    = { workspace = true }
 futures-util       = { workspace = true }
 miette             = { workspace = true }
+rayon              = { workspace = true }
 reflink-copy       = { workspace = true }
 reqwest            = { workspace = true }
 reqwest-middleware = { workspace = true }
