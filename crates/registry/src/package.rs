@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 
 use crate::{package_version::PackageVersion, RegistryError};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Package {
     pub name: String,
     #[serde(alias = "dist-tags")]
@@ -34,6 +34,12 @@ impl Package {
         // Optimization opportunity:
         // We can store this in a cache to remove filter operation and make this a O(1) operation.
         Ok(satisfied_versions.last().copied())
+    }
+
+    pub fn get_latest(&self) -> Result<&PackageVersion, RegistryError> {
+        let version =
+            self.dist_tags.get("latest").expect("latest tag is expected but not found for package");
+        Ok(self.versions.get(version).unwrap())
     }
 }
 

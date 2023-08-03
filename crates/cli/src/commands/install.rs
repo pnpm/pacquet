@@ -1,3 +1,4 @@
+use crate::commands::add::fetch_package;
 use crate::commands::InstallArgs;
 use crate::package_manager::{PackageManager, PackageManagerError};
 use futures_util::future::join_all;
@@ -18,7 +19,10 @@ impl PackageManager {
             dependencies
                 .iter()
                 .map(|(name, version)| {
-                    self.install_package(name, version, &self.config.modules_dir)
+                    let config = &self.config;
+                    let path = &self.config.modules_dir;
+                    let http_client = &self.http_client;
+                    async move { fetch_package(config, &http_client, name, version, &path) }
                 })
                 .collect::<Vec<_>>(),
         )

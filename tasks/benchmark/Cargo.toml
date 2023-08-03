@@ -11,7 +11,8 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-pacquet_tarball = { workspace = true }
+pacquet_registry = { workspace = true }
+pacquet_tarball  = { workspace = true }
 
 criterion    = { workspace = true }
 mockito      = { workspace = true }
@@ -19,3 +20,5 @@ tokio        = { workspace = true }
 tempfile     = { workspace = true }
 pico-args    = { workspace = true }
 project-root = { workspace = true }
+reqwest      = { workspace = true }
+node-semver  = { workspace = true }

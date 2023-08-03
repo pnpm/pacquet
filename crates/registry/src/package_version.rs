@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::package_distribution::PackageDistribution;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PackageVersion {
     pub name: String,
     pub version: node_semver::Version,
@@ -17,6 +17,10 @@ pub struct PackageVersion {
 }
 
 impl PackageVersion {
+    pub fn get_store_name(&self) -> String {
+        format!("{0}@{1}", self.name.replace('/', "+"), self.version.to_string())
+    }
+
     pub fn get_tarball_url(&self) -> &str {
         self.dist.tarball.as_str()
     }

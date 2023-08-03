@@ -27,6 +27,7 @@ async-recursion    = { version = "1.0.4" }
 clap               = { version = "4", features = ["derive"] }
 elsa               = { version = "1.8.1" }
 home               = { version = "0.5.5" }
+futures            = { version = "0.3.28" }
 futures-util       = { version = "0.3.28" }
 miette             = { version = "5.9.0", features = ["fancy"] }
 reflink-copy       = { version = "0.1.5" }
