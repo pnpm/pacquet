@@ -1,18 +1,15 @@
+use crate::commands::InstallArgs;
 use crate::package_manager::{PackageManager, PackageManagerError};
 use futures_util::future::join_all;
 use pacquet_package_json::DependencyGroup;
 
 impl PackageManager {
-    pub async fn install(
-        &self,
-        install_dev_dependencies: bool,
-        install_optional_dependencies: bool,
-    ) -> Result<(), PackageManagerError> {
+    pub async fn install(&self, args: &InstallArgs) -> Result<(), PackageManagerError> {
         let mut dependency_groups = vec![DependencyGroup::Default, DependencyGroup::Optional];
-        if install_dev_dependencies {
+        if args.dev {
             dependency_groups.push(DependencyGroup::Dev);
-        };
-        if !install_optional_dependencies {
+        }
+        if !args.no_optional {
             dependency_groups.remove(1);
         }
         let dependencies = self.package_json.get_dependencies(dependency_groups);
@@ -35,6 +32,7 @@ impl PackageManager {
 mod tests {
     use std::env;
 
+    use crate::commands::InstallArgs;
     use crate::package_manager::PackageManager;
     use pacquet_package_json::{DependencyGroup, PackageJson};
     use tempfile::tempdir;
@@ -56,7 +54,8 @@ mod tests {
         package_json.save().unwrap();
 
         let package_manager = PackageManager::new(&package_json_path).unwrap();
-        package_manager.install(true, false).await.unwrap();
+        let args = InstallArgs { prod: false, dev: true, no_optional: false };
+        package_manager.install(&args).await.unwrap();
         // Make sure the package is installed
         assert!(dir.path().join("node_modules/is-odd").is_symlink());
         assert!(dir.path().join("node_modules/.pacquet/is-odd@3.0.1").exists());
