@@ -44,7 +44,7 @@ tar                = { version = "0.4.38" }
 thiserror          = { version = "1.0.44" }
 tracing            = { version = "0.1.37" }
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
-tokio              = { version = "1", features = ["rt", "macros"] }
+tokio              = { version = "1", features = ["rt-multi-thread", "macros"] }
 zune-inflate       = { version = "0.2.54" }
 
 
