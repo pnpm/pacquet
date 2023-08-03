@@ -4,38 +4,33 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::package_manager::{PackageManager, PackageManagerError};
+use crate::package_manager::PackageManagerError;
 use pacquet_npmrc::PackageImportMethod;
 use rayon::prelude::*;
 
-impl PackageManager {
-    pub async fn import_packages(
-        &self,
-        cas_files: &HashMap<String, PathBuf>,
-        save_path: &PathBuf,
-        symlink_to: &PathBuf,
-    ) -> Result<(), PackageManagerError> {
-        match self.config.package_import_method {
-            PackageImportMethod::Auto => {
-                cas_files
-                    .into_par_iter()
-                    .try_for_each(|(cleaned_entry, store_path)| {
-                        auto_import(
-                            self.config.store_dir.join(store_path),
-                            save_path.join(cleaned_entry),
-                        )
-                    })
-                    .expect("expected no write errors");
+pub async fn import_packages_to_virtual_dir(
+    method: &PackageImportMethod,
+    cas_files: &HashMap<String, PathBuf>,
+    save_path: &PathBuf,
+    symlink_to: &PathBuf,
+) -> Result<(), PackageManagerError> {
+    match method {
+        PackageImportMethod::Auto => {
+            cas_files
+                .into_par_iter()
+                .try_for_each(|(cleaned_entry, store_path)| {
+                    auto_import(store_path, &save_path.join(cleaned_entry))
+                })
+                .expect("expected no write errors");
 
-                if !symlink_to.is_symlink() {
-                    fs::create_dir_all(symlink_to.parent().unwrap())?;
-                    crate::fs::symlink_dir(save_path, symlink_to)?;
-                }
+            if !symlink_to.is_symlink() {
+                fs::create_dir_all(symlink_to.parent().unwrap())?;
+                crate::fs::symlink_dir(save_path, symlink_to)?;
             }
-            _ => panic!("Not implemented yet"),
         }
-        Ok(())
+        _ => panic!("Not implemented yet"),
     }
+    Ok(())
 }
 
 fn auto_import<P: AsRef<Path>>(

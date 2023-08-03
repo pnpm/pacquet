@@ -1,10 +1,14 @@
-use std::path::Path;
+use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 
 use crate::commands::AddArgs;
+use crate::package_import::import_packages_to_virtual_dir;
 use crate::package_manager::{PackageManager, PackageManagerError};
-use async_recursion::async_recursion;
-use futures_util::future::join_all;
-use pacquet_tarball::get_package_store_folder_name;
+use futures_util::future;
+use pacquet_npmrc::Npmrc;
+use pacquet_registry::get_package_from_registry;
+use pacquet_registry::package_version::PackageVersion;
+use pacquet_tarball::download_tarball_to_store;
 
 impl PackageManager {
     /// Here is a brief overview of what this package does.
@@ -15,39 +19,76 @@ impl PackageManager {
     /// 5. Symlink all dependencies to node_modules/.pacquet/pkg@version/node_modules
     /// 6. Update package.json
     pub async fn add(&mut self, args: &AddArgs) -> Result<(), PackageManagerError> {
-        let latest_version = self.registry.get_package_by_version(&args.package, "latest").await?;
-        let dependency_store_folder_name =
-            get_package_store_folder_name(&args.package, &latest_version.version.to_string());
-
+        let package_version =
+            get_package_from_registry(&args.package, &self.http_client, &self.config.registry)
+                .await?;
+        let latest_version = package_version.get_latest()?;
+        let store_name = latest_version.get_store_name();
         let package_node_modules_path =
-            self.config.virtual_store_dir.join(dependency_store_folder_name).join("node_modules");
+            self.config.virtual_store_dir.join(store_name).join("node_modules");
 
-        let cas_paths = self
-            .tarball
-            .download_dependency(
-                &latest_version.dist.integrity,
+        {
+            // Install, extract and symlink tarball to necessary locations.
+            let cas_paths = download_tarball_to_store(
+                &self.http_client,
+                &self.config.store_dir,
+                &latest_version,
                 latest_version.get_tarball_url(),
-                latest_version.dist.unpacked_size,
             )
             .await?;
 
-        self.import_packages(
-            &cas_paths,
-            &package_node_modules_path.join(&args.package),
-            &self.config.modules_dir.join(&args.package),
-        )
-        .await?;
+            import_packages_to_virtual_dir(
+                &self.config.package_import_method,
+                &cas_paths,
+                &package_node_modules_path.join(&args.package),
+                &self.config.modules_dir.join(&args.package),
+            )
+            .await?;
+        }
 
-        join_all(
-            latest_version
-                .get_dependencies(self.config.auto_install_peers)
-                .iter()
-                .map(|(name, version)| {
-                    self.install_package(name, version, &package_node_modules_path)
-                })
-                .collect::<Vec<_>>(),
-        )
-        .await;
+        let mut queue: VecDeque<(PathBuf, Vec<PackageVersion>)> = VecDeque::new();
+        let config = &self.config;
+        let http_client = &self.http_client;
+
+        let handles = latest_version
+            .get_dependencies(self.config.auto_install_peers)
+            .iter()
+            .map(|(name, version)| async {
+                let path = &package_node_modules_path;
+                fetch_package(config, http_client, name, version, path).await.unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        let results = future::join_all(handles).await;
+
+        queue.push_front((package_node_modules_path, results));
+
+        while let Some((symlink_to_folder, dependencies)) = queue.pop_front() {
+            for dependency in dependencies {
+                let node_modules_path = self
+                    .config
+                    .virtual_store_dir
+                    .join(dependency.get_store_name())
+                    .join("node_modules");
+
+                println!(
+                    "package-> {}, node_modules_path -> {}",
+                    dependency.name,
+                    node_modules_path.display()
+                );
+
+                let handles = dependency
+                    .get_dependencies(self.config.auto_install_peers)
+                    .iter()
+                    .map(|(name, version)| async {
+                        fetch_package(config, http_client, name, version, &symlink_to_folder)
+                            .await
+                            .unwrap()
+                    })
+                    .collect::<Vec<_>>();
+                queue.push_back((node_modules_path, future::join_all(handles).await));
+            }
+        }
 
         self.package_json.add_dependency(
             &args.package,
@@ -58,56 +99,38 @@ impl PackageManager {
 
         Ok(())
     }
+}
 
-    #[async_recursion(?Send)]
-    pub async fn install_package(
-        &self,
-        name: &str,
-        version: &str,
-        symlink_path: &Path,
-    ) -> Result<(), PackageManagerError> {
-        let package = self.registry.get_package(name).await?;
-        let package_version = package.get_suitable_version_of(version)?.unwrap();
-        let dependency_store_folder_name =
-            get_package_store_folder_name(name, &package_version.version.to_string());
-        let package_node_modules_path =
-            self.config.virtual_store_dir.join(dependency_store_folder_name).join("node_modules");
+pub async fn fetch_package(
+    config: &Npmrc,
+    http_client: &reqwest::Client,
+    name: &str,
+    version: &str,
+    symlink_path: &Path,
+) -> Result<PackageVersion, PackageManagerError> {
+    let package = get_package_from_registry(name, http_client, &config.registry).await?;
+    let package_version = package.get_suitable_version_of(version)?.unwrap();
+    let dependency_store_folder_name = package_version.get_store_name();
+    let package_node_modules_path =
+        config.virtual_store_dir.join(dependency_store_folder_name).join("node_modules");
 
-        // Make sure to lock the package's mutex so we don't install the same package's tarball
-        // in different threads.
-        let mutex_guard = package.mutex.lock().await;
+    let cas_paths = download_tarball_to_store(
+        http_client,
+        &config.store_dir,
+        &package_version,
+        package_version.get_tarball_url(),
+    )
+    .await?;
 
-        let cas_paths = self
-            .tarball
-            .download_dependency(
-                &package_version.dist.integrity,
-                package_version.get_tarball_url(),
-                package_version.dist.unpacked_size,
-            )
-            .await?;
+    import_packages_to_virtual_dir(
+        &config.package_import_method,
+        &cas_paths,
+        &package_node_modules_path.join(name),
+        &symlink_path.join(&package.name),
+    )
+    .await?;
 
-        self.import_packages(
-            &cas_paths,
-            &package_node_modules_path.join(name),
-            &symlink_path.join(&package.name),
-        )
-        .await?;
-
-        drop(mutex_guard);
-
-        join_all(
-            package_version
-                .get_dependencies(self.config.auto_install_peers)
-                .iter()
-                .map(|(name, version)| {
-                    self.install_package(name, version, &package_node_modules_path)
-                })
-                .collect::<Vec<_>>(),
-        )
-        .await;
-
-        Ok(())
-    }
+    Ok(package_version.to_owned())
 }
 
 #[cfg(test)]

@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::{
     collections::HashMap,
     io::{Cursor, Read},
@@ -6,6 +7,8 @@ use std::{
 };
 
 use miette::Diagnostic;
+use pacquet_registry::package_version::PackageVersion;
+use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
 use thiserror::Error;
@@ -66,51 +69,36 @@ fn verify_checksum(data: &[u8], integrity: &str) -> Result<(), TarballError> {
     }
 }
 
-#[derive(Debug)]
-pub struct TarballManager {
-    http_client: Box<reqwest::Client>,
-    store_dir: PathBuf,
-}
+// #[instrument]
+pub async fn download_tarball_to_store<P: AsRef<Path>>(
+    http_client: &Client,
+    store_dir: P,
+    package_version: &PackageVersion,
+    url: &str,
+) -> Result<HashMap<String, PathBuf>, TarballError> {
+    let response = http_client.get(url).send().await?.bytes().await?;
+    verify_checksum(&response, &package_version.dist.integrity)?;
+    let data = decompress_gzip(&response, package_version.dist.unpacked_size)?;
+    let mut archive = Archive::new(Cursor::new(data));
 
-impl TarballManager {
-    pub fn new<P: Into<PathBuf>>(store_dir: P) -> Self {
-        TarballManager {
-            http_client: Box::new(reqwest::Client::new()),
-            store_dir: store_dir.into(),
-        }
-    }
+    let cas_files = archive
+        .entries()?
+        .map(|entry| {
+            let mut entry = entry.unwrap();
 
-    #[instrument]
-    pub async fn download_dependency(
-        &self,
-        integrity: &str,
-        url: &str,
-        unpacked_size: Option<usize>,
-    ) -> Result<HashMap<String, PathBuf>, TarballError> {
-        let response = self.http_client.get(url).send().await?.bytes().await?;
-        verify_checksum(&response, integrity)?;
-        let data = decompress_gzip(&response, unpacked_size)?;
-        let mut archive = Archive::new(Cursor::new(data));
+            // Read the contents of the entry
+            let mut buffer = Vec::with_capacity(entry.size() as usize);
+            entry.read_to_end(&mut buffer).unwrap();
 
-        let cas_files = archive
-            .entries()?
-            .map(|entry| {
-                let mut entry = entry.unwrap();
+            let entry_path = entry.path().unwrap();
+            let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>();
+            let integrity = pacquet_cafs::write_sync(store_dir.as_ref(), &buffer).unwrap();
 
-                // Read the contents of the entry
-                let mut buffer = Vec::with_capacity(entry.size() as usize);
-                entry.read_to_end(&mut buffer).unwrap();
+            (cleaned_entry_path.to_string_lossy().to_string(), store_dir.as_ref().join(integrity))
+        })
+        .collect::<HashMap<String, PathBuf>>();
 
-                let entry_path = entry.path().unwrap();
-                let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>();
-                let integrity = pacquet_cafs::write_sync(&self.store_dir, &buffer).unwrap();
-
-                (cleaned_entry_path.to_string_lossy().to_string(), integrity)
-            })
-            .collect::<HashMap<String, PathBuf>>();
-
-        Ok(cas_files)
-    }
+    Ok(cas_files)
 }
 
 pub fn get_package_store_folder_name(input: &str, version: &str) -> String {
@@ -119,6 +107,8 @@ pub fn get_package_store_folder_name(input: &str, version: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use node_semver::Version;
+    use pacquet_registry::package_distribution::PackageDistribution;
     use tempfile::tempdir;
 
     use super::*;
@@ -139,13 +129,36 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     async fn packages_under_orgs_should_work() {
         let store_path = tempdir().unwrap();
-        let manager = TarballManager::new(store_path.path());
+        let http_client = reqwest::Client::new();
 
-        let cas_files = manager.download_dependency(
-            "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
+        let package_version = PackageVersion {
+            name: "".to_string(),
+            version: Version {
+                major: 3,
+                minor: 3,
+                patch: 0,
+                build: vec![],
+                pre_release: vec![],
+            },            dist: PackageDistribution {
+                integrity: "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==".to_string(),
+                npm_signature: None,
+                shasum: "".to_string(),
+                tarball: "".to_string(),
+                file_count: None,
+                unpacked_size: Some(16697),
+            },
+            dependencies: None,
+            dev_dependencies: None,
+            peer_dependencies: None,
+        };
+        let cas_files = download_tarball_to_store(
+            &http_client,
+            store_path.path(),
+            &package_version,
             "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
-            Some(16697),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         let mut filenames = cas_files.keys().collect::<Vec<_>>();
         filenames.sort();
@@ -173,15 +186,36 @@ mod tests {
     #[tokio::test]
     async fn should_throw_error_on_checksum_mismatch() {
         let store_path = tempdir().unwrap();
+        let http_client = Client::new();
+        let package_version = PackageVersion {
+            name: "".to_string(),
+            version: Version {
+                major: 3,
+                minor: 3,
+                patch: 0,
+                build: vec![],
+                pre_release: vec![],
+            },
+            dist: PackageDistribution {
+                integrity: "sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==".to_string(),
+                npm_signature: None,
+                shasum: "".to_string(),
+                tarball: "".to_string(),
+                file_count: None,
+                unpacked_size: Some(16697),
+            },
+            dependencies: None,
+            dev_dependencies: None,
+            peer_dependencies: None,
+        };
 
-        // Try calling default as well
-        TarballManager::new(store_path.path())
-            .download_dependency(
-                "sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
-                "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
-                Some(16697),
-            )
-            .await
-            .expect_err("checksum mismatch");
+        download_tarball_to_store(
+            &http_client,
+            store_path.path(),
+            &package_version,
+            "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
+        )
+        .await
+        .expect_err("checksum mismatch");
     }
 }

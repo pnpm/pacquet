@@ -11,9 +11,6 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-pacquet_package_json = { workspace = true }
-pacquet_tarball      = { workspace = true }
-
 elsa               = { workspace = true }
 reqwest            = { workspace = true }
 reqwest-middleware = { workspace = true }

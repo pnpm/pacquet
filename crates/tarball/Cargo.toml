@@ -11,7 +11,8 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-pacquet_cafs = { workspace = true }
+pacquet_cafs     = { workspace = true }
+pacquet_registry = { workspace = true }
 
 miette       = { workspace = true }
 reqwest      = { workspace = true }
@@ -22,5 +23,6 @@ tracing      = { workspace = true }
 zune-inflate = { workspace = true }
 
 [dev-dependencies]
-tempfile = { workspace = true }
-tokio    = { workspace = true }
+tempfile    = { workspace = true }
+tokio       = { workspace = true }
+node-semver = { workspace = true }
