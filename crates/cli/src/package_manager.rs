@@ -7,10 +7,6 @@ use pacquet_registry::RegistryManager;
 use pacquet_tarball::TarballManager;
 use thiserror::Error;
 
-mod commands;
-mod package_import;
-mod symlink;
-
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
 pub enum PackageManagerError {
@@ -32,10 +28,10 @@ pub enum PackageManagerError {
 }
 
 pub struct PackageManager {
-    config: Box<Npmrc>,
-    package_json: Box<PackageJson>,
-    registry: Box<RegistryManager>,
-    tarball: Box<TarballManager>,
+    pub config: Box<Npmrc>,
+    pub package_json: Box<PackageJson>,
+    pub registry: Box<RegistryManager>,
+    pub tarball: Box<TarballManager>,
 }
 
 impl PackageManager {

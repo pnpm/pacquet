@@ -1256,14 +1256,26 @@ dependencies = [
 name = "pacquet_cli"
 version = "0.0.1"
 dependencies = [
+ "async-recursion",
  "clap",
+ "futures-util",
  "miette",
+ "node-semver",
  "pacquet_cafs",
  "pacquet_executor",
  "pacquet_npmrc",
  "pacquet_package_json",
- "pacquet_package_manager",
+ "pacquet_registry",
+ "pacquet_tarball",
+ "rayon",
+ "reflink-copy",
+ "reqwest",
+ "reqwest-middleware",
+ "reqwest-retry",
+ "serde",
+ "serde_json",
  "tempfile",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1306,30 +1318,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
-]
-
-[[package]]
-name = "pacquet_package_manager"
-version = "0.0.1"
-dependencies = [
- "async-recursion",
- "futures-util",
- "miette",
- "node-semver",
- "pacquet_npmrc",
- "pacquet_package_json",
- "pacquet_registry",
- "pacquet_tarball",
- "rayon",
- "reflink-copy",
- "reqwest",
- "reqwest-middleware",
- "reqwest-retry",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
 ]
 
 [[package]]

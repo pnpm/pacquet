@@ -1,3 +1,6 @@
+pub mod add;
+pub mod install;
+
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
