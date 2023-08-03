@@ -1,17 +1,18 @@
 mod commands;
+mod fs;
+mod package_import;
+mod package_manager;
 mod tracing;
 
-use std::env;
+use crate::commands::{Cli, StoreSubcommands, Subcommands};
+use crate::package_manager::PackageManager;
+use crate::tracing::enable_tracing_by_env;
 
 use clap::Parser;
-use commands::{Cli, Subcommands};
 use miette::{IntoDiagnostic, Result, WrapErr};
 use pacquet_executor::execute_shell;
 use pacquet_npmrc::get_current_npmrc;
 use pacquet_package_json::PackageJson;
-use pacquet_package_manager::PackageManager;
-
-use crate::{commands::StoreSubcommands, tracing::enable_tracing_by_env};
 
 pub async fn run_cli() -> Result<()> {
     enable_tracing_by_env();
@@ -20,8 +21,9 @@ pub async fn run_cli() -> Result<()> {
 }
 
 async fn run_commands(cli: Cli) -> Result<()> {
-    let current_directory =
-        cli.current_dir.unwrap_or(env::current_dir().expect("getting current directory failed"));
+    let current_directory = cli
+        .current_dir
+        .unwrap_or(std::env::current_dir().expect("getting current directory failed"));
     let package_json_path = current_directory.join("package.json");
 
     match &cli.subcommand {

@@ -1,11 +1,10 @@
 use std::path::Path;
 
+use crate::package_manager::{PackageManager, PackageManagerError};
 use async_recursion::async_recursion;
 use futures_util::future::join_all;
 use pacquet_package_json::DependencyGroup;
 use pacquet_tarball::get_package_store_folder_name;
-
-use crate::{PackageManager, PackageManagerError};
 
 impl PackageManager {
     /// Here is a brief overview of what this package does.
@@ -124,7 +123,6 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::PackageManager;
 
     #[tokio::test]
     pub async fn should_add_a_package_with_no_dependencies() {

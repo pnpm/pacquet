@@ -1,15 +1,13 @@
+use crate::package_manager::{PackageManager, PackageManagerError};
 use futures_util::future::join_all;
 use pacquet_package_json::DependencyGroup;
-use pacquet_registry::RegistryError;
-
-use crate::PackageManager;
 
 impl PackageManager {
     pub async fn install(
         &self,
         install_dev_dependencies: bool,
         install_optional_dependencies: bool,
-    ) -> Result<(), RegistryError> {
+    ) -> Result<(), PackageManagerError> {
         let mut dependency_groups = vec![DependencyGroup::Default, DependencyGroup::Optional];
         if install_dev_dependencies {
             dependency_groups.push(DependencyGroup::Dev);
@@ -37,10 +35,9 @@ impl PackageManager {
 mod tests {
     use std::env;
 
+    use crate::package_manager::PackageManager;
     use pacquet_package_json::{DependencyGroup, PackageJson};
     use tempfile::tempdir;
-
-    use crate::PackageManager;
 
     #[tokio::test]
     pub async fn should_install_dependencies() {

@@ -4,10 +4,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::package_manager::{PackageManager, PackageManagerError};
 use pacquet_npmrc::PackageImportMethod;
 use rayon::prelude::*;
-
-use crate::{symlink::symlink_dir, PackageManager, PackageManagerError};
 
 impl PackageManager {
     pub async fn import_packages(
@@ -30,7 +29,7 @@ impl PackageManager {
 
                 if !symlink_to.is_symlink() {
                     fs::create_dir_all(symlink_to.parent().unwrap())?;
-                    symlink_dir(save_path, symlink_to)?;
+                    crate::fs::symlink_dir(save_path, symlink_to)?;
                 }
             }
             _ => panic!("Not implemented yet"),
