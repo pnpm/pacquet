@@ -1,9 +1,9 @@
 use std::path::Path;
 
+use crate::commands::AddArgs;
 use crate::package_manager::{PackageManager, PackageManagerError};
 use async_recursion::async_recursion;
 use futures_util::future::join_all;
-use pacquet_package_json::DependencyGroup;
 use pacquet_tarball::get_package_store_folder_name;
 
 impl PackageManager {
@@ -14,15 +14,10 @@ impl PackageManager {
     /// 4. Download all dependencies to node_modules/.pacquet
     /// 5. Symlink all dependencies to node_modules/.pacquet/pkg@version/node_modules
     /// 6. Update package.json
-    pub async fn add(
-        &mut self,
-        name: &str,
-        dependency_group: DependencyGroup,
-        save_exact: bool,
-    ) -> Result<(), PackageManagerError> {
-        let latest_version = self.registry.get_package_by_version(name, "latest").await?;
+    pub async fn add(&mut self, args: &AddArgs) -> Result<(), PackageManagerError> {
+        let latest_version = self.registry.get_package_by_version(&args.package, "latest").await?;
         let dependency_store_folder_name =
-            get_package_store_folder_name(name, &latest_version.version.to_string());
+            get_package_store_folder_name(&args.package, &latest_version.version.to_string());
 
         let package_node_modules_path =
             self.config.virtual_store_dir.join(dependency_store_folder_name).join("node_modules");
@@ -38,8 +33,8 @@ impl PackageManager {
 
         self.import_packages(
             &cas_paths,
-            &package_node_modules_path.join(name),
-            &self.config.modules_dir.join(name),
+            &package_node_modules_path.join(&args.package),
+            &self.config.modules_dir.join(&args.package),
         )
         .await?;
 
@@ -55,9 +50,9 @@ impl PackageManager {
         .await;
 
         self.package_json.add_dependency(
-            name,
-            &latest_version.serialize(save_exact),
-            dependency_group,
+            &args.package,
+            &latest_version.serialize(args.save_exact),
+            args.get_dependency_group(),
         )?;
         self.package_json.save()?;
 
@@ -119,7 +114,7 @@ impl PackageManager {
 mod tests {
     use std::env;
 
-    use pacquet_package_json::PackageJson;
+    use pacquet_package_json::{DependencyGroup, PackageJson};
     use tempfile::tempdir;
 
     use super::*;
@@ -135,8 +130,15 @@ mod tests {
         // It should create a package_json if not exist
         assert!(package_json.exists());
 
-        manager.add("is-odd", DependencyGroup::Default, false).await.unwrap();
-
+        let args = AddArgs {
+            package: "is-odd".to_string(),
+            save_prod: false,
+            save_dev: false,
+            save_optional: false,
+            save_exact: false,
+            virtual_store_dir: current_directory.join("node_modules").to_string_lossy().to_string(),
+        };
+        manager.add(&args).await.unwrap();
         let package_path = dir.path().join("node_modules/is-odd");
         assert!(package_path.exists());
         assert!(package_path.is_symlink());

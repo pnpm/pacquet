@@ -36,16 +36,13 @@ async fn run_commands(cli: Cli) -> Result<()> {
                 .wrap_err("initializing the package manager")?;
             // TODO if a package already exists in another dependency group, we don't remove
             // the existing entry.
-            package_manager
-                .add(&args.package, args.get_dependency_group(), args.save_exact)
-                .await
-                .wrap_err("adding a new package")?;
+            package_manager.add(args).await.wrap_err("adding a new package")?;
         }
         Subcommands::Install(args) => {
             let package_manager = PackageManager::new(&package_json_path)
                 .wrap_err("initializing the package manager")?;
             package_manager
-                .install(args.dev, !args.no_optional)
+                .install(args)
                 .await
                 .into_diagnostic()
                 .wrap_err("installing dependencies")?;
