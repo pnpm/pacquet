@@ -18,7 +18,7 @@ pub struct PackageVersion {
 
 impl PackageVersion {
     pub fn get_store_name(&self) -> String {
-        format!("{0}@{1}", self.name.replace('/', "+"), self.version.to_string())
+        format!("{0}@{1}", self.name.replace('/', "+"), self.version)
     }
 
     pub fn get_tarball_url(&self) -> &str {

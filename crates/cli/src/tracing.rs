@@ -1,22 +1,10 @@
 use std::{str::FromStr, sync::atomic::AtomicBool};
 
 use tracing::Level;
-use tracing_subscriber::{fmt::format::FmtSpan, layer::Filter, EnvFilter, Layer};
+use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter, Layer};
 
 static IS_TRACING_ENABLED: AtomicBool = AtomicBool::new(false);
 
-// skip event because it's not useful for performance analysis
-struct FilterEvent;
-
-impl<S> Filter<S> for FilterEvent {
-    fn enabled(
-        &self,
-        meta: &tracing::Metadata<'_>,
-        _cx: &tracing_subscriber::layer::Context<'_, S>,
-    ) -> bool {
-        !meta.is_event()
-    }
-}
 pub fn enable_tracing_by_env() {
     let trace_var = std::env::var("TRACE").ok();
     let is_enable_tracing = trace_var.is_some();
@@ -50,9 +38,9 @@ fn generate_common_layers(
         // for the second unwrap, if we can't parse the directive, then the tracing result would be
         // unexpected, then panic is reasonable
         let env_layer = EnvFilter::builder()
-      .with_regex(true)
-      .parse(trace_var.expect("Should not be empty"))
-      .expect("Parse tracing directive syntax failed,for details about the directive syntax you could refer https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives");
+            .with_regex(true)
+            .parse(trace_var.expect("Should not be empty"))
+            .expect("Parse tracing directive syntax failed,for details about the directive syntax you could refer https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives");
 
         layers.push(env_layer.boxed());
     }
