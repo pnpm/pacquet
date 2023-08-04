@@ -135,16 +135,18 @@ pub async fn fetch_package(
 
 #[cfg(test)]
 mod tests {
-    use std::env;
+    use std::{env, fs};
 
+    use crate::fs::get_filenames_in_folder;
     use pacquet_package_json::{DependencyGroup, PackageJson};
     use tempfile::tempdir;
 
     use super::*;
 
     #[tokio::test]
-    pub async fn should_add_a_package_with_no_dependencies() {
+    pub async fn should_install_all_dependencies() {
         let dir = tempdir().unwrap();
+        let virtual_store_dir = dir.path().join("node_modules/.pacquet");
         let current_directory = env::current_dir().unwrap();
         env::set_current_dir(&dir).unwrap();
         let package_json = dir.path().join("package.json");
@@ -154,22 +156,92 @@ mod tests {
         assert!(package_json.exists());
 
         let args = AddArgs {
+            package: "is-even".to_string(),
+            save_prod: false,
+            save_dev: false,
+            save_optional: false,
+            save_exact: false,
+            virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
+        };
+        manager.add(&args).await.unwrap();
+        assert!(dir.path().join("node_modules/is-even").is_symlink());
+        assert!(dir.path().join("node_modules/is-even").join("package.json").exists());
+
+        // Check if all dependencies are loaded.
+        let dependencies = [
+            "is-buffer@1.1.6",
+            "is-even@1.0.0",
+            "is-number@3.0.0",
+            "is-odd@0.1.2",
+            "kind-of@3.2.2",
+        ];
+        dependencies.iter().for_each(|dep| {
+            assert!(virtual_store_dir.join(dep).is_dir());
+        });
+
+        // Ensure that is-buffer does not have any dependencies
+        let is_buffer_path = virtual_store_dir.join("is-buffer@1.1.6/node_modules");
+        assert_eq!(get_filenames_in_folder(&is_buffer_path), vec!["is-buffer"]);
+
+        // Ensure that is-even have correct dependencies
+        let is_even_path = virtual_store_dir.join("is-even@1.0.0/node_modules");
+        assert_eq!(get_filenames_in_folder(&is_even_path), vec!["is-even", "is-odd"]);
+
+        // Ensure that is-number does not have any dependencies
+        let is_number_path = virtual_store_dir.join("is-number@3.0.0/node_modules");
+        assert_eq!(get_filenames_in_folder(&is_number_path), vec!["is-number"]);
+
+        env::set_current_dir(&current_directory).unwrap();
+    }
+
+    #[tokio::test]
+    pub async fn should_symlink_correctly() {
+        let dir = tempdir().unwrap();
+        let virtual_store_dir = dir.path().join("node_modules/.pacquet");
+        let current_directory = env::current_dir().unwrap();
+        env::set_current_dir(&dir).unwrap();
+        let package_json = dir.path().join("package.json");
+        let mut manager = PackageManager::new(&package_json).unwrap();
+
+        let args = AddArgs {
             package: "is-odd".to_string(),
             save_prod: false,
             save_dev: false,
             save_optional: false,
             save_exact: false,
-            virtual_store_dir: current_directory.join("node_modules").to_string_lossy().to_string(),
+            virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
         };
         manager.add(&args).await.unwrap();
-        let package_path = dir.path().join("node_modules/is-odd");
-        assert!(package_path.exists());
-        assert!(package_path.is_symlink());
-        assert!(package_path.join("package.json").exists());
 
+        // Make sure the symlinks are correct
+        assert_eq!(
+            fs::read_link(virtual_store_dir.join("is-odd@0.1.2/node_modules/is-number")).unwrap(),
+            fs::canonicalize(virtual_store_dir.join("is-number@3.0.0/node_modules/is-number"))
+                .unwrap(),
+        );
+        env::set_current_dir(&current_directory).unwrap();
+    }
+
+    #[tokio::test]
+    pub async fn should_add_to_package_json() {
+        let dir = tempdir().unwrap();
+        let virtual_store_dir = dir.path().join("node_modules/.pacquet");
+        let current_directory = env::current_dir().unwrap();
+        env::set_current_dir(&dir).unwrap();
+        let package_json = dir.path().join("package.json");
+        let mut manager = PackageManager::new(&package_json).unwrap();
+
+        let args = AddArgs {
+            package: "is-odd".to_string(),
+            save_prod: false,
+            save_dev: false,
+            save_optional: false,
+            save_exact: false,
+            virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
+        };
+        manager.add(&args).await.unwrap();
         let file = PackageJson::from_path(&dir.path().join("package.json")).unwrap();
         assert!(file.get_dependencies(vec![DependencyGroup::Default]).contains_key("is-odd"));
-
         env::set_current_dir(&current_directory).unwrap();
     }
 }
