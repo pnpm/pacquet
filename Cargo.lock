@@ -113,17 +113,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-recursion"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e97ce7de6cf12de5d7226c73f5ba9811622f4db3a5b91b55c53e987e5f91cba"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "async-trait"
 version = "0.1.72"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -477,15 +466,6 @@ name = "either"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a26ae43d7bcc3b814de94796a5e736d4029efb0ee900c12e2d54c993ad1a1e07"
-
-[[package]]
-name = "elsa"
-version = "1.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5e0aca8dce8856e420195bd13b6a64de3334235ccc9214e824b86b12bf26283"
-dependencies = [
- "stable_deref_trait",
-]
 
 [[package]]
 name = "encode_unicode"
@@ -1322,10 +1302,8 @@ dependencies = [
 name = "pacquet_cli"
 version = "0.0.1"
 dependencies = [
- "async-recursion",
  "async-trait",
  "clap",
- "futures",
  "futures-util",
  "insta",
  "miette",
@@ -1394,7 +1372,6 @@ dependencies = [
 name = "pacquet_registry"
 version = "0.0.1"
 dependencies = [
- "elsa",
  "miette",
  "node-semver",
  "reqwest",
@@ -2018,12 +1995,6 @@ dependencies = [
  "thiserror",
  "xxhash-rust",
 ]
-
-[[package]]
-name = "stable_deref_trait"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
 
 [[package]]
 name = "strsim"

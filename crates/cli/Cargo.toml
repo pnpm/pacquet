@@ -22,10 +22,8 @@ pacquet_package_json = { workspace = true }
 pacquet_registry     = { workspace = true }
 pacquet_tarball      = { workspace = true }
 
-async-recursion    = { workspace = true }
 async-trait        = { workspace = true }
 clap               = { workspace = true }
-futures            = { workspace = true }
 futures-util       = { workspace = true }
 miette             = { workspace = true }
 rayon              = { workspace = true }

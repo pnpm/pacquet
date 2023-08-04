@@ -23,13 +23,10 @@ pacquet_executor     = { path = "crates/executor" }
 pacquet_cafs         = { path = "crates/cafs" }
 
 # Dependencies
-async-recursion    = { version = "1.0.4" }
 async-trait        = { version = "0.1.72" }
 clap               = { version = "4", features = ["derive"] }
-elsa               = { version = "1.8.1" }
 home               = { version = "0.5.5" }
 insta              = { version = "1.31.0", features = ["yaml", "glob", "walkdir"] }
-futures            = { version = "0.3.28" }
 futures-util       = { version = "0.3.28" }
 miette             = { version = "5.9.0", features = ["fancy"] }
 reflink-copy       = { version = "0.1.5" }
