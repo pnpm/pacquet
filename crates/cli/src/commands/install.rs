@@ -1,8 +1,10 @@
-use crate::commands::add::fetch_package;
 use crate::commands::InstallArgs;
+use crate::package::find_package_version_from_registry;
 use crate::package_manager::{PackageManager, PackageManagerError};
-use futures_util::future::join_all;
+use futures_util::future;
 use pacquet_package_json::DependencyGroup;
+use pacquet_registry::package_version::PackageVersion;
+use std::collections::VecDeque;
 
 impl PackageManager {
     pub async fn install(&self, args: &InstallArgs) -> Result<(), PackageManagerError> {
@@ -13,20 +15,52 @@ impl PackageManager {
         if !args.no_optional {
             dependency_groups.remove(1);
         }
+
+        let config = &self.config;
+        let path = &self.config.modules_dir;
+        let http_client = &self.http_client;
+        let mut queue: VecDeque<Vec<PackageVersion>> = VecDeque::new();
+
         let dependencies = self.package_json.get_dependencies(dependency_groups);
 
-        join_all(
-            dependencies
-                .iter()
-                .map(|(name, version)| {
-                    let config = &self.config;
-                    let path = &self.config.modules_dir;
-                    let http_client = &self.http_client;
-                    async move { fetch_package(config, &http_client, name, version, &path) }
-                })
-                .collect::<Vec<_>>(),
-        )
-        .await;
+        let direct_dependency_handles = dependencies
+            .iter()
+            .map(|(name, version)| async move {
+                find_package_version_from_registry(config, http_client, name, version, path)
+                    .await
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        queue.push_front(future::join_all(direct_dependency_handles).await);
+
+        while let Some(dependencies) = queue.pop_front() {
+            for dependency in dependencies {
+                let node_modules_path = self
+                    .config
+                    .virtual_store_dir
+                    .join(dependency.get_store_name())
+                    .join("node_modules");
+
+                let handles = dependency
+                    .get_dependencies(self.config.auto_install_peers)
+                    .iter()
+                    .map(|(name, version)| async {
+                        find_package_version_from_registry(
+                            config,
+                            http_client,
+                            name,
+                            version,
+                            &node_modules_path,
+                        )
+                        .await
+                        .unwrap()
+                    })
+                    .collect::<Vec<_>>();
+
+                queue.push_back(future::join_all(handles).await);
+            }
+        }
 
         Ok(())
     }
@@ -37,6 +71,7 @@ mod tests {
     use std::env;
 
     use crate::commands::InstallArgs;
+    use crate::fs::get_all_folders;
     use crate::package_manager::PackageManager;
     use pacquet_package_json::{DependencyGroup, PackageJson};
     use tempfile::tempdir;
@@ -60,6 +95,7 @@ mod tests {
         let package_manager = PackageManager::new(&package_json_path).unwrap();
         let args = InstallArgs { prod: false, dev: true, no_optional: false };
         package_manager.install(&args).await.unwrap();
+
         // Make sure the package is installed
         assert!(dir.path().join("node_modules/is-odd").is_symlink());
         assert!(dir.path().join("node_modules/.pacquet/is-odd@3.0.1").exists());
@@ -69,6 +105,8 @@ mod tests {
         // Make sure we install dev-dependencies as well
         assert!(dir.path().join("node_modules/fast-decode-uri-component").is_symlink());
         assert!(dir.path().join("node_modules/.pacquet/fast-decode-uri-component@1.0.1").is_dir());
+
+        insta::assert_debug_snapshot!(get_all_folders(&dir.path().to_path_buf()));
 
         env::set_current_dir(&current_directory).unwrap();
     }

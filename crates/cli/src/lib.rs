@@ -1,5 +1,6 @@
 mod commands;
 mod fs;
+mod package;
 mod package_import;
 mod package_manager;
 mod tracing;

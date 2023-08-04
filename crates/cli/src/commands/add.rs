@@ -1,14 +1,12 @@
 use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
 
-use crate::commands::AddArgs;
-use crate::package_import::import_packages_to_virtual_dir;
-use crate::package_manager::{PackageManager, PackageManagerError};
+use crate::package::{fetch_package_version_directly, find_package_version_from_registry};
+use crate::{
+    commands::AddArgs,
+    package_manager::{PackageManager, PackageManagerError},
+};
 use futures_util::future;
-use pacquet_npmrc::Npmrc;
-use pacquet_registry::get_package_from_registry;
 use pacquet_registry::package_version::PackageVersion;
-use pacquet_tarball::download_tarball_to_store;
 
 impl PackageManager {
     /// Here is a brief overview of what this package does.
@@ -19,51 +17,38 @@ impl PackageManager {
     /// 5. Symlink all dependencies to node_modules/.pacquet/pkg@version/node_modules
     /// 6. Update package.json
     pub async fn add(&mut self, args: &AddArgs) -> Result<(), PackageManagerError> {
-        let package_version =
-            get_package_from_registry(&args.package, &self.http_client, &self.config.registry)
-                .await?;
-        let latest_version = package_version.get_latest()?;
-        let store_name = latest_version.get_store_name();
-        let package_node_modules_path =
-            self.config.virtual_store_dir.join(store_name).join("node_modules");
+        let latest_version = fetch_package_version_directly(
+            &self.config,
+            &self.http_client,
+            &args.package,
+            "latest",
+            &self.config.modules_dir,
+        )
+        .await?;
+        let package_node_modules_path = self
+            .config
+            .virtual_store_dir
+            .join(latest_version.get_store_name())
+            .join("node_modules");
 
-        {
-            // Install, extract and symlink tarball to necessary locations.
-            let cas_paths = download_tarball_to_store(
-                &self.http_client,
-                &self.config.store_dir,
-                &latest_version,
-                latest_version.get_tarball_url(),
-            )
-            .await?;
-
-            import_packages_to_virtual_dir(
-                &self.config.package_import_method,
-                &cas_paths,
-                &package_node_modules_path.join(&args.package),
-                &self.config.modules_dir.join(&args.package),
-            )
-            .await?;
-        }
-
-        let mut queue: VecDeque<(PathBuf, Vec<PackageVersion>)> = VecDeque::new();
+        let mut queue: VecDeque<Vec<PackageVersion>> = VecDeque::new();
         let config = &self.config;
         let http_client = &self.http_client;
+        let path = &package_node_modules_path;
 
-        let handles = latest_version
+        let direct_dependency_handles = latest_version
             .get_dependencies(self.config.auto_install_peers)
             .iter()
             .map(|(name, version)| async {
-                let path = &package_node_modules_path;
-                fetch_package(config, http_client, name, version, path).await.unwrap()
+                find_package_version_from_registry(config, http_client, name, version, path)
+                    .await
+                    .unwrap()
             })
             .collect::<Vec<_>>();
 
-        let results = future::join_all(handles).await;
+        queue.push_front(future::join_all(direct_dependency_handles).await);
 
-        queue.push_front((package_node_modules_path, results));
-
-        while let Some((symlink_to_folder, dependencies)) = queue.pop_front() {
+        while let Some(dependencies) = queue.pop_front() {
             for dependency in dependencies {
                 let node_modules_path = self
                     .config
@@ -71,22 +56,23 @@ impl PackageManager {
                     .join(dependency.get_store_name())
                     .join("node_modules");
 
-                println!(
-                    "package-> {}, node_modules_path -> {}",
-                    dependency.name,
-                    node_modules_path.display()
-                );
-
                 let handles = dependency
                     .get_dependencies(self.config.auto_install_peers)
                     .iter()
                     .map(|(name, version)| async {
-                        fetch_package(config, http_client, name, version, &symlink_to_folder)
-                            .await
-                            .unwrap()
+                        find_package_version_from_registry(
+                            config,
+                            http_client,
+                            name,
+                            version,
+                            &node_modules_path,
+                        )
+                        .await
+                        .unwrap()
                     })
                     .collect::<Vec<_>>();
-                queue.push_back((node_modules_path, future::join_all(handles).await));
+
+                queue.push_back(future::join_all(handles).await);
             }
         }
 
@@ -101,40 +87,9 @@ impl PackageManager {
     }
 }
 
-pub async fn fetch_package(
-    config: &Npmrc,
-    http_client: &reqwest::Client,
-    name: &str,
-    version: &str,
-    symlink_path: &Path,
-) -> Result<PackageVersion, PackageManagerError> {
-    let package = get_package_from_registry(name, http_client, &config.registry).await?;
-    let package_version = package.get_suitable_version_of(version)?.unwrap();
-    let dependency_store_folder_name = package_version.get_store_name();
-    let package_node_modules_path =
-        config.virtual_store_dir.join(dependency_store_folder_name).join("node_modules");
-
-    let cas_paths = download_tarball_to_store(
-        http_client,
-        &config.store_dir,
-        &package_version,
-        package_version.get_tarball_url(),
-    )
-    .await?;
-
-    import_packages_to_virtual_dir(
-        &config.package_import_method,
-        &cas_paths,
-        &package_node_modules_path.join(name),
-        &symlink_path.join(&package.name),
-    )
-    .await?;
-
-    Ok(package_version.to_owned())
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::fs::get_all_folders;
     use std::{env, fs};
 
     use crate::fs::get_filenames_in_folder;
@@ -164,20 +119,8 @@ mod tests {
             virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
         };
         manager.add(&args).await.unwrap();
-        assert!(dir.path().join("node_modules/is-even").is_symlink());
-        assert!(dir.path().join("node_modules/is-even").join("package.json").exists());
 
-        // Check if all dependencies are loaded.
-        let dependencies = [
-            "is-buffer@1.1.6",
-            "is-even@1.0.0",
-            "is-number@3.0.0",
-            "is-odd@0.1.2",
-            "kind-of@3.2.2",
-        ];
-        dependencies.iter().for_each(|dep| {
-            assert!(virtual_store_dir.join(dep).is_dir());
-        });
+        insta::assert_debug_snapshot!(get_all_folders(&dir.path().to_path_buf()));
 
         // Ensure that is-buffer does not have any dependencies
         let is_buffer_path = virtual_store_dir.join("is-buffer@1.1.6/node_modules");
@@ -189,7 +132,7 @@ mod tests {
 
         // Ensure that is-number does not have any dependencies
         let is_number_path = virtual_store_dir.join("is-number@3.0.0/node_modules");
-        assert_eq!(get_filenames_in_folder(&is_number_path), vec!["is-number"]);
+        assert_eq!(get_filenames_in_folder(&is_number_path), vec!["is-number", "kind-of"]);
 
         env::set_current_dir(&current_directory).unwrap();
     }
@@ -213,10 +156,12 @@ mod tests {
         };
         manager.add(&args).await.unwrap();
 
+        insta::assert_debug_snapshot!(get_all_folders(&dir.path().to_path_buf()));
+
         // Make sure the symlinks are correct
         assert_eq!(
-            fs::read_link(virtual_store_dir.join("is-odd@0.1.2/node_modules/is-number")).unwrap(),
-            fs::canonicalize(virtual_store_dir.join("is-number@3.0.0/node_modules/is-number"))
+            fs::read_link(virtual_store_dir.join("is-odd@3.0.1/node_modules/is-number")).unwrap(),
+            fs::canonicalize(virtual_store_dir.join("is-number@6.0.0/node_modules/is-number"))
                 .unwrap(),
         );
         env::set_current_dir(&current_directory).unwrap();
