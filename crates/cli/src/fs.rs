@@ -31,7 +31,8 @@ pub fn get_all_folders(root: &std::path::PathBuf) -> Vec<String> {
             let simple_path = entry_path.strip_prefix(root).unwrap().to_string_lossy().to_string();
 
             if !simple_path.is_empty() {
-                files.push(simple_path);
+                // The following replace is needed for Windows.
+                files.push(simple_path.replace("\\\\", "/"));
             }
         }
     }
