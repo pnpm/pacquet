@@ -26,10 +26,15 @@ pub fn get_all_folders(root: &std::path::PathBuf) -> Vec<String> {
     let mut files = Vec::new();
     for entry in walkdir::WalkDir::new(root) {
         let entry = entry.unwrap();
+        let entry_path = entry.path().to_path_buf();
         if entry.file_type().is_dir() || entry.file_type().is_symlink() {
-            let path = entry.path().to_path_buf();
-            files.push(path.strip_prefix(root).unwrap().to_string_lossy().to_string());
+            let simple_path = entry_path.strip_prefix(root).unwrap().to_string_lossy().to_string();
+
+            if !simple_path.is_empty() {
+                files.push(simple_path);
+            }
         }
     }
+    files.sort();
     files
 }
