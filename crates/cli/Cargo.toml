@@ -23,7 +23,6 @@ pacquet_registry     = { workspace = true }
 pacquet_tarball      = { workspace = true }
 pacquet_diagnostics  = { workspace = true }
 
-async-trait  = { workspace = true }
 clap         = { workspace = true }
 futures-util = { workspace = true }
 rayon        = { workspace = true }

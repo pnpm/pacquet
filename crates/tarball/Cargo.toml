@@ -17,8 +17,8 @@ pacquet_diagnostics = { workspace = true }
 reqwest      = { workspace = true }
 ssri         = { workspace = true }
 tar          = { workspace = true }
+tokio        = { workspace = true }
 zune-inflate = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-tokio    = { workspace = true }

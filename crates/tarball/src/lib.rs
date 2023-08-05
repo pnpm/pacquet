@@ -14,8 +14,7 @@ use pacquet_diagnostics::{
 use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
-use zune_inflate::errors::InflateDecodeErrors;
-use zune_inflate::{DeflateDecoder, DeflateOptions};
+use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
 
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
@@ -43,6 +42,10 @@ pub enum TarballError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Cafs(#[from] pacquet_cafs::CafsError),
+
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_tarball::task_join_error))]
+    TaskJoin(#[from] tokio::task::JoinError),
 }
 
 #[instrument]
@@ -71,36 +74,42 @@ fn verify_checksum(data: &[u8], integrity: &str) -> Result<(), TarballError> {
 }
 
 // #[instrument]
-pub async fn download_tarball_to_store<P: AsRef<Path>>(
-    store_dir: P,
+pub async fn download_tarball_to_store(
+    store_dir: &Path,
     package_integrity: &str,
     package_unpacked_size: Option<usize>,
     package_url: &str,
 ) -> Result<HashMap<String, PathBuf>, TarballError> {
     let http_client = Client::new();
     let response = http_client.get(package_url).send().await?.bytes().await?;
-    verify_checksum(&response, package_integrity)?;
-    let data = decompress_gzip(&response, package_unpacked_size)?;
-    let mut archive = Archive::new(Cursor::new(data));
 
-    let cas_files = archive
-        .entries()?
-        .map(|entry| {
-            let mut entry = entry.unwrap();
+    let package_integrity = package_integrity.to_owned();
+    let store_dir = store_dir.to_owned();
+    tokio::task::spawn(async move {
+        verify_checksum(&response, &package_integrity)?;
+        let data = decompress_gzip(&response, package_unpacked_size).unwrap();
+        let mut archive = Archive::new(Cursor::new(data));
+        let cas_files = archive
+            .entries()
+            .unwrap()
+            .map(|entry| {
+                let mut entry = entry.unwrap();
 
-            // Read the contents of the entry
-            let mut buffer = Vec::with_capacity(entry.size() as usize);
-            entry.read_to_end(&mut buffer).unwrap();
+                // Read the contents of the entry
+                let mut buffer = Vec::with_capacity(entry.size() as usize);
+                entry.read_to_end(&mut buffer).unwrap();
 
-            let entry_path = entry.path().unwrap();
-            let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>();
-            let integrity = pacquet_cafs::write_sync(store_dir.as_ref(), &buffer).unwrap();
+                let entry_path = entry.path().unwrap();
+                let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>();
+                let integrity = pacquet_cafs::write_sync(store_dir.as_path(), &buffer).unwrap();
 
-            (cleaned_entry_path.to_string_lossy().to_string(), store_dir.as_ref().join(integrity))
-        })
-        .collect::<HashMap<String, PathBuf>>();
+                (cleaned_entry_path.to_string_lossy().to_string(), store_dir.join(integrity))
+            })
+            .collect::<HashMap<String, PathBuf>>();
 
-    Ok(cas_files)
+        Ok(cas_files)
+    })
+    .await?
 }
 
 pub fn get_package_store_folder_name(input: &str, version: &str) -> String {
