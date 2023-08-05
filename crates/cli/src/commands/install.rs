@@ -1,13 +1,30 @@
-use crate::commands::InstallArgs;
 use crate::package::find_package_version_from_registry;
 use crate::package_manager::{PackageManager, PackageManagerError};
+use clap::Parser;
 use futures_util::future;
 use pacquet_package_json::DependencyGroup;
 use pacquet_registry::package_version::PackageVersion;
 use std::collections::VecDeque;
 
+#[derive(Parser, Debug)]
+pub struct InstallCommandArgs {
+    /// pacquet will not install any package listed in devDependencies and will remove those insofar
+    /// they were already installed, if the NODE_ENV environment variable is set to production.
+    /// Use this flag to instruct pacquet to ignore NODE_ENV and take its production status from this
+    /// flag instead.
+    #[arg(short = 'P', long = "prod")]
+    pub prod: bool,
+    /// Only devDependencies are installed and dependencies are removed insofar they were
+    /// already installed, regardless of the NODE_ENV.
+    #[arg(short = 'D', long = "dev")]
+    pub dev: bool,
+    /// optionalDependencies are not installed.
+    #[arg(long = "no-optional")]
+    pub no_optional: bool,
+}
+
 impl PackageManager {
-    pub async fn install(&self, args: &InstallArgs) -> Result<(), PackageManagerError> {
+    pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
         let mut dependency_groups = vec![DependencyGroup::Default, DependencyGroup::Optional];
         if args.dev {
             dependency_groups.push(DependencyGroup::Dev);
@@ -70,7 +87,7 @@ impl PackageManager {
 mod tests {
     use std::env;
 
-    use crate::commands::InstallArgs;
+    use crate::commands::install::InstallCommandArgs;
     use crate::fs::get_all_folders;
     use crate::package_manager::PackageManager;
     use pacquet_package_json::{DependencyGroup, PackageJson};
@@ -93,7 +110,7 @@ mod tests {
         package_json.save().unwrap();
 
         let package_manager = PackageManager::new(&package_json_path).unwrap();
-        let args = InstallArgs { prod: false, dev: true, no_optional: false };
+        let args = InstallCommandArgs { prod: false, dev: true, no_optional: false };
         package_manager.install(&args).await.unwrap();
 
         // Make sure the package is installed

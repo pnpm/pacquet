@@ -1,12 +1,48 @@
+use clap::Parser;
 use std::collections::VecDeque;
 
-use crate::package::{fetch_package_version_directly, find_package_version_from_registry};
 use crate::{
-    commands::AddArgs,
+    package::{fetch_package_version_directly, find_package_version_from_registry},
     package_manager::{PackageManager, PackageManagerError},
 };
 use futures_util::future;
+use pacquet_package_json::DependencyGroup;
 use pacquet_registry::package_version::PackageVersion;
+
+#[derive(Parser, Debug)]
+pub struct AddCommandArgs {
+    /// Name of the package
+    pub package: String,
+    /// Install the specified packages as regular dependencies.
+    #[arg(short = 'P', long = "save-prod", group = "dependency_group")]
+    save_prod: bool,
+    /// Install the specified packages as devDependencies.
+    #[arg(short = 'D', long = "save-dev", group = "dependency_group")]
+    save_dev: bool,
+    /// Install the specified packages as optionalDependencies.
+    #[arg(short = 'O', long = "save-optional", group = "dependency_group")]
+    save_optional: bool,
+    /// Saved dependencies will be configured with an exact version rather than using
+    /// pacquet's default semver range operator.
+    #[arg(short = 'E', long = "save-exact")]
+    pub save_exact: bool,
+    /// The directory with links to the store (default is node_modules/.pacquet).
+    /// All direct and indirect dependencies of the project are linked into this directory
+    #[arg(long = "virtual-store-dir", default_value = "node_modules/.pacquet")]
+    pub virtual_store_dir: String,
+}
+
+impl AddCommandArgs {
+    pub fn get_dependency_group(&self) -> DependencyGroup {
+        if self.save_dev {
+            DependencyGroup::Dev
+        } else if self.save_optional {
+            DependencyGroup::Optional
+        } else {
+            DependencyGroup::Default
+        }
+    }
+}
 
 impl PackageManager {
     /// Here is a brief overview of what this package does.
@@ -16,7 +52,7 @@ impl PackageManager {
     /// 4. Download all dependencies to node_modules/.pacquet
     /// 5. Symlink all dependencies to node_modules/.pacquet/pkg@version/node_modules
     /// 6. Update package.json
-    pub async fn add(&mut self, args: &AddArgs) -> Result<(), PackageManagerError> {
+    pub async fn add(&mut self, args: &AddCommandArgs) -> Result<(), PackageManagerError> {
         let latest_version = fetch_package_version_directly(
             &self.config,
             &self.http_client,
@@ -110,7 +146,7 @@ mod tests {
         // It should create a package_json if not exist
         assert!(package_json.exists());
 
-        let args = AddArgs {
+        let args = AddCommandArgs {
             package: "is-even".to_string(),
             save_prod: false,
             save_dev: false,
@@ -146,7 +182,7 @@ mod tests {
         let package_json = dir.path().join("package.json");
         let mut manager = PackageManager::new(&package_json).unwrap();
 
-        let args = AddArgs {
+        let args = AddCommandArgs {
             package: "is-odd".to_string(),
             save_prod: false,
             save_dev: false,
@@ -176,7 +212,7 @@ mod tests {
         let package_json = dir.path().join("package.json");
         let mut manager = PackageManager::new(&package_json).unwrap();
 
-        let args = AddArgs {
+        let args = AddCommandArgs {
             package: "is-odd".to_string(),
             save_prod: false,
             save_dev: false,

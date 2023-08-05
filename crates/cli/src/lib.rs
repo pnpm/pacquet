@@ -5,10 +5,11 @@ mod package_import;
 mod package_manager;
 mod tracing;
 
-use crate::commands::{Cli, StoreSubcommands, Subcommands};
 use crate::package_manager::PackageManager;
 use crate::tracing::enable_tracing_by_env;
 
+use crate::commands::store::StoreSubcommands;
+use crate::commands::{Cli, Subcommands};
 use clap::Parser;
 use miette::{IntoDiagnostic, Result, WrapErr};
 use pacquet_executor::execute_shell;
@@ -22,10 +23,7 @@ pub async fn run_cli() -> Result<()> {
 }
 
 async fn run_commands(cli: Cli) -> Result<()> {
-    let current_directory = cli
-        .current_dir
-        .unwrap_or(std::env::current_dir().expect("getting current directory failed"));
-    let package_json_path = current_directory.join("package.json");
+    let package_json_path = cli.current_dir.join("package.json");
 
     match &cli.subcommand {
         Subcommands::Init => {
