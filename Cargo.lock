@@ -1306,9 +1306,9 @@ dependencies = [
  "clap",
  "futures-util",
  "insta",
- "miette",
  "node-semver",
  "pacquet_cafs",
+ "pacquet_diagnostics",
  "pacquet_executor",
  "pacquet_npmrc",
  "pacquet_package_json",
@@ -1322,29 +1322,34 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror",
  "tokio",
+ "walkdir",
+]
+
+[[package]]
+name = "pacquet_diagnostics"
+version = "0.0.1"
+dependencies = [
+ "miette",
+ "thiserror",
  "tracing",
  "tracing-subscriber",
- "walkdir",
 ]
 
 [[package]]
 name = "pacquet_executor"
 version = "0.0.1"
 dependencies = [
- "miette",
- "thiserror",
+ "pacquet_diagnostics",
 ]
 
 [[package]]
 name = "pacquet_lockfile"
 version = "0.0.1"
 dependencies = [
- "miette",
+ "pacquet_diagnostics",
  "serde",
  "serde_yaml",
- "thiserror",
 ]
 
 [[package]]
@@ -1361,26 +1366,24 @@ dependencies = [
 name = "pacquet_package_json"
 version = "0.0.1"
 dependencies = [
- "miette",
+ "pacquet_diagnostics",
  "serde",
  "serde_json",
  "tempfile",
- "thiserror",
 ]
 
 [[package]]
 name = "pacquet_registry"
 version = "0.0.1"
 dependencies = [
- "miette",
  "node-semver",
+ "pacquet_diagnostics",
  "reqwest",
  "reqwest-middleware",
  "reqwest-retry",
  "serde",
  "serde_json",
  "tempfile",
- "thiserror",
  "tokio",
 ]
 
@@ -1388,15 +1391,13 @@ dependencies = [
 name = "pacquet_tarball"
 version = "0.0.1"
 dependencies = [
- "miette",
  "pacquet_cafs",
+ "pacquet_diagnostics",
  "reqwest",
  "ssri",
  "tar",
  "tempfile",
- "thiserror",
  "tokio",
- "tracing",
  "zune-inflate",
 ]
 

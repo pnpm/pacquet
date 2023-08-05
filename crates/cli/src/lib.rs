@@ -3,15 +3,16 @@ mod fs;
 mod package;
 mod package_import;
 mod package_manager;
-mod tracing;
 
 use crate::package_manager::PackageManager;
-use crate::tracing::enable_tracing_by_env;
 
 use crate::commands::store::StoreSubcommands;
 use crate::commands::{Cli, Subcommands};
 use clap::Parser;
-use miette::{IntoDiagnostic, Result, WrapErr};
+use pacquet_diagnostics::{
+    enable_tracing_by_env,
+    miette::{IntoDiagnostic, Result, WrapErr},
+};
 use pacquet_executor::execute_shell;
 use pacquet_npmrc::get_current_npmrc;
 use pacquet_package_json::PackageJson;

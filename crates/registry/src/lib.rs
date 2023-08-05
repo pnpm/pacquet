@@ -2,10 +2,11 @@ pub mod package;
 pub mod package_distribution;
 pub mod package_version;
 
-use miette::Diagnostic;
-use thiserror::Error;
-
 use crate::{package::Package, package_version::PackageVersion};
+use pacquet_diagnostics::{
+    miette::{self, Diagnostic},
+    thiserror::{self, Error},
+};
 
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]

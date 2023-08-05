@@ -7,9 +7,11 @@ use std::{
     path::PathBuf,
 };
 
-use miette::Diagnostic;
+use pacquet_diagnostics::{
+    miette::{self, Diagnostic},
+    thiserror::{self, Error},
+};
 use serde_json::{json, Map, Value};
-use thiserror::Error;
 
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]

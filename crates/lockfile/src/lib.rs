@@ -7,9 +7,11 @@ use std::{
     path::PathBuf,
 };
 
-use miette::Diagnostic;
+use pacquet_diagnostics::{
+    miette::{self, Diagnostic},
+    thiserror::{self, Error},
+};
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 use crate::package::LockfilePackage;
 
