@@ -21,6 +21,7 @@ pacquet_lockfile     = { path = "crates/lockfile" }
 pacquet_npmrc        = { path = "crates/npmrc" }
 pacquet_executor     = { path = "crates/executor" }
 pacquet_cafs         = { path = "crates/cafs" }
+pacquet_diagnostics  = { path = "crates/diagnostics" }
 
 # Dependencies
 async-trait        = { version = "0.1.72" }

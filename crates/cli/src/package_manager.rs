@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 
-use miette::Diagnostic;
+use pacquet_diagnostics::{
+    miette::{self, Diagnostic},
+    thiserror::{self, Error},
+};
 use pacquet_npmrc::{get_current_npmrc, Npmrc};
 use pacquet_package_json::PackageJson;
-use thiserror::Error;
 
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]

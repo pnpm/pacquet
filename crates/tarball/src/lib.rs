@@ -6,12 +6,14 @@ use std::{
     str::FromStr,
 };
 
-use miette::Diagnostic;
+use pacquet_diagnostics::{
+    miette::{self, Diagnostic},
+    thiserror::{self, Error},
+    tracing::{self, instrument},
+};
 use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
-use thiserror::Error;
-use tracing::instrument;
 use zune_inflate::errors::InflateDecodeErrors;
 use zune_inflate::{DeflateDecoder, DeflateOptions};
 

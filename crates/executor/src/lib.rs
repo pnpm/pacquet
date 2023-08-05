@@ -1,7 +1,9 @@
 use std::process::Command;
 
-use miette::{Diagnostic, Result};
-use thiserror::Error;
+use pacquet_diagnostics::{
+    miette::{self, Diagnostic, Result},
+    thiserror::{self, Error},
+};
 
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]

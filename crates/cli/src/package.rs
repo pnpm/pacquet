@@ -22,7 +22,7 @@ pub async fn find_package_version_from_registry<P: AsRef<Path>>(
     symlink_path: P,
 ) -> Result<PackageVersion, PackageManagerError> {
     let package = get_package_from_registry(name, http_client, &config.registry).await?;
-    let package_version = package.get_suitable_version_of(version)?.unwrap();
+    let package_version = package.get_pinned_version(version)?.unwrap();
     internal_fetch(package_version, config, symlink_path).await?;
     Ok(package_version.to_owned())
 }

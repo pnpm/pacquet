@@ -23,7 +23,7 @@ impl PartialEq for Package {
 }
 
 impl Package {
-    pub fn get_suitable_version_of(
+    pub fn get_pinned_version(
         &self,
         version_field: &str,
     ) -> Result<Option<&PackageVersion>, RegistryError> {

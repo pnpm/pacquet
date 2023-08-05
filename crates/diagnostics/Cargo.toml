@@ -1,5 +1,5 @@
 [package]
-name                  = "pacquet_lockfile"
+name                  = "pacquet_diagnostics"
 version               = "0.0.1"
 publish               = false
 authors.workspace     = true
@@ -11,7 +11,7 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-pacquet_diagnostics = { workspace = true }
-
-serde      = { workspace = true }
-serde_yaml = { workspace = true }
+miette             = { workspace = true }
+thiserror          = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }

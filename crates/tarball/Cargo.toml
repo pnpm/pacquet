@@ -11,14 +11,12 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-pacquet_cafs = { workspace = true }
+pacquet_cafs        = { workspace = true }
+pacquet_diagnostics = { workspace = true }
 
-miette       = { workspace = true }
 reqwest      = { workspace = true }
 ssri         = { workspace = true }
 tar          = { workspace = true }
-thiserror    = { workspace = true }
-tracing      = { workspace = true }
 zune-inflate = { workspace = true }
 
 [dev-dependencies]
