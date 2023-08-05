@@ -74,8 +74,8 @@ impl PackageManager {
 
         let direct_dependency_handles = latest_version
             .get_dependencies(self.config.auto_install_peers)
-            .iter()
-            .map(|(name, version)| async {
+            .into_iter()
+            .map(|(name, version)| async move {
                 find_package_version_from_registry(config, http_client, name, version, path)
                     .await
                     .unwrap()
@@ -94,17 +94,20 @@ impl PackageManager {
 
                 let handles = dependency
                     .get_dependencies(self.config.auto_install_peers)
-                    .iter()
-                    .map(|(name, version)| async {
-                        find_package_version_from_registry(
-                            config,
-                            http_client,
-                            name,
-                            version,
-                            &node_modules_path,
-                        )
-                        .await
-                        .unwrap()
+                    .into_iter()
+                    .map(|(name, version)| {
+                        let path = node_modules_path.clone();
+                        async move {
+                            find_package_version_from_registry(
+                                config,
+                                http_client,
+                                name,
+                                version,
+                                path,
+                            )
+                            .await
+                            .unwrap()
+                        }
                     })
                     .collect::<Vec<_>>();
 

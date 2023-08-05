@@ -14,12 +14,12 @@ use std::path::Path;
 /// symlink_path will be appended by the name of the package. Therefore,
 /// it should be resolved into the node_modules folder of a subdependency such as
 /// `node_modules/.pacquet/fastify@1.0.0/node_modules`.
-pub async fn find_package_version_from_registry(
+pub async fn find_package_version_from_registry<P: AsRef<Path>>(
     config: &Npmrc,
     http_client: &reqwest::Client,
     name: &str,
     version: &str,
-    symlink_path: &Path,
+    symlink_path: P,
 ) -> Result<PackageVersion, PackageManagerError> {
     let package = get_package_from_registry(name, http_client, &config.registry).await?;
     let package_version = package.get_suitable_version_of(version)?.unwrap();
@@ -27,12 +27,12 @@ pub async fn find_package_version_from_registry(
     Ok(package_version.to_owned())
 }
 
-pub async fn fetch_package_version_directly(
+pub async fn fetch_package_version_directly<P: AsRef<Path>>(
     config: &Npmrc,
     http_client: &reqwest::Client,
     name: &str,
     version: &str,
-    symlink_path: &Path,
+    symlink_path: P,
 ) -> Result<PackageVersion, PackageManagerError> {
     let package_version =
         get_package_version_from_registry(name, version, http_client, &config.registry).await?;
@@ -40,15 +40,14 @@ pub async fn fetch_package_version_directly(
     Ok(package_version.to_owned())
 }
 
-async fn internal_fetch(
+async fn internal_fetch<P: AsRef<Path>>(
     package_version: &PackageVersion,
     config: &Npmrc,
     http_client: &reqwest::Client,
-    symlink_path: &Path,
+    symlink_path: P,
 ) -> Result<(), PackageManagerError> {
-    let dependency_store_folder_name = package_version.get_store_name();
-    let package_node_modules_path =
-        config.virtual_store_dir.join(dependency_store_folder_name).join("node_modules");
+    let store_folder_name = package_version.get_store_name();
+    let node_modules_path = config.virtual_store_dir.join(store_folder_name).join("node_modules");
 
     let cas_paths = download_tarball_to_store(
         http_client,
@@ -62,8 +61,8 @@ async fn internal_fetch(
         .package_import_method
         .import(
             &cas_paths,
-            package_node_modules_path.join(&package_version.name),
-            symlink_path.join(&package_version.name),
+            node_modules_path.join(&package_version.name),
+            symlink_path.as_ref().join(&package_version.name),
         )
         .await?;
 
