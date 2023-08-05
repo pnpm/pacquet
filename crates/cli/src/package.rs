@@ -1,8 +1,7 @@
 use crate::package_import::ImportMethodImpl;
 use crate::package_manager::PackageManagerError;
 use pacquet_npmrc::Npmrc;
-use pacquet_registry::package_version::PackageVersion;
-use pacquet_registry::{get_package_from_registry, get_package_version_from_registry};
+use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::download_tarball_to_store;
 use std::path::Path;
 
@@ -21,7 +20,7 @@ pub async fn find_package_version_from_registry<P: AsRef<Path>>(
     version: &str,
     symlink_path: P,
 ) -> Result<PackageVersion, PackageManagerError> {
-    let package = get_package_from_registry(name, http_client, &config.registry).await?;
+    let package = Package::fetch_from_registry(name, http_client, &config.registry).await?;
     let package_version = package.get_pinned_version(version)?.unwrap();
     internal_fetch(package_version, config, symlink_path).await?;
     Ok(package_version.to_owned())
@@ -35,7 +34,7 @@ pub async fn fetch_package_version_directly<P: AsRef<Path>>(
     symlink_path: P,
 ) -> Result<PackageVersion, PackageManagerError> {
     let package_version =
-        get_package_version_from_registry(name, version, http_client, &config.registry).await?;
+        PackageVersion::fetch_from_registry(name, version, http_client, &config.registry).await?;
     internal_fetch(&package_version, config, symlink_path).await?;
     Ok(package_version.to_owned())
 }

@@ -1,5 +1,7 @@
 mod package;
 
+pub use package::{LockfilePackage, LockfilePackageResolution};
+
 use std::{
     collections::HashMap,
     env, fs,
@@ -12,8 +14,6 @@ use pacquet_diagnostics::{
     thiserror::{self, Error},
 };
 use serde::{Deserialize, Serialize};
-
-use crate::package::LockfilePackage;
 
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]

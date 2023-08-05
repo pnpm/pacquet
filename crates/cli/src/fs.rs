@@ -34,7 +34,6 @@ pub fn get_all_folders(root: &std::path::PathBuf) -> Vec<String> {
                 .strip_prefix(root)
                 .unwrap()
                 .components()
-                .into_iter()
                 .map(|c| c.as_os_str().to_string_lossy().to_string())
                 .collect::<Vec<_>>()
                 .join("/");

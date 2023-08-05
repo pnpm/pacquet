@@ -23,6 +23,20 @@ impl PartialEq for Package {
 }
 
 impl Package {
+    pub async fn fetch_from_registry(
+        name: &str,
+        http_client: &reqwest::Client,
+        registry: &str,
+    ) -> Result<Self, RegistryError> {
+        Ok(http_client
+            .get(format!("{0}{name}", &registry))
+            .header("content-type", "application/json")
+            .send()
+            .await?
+            .json::<Package>()
+            .await?)
+    }
+
     pub fn get_pinned_version(
         &self,
         version_field: &str,
