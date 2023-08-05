@@ -1389,9 +1389,7 @@ name = "pacquet_tarball"
 version = "0.0.1"
 dependencies = [
  "miette",
- "node-semver",
  "pacquet_cafs",
- "pacquet_registry",
  "reqwest",
  "ssri",
  "tar",

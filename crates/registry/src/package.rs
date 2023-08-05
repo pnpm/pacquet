@@ -16,6 +16,12 @@ pub struct Package {
     pub mutex: Arc<Mutex<u8>>,
 }
 
+impl PartialEq for Package {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
 impl Package {
     pub fn get_suitable_version_of(
         &self,

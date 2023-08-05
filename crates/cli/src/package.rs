@@ -23,7 +23,7 @@ pub async fn find_package_version_from_registry<P: AsRef<Path>>(
 ) -> Result<PackageVersion, PackageManagerError> {
     let package = get_package_from_registry(name, http_client, &config.registry).await?;
     let package_version = package.get_suitable_version_of(version)?.unwrap();
-    internal_fetch(package_version, config, http_client, symlink_path).await?;
+    internal_fetch(package_version, config, symlink_path).await?;
     Ok(package_version.to_owned())
 }
 
@@ -36,23 +36,22 @@ pub async fn fetch_package_version_directly<P: AsRef<Path>>(
 ) -> Result<PackageVersion, PackageManagerError> {
     let package_version =
         get_package_version_from_registry(name, version, http_client, &config.registry).await?;
-    internal_fetch(&package_version, config, http_client, symlink_path).await?;
+    internal_fetch(&package_version, config, symlink_path).await?;
     Ok(package_version.to_owned())
 }
 
 async fn internal_fetch<P: AsRef<Path>>(
     package_version: &PackageVersion,
     config: &Npmrc,
-    http_client: &reqwest::Client,
     symlink_path: P,
 ) -> Result<(), PackageManagerError> {
     let store_folder_name = package_version.get_store_name();
     let node_modules_path = config.virtual_store_dir.join(store_folder_name).join("node_modules");
 
     let cas_paths = download_tarball_to_store(
-        http_client,
         &config.store_dir,
-        package_version,
+        &package_version.dist.integrity,
+        package_version.dist.unpacked_size,
         package_version.get_tarball_url(),
     )
     .await?;

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::package_distribution::PackageDistribution;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq)]
 pub struct PackageVersion {
     pub name: String,
     pub version: node_semver::Version,
@@ -14,6 +14,12 @@ pub struct PackageVersion {
     pub dev_dependencies: Option<HashMap<String, String>>,
     #[serde(alias = "peerDependencies")]
     pub peer_dependencies: Option<HashMap<String, String>>,
+}
+
+impl PartialEq for PackageVersion {
+    fn eq(&self, other: &Self) -> bool {
+        self.dist == other.dist
+    }
 }
 
 impl PackageVersion {

@@ -7,7 +7,6 @@ use std::{
 };
 
 use miette::Diagnostic;
-use pacquet_registry::package_version::PackageVersion;
 use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
@@ -71,14 +70,15 @@ fn verify_checksum(data: &[u8], integrity: &str) -> Result<(), TarballError> {
 
 // #[instrument]
 pub async fn download_tarball_to_store<P: AsRef<Path>>(
-    http_client: &Client,
     store_dir: P,
-    package_version: &PackageVersion,
-    url: &str,
+    package_integrity: &str,
+    package_unpacked_size: Option<usize>,
+    package_url: &str,
 ) -> Result<HashMap<String, PathBuf>, TarballError> {
-    let response = http_client.get(url).send().await?.bytes().await?;
-    verify_checksum(&response, &package_version.dist.integrity)?;
-    let data = decompress_gzip(&response, package_version.dist.unpacked_size)?;
+    let http_client = Client::new();
+    let response = http_client.get(package_url).send().await?.bytes().await?;
+    verify_checksum(&response, package_integrity)?;
+    let data = decompress_gzip(&response, package_unpacked_size)?;
     let mut archive = Archive::new(Cursor::new(data));
 
     let cas_files = archive
@@ -107,8 +107,6 @@ pub fn get_package_store_folder_name(input: &str, version: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use node_semver::Version;
-    use pacquet_registry::package_distribution::PackageDistribution;
     use tempfile::tempdir;
 
     use super::*;
@@ -129,32 +127,10 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     async fn packages_under_orgs_should_work() {
         let store_path = tempdir().unwrap();
-        let http_client = reqwest::Client::new();
-
-        let package_version = PackageVersion {
-            name: "".to_string(),
-            version: Version {
-                major: 3,
-                minor: 3,
-                patch: 0,
-                build: vec![],
-                pre_release: vec![],
-            },            dist: PackageDistribution {
-                integrity: "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==".to_string(),
-                npm_signature: None,
-                shasum: "".to_string(),
-                tarball: "".to_string(),
-                file_count: None,
-                unpacked_size: Some(16697),
-            },
-            dependencies: None,
-            dev_dependencies: None,
-            peer_dependencies: None,
-        };
         let cas_files = download_tarball_to_store(
-            &http_client,
             store_path.path(),
-            &package_version,
+            "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
+            Some(16697),
             "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
         )
         .await
@@ -186,33 +162,10 @@ mod tests {
     #[tokio::test]
     async fn should_throw_error_on_checksum_mismatch() {
         let store_path = tempdir().unwrap();
-        let http_client = Client::new();
-        let package_version = PackageVersion {
-            name: "".to_string(),
-            version: Version {
-                major: 3,
-                minor: 3,
-                patch: 0,
-                build: vec![],
-                pre_release: vec![],
-            },
-            dist: PackageDistribution {
-                integrity: "sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==".to_string(),
-                npm_signature: None,
-                shasum: "".to_string(),
-                tarball: "".to_string(),
-                file_count: None,
-                unpacked_size: Some(16697),
-            },
-            dependencies: None,
-            dev_dependencies: None,
-            peer_dependencies: None,
-        };
-
         download_tarball_to_store(
-            &http_client,
             store_path.path(),
-            &package_version,
+            "sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
+            Some(16697),
             "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
         )
         .await
