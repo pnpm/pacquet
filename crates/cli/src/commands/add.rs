@@ -7,7 +7,7 @@ use crate::{
 };
 use futures_util::future;
 use pacquet_package_json::DependencyGroup;
-use pacquet_registry::package_version::PackageVersion;
+use pacquet_registry::PackageVersion;
 
 #[derive(Parser, Debug)]
 pub struct AddCommandArgs {

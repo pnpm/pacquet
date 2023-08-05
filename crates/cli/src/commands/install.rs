@@ -3,7 +3,7 @@ use crate::package_manager::{PackageManager, PackageManagerError};
 use clap::Parser;
 use futures_util::future;
 use pacquet_package_json::DependencyGroup;
-use pacquet_registry::package_version::PackageVersion;
+use pacquet_registry::PackageVersion;
 use std::collections::VecDeque;
 
 #[derive(Parser, Debug)]

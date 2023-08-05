@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::package_distribution::PackageDistribution;
+use crate::RegistryError;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq)]
 pub struct PackageVersion {
@@ -23,6 +24,21 @@ impl PartialEq for PackageVersion {
 }
 
 impl PackageVersion {
+    pub async fn fetch_from_registry(
+        name: &str,
+        version: &str,
+        http_client: &reqwest::Client,
+        registry: &str,
+    ) -> Result<Self, RegistryError> {
+        Ok(http_client
+            .get(format!("{0}{name}/{version}", &registry))
+            .header("content-type", "application/json")
+            .send()
+            .await?
+            .json::<PackageVersion>()
+            .await?)
+    }
+
     pub fn get_store_name(&self) -> String {
         format!("{0}@{1}", self.name.replace('/', "+"), self.version)
     }

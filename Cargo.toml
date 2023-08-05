@@ -32,8 +32,6 @@ futures-util       = { version = "0.3.28" }
 miette             = { version = "5.9.0", features = ["fancy"] }
 reflink-copy       = { version = "0.1.5" }
 reqwest            = { version = "0.11", default-features = false, features = ["json", "native-tls-vendored"] }
-reqwest-middleware = { version = "0.2.2" }
-reqwest-retry      = { version = "0.2.2" }
 node-semver        = { version = "2.1.0" }
 rayon              = { version = "1.7.0" }
 serde              = { version = "1.0.179", features = ["derive"] }
