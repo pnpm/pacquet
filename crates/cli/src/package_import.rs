@@ -5,13 +5,11 @@ use std::{
 };
 
 use crate::package_manager::PackageManagerError;
-use async_trait::async_trait;
 use pacquet_npmrc::PackageImportMethod;
 use rayon::prelude::*;
 
-#[async_trait]
 pub trait ImportMethodImpl {
-    async fn import(
+    fn import(
         &self,
         cas_files: &HashMap<String, PathBuf>,
         save_path: PathBuf,
@@ -19,9 +17,8 @@ pub trait ImportMethodImpl {
     ) -> Result<(), PackageManagerError>;
 }
 
-#[async_trait]
 impl ImportMethodImpl for PackageImportMethod {
-    async fn import(
+    fn import(
         &self,
         cas_files: &HashMap<String, PathBuf>,
         save_path: PathBuf,
@@ -29,15 +26,19 @@ impl ImportMethodImpl for PackageImportMethod {
     ) -> Result<(), PackageManagerError> {
         match self {
             PackageImportMethod::Auto => {
-                cas_files
-                    .into_par_iter()
-                    .try_for_each(|(cleaned_entry, store_path)| {
-                        auto_import(store_path, &save_path.join(cleaned_entry))
-                    })
-                    .expect("expected no write errors");
+                if !save_path.exists() {
+                    cas_files
+                        .into_par_iter()
+                        .try_for_each(|(cleaned_entry, store_path)| {
+                            auto_import(store_path, &save_path.join(cleaned_entry))
+                        })
+                        .expect("expected no write errors");
+                }
 
                 if !symlink_to.is_symlink() {
-                    fs::create_dir_all(symlink_to.parent().unwrap())?;
+                    if let Some(parent_dir) = symlink_to.parent() {
+                        fs::create_dir_all(parent_dir)?;
+                    }
                     crate::fs::symlink_dir(save_path, symlink_to)?;
                 }
             }
@@ -54,10 +55,8 @@ fn auto_import<P: AsRef<Path>>(
 ) -> Result<(), PackageManagerError> {
     if !symlink_path.as_ref().exists() {
         // Create parent folder
-        if let Some(parent_folder) = &symlink_path.as_ref().parent() {
-            if !parent_folder.exists() {
-                fs::create_dir_all(parent_folder)?;
-            }
+        if let Some(parent_dir) = &symlink_path.as_ref().parent() {
+            fs::create_dir_all(parent_dir)?;
         }
 
         reflink_copy::reflink_or_copy(original_path, &symlink_path)?;

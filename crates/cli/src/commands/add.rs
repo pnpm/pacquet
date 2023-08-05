@@ -6,6 +6,7 @@ use crate::{
     package_manager::{PackageManager, PackageManagerError},
 };
 use futures_util::future;
+use pacquet_diagnostics::miette::WrapErr;
 use pacquet_package_json::DependencyGroup;
 use pacquet_registry::PackageVersion;
 
@@ -67,18 +68,16 @@ impl PackageManager {
             .join(latest_version.get_store_name())
             .join("node_modules");
 
-        let mut queue: VecDeque<Vec<PackageVersion>> = VecDeque::new();
+        let mut queue: VecDeque<Vec<Result<PackageVersion, PackageManagerError>>> = VecDeque::new();
         let config = &self.config;
         let http_client = &self.http_client;
         let path = &package_node_modules_path;
 
         let direct_dependency_handles = latest_version
             .get_dependencies(self.config.auto_install_peers)
-            .into_iter()
-            .map(|(name, version)| async move {
+            .iter()
+            .map(|(name, version)| {
                 find_package_version_from_registry(config, http_client, name, version, path)
-                    .await
-                    .unwrap()
             })
             .collect::<Vec<_>>();
 
@@ -86,6 +85,8 @@ impl PackageManager {
 
         while let Some(dependencies) = queue.pop_front() {
             for dependency in dependencies {
+                let dependency =
+                    dependency.wrap_err("failed to install one of the dependencies.").unwrap();
                 let node_modules_path = self
                     .config
                     .virtual_store_dir
@@ -94,20 +95,15 @@ impl PackageManager {
 
                 let handles = dependency
                     .get_dependencies(self.config.auto_install_peers)
-                    .into_iter()
+                    .iter()
                     .map(|(name, version)| {
-                        let path = node_modules_path.clone();
-                        async move {
-                            find_package_version_from_registry(
-                                config,
-                                http_client,
-                                name,
-                                version,
-                                path,
-                            )
-                            .await
-                            .unwrap()
-                        }
+                        find_package_version_from_registry(
+                            config,
+                            http_client,
+                            name,
+                            version,
+                            node_modules_path.to_owned(),
+                        )
                     })
                     .collect::<Vec<_>>();
 

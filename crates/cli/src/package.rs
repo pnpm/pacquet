@@ -3,7 +3,7 @@ use crate::package_manager::PackageManagerError;
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::download_tarball_to_store;
-use std::path::Path;
+use std::path::PathBuf;
 
 /// This function execute the following and returns the package
 /// - retrieves the package from the registry
@@ -13,7 +13,7 @@ use std::path::Path;
 /// symlink_path will be appended by the name of the package. Therefore,
 /// it should be resolved into the node_modules folder of a subdependency such as
 /// `node_modules/.pacquet/fastify@1.0.0/node_modules`.
-pub async fn find_package_version_from_registry<P: AsRef<Path>>(
+pub async fn find_package_version_from_registry<P: Into<PathBuf>>(
     config: &Npmrc,
     http_client: &reqwest::Client,
     name: &str,
@@ -26,7 +26,7 @@ pub async fn find_package_version_from_registry<P: AsRef<Path>>(
     Ok(package_version.to_owned())
 }
 
-pub async fn fetch_package_version_directly<P: AsRef<Path>>(
+pub async fn fetch_package_version_directly<P: Into<PathBuf>>(
     config: &Npmrc,
     http_client: &reqwest::Client,
     name: &str,
@@ -39,7 +39,7 @@ pub async fn fetch_package_version_directly<P: AsRef<Path>>(
     Ok(package_version.to_owned())
 }
 
-async fn internal_fetch<P: AsRef<Path>>(
+async fn internal_fetch<P: Into<PathBuf>>(
     package_version: &PackageVersion,
     config: &Npmrc,
     symlink_path: P,
@@ -55,14 +55,11 @@ async fn internal_fetch<P: AsRef<Path>>(
     )
     .await?;
 
-    config
-        .package_import_method
-        .import(
-            &cas_paths,
-            node_modules_path.join(&package_version.name),
-            symlink_path.as_ref().join(&package_version.name),
-        )
-        .await?;
+    config.package_import_method.import(
+        &cas_paths,
+        node_modules_path.join(&package_version.name),
+        symlink_path.into().join(&package_version.name),
+    )?;
 
     Ok(())
 }
