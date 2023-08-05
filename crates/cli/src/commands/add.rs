@@ -177,6 +177,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(not(target_os = "windows"))]
     pub async fn should_symlink_correctly() {
         let dir = tempdir().unwrap();
         let virtual_store_dir = dir.path().join("node_modules/.pacquet");
