@@ -33,7 +33,7 @@ reflink-copy       = { version = "0.1.5" }
 reqwest            = { version = "0.11", default-features = false, features = ["json", "native-tls-vendored"] }
 node-semver        = { version = "2.1.0" }
 rayon              = { version = "1.7.0" }
-serde              = { version = "1.0.182", features = ["derive"] }
+serde              = { version = "1.0.183", features = ["derive"] }
 serde_ini          = { version = "0.2.0" }
 serde_json         = { version = "1.0.99" }
 serde_yaml         = { version = "0.9.1" }
