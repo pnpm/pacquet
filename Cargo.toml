@@ -50,7 +50,7 @@ zune-inflate       = { version = "0.2.54" }
 # Dev dependencies
 criterion    = { version = "0.5.1", features = ["async_tokio"] }
 project-root = { version = "0.2.2" }
-tempfile     = { version = "3.6.0" }
+tempfile     = { version = "3.7.1" }
 mockito      = { version = "1.1.0" }
 pico-args    = { version = "0.5.0" }
 
