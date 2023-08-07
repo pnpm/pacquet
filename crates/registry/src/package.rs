@@ -1,8 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
-
+use std::sync::Mutex;
 use crate::{package_version::PackageVersion, RegistryError};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
