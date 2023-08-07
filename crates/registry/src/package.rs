@@ -1,7 +1,9 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
 
 use crate::{package_version::PackageVersion, RegistryError};
 
