@@ -22,7 +22,7 @@ pub fn get_filenames_in_folder(path: &Path) -> Vec<String> {
 }
 
 #[cfg(test)]
-pub fn get_all_folders(root: &std::path::PathBuf) -> Vec<OsString> {
+pub fn get_all_folders(root: &std::path::PathBuf) -> Vec<String> {
     let mut files = Vec::new();
     for entry in walkdir::WalkDir::new(root) {
         let entry = entry.unwrap();
@@ -36,10 +36,10 @@ pub fn get_all_folders(root: &std::path::PathBuf) -> Vec<OsString> {
                 .components()
                 .map(|c| c.as_os_str().to_string_lossy().to_string())
                 .collect::<Vec<_>>()
-                .join(std::path::MAIN_SEPARATOR.to_string());
+                .join("/");
 
             if !simple_path.is_empty() {
-                files.push(OsString::from(simple_path));
+                files.push(simple_path);
             }
         }
     }
