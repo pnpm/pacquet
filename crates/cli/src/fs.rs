@@ -30,13 +30,21 @@ pub fn get_all_folders(root: &std::path::PathBuf) -> Vec<String> {
         if entry.file_type().is_dir() || entry.file_type().is_symlink() {
             // We need this mutation to ensure that both Unix and Windows paths resolves the same.
             // TODO: Find a better way to do this?
-            let simple_path = entry_path.strip_prefix(root).unwrap();
-            if !simple_path.as_os_str().is_empty() {
-                files.push(simple_path.to_string_lossy().to_string());
+            let simple_path = entry_path
+                .strip_prefix(root)
+                .unwrap()
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+                .join("/");
+
+            if !simple_path.is_empty() {
+                files.push(simple_path.as_os_str().to_string_lossy().to_string());
             }
         }
     }
     files.sort();
     files
 }
+
 
