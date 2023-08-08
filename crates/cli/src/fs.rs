@@ -39,7 +39,7 @@ pub fn get_all_folders(root: &std::path::PathBuf) -> Vec<String> {
                 .join(std::path::MAIN_SEPARATOR_STR);
 
             if !simple_path.is_empty() {
-                files.push(simple_path);
+                files.push(simple_path.as_os_str().to_string_lossy().to_string());
             }
         }
     }
