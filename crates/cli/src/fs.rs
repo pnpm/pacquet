@@ -36,10 +36,10 @@ pub fn get_all_folders(root: &std::path::PathBuf) -> Vec<String> {
                 .components()
                 .map(|c| c.as_os_str().to_string_lossy().to_string())
                 .collect::<Vec<_>>()
-                .join("/");
+                .join(std::path::MAIN_SEPARATOR.to_string());
 
             if !simple_path.is_empty() {
-                files.push(simple_path.as_os_string());
+                files.push(simple_path);
             }
         }
     }
