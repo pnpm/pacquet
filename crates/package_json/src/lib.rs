@@ -197,55 +197,6 @@ impl PackageJson {
             Err(PackageJsonError::NoScript(command.to_string()))
         }
     }
-
-    pub fn list(&self, dependency_group: DependencyGroup, node_modules_path: &PathBuf, depth: u32) -> Result<String, PackageJsonError> { 
-        let mut scope: String = String::new();
-        let default = Value::default();
-        match dependency_group {
-            DependencyGroup::Dev => {
-                let mut dependencies = self
-                    .value
-                    .get("devDependencies")
-                    .unwrap_or(&default)
-                    .as_object()
-                    .into_iter();
-
-                let dep = dependencies.next();
-                while !dep.is_none() {
-                   let tree: String =  dep.unwrap()
-                        .into_iter()
-                        .map(|(name, version)| {
-                            let mut res = format!("{}@{}", name, version);
-
-                            if depth > 1 {
-                                let nested = PackageJson::from_path(&node_modules_path.join(name))
-                                    .unwrap();
-                                let unwraped = nested.list(DependencyGroup::Dev, node_modules_path, depth);
-                                res = format!("\n\t{}", unwraped.unwrap())
-                            }
-
-                            res
-                        }).collect();
-                        scope = format!("{:?}\n", tree);
-                }
-
-            },
-            DependencyGroup::Default => scope = "dependencies".to_string(),
-            _ => scope = "all".to_string()
-        }
-
-        // let binding = Value::default();
-        // let mut dependencies = self.value.get(scope).unwrap_or(&binding).as_object().into_iter();
-
-        // let mut dep = dependencies.next();
-        // while !dep.is_none() {
-        //     println!("{:?}", dep);
-        //     dep = dependencies.next();
-        // }
-
-        Ok(scope.clone())
-    }
-
 }
 
 #[cfg(test)]

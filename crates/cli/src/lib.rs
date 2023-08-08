@@ -25,6 +25,7 @@ pub async fn run_cli() -> Result<()> {
 
 async fn run_commands(cli: Cli) -> Result<()> {
     let package_json_path = cli.current_dir.join("package.json");
+    let node_modules_path = cli.current_dir.join("node_modules");
 
     match &cli.subcommand {
         Subcommands::Init => {
@@ -100,7 +101,8 @@ async fn run_commands(cli: Cli) -> Result<()> {
         Subcommands::List(args) => {
             let group = args.get_scope();
             let depth = args.get_depth();
-            PackageJson::from_path(&package_json_path)?.list(group, &node_modules_path, depth)?;
+            let manager = PackageManager::new(&package_json_path)?;
+            manager.list(&manager.package_json, group, &node_modules_path, depth)?;
         }
     }
 

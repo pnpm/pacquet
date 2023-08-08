@@ -1,12 +1,14 @@
 pub mod add;
 pub mod install;
+pub mod list;
 pub mod run;
 pub mod store;
 
 use std::{env, ffi::OsString, path::PathBuf};
 
 use crate::commands::{
-    add::AddCommandArgs, install::InstallCommandArgs, run::RunCommandArgs, store::StoreSubcommands,
+    add::AddCommandArgs, install::InstallCommandArgs, list::ListArgs, run::RunCommandArgs,
+    store::StoreSubcommands,
 };
 use clap::{Parser, Subcommand};
 
@@ -46,4 +48,6 @@ pub enum Subcommands {
     /// Managing the package store.
     #[clap(subcommand)]
     Store(StoreSubcommands),
+    /// List all dependencies installed based on package.json
+    List(ListArgs),
 }
