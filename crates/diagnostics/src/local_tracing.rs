@@ -25,7 +25,7 @@ pub fn enable_tracing_by_env() {
 fn common_layer(trace_var: &str) -> Box<dyn Layer<tracing_subscriber::Registry> + Send + Sync> {
     if let Ok(default_level) = Level::from_str(trace_var) {
         tracing_subscriber::filter::Targets::new()
-            .with_targets([("pacquet_tarball", default_level)])
+            .with_target("pacquet_tarball", default_level)
             .boxed()
     } else {
         // SAFETY: for the `expect`, if we can't parse the directive, then the tracing result would be
