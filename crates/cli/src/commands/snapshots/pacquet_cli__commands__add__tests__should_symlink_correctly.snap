@@ -2,4 +2,15 @@
 source: crates/cli/src/commands/add.rs
 expression: get_all_folders(&dir.path().to_path_buf())
 ---
-[]
+[
+    "node_modules",
+    "node_modules/.pacquet",
+    "node_modules/.pacquet/is-number@6.0.0",
+    "node_modules/.pacquet/is-number@6.0.0/node_modules",
+    "node_modules/.pacquet/is-number@6.0.0/node_modules/is-number",
+    "node_modules/.pacquet/is-odd@3.0.1",
+    "node_modules/.pacquet/is-odd@3.0.1/node_modules",
+    "node_modules/.pacquet/is-odd@3.0.1/node_modules/is-number",
+    "node_modules/.pacquet/is-odd@3.0.1/node_modules/is-odd",
+    "node_modules/is-odd",
+]
