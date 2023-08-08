@@ -12,6 +12,7 @@ use pacquet_diagnostics::{
     thiserror::{self, Error},
 };
 use serde_json::{json, Map, Value};
+use strum::IntoStaticStr;
 
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
@@ -44,25 +45,18 @@ pub enum PackageJsonError {
     NoScript(String),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, IntoStaticStr)]
 pub enum DependencyGroup {
+    #[strum(serialize = "dependencies")]
     Default,
+    #[strum(serialize = "devDependencies")]
     Dev,
+    #[strum(serialize = "optionalDependencies")]
     Optional,
+    #[strum(serialize = "peerDependencies")]
     Peer,
+    #[strum(serialize = "bundledDependencies")]
     Bundled,
-}
-
-impl From<DependencyGroup> for &str {
-    fn from(value: DependencyGroup) -> Self {
-        match value {
-            DependencyGroup::Default => "dependencies",
-            DependencyGroup::Dev => "devDependencies",
-            DependencyGroup::Optional => "optionalDependencies",
-            DependencyGroup::Peer => "peerDependencies",
-            DependencyGroup::Bundled => "bundledDependencies",
-        }
-    }
 }
 
 pub struct PackageJson {
