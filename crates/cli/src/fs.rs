@@ -36,7 +36,7 @@ pub fn get_all_folders(root: &std::path::PathBuf) -> Vec<OsString> {
                 .components()
                 .map(|c| c.as_os_str().to_os_string())
                 .collect::<Vec<_>>()
-                .join(std::path::MAIN_SEPARATOR.to_string());
+                .join("/");
 
             if !simple_path.is_empty() {
                 files.push(simple_path);
