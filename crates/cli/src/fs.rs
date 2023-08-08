@@ -39,10 +39,12 @@ pub fn get_all_folders(root: &std::path::PathBuf) -> Vec<String> {
                 .join(std::path::MAIN_SEPARATOR_STR);
 
             if !simple_path.is_empty() {
-                files.push(simple_path.as_os_str().to_string_lossy().to_string());
+                let os_string = std::ffi::OsString::from(simple_path);
+                files.push(os_string.to_string_lossy().to_string());
             }
         }
     }
     files.sort();
     files
 }
+
