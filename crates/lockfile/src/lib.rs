@@ -39,19 +39,17 @@ pub struct LockfilePeerDependencyMeta {
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LockfileSettings {
-    #[serde(alias = "autoInstallPeers")]
     auto_install_peers: bool,
-    #[serde(alias = "excludeLinksFromLockfile")]
     exclude_links_from_lockfile: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Lockfile {
-    #[serde(alias = "lockFileVersion")]
     pub lock_file_version: String,
     pub settings: Option<LockfileSettings>,
-    #[serde(alias = "neverBuiltDependencies")]
     pub never_built_dependencies: Option<Vec<String>>,
     pub overrides: Option<HashMap<String, String>>,
     pub dependencies: Option<HashMap<String, LockfileDependency>>,

@@ -11,7 +11,7 @@ use crate::{package_version::PackageVersion, RegistryError};
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Package {
     pub name: String,
-    #[serde(alias = "dist-tags")]
+    #[serde(rename = "dist-tags")]
     dist_tags: HashMap<String, String>,
     pub versions: HashMap<String, PackageVersion>,
 

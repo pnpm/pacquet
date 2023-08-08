@@ -1,13 +1,12 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct PackageDistribution {
     pub integrity: String,
     pub shasum: String,
     pub tarball: String,
-    #[serde(alias = "fileCount")]
     pub file_count: Option<usize>,
-    #[serde(alias = "unpackedSize")]
     pub unpacked_size: Option<usize>,
 }
 
