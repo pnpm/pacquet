@@ -47,4 +47,3 @@ pub fn get_all_folders(root: &std::path::PathBuf) -> Vec<String> {
     files.sort();
     files
 }
-
