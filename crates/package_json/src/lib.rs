@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     convert::Into,
-    ffi::OsStr,
     fs,
     io::{Read, Write},
     path::PathBuf,
@@ -71,11 +70,11 @@ impl PackageJson {
 
     fn write_to_file(path: &PathBuf) -> Result<Value, PackageJsonError> {
         let mut file = fs::File::create(path)?;
-        let mut name = "";
-        if let Some(folder) = path.parent() {
-            // Set the default package name as the folder of the current directory
-            name = folder.file_name().unwrap_or(OsStr::new("")).to_str().unwrap();
-        }
+        let name = path
+            .parent()
+            .and_then(|folder| folder.file_name())
+            .and_then(|file_name| file_name.to_str())
+            .unwrap_or("");
         let package_json = json!({
             "name": name,
             "version": "1.0.0",
