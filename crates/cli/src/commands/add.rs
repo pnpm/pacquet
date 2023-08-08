@@ -75,7 +75,6 @@ impl PackageManager {
 
         let direct_dependency_handles = latest_version
             .get_dependencies(self.config.auto_install_peers)
-            .iter()
             .map(|(name, version)| {
                 find_package_version_from_registry(config, http_client, name, version, path)
             })
@@ -95,7 +94,6 @@ impl PackageManager {
 
                 let handles = dependency
                     .get_dependencies(self.config.auto_install_peers)
-                    .iter()
                     .map(|(name, version)| {
                         find_package_version_from_registry(
                             config,

@@ -61,7 +61,6 @@ impl PackageManager {
 
                 let handles = dependency
                     .get_dependencies(self.config.auto_install_peers)
-                    .iter()
                     .map(|(name, version)| async {
                         find_package_version_from_registry(
                             config,
