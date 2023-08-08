@@ -34,12 +34,12 @@ pub fn get_all_folders(root: &std::path::PathBuf) -> Vec<OsString> {
                 .strip_prefix(root)
                 .unwrap()
                 .components()
-                .map(|c| c.as_os_str().to_os_string())
+                .map(|c| c.as_os_str().to_string_lossy().to_string())
                 .collect::<Vec<_>>()
-                .join("/");
+                .join(std::path::MAIN_SEPARATOR.to_string());
 
             if !simple_path.is_empty() {
-                files.push(simple_path);
+                files.push(OsString::from(simple_path));
             }
         }
     }
