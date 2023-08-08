@@ -88,11 +88,13 @@ mod tests {
             peer_dependencies: Some(peer_dependencies),
         };
 
-        assert!(version.get_dependencies(false).contains_key("fastify"));
-        assert!(!version.get_dependencies(false).contains_key("fast-querystring"));
-        assert!(version.get_dependencies(true).contains_key("fastify"));
-        assert!(version.get_dependencies(true).contains_key("fast-querystring"));
-        assert!(!version.get_dependencies(true).contains_key("hello-world"));
+        let get_dependencies = |peer| version.get_dependencies(peer).collect::<HashMap<_, _>>();
+
+        assert!(get_dependencies(false).contains_key("fastify"));
+        assert!(!get_dependencies(false).contains_key("fast-querystring"));
+        assert!(get_dependencies(true).contains_key("fastify"));
+        assert!(get_dependencies(true).contains_key("fast-querystring"));
+        assert!(!get_dependencies(true).contains_key("hello-world"));
     }
 
     #[test]

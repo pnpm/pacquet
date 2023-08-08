@@ -47,24 +47,21 @@ impl PackageVersion {
         self.dist.tarball.as_str()
     }
 
-    pub fn get_dependencies(&self, with_peer_dependencies: bool) -> HashMap<&str, &str> {
-        let mut dependencies = HashMap::<&str, &str>::new();
+    pub fn get_dependencies(
+        &self,
+        with_peer_dependencies: bool,
+    ) -> impl Iterator<Item = (&'_ str, &'_ str)> {
+        let dependencies = self.dependencies.iter().flatten();
 
-        if let Some(deps) = self.dependencies.as_ref() {
-            for dep in deps {
-                dependencies.insert(dep.0.as_str(), dep.1.as_str());
-            }
-        }
-
-        if with_peer_dependencies {
-            if let Some(deps) = self.peer_dependencies.as_ref() {
-                for dep in deps {
-                    dependencies.insert(dep.0.as_str(), dep.1.as_str());
-                }
-            }
-        }
+        let peer_dependencies = with_peer_dependencies
+            .then_some(&self.peer_dependencies)
+            .into_iter()
+            .flatten()
+            .flatten();
 
         dependencies
+            .chain(peer_dependencies)
+            .map(|(name, version)| (name.as_str(), version.as_str()))
     }
 
     pub fn serialize(&self, save_exact: bool) -> String {
