@@ -6,14 +6,13 @@ use crate::package_distribution::PackageDistribution;
 use crate::RegistryError;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct PackageVersion {
     pub name: String,
     pub version: node_semver::Version,
     pub dist: PackageDistribution,
     pub dependencies: Option<HashMap<String, String>>,
-    #[serde(alias = "devDependencies")]
     pub dev_dependencies: Option<HashMap<String, String>>,
-    #[serde(alias = "peerDependencies")]
     pub peer_dependencies: Option<HashMap<String, String>>,
 }
 
