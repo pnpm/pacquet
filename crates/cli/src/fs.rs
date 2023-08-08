@@ -40,7 +40,8 @@ pub fn get_all_folders(root: &std::path::PathBuf) -> Vec<String> {
 
             if !simple_path.is_empty() {
                 let os_string = std::ffi::OsString::from(simple_path);
-                files.push(os_string.to_string_lossy().to_string());
+                let os_string_lossy = os_string.to_string_lossy().to_string(); // Convert to String
+                files.push(os_string_lossy); // Push the string into the vector
             }
         }
     }
