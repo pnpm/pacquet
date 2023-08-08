@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 
 use crate::package_distribution::PackageDistribution;
@@ -30,13 +31,14 @@ impl PackageVersion {
         http_client: &reqwest::Client,
         registry: &str,
     ) -> Result<Self, RegistryError> {
-        Ok(http_client
+        http_client
             .get(format!("{0}{name}/{version}", &registry))
             .header("content-type", "application/json")
             .send()
             .await?
             .json::<PackageVersion>()
-            .await?)
+            .await?
+            .pipe(Ok)
     }
 
     pub fn get_store_name(&self) -> String {
