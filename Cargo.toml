@@ -32,6 +32,7 @@ miette             = { version = "5.9.0", features = ["fancy"] }
 reflink-copy       = { version = "0.1.5" }
 reqwest            = { version = "0.11", default-features = false, features = ["json", "native-tls-vendored"] }
 node-semver        = { version = "2.1.0" }
+pipe-trait         = { version = "0.4.0" }
 rayon              = { version = "1.7.0" }
 serde              = { version = "1.0.183", features = ["derive"] }
 serde_ini          = { version = "0.2.0" }

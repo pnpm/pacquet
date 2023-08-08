@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 
 use crate::{package_version::PackageVersion, RegistryError};
@@ -30,13 +31,14 @@ impl Package {
         http_client: &reqwest::Client,
         registry: &str,
     ) -> Result<Self, RegistryError> {
-        Ok(http_client
+        http_client
             .get(format!("{0}{name}", &registry))
             .header("content-type", "application/json")
             .send()
             .await?
             .json::<Package>()
-            .await?)
+            .await?
+            .pipe(Ok)
     }
 
     pub fn get_pinned_version(
