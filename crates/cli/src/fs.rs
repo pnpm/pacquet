@@ -1,5 +1,4 @@
 use std::{io, os, path::Path};
-use std::ffi::OsString;
 
 #[cfg(unix)]
 pub fn symlink_dir<P: AsRef<Path>>(original: P, link: P) -> io::Result<()> {
