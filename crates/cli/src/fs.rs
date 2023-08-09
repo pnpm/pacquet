@@ -40,7 +40,7 @@ pub fn get_all_folders(root: &std::path::PathBuf) -> Vec<String> {
 
             if !simple_path.is_empty() {
                 let os_string = std::ffi::OsString::from(simple_path);
-                files.push(os_string.to_string_lossy().to_string());
+                files.push(os_string.to_string());
             }
         }
     }
