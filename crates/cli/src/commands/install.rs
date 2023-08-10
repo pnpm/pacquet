@@ -38,7 +38,7 @@ impl PackageManager {
         let http_client = &self.http_client;
         let mut queue: VecDeque<Vec<PackageVersion>> = VecDeque::new();
 
-        let dependencies = self.package_json.get_dependencies(dependency_groups);
+        let dependencies = self.package_json.get_dependencies(&dependency_groups);
 
         let direct_dependency_handles = dependencies
             .iter()
