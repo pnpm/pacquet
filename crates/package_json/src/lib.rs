@@ -89,7 +89,7 @@ impl PackageJson {
             .unwrap_or("");
         let package_json = PackageJson::get_init_package_json(name);
         let contents = PackageJson::to_string_prettify(&package_json)?;
-        fs::write(path, contents)?;
+        fs::write(path, contents)?; // TODO: forbid overwriting existing files
         Ok(package_json)
     }
 
