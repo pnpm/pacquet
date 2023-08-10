@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -130,22 +129,16 @@ impl PackageJson {
         Ok(())
     }
 
-    pub fn get_dependencies(&self, groups: &[DependencyGroup]) -> HashMap<&str, &str> {
-        let mut dependencies = HashMap::<&str, &str>::new();
-
-        groups.iter().for_each(|group| {
-            if let Some(entries) =
-                self.value.get::<&str>(group.into()).and_then(|value| value.as_object())
-            {
-                entries.iter().for_each(|(key, value)| {
-                    if let Some(value) = value.as_str() {
-                        dependencies.insert(key.as_str(), value);
-                    }
-                })
-            }
-        });
-
-        dependencies
+    pub fn get_dependencies<'a>(
+        &'a self,
+        groups: &'a [DependencyGroup],
+    ) -> impl Iterator<Item = (&'a str, &'a str)> + 'a {
+        groups
+            .iter()
+            .flat_map(|group| self.value.get::<&str>(group.into()))
+            .flat_map(|value| value.as_object())
+            .flatten()
+            .flat_map(|(key, value)| value.as_str().map(|value| (key.as_str(), value)))
     }
 
     pub fn add_dependency(
@@ -195,7 +188,7 @@ impl PackageJson {
 
 #[cfg(test)]
 mod tests {
-    use std::fs::read_to_string;
+    use std::{collections::HashMap, fs::read_to_string};
 
     use insta::assert_snapshot;
     use tempfile::{tempdir, NamedTempFile};
@@ -233,7 +226,8 @@ mod tests {
         let mut package_json = PackageJson::create_if_needed(tmp.clone()).unwrap();
         package_json.add_dependency("fastify", "1.0.0", DependencyGroup::Default).unwrap();
 
-        let dependencies = package_json.get_dependencies(&[DependencyGroup::Default]);
+        let dependencies: HashMap<_, _> =
+            package_json.get_dependencies(&[DependencyGroup::Default]).collect();
         assert!(dependencies.contains_key("fastify"));
         assert_eq!(dependencies.get("fastify").unwrap(), &"1.0.0");
         package_json.save().unwrap();
@@ -280,9 +274,9 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "{}", data).unwrap();
         let package_json = PackageJson::create_if_needed(tmp.path().to_path_buf()).unwrap();
-        assert!(package_json
-            .get_dependencies(&[DependencyGroup::Peer])
-            .contains_key("fast-querystring"));
-        assert!(package_json.get_dependencies(&[DependencyGroup::Default]).contains_key("fastify"));
+        let get_dependencies =
+            |groups| package_json.get_dependencies(groups).collect::<HashMap<_, _>>();
+        assert!(get_dependencies(&[DependencyGroup::Peer]).contains_key("fast-querystring"));
+        assert!(get_dependencies(&[DependencyGroup::Default]).contains_key("fastify"));
     }
 }
