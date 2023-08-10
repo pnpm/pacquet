@@ -36,7 +36,7 @@ impl PackageManager {
         let config = &self.config;
         let path = &self.config.modules_dir;
         let http_client = &self.http_client;
-        let mut queue: VecDeque<Vec<PackageVersion>> = VecDeque::new(); // QUESTION: is this queue necessary since it only has one element?
+        let mut queue: VecDeque<Vec<PackageVersion>> = VecDeque::new();
 
         let direct_dependency_handles = self
             .package_json
