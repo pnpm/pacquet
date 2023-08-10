@@ -153,7 +153,7 @@ mod tests {
         };
         manager.add(&args).await.unwrap();
 
-        insta::assert_debug_snapshot!(get_all_folders(&dir.path().to_path_buf()));
+        insta::assert_debug_snapshot!(get_all_folders(dir.path()));
 
         // Ensure that is-buffer does not have any dependencies
         let is_buffer_path = virtual_store_dir.join("is-buffer@1.1.6/node_modules");
@@ -190,7 +190,7 @@ mod tests {
         };
         manager.add(&args).await.unwrap();
 
-        insta::assert_debug_snapshot!(get_all_folders(&dir.path().to_path_buf()));
+        insta::assert_debug_snapshot!(get_all_folders(dir.path()));
 
         // Make sure the symlinks are correct
         assert_eq!(
@@ -219,7 +219,7 @@ mod tests {
             virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
         };
         manager.add(&args).await.unwrap();
-        let file = PackageJson::from_path(&dir.path().join("package.json")).unwrap();
+        let file = PackageJson::from_path(dir.path().join("package.json")).unwrap();
         assert!(file.get_dependencies(&[DependencyGroup::Default]).contains_key("is-odd"));
         env::set_current_dir(&current_directory).unwrap();
     }

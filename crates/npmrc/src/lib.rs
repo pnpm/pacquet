@@ -169,7 +169,7 @@ pub struct Npmrc {
 
 impl Npmrc {
     pub fn new() -> Self {
-        let config: Npmrc = serde_ini::from_str("").unwrap();
+        let config: Npmrc = serde_ini::from_str("").unwrap(); // TODO: derive `SmartDefault` for `Npmrc and call `Npmrc::default()`
         config
     }
 }

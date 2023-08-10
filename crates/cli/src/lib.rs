@@ -48,14 +48,14 @@ async fn run_commands(cli: Cli) -> Result<()> {
                 .wrap_err("installing dependencies")?;
         }
         Subcommands::Test => {
-            let package_json = PackageJson::from_path(&package_json_path)
+            let package_json = PackageJson::from_path(package_json_path)
                 .wrap_err("getting the package.json in current directory")?;
             if let Some(script) = package_json.get_script("test", false)? {
                 execute_shell(script).wrap_err(format!("executing command: \"{0}\"", script))?;
             }
         }
         Subcommands::Run(args) => {
-            let package_json = PackageJson::from_path(&package_json_path)
+            let package_json = PackageJson::from_path(package_json_path)
                 .wrap_err("getting the package.json in current directory")?;
             if let Some(script) = package_json.get_script(&args.command, args.if_present)? {
                 let mut command = script.to_string();
@@ -71,7 +71,7 @@ async fn run_commands(cli: Cli) -> Result<()> {
             // object. If no start property is specified on the scripts object, it will attempt to
             // run node server.js as a default, failing if neither are present.
             // The intended usage of the property is to specify a command that starts your program.
-            let package_json = PackageJson::from_path(&package_json_path)
+            let package_json = PackageJson::from_path(package_json_path)
                 .wrap_err("getting the package.json in current directory")?;
             let command = if let Some(script) = package_json.get_script("start", true)? {
                 script

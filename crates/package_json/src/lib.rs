@@ -1,4 +1,9 @@
-use std::{collections::HashMap, convert::Into, fs, io::Write, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 use pacquet_diagnostics::{
     miette::{self, Diagnostic},
@@ -58,12 +63,8 @@ pub struct PackageJson {
 }
 
 impl PackageJson {
-    pub fn new(path: PathBuf, value: Value) -> PackageJson {
-        PackageJson { path, value }
-    }
-
-    fn get_init_package_json(name: &str) -> Result<Value, PackageJsonError> {
-        let package_json = json!({
+    fn get_init_package_json(name: &str) -> Value {
+        json!({
             "name": name,
             "version": "1.0.0",
             "description": "",
@@ -74,66 +75,57 @@ impl PackageJson {
             "keywords": [],
             "author": "",
             "license": "ISC"
-        });
-        Ok(package_json)
+        })
     }
 
-    fn to_string_prettify(package_json: &Value) -> Result<String, PackageJsonError> {
-        Ok(serde_json::to_string_pretty(package_json)?)
-    }
-
-    fn write_to_file(path: &PathBuf) -> Result<Value, PackageJsonError> {
-        let mut file = fs::File::create(path)?;
+    fn write_to_file(path: &Path) -> Result<(Value, String), PackageJsonError> {
         let name = path
             .parent()
             .and_then(|folder| folder.file_name())
             .and_then(|file_name| file_name.to_str())
             .unwrap_or("");
-        let package_json = PackageJson::get_init_package_json(name)?;
-        let contents = PackageJson::to_string_prettify(&package_json)?;
-        file.write_all(contents.as_bytes())?;
-        Ok(package_json)
+        let package_json = PackageJson::get_init_package_json(name);
+        let contents = serde_json::to_string_pretty(&package_json)?;
+        fs::write(path, &contents)?; // TODO: forbid overwriting existing files
+        Ok((package_json, contents))
     }
 
-    fn read_from_file(path: &PathBuf) -> Result<Value, PackageJsonError> {
-        let file = fs::File::open(path)?;
-        Ok(serde_json::from_reader(file)?)
+    fn read_from_file(path: &Path) -> Result<Value, PackageJsonError> {
+        let contents = fs::read_to_string(path)?;
+        serde_json::from_str(&contents).map_err(PackageJsonError::from)
     }
 
-    pub fn init(path: &PathBuf) -> Result<(), PackageJsonError> {
+    pub fn init(path: &Path) -> Result<(), PackageJsonError> {
         if path.exists() {
             return Err(PackageJsonError::AlreadyExist);
         }
-        let package_json = PackageJson::write_to_file(path)?;
-        println!(
-            "Wrote to {}\n\n{}",
-            path.display(),
-            PackageJson::to_string_prettify(&package_json).unwrap_or(String::new())
-        );
+        let (_, contents) = PackageJson::write_to_file(path)?;
+        println!("Wrote to {path}\n\n{contents}", path = path.display());
         Ok(())
     }
 
-    pub fn from_path(path: &PathBuf) -> Result<PackageJson, PackageJsonError> {
+    pub fn from_path(path: PathBuf) -> Result<PackageJson, PackageJsonError> {
         if !path.exists() {
             return Err(PackageJsonError::NoImporterManifestFound(path.display().to_string()));
         }
 
-        Ok(PackageJson { path: path.to_path_buf(), value: PackageJson::read_from_file(path)? })
+        let value = PackageJson::read_from_file(&path)?;
+        Ok(PackageJson { path, value })
     }
 
-    pub fn create_if_needed(path: &PathBuf) -> Result<PackageJson, PackageJsonError> {
+    pub fn create_if_needed(path: PathBuf) -> Result<PackageJson, PackageJsonError> {
         let value = if path.exists() {
-            PackageJson::read_from_file(path)?
+            PackageJson::read_from_file(&path)?
         } else {
-            PackageJson::write_to_file(path)?
+            PackageJson::write_to_file(&path).map(|(value, _)| value)?
         };
 
-        Ok(PackageJson::new(path.to_path_buf(), value))
+        Ok(PackageJson { path, value })
     }
 
     pub fn save(&mut self) -> Result<(), PackageJsonError> {
         let mut file = fs::File::create(&self.path)?;
-        let contents = PackageJson::to_string_prettify(&self.value)?;
+        let contents = serde_json::to_string_pretty(&self.value)?;
         file.write_all(contents.as_bytes())?;
         Ok(())
     }
@@ -213,33 +205,15 @@ mod tests {
 
     #[test]
     fn test_init_package_json_content() {
-        let package_json = PackageJson::get_init_package_json("test").unwrap();
-        assert_snapshot!(PackageJson::to_string_prettify(&package_json).unwrap_or(String::new()));
-    }
-
-    #[test]
-    fn test_dependency_group_into() {
-        assert_eq!(<DependencyGroup as Into<&str>>::into(DependencyGroup::Default), "dependencies");
-        assert_eq!(<DependencyGroup as Into<&str>>::into(DependencyGroup::Dev), "devDependencies");
-        assert_eq!(
-            <DependencyGroup as Into<&str>>::into(DependencyGroup::Optional),
-            "optionalDependencies"
-        );
-        assert_eq!(
-            <DependencyGroup as Into<&str>>::into(DependencyGroup::Peer),
-            "peerDependencies"
-        );
-        assert_eq!(
-            <DependencyGroup as Into<&str>>::into(DependencyGroup::Bundled),
-            "bundledDependencies"
-        );
+        let package_json = PackageJson::get_init_package_json("test");
+        assert_snapshot!(serde_json::to_string_pretty(&package_json).unwrap());
     }
 
     #[test]
     fn init_should_throw_if_exists() {
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "hello world").unwrap();
-        PackageJson::init(&tmp.path().to_path_buf()).expect_err("package.json already exist");
+        PackageJson::init(tmp.path()).expect_err("package.json already exist");
     }
 
     #[test]
@@ -249,14 +223,14 @@ mod tests {
         PackageJson::init(&tmp).unwrap();
         assert!(tmp.exists());
         assert!(tmp.is_file());
-        assert_eq!(PackageJson::from_path(&tmp).unwrap().path, tmp);
+        assert_eq!(PackageJson::from_path(tmp.clone()).unwrap().path, tmp);
     }
 
     #[test]
     fn should_add_dependency() {
         let dir = tempdir().unwrap();
         let tmp = dir.path().join("package.json");
-        let mut package_json = PackageJson::create_if_needed(&tmp).unwrap();
+        let mut package_json = PackageJson::create_if_needed(tmp.clone()).unwrap();
         package_json.add_dependency("fastify", "1.0.0", DependencyGroup::Default).unwrap();
 
         let dependencies = package_json.get_dependencies(&[DependencyGroup::Default]);
@@ -270,7 +244,7 @@ mod tests {
     fn should_throw_on_missing_command() {
         let dir = tempdir().unwrap();
         let tmp = dir.path().join("package.json");
-        let package_json = PackageJson::create_if_needed(&tmp).unwrap();
+        let package_json = PackageJson::create_if_needed(tmp).unwrap();
         package_json.get_script("dev", false).expect_err("dev command should not exist");
     }
 
@@ -285,7 +259,7 @@ mod tests {
         "#;
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "{}", data).unwrap();
-        let package_json = PackageJson::create_if_needed(&tmp.path().to_path_buf()).unwrap();
+        let package_json = PackageJson::create_if_needed(tmp.path().to_path_buf()).unwrap();
         package_json.get_script("test", false).unwrap();
         package_json.get_script("invalid", false).expect_err("invalid command should not exist");
         package_json.get_script("invalid", true).unwrap();
@@ -305,7 +279,7 @@ mod tests {
         "#;
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "{}", data).unwrap();
-        let package_json = PackageJson::create_if_needed(&tmp.path().to_path_buf()).unwrap();
+        let package_json = PackageJson::create_if_needed(tmp.path().to_path_buf()).unwrap();
         assert!(package_json
             .get_dependencies(&[DependencyGroup::Peer])
             .contains_key("fast-querystring"));
