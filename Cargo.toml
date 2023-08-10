@@ -36,7 +36,7 @@ pipe-trait         = { version = "0.4.0" }
 rayon              = { version = "1.7.0" }
 serde              = { version = "1.0.183", features = ["derive"] }
 serde_ini          = { version = "0.2.0" }
-serde_json         = { version = "1.0.99" }
+serde_json         = { version = "1.0.99", features = ["preserve_order"] }
 serde_yaml         = { version = "0.9.1" }
 ssri               = { version = "9.0.0" }
 strum              = { version = "0.25.0", features = ["derive"] }

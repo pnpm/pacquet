@@ -80,8 +80,12 @@ impl PackageJson {
             "version": "1.0.0",
             "description": "",
             "main": "index.js",
+            "script": {
+              "test": "echo \"Error: no test specified\" && exit 1"
+            },
+            "keywords": [],
             "author": "",
-            "license": "MIT",
+            "license": "ISC"
         });
         let contents = serde_json::to_string_pretty(&package_json)?;
         file.write_all(contents.as_bytes())?;
@@ -99,7 +103,12 @@ impl PackageJson {
         if path.exists() {
             return Err(PackageJsonError::AlreadyExist);
         }
-        PackageJson::write_to_file(path)?;
+        let package_json = PackageJson::write_to_file(path)?;
+        println!(
+            "Wrote to {}\n\n{}",
+            path.display(),
+            serde_json::to_string_pretty(&package_json).unwrap_or(String::new())
+        );
         Ok(())
     }
 
