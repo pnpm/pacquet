@@ -1,10 +1,4 @@
-use std::{
-    collections::HashMap,
-    convert::Into,
-    fs,
-    io::{Read, Write},
-    path::PathBuf,
-};
+use std::{collections::HashMap, convert::Into, fs, io::Write, path::PathBuf};
 
 use pacquet_diagnostics::{
     miette::{self, Diagnostic},
@@ -102,10 +96,8 @@ impl PackageJson {
     }
 
     fn read_from_file(path: &PathBuf) -> Result<Value, PackageJsonError> {
-        let mut file = fs::File::open(path)?;
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
-        Ok(serde_json::from_str(&contents)?)
+        let contents = fs::read_to_string(path)?;
+        serde_json::from_str(&contents).map_err(PackageJsonError::from)
     }
 
     pub fn init(path: &PathBuf) -> Result<(), PackageJsonError> {
