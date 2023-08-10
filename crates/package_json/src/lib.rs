@@ -58,10 +58,6 @@ pub struct PackageJson {
 }
 
 impl PackageJson {
-    pub fn new(path: PathBuf, value: Value) -> PackageJson {
-        PackageJson { path, value }
-    }
-
     fn get_init_package_json(name: &str) -> Value {
         json!({
             "name": name,
@@ -118,7 +114,7 @@ impl PackageJson {
             PackageJson::write_to_file(path).map(|(value, _)| value)?
         };
 
-        Ok(PackageJson::new(path.to_path_buf(), value))
+        Ok(PackageJson { path: path.to_path_buf(), value })
     }
 
     pub fn save(&mut self) -> Result<(), PackageJsonError> {
