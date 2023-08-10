@@ -1,4 +1,4 @@
-use std::{io, os, path::{Path, MAIN_SEPARATOR}};
+use std::{io, os, path::Path};
 
 #[cfg(unix)]
 pub fn symlink_dir<P: AsRef<Path>>(original: P, link: P) -> io::Result<()> {
@@ -36,7 +36,7 @@ pub fn get_all_folders(root: &std::path::Path) -> Vec<String> {
                 .components()
                 .map(|c| c.as_os_str().to_str().expect("invalid UTF-8"))
                 .collect::<Vec<_>>()
-                .join(MAIN_SEPARATOR.as_ref());
+                .join("/");
 
             if !simple_path.is_empty() {
                 let os_string = std::ffi::OsString::from(simple_path);
