@@ -1,10 +1,4 @@
-use std::{
-    collections::HashMap,
-    convert::Into,
-    fs,
-    io::{Read, Write},
-    path::PathBuf,
-};
+use std::{collections::HashMap, convert::Into, fs, io::Write, path::PathBuf};
 
 use pacquet_diagnostics::{
     miette::{self, Diagnostic},
@@ -102,10 +96,8 @@ impl PackageJson {
     }
 
     fn read_from_file(path: &PathBuf) -> Result<Value, PackageJsonError> {
-        let mut file = fs::File::open(path)?;
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
-        Ok(serde_json::from_str(&contents)?)
+        let file = fs::File::open(path)?;
+        Ok(serde_json::from_reader(file)?)
     }
 
     pub fn init(path: &PathBuf) -> Result<(), PackageJsonError> {
@@ -146,22 +138,20 @@ impl PackageJson {
         Ok(())
     }
 
-    pub fn get_dependencies(&self, groups: Vec<DependencyGroup>) -> HashMap<&str, &str> {
+    pub fn get_dependencies(&self, groups: &[DependencyGroup]) -> HashMap<&str, &str> {
         let mut dependencies = HashMap::<&str, &str>::new();
 
-        for group in groups {
-            let group_key: &str = group.into();
-
-            if let Some(value) = self.value.get(group_key) {
-                if let Some(entries) = value.as_object() {
-                    for (key, value) in entries {
-                        if let Some(value) = value.as_str() {
-                            dependencies.insert(key.as_str(), value);
-                        }
+        groups.iter().for_each(|group| {
+            if let Some(entries) =
+                self.value.get::<&str>(group.into()).and_then(|value| value.as_object())
+            {
+                entries.iter().for_each(|(key, value)| {
+                    if let Some(value) = value.as_str() {
+                        dependencies.insert(key.as_str(), value);
                     }
-                }
+                })
             }
-        }
+        });
 
         dependencies
     }
@@ -194,12 +184,13 @@ impl PackageJson {
         command: &str,
         if_present: bool,
     ) -> Result<Option<&str>, PackageJsonError> {
-        if let Some(scripts) = self.value.get("scripts") {
-            if let Some(script) = scripts.get(command) {
-                if let Some(script_str) = script.as_str() {
-                    return Ok(Some(script_str));
-                }
-            }
+        if let Some(script_str) = self
+            .value
+            .get("scripts")
+            .and_then(|scripts| scripts.get(command))
+            .and_then(|script| script.as_str())
+        {
+            return Ok(Some(script_str));
         }
 
         if if_present {
@@ -268,7 +259,7 @@ mod tests {
         let mut package_json = PackageJson::create_if_needed(&tmp).unwrap();
         package_json.add_dependency("fastify", "1.0.0", DependencyGroup::Default).unwrap();
 
-        let dependencies = package_json.get_dependencies(vec![DependencyGroup::Default]);
+        let dependencies = package_json.get_dependencies(&[DependencyGroup::Default]);
         assert!(dependencies.contains_key("fastify"));
         assert_eq!(dependencies.get("fastify").unwrap(), &"1.0.0");
         package_json.save().unwrap();
@@ -316,10 +307,8 @@ mod tests {
         write!(tmp.as_file(), "{}", data).unwrap();
         let package_json = PackageJson::create_if_needed(&tmp.path().to_path_buf()).unwrap();
         assert!(package_json
-            .get_dependencies(vec![DependencyGroup::Peer])
+            .get_dependencies(&[DependencyGroup::Peer])
             .contains_key("fast-querystring"));
-        assert!(package_json
-            .get_dependencies(vec![DependencyGroup::Default])
-            .contains_key("fastify"));
+        assert!(package_json.get_dependencies(&[DependencyGroup::Default]).contains_key("fastify"));
     }
 }
