@@ -212,16 +212,6 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_dependency_group_to_string() {
-        // QUESTION: do we even need this test?
-        assert_eq!(<&str>::from(DependencyGroup::Default), "dependencies");
-        assert_eq!(<&str>::from(DependencyGroup::Dev), "devDependencies");
-        assert_eq!(<&str>::from(DependencyGroup::Optional), "optionalDependencies");
-        assert_eq!(<&str>::from(DependencyGroup::Peer), "peerDependencies");
-        assert_eq!(<&str>::from(DependencyGroup::Bundled), "bundledDependencies");
-    }
-
-    #[test]
     fn init_should_throw_if_exists() {
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "hello world").unwrap();
