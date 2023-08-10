@@ -1,19 +1,19 @@
 use std::collections::HashMap;
 
+use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 
 use crate::package_distribution::PackageDistribution;
 use crate::RegistryError;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct PackageVersion {
     pub name: String,
     pub version: node_semver::Version,
     pub dist: PackageDistribution,
     pub dependencies: Option<HashMap<String, String>>,
-    #[serde(alias = "devDependencies")]
     pub dev_dependencies: Option<HashMap<String, String>>,
-    #[serde(alias = "peerDependencies")]
     pub peer_dependencies: Option<HashMap<String, String>>,
 }
 
@@ -30,13 +30,14 @@ impl PackageVersion {
         http_client: &reqwest::Client,
         registry: &str,
     ) -> Result<Self, RegistryError> {
-        Ok(http_client
+        http_client
             .get(format!("{0}{name}/{version}", &registry))
             .header("content-type", "application/json")
             .send()
             .await?
             .json::<PackageVersion>()
-            .await?)
+            .await?
+            .pipe(Ok)
     }
 
     pub fn get_store_name(&self) -> String {
@@ -47,24 +48,21 @@ impl PackageVersion {
         self.dist.tarball.as_str()
     }
 
-    pub fn get_dependencies(&self, with_peer_dependencies: bool) -> HashMap<&str, &str> {
-        let mut dependencies = HashMap::<&str, &str>::new();
+    pub fn get_dependencies(
+        &self,
+        with_peer_dependencies: bool,
+    ) -> impl Iterator<Item = (&'_ str, &'_ str)> {
+        let dependencies = self.dependencies.iter().flatten();
 
-        if let Some(deps) = self.dependencies.as_ref() {
-            for dep in deps {
-                dependencies.insert(dep.0.as_str(), dep.1.as_str());
-            }
-        }
-
-        if with_peer_dependencies {
-            if let Some(deps) = self.peer_dependencies.as_ref() {
-                for dep in deps {
-                    dependencies.insert(dep.0.as_str(), dep.1.as_str());
-                }
-            }
-        }
+        let peer_dependencies = with_peer_dependencies
+            .then_some(&self.peer_dependencies)
+            .into_iter()
+            .flatten()
+            .flatten();
 
         dependencies
+            .chain(peer_dependencies)
+            .map(|(name, version)| (name.as_str(), version.as_str()))
     }
 
     pub fn serialize(&self, save_exact: bool) -> String {

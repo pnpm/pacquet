@@ -32,12 +32,14 @@ miette             = { version = "5.9.0", features = ["fancy"] }
 reflink-copy       = { version = "0.1.5" }
 reqwest            = { version = "0.11", default-features = false, features = ["json", "native-tls-vendored"] }
 node-semver        = { version = "2.1.0" }
+pipe-trait         = { version = "0.4.0" }
 rayon              = { version = "1.7.0" }
 serde              = { version = "1.0.183", features = ["derive"] }
 serde_ini          = { version = "0.2.0" }
-serde_json         = { version = "1.0.99" }
+serde_json         = { version = "1.0.99", features = ["preserve_order"] }
 serde_yaml         = { version = "0.9.1" }
 ssri               = { version = "9.0.0" }
+strum              = { version = "0.25.0", features = ["derive"] }
 tar                = { version = "0.4.38" }
 thiserror          = { version = "1.0.44" }
 tracing            = { version = "0.1.37" }

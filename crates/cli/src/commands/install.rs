@@ -38,7 +38,7 @@ impl PackageManager {
         let http_client = &self.http_client;
         let mut queue: VecDeque<Vec<PackageVersion>> = VecDeque::new();
 
-        let dependencies = self.package_json.get_dependencies(dependency_groups);
+        let dependencies = self.package_json.get_dependencies(&dependency_groups);
 
         let direct_dependency_handles = dependencies
             .iter()
@@ -61,7 +61,6 @@ impl PackageManager {
 
                 let handles = dependency
                     .get_dependencies(self.config.auto_install_peers)
-                    .iter()
                     .map(|(name, version)| async {
                         find_package_version_from_registry(
                             config,
@@ -100,7 +99,7 @@ mod tests {
         env::set_current_dir(dir.path()).unwrap();
 
         let package_json_path = dir.path().join("package.json");
-        let mut package_json = PackageJson::create_if_needed(&package_json_path).unwrap();
+        let mut package_json = PackageJson::create_if_needed(package_json_path.clone()).unwrap();
 
         package_json.add_dependency("is-odd", "3.0.1", DependencyGroup::Default).unwrap();
         package_json
@@ -123,7 +122,7 @@ mod tests {
         assert!(dir.path().join("node_modules/fast-decode-uri-component").is_symlink());
         assert!(dir.path().join("node_modules/.pacquet/fast-decode-uri-component@1.0.1").is_dir());
 
-        insta::assert_debug_snapshot!(get_all_folders(&dir.path().to_path_buf()));
+        insta::assert_debug_snapshot!(get_all_folders(dir.path()));
 
         env::set_current_dir(&current_directory).unwrap();
     }

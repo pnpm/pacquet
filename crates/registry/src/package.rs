@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 
 use crate::{package_version::PackageVersion, RegistryError};
@@ -10,7 +11,7 @@ use crate::{package_version::PackageVersion, RegistryError};
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Package {
     pub name: String,
-    #[serde(alias = "dist-tags")]
+    #[serde(rename = "dist-tags")]
     dist_tags: HashMap<String, String>,
     pub versions: HashMap<String, PackageVersion>,
 
@@ -30,13 +31,14 @@ impl Package {
         http_client: &reqwest::Client,
         registry: &str,
     ) -> Result<Self, RegistryError> {
-        Ok(http_client
+        http_client
             .get(format!("{0}{name}", &registry))
             .header("content-type", "application/json")
             .send()
             .await?
             .json::<Package>()
-            .await?)
+            .await?
+            .pipe(Ok)
     }
 
     pub fn get_pinned_version(
@@ -48,8 +50,7 @@ impl Package {
             .versions
             .values()
             .filter(|v| v.version.satisfies(&range))
-            .collect::<Vec<&PackageVersion>>()
-            .clone();
+            .collect::<Vec<&PackageVersion>>();
 
         satisfied_versions.sort_by(|a, b| a.version.partial_cmp(&b.version).unwrap());
 
@@ -89,11 +90,13 @@ mod tests {
             peer_dependencies: Some(peer_dependencies),
         };
 
-        assert!(version.get_dependencies(false).contains_key("fastify"));
-        assert!(!version.get_dependencies(false).contains_key("fast-querystring"));
-        assert!(version.get_dependencies(true).contains_key("fastify"));
-        assert!(version.get_dependencies(true).contains_key("fast-querystring"));
-        assert!(!version.get_dependencies(true).contains_key("hello-world"));
+        let get_dependencies = |peer| version.get_dependencies(peer).collect::<HashMap<_, _>>();
+
+        assert!(get_dependencies(false).contains_key("fastify"));
+        assert!(!get_dependencies(false).contains_key("fast-querystring"));
+        assert!(get_dependencies(true).contains_key("fastify"));
+        assert!(get_dependencies(true).contains_key("fast-querystring"));
+        assert!(!get_dependencies(true).contains_key("hello-world"));
     }
 
     #[test]
