@@ -68,6 +68,26 @@ impl PackageJson {
         PackageJson { path, value }
     }
 
+    fn get_init_package_json(name: &str) -> Result<Value, PackageJsonError> {
+        let package_json = json!({
+            "name": name,
+            "version": "1.0.0",
+            "description": "",
+            "main": "index.js",
+            "scripts": {
+              "test": "echo \"Error: no test specified\" && exit 1"
+            },
+            "keywords": [],
+            "author": "",
+            "license": "ISC"
+        });
+        Ok(package_json)
+    }
+
+    fn to_string_prettify(package_json: &Value) -> Result<String, PackageJsonError> {
+        Ok(serde_json::to_string_pretty(package_json)?)
+    }
+
     fn write_to_file(path: &PathBuf) -> Result<Value, PackageJsonError> {
         let mut file = fs::File::create(path)?;
         let name = path
@@ -75,19 +95,8 @@ impl PackageJson {
             .and_then(|folder| folder.file_name())
             .and_then(|file_name| file_name.to_str())
             .unwrap_or("");
-        let package_json = json!({
-            "name": name,
-            "version": "1.0.0",
-            "description": "",
-            "main": "index.js",
-            "script": {
-              "test": "echo \"Error: no test specified\" && exit 1"
-            },
-            "keywords": [],
-            "author": "",
-            "license": "ISC"
-        });
-        let contents = serde_json::to_string_pretty(&package_json)?;
+        let package_json = PackageJson::get_init_package_json(name)?;
+        let contents = PackageJson::to_string_prettify(&package_json)?;
         file.write_all(contents.as_bytes())?;
         Ok(package_json)
     }
@@ -107,7 +116,7 @@ impl PackageJson {
         println!(
             "Wrote to {}\n\n{}",
             path.display(),
-            serde_json::to_string_pretty(&package_json).unwrap_or(String::new())
+            PackageJson::to_string_prettify(&package_json).unwrap_or(String::new())
         );
         Ok(())
     }
@@ -132,7 +141,7 @@ impl PackageJson {
 
     pub fn save(&mut self) -> Result<(), PackageJsonError> {
         let mut file = fs::File::create(&self.path)?;
-        let contents = serde_json::to_string_pretty(&self.value)?;
+        let contents = PackageJson::to_string_prettify(&self.value)?;
         file.write_all(contents.as_bytes())?;
         Ok(())
     }
@@ -205,10 +214,17 @@ impl PackageJson {
 mod tests {
     use std::fs::read_to_string;
 
+    use insta::assert_snapshot;
     use tempfile::{tempdir, NamedTempFile};
 
     use super::*;
     use crate::DependencyGroup;
+
+    #[test]
+    fn test_init_package_json_content() {
+        let package_json = PackageJson::get_init_package_json("test").unwrap();
+        assert_snapshot!(PackageJson::to_string_prettify(&package_json).unwrap_or(String::new()));
+    }
 
     #[test]
     fn test_dependency_group_into() {
@@ -264,7 +280,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let tmp = dir.path().join("package.json");
         let package_json = PackageJson::create_if_needed(&tmp).unwrap();
-        package_json.get_script("test", false).expect_err("test command should not exist");
+        package_json.get_script("dev", false).expect_err("dev command should not exist");
     }
 
     #[test]
