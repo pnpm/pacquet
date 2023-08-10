@@ -1272,6 +1272,7 @@ dependencies = [
 name = "pacquet_package_json"
 version = "0.0.1"
 dependencies = [
+ "insta",
  "pacquet_diagnostics",
  "serde",
  "serde_json",

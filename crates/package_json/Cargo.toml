@@ -11,6 +11,7 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
+insta               = { workspace = true }
 pacquet_diagnostics = { workspace = true }
 
 serde      = { workspace = true }
