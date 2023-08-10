@@ -122,7 +122,7 @@ mod tests {
         assert!(dir.path().join("node_modules/fast-decode-uri-component").is_symlink());
         assert!(dir.path().join("node_modules/.pacquet/fast-decode-uri-component@1.0.1").is_dir());
 
-        insta::assert_debug_snapshot!(get_all_folders(&dir.path().to_path_buf()));
+        insta::assert_debug_snapshot!(get_all_folders(dir.path()));
 
         env::set_current_dir(&current_directory).unwrap();
     }
