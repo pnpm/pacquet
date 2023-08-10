@@ -136,9 +136,9 @@ impl PackageJson {
         groups
             .iter()
             .flat_map(|group| self.value.get::<&str>(group.into()))
-            .flat_map(|value| value.as_object())
+            .flat_map(|dependencies| dependencies.as_object())
             .flatten()
-            .flat_map(|(key, value)| value.as_str().map(|value| (key.as_str(), value)))
+            .flat_map(|(name, version)| version.as_str().map(|value| (name.as_str(), value)))
     }
 
     pub fn add_dependency(
