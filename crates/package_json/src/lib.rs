@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn test_init_package_json_content() {
         let package_json = PackageJson::get_init_package_json("test");
-        assert_snapshot!(serde_json::to_string_pretty(&package_json).unwrap_or(String::new()));
+        assert_snapshot!(serde_json::to_string_pretty(&package_json).unwrap());
     }
 
     #[test]
