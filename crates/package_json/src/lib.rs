@@ -75,8 +75,7 @@ impl PackageJson {
             .and_then(|folder| folder.file_name())
             .and_then(|file_name| file_name.to_str())
             .unwrap_or("");
-        let package_json =
-            json!({
+        let package_json = json!({
             "name": name,
             "version": "1.0.0",
             "description": "",
@@ -105,7 +104,11 @@ impl PackageJson {
             return Err(PackageJsonError::AlreadyExist);
         }
         let package_json = PackageJson::write_to_file(path)?;
-        println!("Wrote to {}\n\n{}", path.display(), serde_json::to_string_pretty(&package_json).unwrap_or(String::new()));
+        println!(
+            "Wrote to {}\n\n{}",
+            path.display(),
+            serde_json::to_string_pretty(&package_json).unwrap_or(String::new())
+        );
         Ok(())
     }
 
