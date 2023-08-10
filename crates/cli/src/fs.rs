@@ -1,4 +1,8 @@
-use std::{io, os, path::Path};
+use std::{
+    io,
+    os,
+    path::{Path, MAIN_SEPARATOR},
+};
 
 #[cfg(unix)]
 pub fn symlink_dir<P: AsRef<Path>>(original: P, link: P) -> io::Result<()> {
@@ -22,7 +26,7 @@ pub fn get_filenames_in_folder(path: &Path) -> Vec<String> {
 }
 
 #[cfg(test)]
-pub fn get_all_folders(root: &std::path::PathBuf) -> Vec<String> {
+pub fn get_all_folders(root: &Path) -> Vec<String> {
     let mut files = Vec::new();
     for entry in walkdir::WalkDir::new(root) {
         let entry = entry.unwrap();
@@ -36,7 +40,7 @@ pub fn get_all_folders(root: &std::path::PathBuf) -> Vec<String> {
                 .components()
                 .map(|c| c.as_os_str().to_string_lossy().to_string())
                 .collect::<Vec<_>>()
-                .join(std::path::MAIN_SEPARATOR_STR);
+                .join(MAIN_SEPARATOR);
 
             if !simple_path.is_empty() {
                 let os_string = std::ffi::OsString::from(simple_path);
