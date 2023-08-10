@@ -280,7 +280,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let tmp = dir.path().join("package.json");
         let package_json = PackageJson::create_if_needed(&tmp).unwrap();
-        package_json.get_script("test", false).expect_err("test command should not exist");
+        package_json.get_script("dev", false).expect_err("dev command should not exist");
     }
 
     #[test]
