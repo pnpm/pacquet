@@ -62,8 +62,8 @@ impl PackageJson {
         PackageJson { path, value }
     }
 
-    fn get_init_package_json(name: &str) -> Result<Value, PackageJsonError> {
-        let package_json = json!({
+    fn get_init_package_json(name: &str) -> Value {
+        json!({
             "name": name,
             "version": "1.0.0",
             "description": "",
@@ -74,8 +74,7 @@ impl PackageJson {
             "keywords": [],
             "author": "",
             "license": "ISC"
-        });
-        Ok(package_json)
+        })
     }
 
     fn to_string_prettify(package_json: &Value) -> Result<String, PackageJsonError> {
@@ -89,7 +88,7 @@ impl PackageJson {
             .and_then(|folder| folder.file_name())
             .and_then(|file_name| file_name.to_str())
             .unwrap_or("");
-        let package_json = PackageJson::get_init_package_json(name)?;
+        let package_json = PackageJson::get_init_package_json(name);
         let contents = PackageJson::to_string_prettify(&package_json)?;
         file.write_all(contents.as_bytes())?;
         Ok(package_json)
@@ -214,7 +213,7 @@ mod tests {
 
     #[test]
     fn test_init_package_json_content() {
-        let package_json = PackageJson::get_init_package_json("test").unwrap();
+        let package_json = PackageJson::get_init_package_json("test");
         assert_snapshot!(PackageJson::to_string_prettify(&package_json).unwrap_or(String::new()));
     }
 
