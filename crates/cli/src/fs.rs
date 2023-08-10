@@ -34,7 +34,7 @@ pub fn get_all_folders(root: &std::path::Path) -> Vec<String> {
                 .strip_prefix(root)
                 .unwrap()
                 .components()
-                .map(|c| c.as_os_str().to_string_lossy().to_string()) // TODO: error on invalid UTF-8
+                .map(|c| c.as_os_str().to_str().expect("invalid UTF-8"))
                 .collect::<Vec<_>>()
                 .join("/");
 
