@@ -82,7 +82,6 @@ impl PackageJson {
     }
 
     fn write_to_file(path: &PathBuf) -> Result<Value, PackageJsonError> {
-        let mut file = fs::File::create(path)?;
         let name = path
             .parent()
             .and_then(|folder| folder.file_name())
@@ -90,7 +89,7 @@ impl PackageJson {
             .unwrap_or("");
         let package_json = PackageJson::get_init_package_json(name);
         let contents = PackageJson::to_string_prettify(&package_json)?;
-        file.write_all(contents.as_bytes())?;
+        fs::write(path, contents)?;
         Ok(package_json)
     }
 
