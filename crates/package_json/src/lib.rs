@@ -1,4 +1,10 @@
-use std::{collections::HashMap, convert::Into, fs, io::Write, path::PathBuf};
+use std::{
+    collections::HashMap,
+    convert::Into,
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 use pacquet_diagnostics::{
     miette::{self, Diagnostic},
@@ -73,7 +79,7 @@ impl PackageJson {
         })
     }
 
-    fn write_to_file(path: &PathBuf) -> Result<(Value, String), PackageJsonError> {
+    fn write_to_file(path: &Path) -> Result<(Value, String), PackageJsonError> {
         let name = path
             .parent()
             .and_then(|folder| folder.file_name())
@@ -85,12 +91,12 @@ impl PackageJson {
         Ok((package_json, contents))
     }
 
-    fn read_from_file(path: &PathBuf) -> Result<Value, PackageJsonError> {
+    fn read_from_file(path: &Path) -> Result<Value, PackageJsonError> {
         let contents = fs::read_to_string(path)?;
         serde_json::from_str(&contents).map_err(PackageJsonError::from)
     }
 
-    pub fn init(path: &PathBuf) -> Result<(), PackageJsonError> {
+    pub fn init(path: &Path) -> Result<(), PackageJsonError> {
         if path.exists() {
             return Err(PackageJsonError::AlreadyExist);
         }
@@ -219,7 +225,7 @@ mod tests {
     fn init_should_throw_if_exists() {
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "hello world").unwrap();
-        PackageJson::init(&tmp.path().to_path_buf()).expect_err("package.json already exist");
+        PackageJson::init(tmp.path()).expect_err("package.json already exist");
     }
 
     #[test]
