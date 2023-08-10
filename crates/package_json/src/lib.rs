@@ -209,21 +209,13 @@ mod tests {
     }
 
     #[test]
-    fn test_dependency_group_into() {
-        assert_eq!(<DependencyGroup as Into<&str>>::into(DependencyGroup::Default), "dependencies");
-        assert_eq!(<DependencyGroup as Into<&str>>::into(DependencyGroup::Dev), "devDependencies");
-        assert_eq!(
-            <DependencyGroup as Into<&str>>::into(DependencyGroup::Optional),
-            "optionalDependencies"
-        );
-        assert_eq!(
-            <DependencyGroup as Into<&str>>::into(DependencyGroup::Peer),
-            "peerDependencies"
-        );
-        assert_eq!(
-            <DependencyGroup as Into<&str>>::into(DependencyGroup::Bundled),
-            "bundledDependencies"
-        );
+    fn test_convert_dependency_group_to_string() {
+        // QUESTION: do we even need this test?
+        assert_eq!(<&str>::from(DependencyGroup::Default), "dependencies");
+        assert_eq!(<&str>::from(DependencyGroup::Dev), "devDependencies");
+        assert_eq!(<&str>::from(DependencyGroup::Optional), "optionalDependencies");
+        assert_eq!(<&str>::from(DependencyGroup::Peer), "peerDependencies");
+        assert_eq!(<&str>::from(DependencyGroup::Bundled), "bundledDependencies");
     }
 
     #[test]
