@@ -40,7 +40,7 @@ pub fn default_store_dir() -> PathBuf {
         "linux" => home_dir.join(".local/share/pacquet/store"),
         "macos" => home_dir.join("Library/pacquet/store"),
         "windows" => home_dir.join("AppData/Local/pacquet/store"),
-        _ => panic!("unsupported operating system: {0}", env::consts::OS),
+        _ => panic!("unsupported operating system: {}", env::consts::OS),
     }
 }
 
