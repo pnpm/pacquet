@@ -1,8 +1,4 @@
-use std::{
-    env,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::{env, path::PathBuf, str::FromStr};
 
 use serde::{de, Deserialize, Deserializer};
 
@@ -28,11 +24,11 @@ pub fn default_public_hoist_pattern() -> Vec<String> {
 pub fn default_store_dir() -> PathBuf {
     // TODO: If env variables start with ~, make sure to resolve it into home_dir.
     if let Ok(pacquet_home) = env::var("PACQUET_HOME") {
-        return Path::new(&pacquet_home).join("store");
+        return PathBuf::from(pacquet_home).join("store");
     }
 
     if let Ok(xdg_data_home) = env::var("XDG_DATA_HOME") {
-        return Path::new(&xdg_data_home).join("pacquet/store");
+        return PathBuf::from(xdg_data_home).join("pacquet/store");
     }
 
     // Using ~ (tilde) for defining home path is not supported in Rust and
@@ -110,7 +106,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::env;
+    use std::{env, path::Path};
 
     use super::*;
     #[test]
