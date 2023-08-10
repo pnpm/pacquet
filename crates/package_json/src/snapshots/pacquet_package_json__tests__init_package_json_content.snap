@@ -1,6 +1,6 @@
 ---
 source: crates/package_json/src/lib.rs
-expression: "PackageJson::to_string_prettify(&package_json).unwrap_or(String::new())"
+expression: "serde_json::to_string_pretty(&package_json).unwrap_or(String::new())"
 ---
 {
   "name": "test",

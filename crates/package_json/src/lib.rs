@@ -77,10 +77,6 @@ impl PackageJson {
         })
     }
 
-    fn to_string_prettify(package_json: &Value) -> Result<String, PackageJsonError> {
-        Ok(serde_json::to_string_pretty(package_json)?)
-    }
-
     fn write_to_file(path: &PathBuf) -> Result<Value, PackageJsonError> {
         let name = path
             .parent()
@@ -88,7 +84,7 @@ impl PackageJson {
             .and_then(|file_name| file_name.to_str())
             .unwrap_or("");
         let package_json = PackageJson::get_init_package_json(name);
-        let contents = PackageJson::to_string_prettify(&package_json)?;
+        let contents = serde_json::to_string_pretty(&package_json)?;
         fs::write(path, contents)?; // TODO: forbid overwriting existing files
         Ok(package_json)
     }
@@ -106,7 +102,7 @@ impl PackageJson {
         println!(
             "Wrote to {}\n\n{}",
             path.display(),
-            PackageJson::to_string_prettify(&package_json).unwrap_or(String::new())
+            serde_json::to_string_pretty(&package_json).unwrap_or(String::new())
         );
         Ok(())
     }
@@ -131,7 +127,7 @@ impl PackageJson {
 
     pub fn save(&mut self) -> Result<(), PackageJsonError> {
         let mut file = fs::File::create(&self.path)?;
-        let contents = PackageJson::to_string_prettify(&self.value)?;
+        let contents = serde_json::to_string_pretty(&self.value)?;
         file.write_all(contents.as_bytes())?;
         Ok(())
     }
@@ -213,7 +209,7 @@ mod tests {
     #[test]
     fn test_init_package_json_content() {
         let package_json = PackageJson::get_init_package_json("test");
-        assert_snapshot!(PackageJson::to_string_prettify(&package_json).unwrap_or(String::new()));
+        assert_snapshot!(serde_json::to_string_pretty(&package_json).unwrap_or(String::new()));
     }
 
     #[test]
