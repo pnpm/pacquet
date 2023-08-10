@@ -36,7 +36,7 @@ pub fn get_all_folders(root: &std::path::Path) -> Vec<String> {
                 .components()
                 .map(|c| c.as_os_str().to_str().expect("invalid UTF-8"))
                 .collect::<Vec<_>>()
-                .join(MAIN_SEPARATOR);
+                .join(MAIN_SEPARATOR.as_ref());
 
             if !simple_path.is_empty() {
                 let os_string = std::ffi::OsString::from(simple_path);
