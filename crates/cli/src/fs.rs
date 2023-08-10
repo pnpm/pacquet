@@ -1,8 +1,4 @@
-use std::{
-    io,
-    os,
-    path::{Path, MAIN_SEPARATOR},
-};
+use std::{io, os, path::{Path, MAIN_SEPARATOR}};
 
 #[cfg(unix)]
 pub fn symlink_dir<P: AsRef<Path>>(original: P, link: P) -> io::Result<()> {
