@@ -133,6 +133,8 @@ impl PackageJson {
         &'a self,
         groups: &'a [DependencyGroup],
     ) -> impl Iterator<Item = (&'a str, &'a str)> + 'a {
+        // TODO: add error when `dependencies` is found to not be an object
+        // TODO: add error when `version` is found to not be a string
         groups
             .iter()
             .flat_map(|group| self.value.get::<&str>(group.into()))
