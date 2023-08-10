@@ -77,7 +77,7 @@ impl PackageJson {
         })
     }
 
-    fn write_to_file(path: &PathBuf) -> Result<Value, PackageJsonError> {
+    fn write_to_file(path: &PathBuf) -> Result<(Value, String), PackageJsonError> {
         let name = path
             .parent()
             .and_then(|folder| folder.file_name())
@@ -85,8 +85,8 @@ impl PackageJson {
             .unwrap_or("");
         let package_json = PackageJson::get_init_package_json(name);
         let contents = serde_json::to_string_pretty(&package_json)?;
-        fs::write(path, contents)?; // TODO: forbid overwriting existing files
-        Ok(package_json)
+        fs::write(path, &contents)?; // TODO: forbid overwriting existing files
+        Ok((package_json, contents))
     }
 
     fn read_from_file(path: &PathBuf) -> Result<Value, PackageJsonError> {
@@ -98,12 +98,8 @@ impl PackageJson {
         if path.exists() {
             return Err(PackageJsonError::AlreadyExist);
         }
-        let package_json = PackageJson::write_to_file(path)?;
-        println!(
-            "Wrote to {}\n\n{}",
-            path.display(),
-            serde_json::to_string_pretty(&package_json).unwrap_or(String::new())
-        );
+        let (_, contents) = PackageJson::write_to_file(path)?;
+        println!("Wrote to {path}\n\n{contents}", path = path.display());
         Ok(())
     }
 
@@ -119,7 +115,7 @@ impl PackageJson {
         let value = if path.exists() {
             PackageJson::read_from_file(path)?
         } else {
-            PackageJson::write_to_file(path)?
+            PackageJson::write_to_file(path).map(|(value, _)| value)?
         };
 
         Ok(PackageJson::new(path.to_path_buf(), value))
