@@ -1,6 +1,5 @@
 ---
 source: crates/package_json/src/lib.rs
-assertion_line: 226
 expression: "PackageJson::to_string_prettify(&package_json).unwrap_or(String::new())"
 ---
 {
