@@ -99,7 +99,7 @@ mod tests {
         env::set_current_dir(dir.path()).unwrap();
 
         let package_json_path = dir.path().join("package.json");
-        let mut package_json = PackageJson::create_if_needed(&package_json_path).unwrap();
+        let mut package_json = PackageJson::create_if_needed(package_json_path.clone()).unwrap();
 
         package_json.add_dependency("is-odd", "3.0.1", DependencyGroup::Default).unwrap();
         package_json

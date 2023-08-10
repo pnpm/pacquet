@@ -99,22 +99,23 @@ impl PackageJson {
         Ok(())
     }
 
-    pub fn from_path(path: &PathBuf) -> Result<PackageJson, PackageJsonError> {
+    pub fn from_path(path: PathBuf) -> Result<PackageJson, PackageJsonError> {
         if !path.exists() {
             return Err(PackageJsonError::NoImporterManifestFound(path.display().to_string()));
         }
 
-        Ok(PackageJson { path: path.to_path_buf(), value: PackageJson::read_from_file(path)? })
+        let value = PackageJson::read_from_file(&path)?;
+        Ok(PackageJson { path, value })
     }
 
-    pub fn create_if_needed(path: &PathBuf) -> Result<PackageJson, PackageJsonError> {
+    pub fn create_if_needed(path: PathBuf) -> Result<PackageJson, PackageJsonError> {
         let value = if path.exists() {
-            PackageJson::read_from_file(path)?
+            PackageJson::read_from_file(&path)?
         } else {
-            PackageJson::write_to_file(path).map(|(value, _)| value)?
+            PackageJson::write_to_file(&path).map(|(value, _)| value)?
         };
 
-        Ok(PackageJson { path: path.to_path_buf(), value })
+        Ok(PackageJson { path, value })
     }
 
     pub fn save(&mut self) -> Result<(), PackageJsonError> {
@@ -228,14 +229,14 @@ mod tests {
         PackageJson::init(&tmp).unwrap();
         assert!(tmp.exists());
         assert!(tmp.is_file());
-        assert_eq!(PackageJson::from_path(&tmp).unwrap().path, tmp);
+        assert_eq!(PackageJson::from_path(tmp.clone()).unwrap().path, tmp);
     }
 
     #[test]
     fn should_add_dependency() {
         let dir = tempdir().unwrap();
         let tmp = dir.path().join("package.json");
-        let mut package_json = PackageJson::create_if_needed(&tmp).unwrap();
+        let mut package_json = PackageJson::create_if_needed(tmp.clone()).unwrap();
         package_json.add_dependency("fastify", "1.0.0", DependencyGroup::Default).unwrap();
 
         let dependencies = package_json.get_dependencies(vec![DependencyGroup::Default]);
@@ -249,7 +250,7 @@ mod tests {
     fn should_throw_on_missing_command() {
         let dir = tempdir().unwrap();
         let tmp = dir.path().join("package.json");
-        let package_json = PackageJson::create_if_needed(&tmp).unwrap();
+        let package_json = PackageJson::create_if_needed(tmp).unwrap();
         package_json.get_script("dev", false).expect_err("dev command should not exist");
     }
 
@@ -264,7 +265,7 @@ mod tests {
         "#;
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "{}", data).unwrap();
-        let package_json = PackageJson::create_if_needed(&tmp.path().to_path_buf()).unwrap();
+        let package_json = PackageJson::create_if_needed(tmp.path().to_path_buf()).unwrap();
         package_json.get_script("test", false).unwrap();
         package_json.get_script("invalid", false).expect_err("invalid command should not exist");
         package_json.get_script("invalid", true).unwrap();
@@ -284,7 +285,7 @@ mod tests {
         "#;
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "{}", data).unwrap();
-        let package_json = PackageJson::create_if_needed(&tmp.path().to_path_buf()).unwrap();
+        let package_json = PackageJson::create_if_needed(tmp.path().to_path_buf()).unwrap();
         assert!(package_json
             .get_dependencies(vec![DependencyGroup::Peer])
             .contains_key("fast-querystring"));

@@ -219,7 +219,7 @@ mod tests {
             virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
         };
         manager.add(&args).await.unwrap();
-        let file = PackageJson::from_path(&dir.path().join("package.json")).unwrap();
+        let file = PackageJson::from_path(dir.path().join("package.json")).unwrap();
         assert!(file.get_dependencies(vec![DependencyGroup::Default]).contains_key("is-odd"));
         env::set_current_dir(&current_directory).unwrap();
     }
