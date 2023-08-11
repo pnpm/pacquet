@@ -141,6 +141,18 @@ mod tests {
             create_list(InstallCommandArgs { prod: false, dev: true, no_optional: true }),
             [Dev],
         );
+
+        // --prod --dev -> prod + dev
+        assert_eq!(
+            create_list(InstallCommandArgs { prod: true, dev: true, no_optional: false }),
+            [Default, Dev],
+        );
+
+        // --prod --dev --no-optional -> prod + dev
+        assert_eq!(
+            create_list(InstallCommandArgs { prod: true, dev: true, no_optional: false }),
+            [Default, Dev],
+        );
     }
 
     #[tokio::test]
