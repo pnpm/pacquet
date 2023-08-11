@@ -28,13 +28,10 @@ impl InstallCommandArgs {
     /// which filters the types of dependencies to install.
     fn get_dependency_groups(&self) -> impl Iterator<Item = DependencyGroup> {
         let InstallCommandArgs { prod, dev, no_optional } = self;
-        if *prod && *dev {
-            todo!("What to do when both --prod and --dev present?");
-        }
-        let has_both = !prod && !dev;
+        let has_both = prod == dev;
         let has_prod = has_both || *prod;
         let has_dev = has_both || *dev;
-        let has_optional = !no_optional;
+        let has_optional = !(*no_optional || *prod && *dev);
         std::iter::empty()
             .chain(has_prod.then_some(DependencyGroup::Default))
             .chain(has_dev.then_some(DependencyGroup::Dev))
