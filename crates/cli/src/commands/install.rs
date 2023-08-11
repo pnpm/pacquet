@@ -96,29 +96,41 @@ mod tests {
         use DependencyGroup::{Default, Dev, Optional};
         let create_list =
             |args: InstallCommandArgs| args.get_dependency_groups().collect::<Vec<_>>();
+
+        // no flags -> prod + dev + optional
         assert_eq!(
             create_list(InstallCommandArgs { prod: false, dev: false, no_optional: false }),
-            [Default, Optional],
+            [Default, Dev, Optional],
         );
+
+        // --prod -> prod + optional
         assert_eq!(
             create_list(InstallCommandArgs { prod: true, dev: false, no_optional: false }),
             [Default, Optional],
         );
+
+        // --dev -> dev + optional
         assert_eq!(
             create_list(InstallCommandArgs { prod: false, dev: true, no_optional: false }),
-            [Default, Dev, Optional],
+            [Dev, Optional],
         );
+
+        // --no-optional -> prod + dev
         assert_eq!(
             create_list(InstallCommandArgs { prod: false, dev: false, no_optional: true }),
-            [Default],
+            [Default, Dev],
         );
+
+        // --prod --no-optional -> prod
         assert_eq!(
             create_list(InstallCommandArgs { prod: true, dev: false, no_optional: true }),
             [Default],
         );
+
+        // --dev --no-optional -> dev
         assert_eq!(
             create_list(InstallCommandArgs { prod: false, dev: true, no_optional: true }),
-            [Default, Dev],
+            [Dev],
         );
     }
 
