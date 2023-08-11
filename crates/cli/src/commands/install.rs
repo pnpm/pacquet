@@ -91,6 +91,37 @@ mod tests {
     use pacquet_package_json::{DependencyGroup, PackageJson};
     use tempfile::tempdir;
 
+    #[test]
+    fn install_args_to_dependency_groups() {
+        use DependencyGroup::{Bundled, Default, Dev, Optional, Peer};
+        let create_list =
+            |args: InstallCommandArgs| args.get_dependency_groups().collect::<Vec<_>>();
+        assert_eq!(
+            create_list(InstallCommandArgs { prod: false, dev: false, no_optional: false }),
+            [Default, Optional],
+        );
+        assert_eq!(
+            create_list(InstallCommandArgs { prod: true, dev: false, no_optional: false }),
+            [Default, Optional],
+        );
+        assert_eq!(
+            create_list(InstallCommandArgs { prod: false, dev: true, no_optional: false }),
+            [Default, Dev, Optional],
+        );
+        assert_eq!(
+            create_list(InstallCommandArgs { prod: false, dev: false, no_optional: true }),
+            [Default],
+        );
+        assert_eq!(
+            create_list(InstallCommandArgs { prod: true, dev: false, no_optional: true }),
+            [Default],
+        );
+        assert_eq!(
+            create_list(InstallCommandArgs { prod: false, dev: true, no_optional: true }),
+            [Default, Dev],
+        );
+    }
+
     #[tokio::test]
     pub async fn should_install_dependencies() {
         let dir = tempdir().unwrap();
