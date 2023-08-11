@@ -157,7 +157,7 @@ mod tests {
         package_json.save().unwrap();
 
         let package_manager = PackageManager::new(&package_json_path).unwrap();
-        let args = InstallCommandArgs { prod: false, dev: true, no_optional: false };
+        let args = InstallCommandArgs { prod: false, dev: false, no_optional: false };
         package_manager.install(&args).await.unwrap();
 
         // Make sure the package is installed
