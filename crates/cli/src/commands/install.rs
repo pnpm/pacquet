@@ -25,10 +25,9 @@ pub struct InstallCommandArgs {
 
 impl PackageManager {
     pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
-        let dependency_groups: Vec<_> = std::iter::once(DependencyGroup::Default)
+        let dependency_groups = std::iter::once(DependencyGroup::Default)
             .chain(args.dev.then_some(DependencyGroup::Dev))
-            .chain((!args.no_optional).then_some(DependencyGroup::Optional))
-            .collect();
+            .chain((!args.no_optional).then_some(DependencyGroup::Optional));
 
         let config = &self.config;
         let path = &self.config.modules_dir;
@@ -37,7 +36,7 @@ impl PackageManager {
 
         let direct_dependency_handles = self
             .package_json
-            .get_dependencies(&dependency_groups)
+            .get_dependencies(dependency_groups)
             .map(|(name, version)| async move {
                 find_package_version_from_registry(config, http_client, name, version, path)
                     .await
