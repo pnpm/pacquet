@@ -77,8 +77,7 @@ impl PackageManager {
             .get_dependencies(self.config.auto_install_peers)
             .map(|(name, version)| {
                 find_package_version_from_registry(config, http_client, name, version, path)
-            })
-            .collect::<Vec<_>>();
+            });
 
         queue.push_front(future::join_all(direct_dependency_handles).await);
 
@@ -92,9 +91,8 @@ impl PackageManager {
                     .join(dependency.get_store_name())
                     .join("node_modules");
 
-                let handles = dependency
-                    .get_dependencies(self.config.auto_install_peers)
-                    .map(|(name, version)| {
+                let handles = dependency.get_dependencies(self.config.auto_install_peers).map(
+                    |(name, version)| {
                         find_package_version_from_registry(
                             config,
                             http_client,
@@ -102,8 +100,8 @@ impl PackageManager {
                             version,
                             node_modules_path.to_owned(),
                         )
-                    })
-                    .collect::<Vec<_>>();
+                    },
+                );
 
                 queue.push_back(future::join_all(handles).await);
             }

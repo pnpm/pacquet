@@ -38,15 +38,13 @@ impl PackageManager {
         let http_client = &self.http_client;
         let mut queue: VecDeque<Vec<PackageVersion>> = VecDeque::new();
 
-        let direct_dependency_handles = self
-            .package_json
-            .get_dependencies(&dependency_groups)
-            .map(|(name, version)| async move {
+        let direct_dependency_handles = self.package_json.get_dependencies(&dependency_groups).map(
+            |(name, version)| async move {
                 find_package_version_from_registry(config, http_client, name, version, path)
                     .await
                     .unwrap()
-            })
-            .collect::<Vec<_>>();
+            },
+        );
 
         queue.push_front(future::join_all(direct_dependency_handles).await);
 
@@ -58,9 +56,8 @@ impl PackageManager {
                     .join(dependency.get_store_name())
                     .join("node_modules");
 
-                let handles = dependency
-                    .get_dependencies(self.config.auto_install_peers)
-                    .map(|(name, version)| async {
+                let handles = dependency.get_dependencies(self.config.auto_install_peers).map(
+                    |(name, version)| async {
                         find_package_version_from_registry(
                             config,
                             http_client,
@@ -70,8 +67,8 @@ impl PackageManager {
                         )
                         .await
                         .unwrap()
-                    })
-                    .collect::<Vec<_>>();
+                    },
+                );
 
                 queue.push_back(future::join_all(handles).await);
             }
