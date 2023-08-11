@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use pipe_trait::Pipe;
+use reqwest_middleware::ClientWithMiddleware;
 use serde::{Deserialize, Serialize};
 
 use crate::package_distribution::PackageDistribution;
@@ -27,7 +28,7 @@ impl PackageVersion {
     pub async fn fetch_from_registry(
         name: &str,
         version: &str,
-        http_client: &reqwest::Client,
+        http_client: &ClientWithMiddleware,
         registry: &str,
     ) -> Result<Self, RegistryError> {
         http_client

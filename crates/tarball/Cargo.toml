@@ -14,11 +14,12 @@ repository.workspace  = true
 pacquet_cafs        = { workspace = true }
 pacquet_diagnostics = { workspace = true }
 
-reqwest      = { workspace = true }
-ssri         = { workspace = true }
-tar          = { workspace = true }
-tokio        = { workspace = true }
-zune-inflate = { workspace = true }
+reqwest            = { workspace = true }
+reqwest-middleware = { workspace = true }
+ssri               = { workspace = true }
+tar                = { workspace = true }
+tokio              = { workspace = true }
+zune-inflate       = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -28,9 +28,12 @@ clap               = { version = "4", features = ["derive", "string"] }
 home               = { version = "0.5.5" }
 insta              = { version = "1.31.0", features = ["yaml", "glob", "walkdir"] }
 futures-util       = { version = "0.3.28" }
+moka               = { version = "0.11.3" }
 miette             = { version = "5.9.0", features = ["fancy"] }
 reflink-copy       = { version = "0.1.5" }
 reqwest            = { version = "0.11", default-features = false, features = ["json", "native-tls-vendored"] }
+reqwest-middleware = { version = "0.2.3" }
+http-cache-reqwest = { version = "0.11.1", default-features = false, features = ["manager-moka"] }
 node-semver        = { version = "2.1.0" }
 pipe-trait         = { version = "0.4.0" }
 rayon              = { version = "1.7.0" }
@@ -44,7 +47,7 @@ tar                = { version = "0.4.38" }
 thiserror          = { version = "1.0.44" }
 tracing            = { version = "0.1.37" }
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
-tokio              = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+tokio              = { version = "1", features = ["rt-multi-thread", "macros"] }
 walkdir            = { version = "2.3.3" }
 zune-inflate       = { version = "0.2.54" }
 

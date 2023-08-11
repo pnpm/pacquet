@@ -1,3 +1,6 @@
+use http_cache_reqwest::{Cache, CacheMode, HttpCache, HttpCacheOptions, MokaManager};
+use reqwest::Client;
+use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use std::path::PathBuf;
 
 use pacquet_diagnostics::{
@@ -30,7 +33,7 @@ pub enum PackageManagerError {
 pub struct PackageManager {
     pub config: Box<Npmrc>,
     pub package_json: Box<PackageJson>,
-    pub http_client: Box<reqwest::Client>,
+    pub http_client: Box<ClientWithMiddleware>,
 }
 
 impl PackageManager {
@@ -38,7 +41,15 @@ impl PackageManager {
         Ok(PackageManager {
             config: Box::new(get_current_npmrc()),
             package_json: Box::new(PackageJson::create_if_needed(package_json_path.into())?),
-            http_client: Box::new(reqwest::Client::new()),
+            http_client: Box::new(
+                ClientBuilder::new(Client::new())
+                    .with(Cache(HttpCache {
+                        mode: CacheMode::ForceCache,
+                        manager: MokaManager::default(),
+                        options: HttpCacheOptions::default(),
+                    }))
+                    .build(),
+            ),
         })
     }
 }

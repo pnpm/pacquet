@@ -4,6 +4,7 @@ use std::{
 };
 
 use pipe_trait::Pipe;
+use reqwest_middleware::ClientWithMiddleware;
 use serde::{Deserialize, Serialize};
 
 use crate::{package_version::PackageVersion, RegistryError};
@@ -28,7 +29,7 @@ impl PartialEq for Package {
 impl Package {
     pub async fn fetch_from_registry(
         name: &str,
-        http_client: &reqwest::Client,
+        http_client: &ClientWithMiddleware,
         registry: &str,
     ) -> Result<Self, RegistryError> {
         http_client
