@@ -25,13 +25,10 @@ pub struct InstallCommandArgs {
 
 impl PackageManager {
     pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
-        let mut dependency_groups = vec![DependencyGroup::Default, DependencyGroup::Optional];
-        if args.dev {
-            dependency_groups.push(DependencyGroup::Dev);
-        }
-        if args.no_optional {
-            dependency_groups.remove(1);
-        }
+        let dependency_groups: Vec<_> = std::iter::once(DependencyGroup::Default)
+            .chain(args.dev.then_some(DependencyGroup::Dev))
+            .chain((!args.no_optional).then_some(DependencyGroup::Optional))
+            .collect();
 
         let config = &self.config;
         let path = &self.config.modules_dir;
