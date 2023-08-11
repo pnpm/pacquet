@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn install_args_to_dependency_groups() {
-        use DependencyGroup::{Bundled, Default, Dev, Optional, Peer};
+        use DependencyGroup::{Default, Dev, Optional};
         let create_list =
             |args: InstallCommandArgs| args.get_dependency_groups().collect::<Vec<_>>();
         assert_eq!(
