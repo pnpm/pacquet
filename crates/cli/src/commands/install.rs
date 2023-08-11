@@ -27,9 +27,15 @@ impl InstallCommandArgs {
     /// Convert the command arguments to an iterator of [`DependencyGroup`]
     /// which filters the types of dependencies to install.
     fn get_dependency_groups(&self) -> impl Iterator<Item = DependencyGroup> {
-        std::iter::once(DependencyGroup::Default)
-            .chain(self.dev.then_some(DependencyGroup::Dev))
-            .chain((!self.no_optional).then_some(DependencyGroup::Optional))
+        let InstallCommandArgs { prod, dev, no_optional } = self;
+        let has_both = !prod && !dev;
+        let has_prod = has_both || *prod;
+        let has_dev = has_both || *dev;
+        let has_optional = !no_optional;
+        std::iter::empty()
+            .chain(has_prod.then_some(DependencyGroup::Default))
+            .chain(has_dev.then_some(DependencyGroup::Dev))
+            .chain(has_optional.then_some(DependencyGroup::Optional))
     }
 }
 
