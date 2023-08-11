@@ -1,8 +1,7 @@
 mod custom_deserializer;
 
-use std::{env, fs, path::PathBuf};
-
 use serde::Deserialize;
+use std::{env, fs, path::PathBuf};
 
 use crate::custom_deserializer::{
     bool_true, default_hoist_pattern, default_modules_cache_max_age, default_modules_dir,
@@ -11,50 +10,45 @@ use crate::custom_deserializer::{
 };
 
 #[derive(Debug, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "kebab-case")]
 pub enum NodeLinker {
     /// dependencies are symlinked from a virtual store at node_modules/.pnpm.
-    #[serde(rename = "isolated")]
     #[default]
     Isolated,
 
     /// flat node_modules without symlinks is created. Same as the node_modules created by npm or
     /// Yarn Classic.
-    #[serde(rename = "hoisted")]
     Hoisted,
 
     /// no node_modules. Plug'n'Play is an innovative strategy for Node that is used by
     /// Yarn Berry. It is recommended to also set symlink setting to false when using pnp as
     /// your linker.
-    #[serde(rename = "pnp")]
     Pnp,
 }
 
 #[derive(Debug, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "kebab-case")]
 pub enum PackageImportMethod {
     ///  try to clone packages from the store. If cloning is not supported then hardlink packages
     /// from the store. If neither cloning nor linking is possible, fall back to copying
-    #[serde(rename = "auto")]
     #[default]
     Auto,
 
     /// hard link packages from the store
-    #[serde(rename = "hardlink")]
     Hardlink,
 
     /// try to clone packages from the store. If cloning is not supported then fall back to copying
-    #[serde(rename = "copy")]
     Copy,
 
     /// copy packages from the store
-    #[serde(rename = "clone")]
     Clone,
 
     /// clone (AKA copy-on-write or reference link) packages from the store
-    #[serde(rename = "clone-or-copy")]
     CloneOrCopy,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct Npmrc {
     /// When true, all dependencies are hoisted to node_modules/.pnpm/node_modules.
     /// This makes unlisted dependencies accessible to all packages inside node_modules.
@@ -65,14 +59,14 @@ pub struct Npmrc {
     /// By default, all packages are hoisted - however, if you know that only some flawed packages
     /// have phantom dependencies, you can use this option to exclusively hoist the phantom
     /// dependencies (recommended).
-    #[serde(rename = "hoist-pattern", default = "default_hoist_pattern")]
+    #[serde(default = "default_hoist_pattern")]
     pub hoist_pattern: Vec<String>,
 
     /// Unlike hoist-pattern, which hoists dependencies to a hidden modules directory inside the
     /// virtual store, public-hoist-pattern hoists dependencies matching the pattern to the root
     /// modules directory. Hoisting to the root modules directory means that application code will
     /// have access to phantom dependencies, even if they modify the resolution strategy improperly.
-    #[serde(rename = "public-hoist-pattern", default = "default_public_hoist_pattern")]
+    #[serde(default = "default_public_hoist_pattern")]
     pub public_hoist_pattern: Vec<String>,
 
     /// By default, pnpm creates a semistrict node_modules, meaning dependencies have access to
@@ -80,22 +74,19 @@ pub struct Npmrc {
     /// most of the packages in the ecosystem work with no issues. However, if some tooling only
     /// works when the hoisted dependencies are in the root of node_modules, you can set this to
     /// true to hoist them for you.
-    #[serde(rename = "shamefully-hoist")]
     #[serde(default, deserialize_with = "deserialize_bool")]
     pub shamefully_hoist: bool,
 
     /// The location where all the packages are saved on the disk.
-    #[serde(rename = "store-dir")]
     #[serde(default = "default_store_dir", deserialize_with = "deserialize_pathbuf")]
     pub store_dir: PathBuf,
 
     /// The directory in which dependencies will be installed (instead of node_modules).
-    #[serde(rename = "modules-dir")]
     #[serde(default = "default_modules_dir", deserialize_with = "deserialize_pathbuf")]
     pub modules_dir: PathBuf,
 
     /// Defines what linker should be used for installing Node packages.
-    #[serde(rename = "node-linker", default)]
+    #[serde(default)]
     pub node_linker: NodeLinker,
 
     /// When symlink is set to false, pnpm creates a virtual store directory without any symlinks.
@@ -105,13 +96,12 @@ pub struct Npmrc {
 
     /// The directory with links to the store. All direct and indirect dependencies of the
     /// project are linked into this directory.
-    #[serde(rename = "virtual-store-dir")]
     #[serde(default = "default_virtual_store_dir", deserialize_with = "deserialize_pathbuf")]
     pub virtual_store_dir: PathBuf,
 
     /// Controls the way packages are imported from the store (if you want to disable symlinks
     /// inside node_modules, then you need to change the node-linker setting, not this one).
-    #[serde(rename = "package-import-method", default)]
+    #[serde(default)]
     pub package_import_method: PackageImportMethod,
 
     /// The time in minutes after which orphan packages from the modules directory should be
@@ -119,7 +109,6 @@ pub struct Npmrc {
     /// speed when switching branches or downgrading dependencies.
     ///
     /// Default value is 10080 (7 days in minutes)
-    #[serde(rename = "modules-cache-max-age")]
     #[serde(default = "default_modules_cache_max_age", deserialize_with = "deserialize_u64")]
     pub modules_cache_max_age: u64,
 
@@ -130,12 +119,10 @@ pub struct Npmrc {
     /// When set to true and the available pnpm-lock.yaml satisfies the package.json dependencies
     /// directive, a headless installation is performed. A headless installation skips all
     /// dependency resolution as it does not need to modify the lockfile.
-    #[serde(rename = "prefer-frozen-lockfile")]
     #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
     pub prefer_frozen_lockfile: bool,
 
     /// Add the full URL to the package's tarball to every entry in pnpm-lock.yaml.
-    #[serde(rename = "lockfile-include-tarball-url")]
     #[serde(default, deserialize_with = "deserialize_bool")]
     pub lockfile_include_tarball_url: bool,
 
@@ -144,17 +131,14 @@ pub struct Npmrc {
     pub registry: String,
 
     /// When true, any missing non-optional peer dependencies are automatically installed.
-    #[serde(rename = "auto-install-peers")]
     #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
     pub auto_install_peers: bool,
 
     /// When this setting is set to true, packages with peer dependencies will be deduplicated after peers resolution.
-    #[serde(rename = "dedupe-peer-dependents")]
     #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
     pub dedupe_peer_dependents: bool,
 
     /// If this is enabled, commands will fail if there is a missing or invalid peer dependency in the tree.
-    #[serde(rename = "strict-peer-dependencies")]
     #[serde(default, deserialize_with = "deserialize_bool")]
     pub strict_peer_dependencies: bool,
 
@@ -162,7 +146,6 @@ pub struct Npmrc {
     /// dependencies of any projects in the workspace. It is a useful feature as you can install
     /// your peer dependencies only in the root of the workspace, and you can be sure that all
     /// projects in the workspace use the same versions of the peer dependencies.
-    #[serde(rename = "resolve-peers-from-workspace-root")]
     #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
     pub resolve_peers_from_workspace_root: bool,
 }
