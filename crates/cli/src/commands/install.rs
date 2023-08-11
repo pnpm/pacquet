@@ -29,7 +29,7 @@ impl PackageManager {
         if args.dev {
             dependency_groups.push(DependencyGroup::Dev);
         }
-        if !args.no_optional {
+        if args.no_optional {
             dependency_groups.remove(1);
         }
 
