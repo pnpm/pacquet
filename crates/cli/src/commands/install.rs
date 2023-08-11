@@ -23,24 +23,31 @@ pub struct InstallCommandArgs {
     pub no_optional: bool,
 }
 
+impl InstallCommandArgs {
+    /// Convert the command arguments to an iterator of [`DependencyGroup`]
+    /// which filters the types of dependencies to install.
+    fn get_dependency_groups(&self) -> impl Iterator<Item = DependencyGroup> {
+        std::iter::once(DependencyGroup::Default)
+            .chain(self.dev.then_some(DependencyGroup::Dev))
+            .chain((!self.no_optional).then_some(DependencyGroup::Optional))
+    }
+}
+
 impl PackageManager {
     pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
-        let dependency_groups = std::iter::once(DependencyGroup::Default)
-            .chain(args.dev.then_some(DependencyGroup::Dev))
-            .chain((!args.no_optional).then_some(DependencyGroup::Optional));
-
         let config = &self.config;
         let path = &self.config.modules_dir;
         let http_client = &self.http_client;
         let mut queue: VecDeque<Vec<PackageVersion>> = VecDeque::new();
 
-        let direct_dependency_handles = self.package_json.get_dependencies(dependency_groups).map(
-            |(name, version)| async move {
+        let direct_dependency_handles = self
+            .package_json
+            .get_dependencies(args.get_dependency_groups())
+            .map(|(name, version)| async move {
                 find_package_version_from_registry(config, http_client, name, version, path)
                     .await
                     .unwrap()
-            },
-        );
+            });
 
         queue.push_front(future::join_all(direct_dependency_handles).await);
 
