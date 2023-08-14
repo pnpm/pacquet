@@ -40,7 +40,7 @@ serde_json         = { version = "1.0.99", features = ["preserve_order"] }
 serde_yaml         = { version = "0.9.1" }
 ssri               = { version = "9.0.0" }
 strum              = { version = "0.25.0", features = ["derive"] }
-tar                = { version = "0.4.38" }
+tar                = { version = "0.4.40" }
 thiserror          = { version = "1.0.44" }
 tracing            = { version = "0.1.37" }
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
