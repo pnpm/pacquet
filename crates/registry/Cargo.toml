@@ -13,12 +13,13 @@ repository.workspace  = true
 [dependencies]
 pacquet_diagnostics = { workspace = true }
 
-reqwest     = { workspace = true }
-node-semver = { workspace = true }
-pipe-trait  = { workspace = true }
-serde       = { workspace = true }
-serde_json  = { workspace = true }
-tokio       = { workspace = true }
+reqwest            = { workspace = true }
+reqwest-middleware = { workspace = true }
+node-semver        = { workspace = true }
+pipe-trait         = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+tokio              = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

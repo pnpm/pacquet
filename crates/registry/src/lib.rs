@@ -27,6 +27,10 @@ pub enum RegistryError {
     Network(#[from] reqwest::Error),
 
     #[error(transparent)]
+    #[diagnostic(code(pacquet_registry::network_middleware_error))]
+    NetworkMiddleware(#[from] reqwest_middleware::Error),
+
+    #[error(transparent)]
     #[diagnostic(code(pacquet_registry::io_error))]
     Io(#[from] std::io::Error),
 

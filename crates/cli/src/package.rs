@@ -3,6 +3,7 @@ use crate::package_manager::PackageManagerError;
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::download_tarball_to_store;
+use reqwest_middleware::ClientWithMiddleware;
 use std::path::PathBuf;
 
 /// This function execute the following and returns the package
@@ -15,7 +16,7 @@ use std::path::PathBuf;
 /// `node_modules/.pacquet/fastify@1.0.0/node_modules`.
 pub async fn find_package_version_from_registry<P: Into<PathBuf>>(
     config: &Npmrc,
-    http_client: &reqwest::Client,
+    http_client: &ClientWithMiddleware,
     name: &str,
     version: &str,
     symlink_path: P,
@@ -28,7 +29,7 @@ pub async fn find_package_version_from_registry<P: Into<PathBuf>>(
 
 pub async fn fetch_package_version_directly<P: Into<PathBuf>>(
     config: &Npmrc,
-    http_client: &reqwest::Client,
+    http_client: &ClientWithMiddleware,
     name: &str,
     version: &str,
     symlink_path: P,
@@ -67,8 +68,11 @@ async fn internal_fetch<P: Into<PathBuf>>(
 #[cfg(test)]
 mod tests {
     use crate::package::find_package_version_from_registry;
+    use http_cache_reqwest::{Cache, CacheMode, HttpCache, HttpCacheOptions, MokaManager};
     use node_semver::Version;
     use pacquet_npmrc::Npmrc;
+    use reqwest::Client;
+    use reqwest_middleware::ClientBuilder;
     use std::fs;
     use std::path::Path;
     use tempfile::tempdir;
@@ -103,7 +107,13 @@ mod tests {
         let modules_dir = tempdir().unwrap();
         let virtual_store_dir = tempdir().unwrap();
         let config = get_config(store_dir.path(), modules_dir.path(), virtual_store_dir.path());
-        let http_client = reqwest::Client::new();
+        let http_client = ClientBuilder::new(Client::new())
+            .with(Cache(HttpCache {
+                mode: CacheMode::ForceCache,
+                manager: MokaManager::default(),
+                options: HttpCacheOptions::default(),
+            }))
+            .build();
         let symlink_path = tempdir().unwrap();
         let package = find_package_version_from_registry(
             &config,
