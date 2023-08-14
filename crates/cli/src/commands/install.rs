@@ -147,7 +147,7 @@ mod tests {
 
         // --prod --dev --no-optional -> prod + dev
         assert_eq!(
-            create_list(InstallCommandArgs { prod: true, dev: true, no_optional: false }),
+            create_list(InstallCommandArgs { prod: true, dev: true, no_optional: true }),
             [Default, Dev],
         );
     }
