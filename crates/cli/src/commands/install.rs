@@ -31,7 +31,7 @@ impl InstallCommandArgs {
         let has_both = prod == dev;
         let has_prod = has_both || *prod;
         let has_dev = has_both || *dev;
-        let has_optional = !(*no_optional || *prod && *dev);
+        let has_optional = !no_optional;
         std::iter::empty()
             .chain(has_prod.then_some(DependencyGroup::Default))
             .chain(has_dev.then_some(DependencyGroup::Dev))
@@ -139,10 +139,10 @@ mod tests {
             [Dev],
         );
 
-        // --prod --dev -> prod + dev
+        // --prod --dev -> prod + dev + optional
         assert_eq!(
             create_list(InstallCommandArgs { prod: true, dev: true, no_optional: false }),
-            [Default, Dev],
+            [Default, Dev, Optional],
         );
 
         // --prod --dev --no-optional -> prod + dev
