@@ -125,6 +125,7 @@ mod tests {
 
     use crate::fs::get_filenames_in_folder;
     use pacquet_package_json::{DependencyGroup, PackageJson};
+    use pretty_assertions::assert_eq;
     use tempfile::tempdir;
 
     use super::*;

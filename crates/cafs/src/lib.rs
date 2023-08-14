@@ -62,6 +62,7 @@ pub fn prune_sync<P: Into<PathBuf>>(store_dir: P) -> Result<(), CafsError> {
 mod tests {
     use std::{env, str::FromStr};
 
+    use pretty_assertions::assert_eq;
     use tempfile::tempdir;
 
     use super::*;

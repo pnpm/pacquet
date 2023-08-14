@@ -21,4 +21,5 @@ tokio        = { workspace = true }
 zune-inflate = { workspace = true }
 
 [dev-dependencies]
-tempfile = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile          = { workspace = true }

@@ -118,6 +118,7 @@ pub fn get_package_store_folder_name(input: &str, version: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
     use tempfile::tempdir;
 
     use super::*;

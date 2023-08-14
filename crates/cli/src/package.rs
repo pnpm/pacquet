@@ -69,6 +69,7 @@ mod tests {
     use crate::package::find_package_version_from_registry;
     use node_semver::Version;
     use pacquet_npmrc::Npmrc;
+    use pretty_assertions::assert_eq;
     use std::fs;
     use std::path::Path;
     use tempfile::tempdir;
