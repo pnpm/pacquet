@@ -42,7 +42,7 @@ pub enum PackageJsonError {
     NoScript(String),
 }
 
-#[derive(Debug, PartialEq, IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, IntoStaticStr)]
 pub enum DependencyGroup {
     #[strum(serialize = "dependencies")]
     Default,
@@ -131,12 +131,12 @@ impl PackageJson {
 
     pub fn get_dependencies<'a>(
         &'a self,
-        groups: &'a [DependencyGroup],
+        groups: impl IntoIterator<Item = DependencyGroup> + 'a,
     ) -> impl Iterator<Item = (&'a str, &'a str)> + 'a {
         // TODO: add error when `dependencies` is found to not be an object
         // TODO: add error when `version` is found to not be a string
         groups
-            .iter()
+            .into_iter()
             .flat_map(|group| self.value.get::<&str>(group.into()))
             .flat_map(|dependencies| dependencies.as_object())
             .flatten()
@@ -229,7 +229,7 @@ mod tests {
         package_json.add_dependency("fastify", "1.0.0", DependencyGroup::Default).unwrap();
 
         let dependencies: HashMap<_, _> =
-            package_json.get_dependencies(&[DependencyGroup::Default]).collect();
+            package_json.get_dependencies([DependencyGroup::Default]).collect();
         assert!(dependencies.contains_key("fastify"));
         assert_eq!(dependencies.get("fastify").unwrap(), &"1.0.0");
         package_json.save().unwrap();
@@ -278,7 +278,7 @@ mod tests {
         let package_json = PackageJson::create_if_needed(tmp.path().to_path_buf()).unwrap();
         let get_dependencies =
             |groups| package_json.get_dependencies(groups).collect::<HashMap<_, _>>();
-        assert!(get_dependencies(&[DependencyGroup::Peer]).contains_key("fast-querystring"));
-        assert!(get_dependencies(&[DependencyGroup::Default]).contains_key("fastify"));
+        assert!(get_dependencies([DependencyGroup::Peer]).contains_key("fast-querystring"));
+        assert!(get_dependencies([DependencyGroup::Default]).contains_key("fastify"));
     }
 }

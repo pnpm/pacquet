@@ -23,28 +23,37 @@ pub struct InstallCommandArgs {
     pub no_optional: bool,
 }
 
+impl InstallCommandArgs {
+    /// Convert the command arguments to an iterator of [`DependencyGroup`]
+    /// which filters the types of dependencies to install.
+    fn get_dependency_groups(&self) -> impl Iterator<Item = DependencyGroup> {
+        let &InstallCommandArgs { prod, dev, no_optional } = self;
+        let has_both = prod == dev;
+        let has_prod = has_both || prod;
+        let has_dev = has_both || dev;
+        let has_optional = !no_optional;
+        std::iter::empty()
+            .chain(has_prod.then_some(DependencyGroup::Default))
+            .chain(has_dev.then_some(DependencyGroup::Dev))
+            .chain(has_optional.then_some(DependencyGroup::Optional))
+    }
+}
+
 impl PackageManager {
     pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
-        let mut dependency_groups = vec![DependencyGroup::Default, DependencyGroup::Optional];
-        if args.dev {
-            dependency_groups.push(DependencyGroup::Dev);
-        }
-        if !args.no_optional {
-            dependency_groups.remove(1);
-        }
-
         let config = &self.config;
         let path = &self.config.modules_dir;
         let http_client = &self.http_client;
         let mut queue: VecDeque<Vec<PackageVersion>> = VecDeque::new();
 
-        let direct_dependency_handles = self.package_json.get_dependencies(&dependency_groups).map(
-            |(name, version)| async move {
+        let direct_dependency_handles = self
+            .package_json
+            .get_dependencies(args.get_dependency_groups())
+            .map(|(name, version)| async move {
                 find_package_version_from_registry(config, http_client, name, version, path)
                     .await
                     .unwrap()
-            },
-        );
+            });
 
         queue.push_front(future::join_all(direct_dependency_handles).await);
 
@@ -88,6 +97,61 @@ mod tests {
     use pacquet_package_json::{DependencyGroup, PackageJson};
     use tempfile::tempdir;
 
+    #[test]
+    fn install_args_to_dependency_groups() {
+        use DependencyGroup::{Default, Dev, Optional};
+        let create_list =
+            |args: InstallCommandArgs| args.get_dependency_groups().collect::<Vec<_>>();
+
+        // no flags -> prod + dev + optional
+        assert_eq!(
+            create_list(InstallCommandArgs { prod: false, dev: false, no_optional: false }),
+            [Default, Dev, Optional],
+        );
+
+        // --prod -> prod + optional
+        assert_eq!(
+            create_list(InstallCommandArgs { prod: true, dev: false, no_optional: false }),
+            [Default, Optional],
+        );
+
+        // --dev -> dev + optional
+        assert_eq!(
+            create_list(InstallCommandArgs { prod: false, dev: true, no_optional: false }),
+            [Dev, Optional],
+        );
+
+        // --no-optional -> prod + dev
+        assert_eq!(
+            create_list(InstallCommandArgs { prod: false, dev: false, no_optional: true }),
+            [Default, Dev],
+        );
+
+        // --prod --no-optional -> prod
+        assert_eq!(
+            create_list(InstallCommandArgs { prod: true, dev: false, no_optional: true }),
+            [Default],
+        );
+
+        // --dev --no-optional -> dev
+        assert_eq!(
+            create_list(InstallCommandArgs { prod: false, dev: true, no_optional: true }),
+            [Dev],
+        );
+
+        // --prod --dev -> prod + dev + optional
+        assert_eq!(
+            create_list(InstallCommandArgs { prod: true, dev: true, no_optional: false }),
+            [Default, Dev, Optional],
+        );
+
+        // --prod --dev --no-optional -> prod + dev
+        assert_eq!(
+            create_list(InstallCommandArgs { prod: true, dev: true, no_optional: true }),
+            [Default, Dev],
+        );
+    }
+
     #[tokio::test]
     pub async fn should_install_dependencies() {
         let dir = tempdir().unwrap();
@@ -105,7 +169,7 @@ mod tests {
         package_json.save().unwrap();
 
         let package_manager = PackageManager::new(&package_json_path).unwrap();
-        let args = InstallCommandArgs { prod: false, dev: true, no_optional: false };
+        let args = InstallCommandArgs { prod: false, dev: false, no_optional: false };
         package_manager.install(&args).await.unwrap();
 
         // Make sure the package is installed

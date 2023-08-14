@@ -218,7 +218,7 @@ mod tests {
         };
         manager.add(&args).await.unwrap();
         let file = PackageJson::from_path(dir.path().join("package.json")).unwrap();
-        assert!(file.get_dependencies(&[DependencyGroup::Default]).any(|(k, _)| k == "is-odd"));
+        assert!(file.get_dependencies([DependencyGroup::Default]).any(|(k, _)| k == "is-odd"));
         env::set_current_dir(&current_directory).unwrap();
     }
 }
