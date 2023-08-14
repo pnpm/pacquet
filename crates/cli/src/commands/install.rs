@@ -95,6 +95,7 @@ mod tests {
     use crate::fs::get_all_folders;
     use crate::package_manager::PackageManager;
     use pacquet_package_json::{DependencyGroup, PackageJson};
+    use pretty_assertions::assert_eq;
     use tempfile::tempdir;
 
     #[test]

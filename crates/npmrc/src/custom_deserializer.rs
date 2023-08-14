@@ -106,6 +106,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
     use std::{env, path::Path};
 
     use super::*;

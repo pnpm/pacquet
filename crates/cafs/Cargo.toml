@@ -16,4 +16,5 @@ ssri      = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-tempfile = { workspace = true }
+tempfile          = { workspace = true }
+pretty_assertions = { workspace = true }

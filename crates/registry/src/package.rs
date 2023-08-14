@@ -71,6 +71,7 @@ mod tests {
     use std::collections::HashMap;
 
     use node_semver::Version;
+    use pretty_assertions::assert_eq;
 
     use super::*;
     use crate::package_distribution::PackageDistribution;

@@ -185,6 +185,7 @@ pub fn get_current_npmrc() -> Npmrc {
 mod tests {
     use std::{env, io::Write, str::FromStr};
 
+    use pretty_assertions::assert_eq;
     use tempfile::tempdir;
 
     use super::*;

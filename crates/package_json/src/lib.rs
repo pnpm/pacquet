@@ -193,6 +193,7 @@ mod tests {
     use std::{collections::HashMap, fs::read_to_string};
 
     use insta::assert_snapshot;
+    use pretty_assertions::assert_eq;
     use tempfile::{tempdir, NamedTempFile};
 
     use super::*;
