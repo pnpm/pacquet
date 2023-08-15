@@ -85,31 +85,29 @@ pub async fn download_tarball_to_store(
 
     let package_integrity = package_integrity.to_owned();
     let store_dir = store_dir.to_owned();
-    tokio::task::spawn(async move {
-        verify_checksum(&response, &package_integrity)?;
-        let data = decompress_gzip(&response, package_unpacked_size).unwrap();
-        let mut archive = Archive::new(Cursor::new(data));
-        let cas_files = archive
-            .entries()
-            .unwrap()
-            .map(|entry| {
-                let mut entry = entry.unwrap();
 
-                // Read the contents of the entry
-                let mut buffer = Vec::with_capacity(entry.size() as usize);
-                entry.read_to_end(&mut buffer).unwrap();
+    verify_checksum(&response, &package_integrity)?;
+    let data = decompress_gzip(&response, package_unpacked_size).unwrap();
+    let mut archive = Archive::new(Cursor::new(data));
+    let cas_files = archive
+        .entries()
+        .unwrap()
+        .map(|entry| {
+            let mut entry = entry.unwrap();
 
-                let entry_path = entry.path().unwrap();
-                let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>();
-                let integrity = pacquet_cafs::write_sync(store_dir.as_path(), &buffer).unwrap();
+            // Read the contents of the entry
+            let mut buffer = Vec::with_capacity(entry.size() as usize);
+            entry.read_to_end(&mut buffer).unwrap();
 
-                (cleaned_entry_path.to_string_lossy().to_string(), store_dir.join(integrity))
-            })
-            .collect::<HashMap<String, PathBuf>>();
+            let entry_path = entry.path().unwrap();
+            let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>();
+            let integrity = pacquet_cafs::write_sync(store_dir.as_path(), &buffer).unwrap();
 
-        Ok(cas_files)
-    })
-    .await?
+            (cleaned_entry_path.to_string_lossy().to_string(), store_dir.join(integrity))
+        })
+        .collect::<HashMap<String, PathBuf>>();
+
+    Ok(cas_files)
 }
 
 pub fn package_store_dirname(input: &str, version: &str) -> String {
