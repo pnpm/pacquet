@@ -60,7 +60,7 @@ async fn internal_fetch<P: Into<PathBuf>>(
     if let Some(mut receiver) = package_cache.get_mut(&saved_path) {
         tracing::debug!("Cache hit");
 
-        // TODO: is this loop necessary?
+        // TODO: if it turns out that internal_fetch doesn't need to be waited, remove this loop
         loop {
             if let Err(error) = receiver.changed().await {
                 panic!("Unexpected error when listening to channel: {error}");
