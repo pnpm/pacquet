@@ -7,10 +7,10 @@ use tokio::sync::watch::Receiver;
 /// Value of the cache.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PackageState {
-    /// The package is being process.
-    Processing,
+    /// The package is being processed.
+    InProcess,
     /// The package is saved.
-    Saved,
+    Available,
 }
 
 /// Internal cache of [`crate::PackageManager`].

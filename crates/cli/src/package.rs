@@ -66,14 +66,14 @@ async fn internal_fetch<P: Into<PathBuf>>(
                 panic!("Unexpected error when listening to channel: {error}");
             }
             match *receiver.borrow() {
-                PackageState::Processing => continue,
-                PackageState::Saved => break,
+                PackageState::InProcess => continue,
+                PackageState::Available => break,
             };
         }
         return Ok(());
     }
 
-    let (sender, receiver) = tokio::sync::watch::channel(PackageState::Processing);
+    let (sender, receiver) = tokio::sync::watch::channel(PackageState::InProcess);
     package_cache.insert(saved_path.clone(), receiver);
 
     // TODO: skip when it already exists in store?
@@ -91,7 +91,7 @@ async fn internal_fetch<P: Into<PathBuf>>(
         symlink_path.into().join(&package_version.name),
     )?;
 
-    sender.send(PackageState::Saved).expect("send state");
+    sender.send(PackageState::Available).expect("send state");
 
     Ok(())
 }
