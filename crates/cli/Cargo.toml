@@ -24,6 +24,7 @@ pacquet_tarball      = { workspace = true }
 pacquet_diagnostics  = { workspace = true }
 
 clap         = { workspace = true }
+dashmap      = { workspace = true }
 futures-util = { workspace = true }
 rayon        = { workspace = true }
 reflink-copy = { workspace = true }

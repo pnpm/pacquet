@@ -1,3 +1,4 @@
+use crate::package_cache::{PackageCache, PackageState};
 use crate::package_import::ImportMethodImpl;
 use crate::package_manager::PackageManagerError;
 use pacquet_npmrc::Npmrc;
@@ -14,6 +15,7 @@ use std::path::PathBuf;
 /// it should be resolved into the node_modules folder of a subdependency such as
 /// `node_modules/.pacquet/fastify@1.0.0/node_modules`.
 pub async fn find_package_version_from_registry<P: Into<PathBuf>>(
+    package_cache: &PackageCache,
     config: &Npmrc,
     http_client: &reqwest::Client,
     name: &str,
@@ -22,11 +24,12 @@ pub async fn find_package_version_from_registry<P: Into<PathBuf>>(
 ) -> Result<PackageVersion, PackageManagerError> {
     let package = Package::fetch_from_registry(name, http_client, &config.registry).await?;
     let package_version = package.pinned_version(version)?.unwrap();
-    internal_fetch(package_version, config, symlink_path).await?;
+    internal_fetch(package_cache, package_version, config, symlink_path).await?;
     Ok(package_version.to_owned())
 }
 
 pub async fn fetch_package_version_directly<P: Into<PathBuf>>(
+    package_cache: &PackageCache,
     config: &Npmrc,
     http_client: &reqwest::Client,
     name: &str,
@@ -35,16 +38,40 @@ pub async fn fetch_package_version_directly<P: Into<PathBuf>>(
 ) -> Result<PackageVersion, PackageManagerError> {
     let package_version =
         PackageVersion::fetch_from_registry(name, version, http_client, &config.registry).await?;
-    internal_fetch(&package_version, config, symlink_path).await?;
+    internal_fetch(package_cache, &package_version, config, symlink_path).await?;
     Ok(package_version.to_owned())
 }
 
 async fn internal_fetch<P: Into<PathBuf>>(
+    package_cache: &PackageCache,
     package_version: &PackageVersion,
     config: &Npmrc,
     symlink_path: P,
 ) -> Result<(), PackageManagerError> {
     let store_folder_name = package_version.to_store_name();
+
+    let saved_path = config
+        .virtual_store_dir
+        .join(store_folder_name)
+        .join("node_modules")
+        .join(&package_version.name);
+
+    if let Some(mut receiver) = package_cache.get_mut(&saved_path) {
+        // TODO: is this loop necessary?
+        loop {
+            if let Err(error) = receiver.changed().await {
+                panic!("Unexpected error when listening to channel: {error}");
+            }
+            match *receiver.borrow() {
+                PackageState::Processing => continue,
+                PackageState::Saved => break,
+            };
+        }
+        return Ok(());
+    }
+
+    let (sender, receiver) = tokio::sync::watch::channel(PackageState::Processing);
+    package_cache.insert(saved_path.clone(), receiver);
 
     // TODO: skip when it already exists in store?
     let cas_paths = download_tarball_to_store(
@@ -57,13 +84,11 @@ async fn internal_fetch<P: Into<PathBuf>>(
 
     config.package_import_method.import(
         &cas_paths,
-        config
-            .virtual_store_dir
-            .join(store_folder_name)
-            .join("node_modules")
-            .join(&package_version.name),
+        saved_path,
         symlink_path.into().join(&package_version.name),
     )?;
+
+    sender.send(PackageState::Saved).expect("send state");
 
     Ok(())
 }
@@ -111,6 +136,7 @@ mod tests {
         let http_client = reqwest::Client::new();
         let symlink_path = tempdir().unwrap();
         let package = find_package_version_from_registry(
+            &Default::default(),
             &config,
             &http_client,
             "fast-querystring",

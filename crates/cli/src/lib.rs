@@ -1,6 +1,7 @@
 mod commands;
 mod fs;
 mod package;
+mod package_cache;
 mod package_import;
 mod package_manager;
 

@@ -50,9 +50,16 @@ impl PackageManager {
             .package_json
             .dependencies(args.dependency_groups())
             .map(|(name, version)| async move {
-                find_package_version_from_registry(config, http_client, name, version, path)
-                    .await
-                    .unwrap()
+                find_package_version_from_registry(
+                    &self.package_cache,
+                    config,
+                    http_client,
+                    name,
+                    version,
+                    path,
+                )
+                .await
+                .unwrap()
             });
 
         queue.push_front(future::join_all(direct_dependency_handles).await);
@@ -68,6 +75,7 @@ impl PackageManager {
                 let handles = dependency.dependencies(self.config.auto_install_peers).map(
                     |(name, version)| async {
                         find_package_version_from_registry(
+                            &self.package_cache,
                             config,
                             http_client,
                             name,
