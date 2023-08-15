@@ -83,10 +83,7 @@ pub async fn download_tarball_to_store(
     let http_client = Client::new();
     let response = http_client.get(package_url).send().await?.bytes().await?;
 
-    let package_integrity = package_integrity.to_owned();
-    let store_dir = store_dir.to_owned();
-
-    verify_checksum(&response, &package_integrity)?;
+    verify_checksum(&response, package_integrity)?;
     let data = decompress_gzip(&response, package_unpacked_size).unwrap();
     let mut archive = Archive::new(Cursor::new(data));
     let cas_files = archive
@@ -101,7 +98,7 @@ pub async fn download_tarball_to_store(
 
             let entry_path = entry.path().unwrap();
             let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>();
-            let integrity = pacquet_cafs::write_sync(store_dir.as_path(), &buffer).unwrap();
+            let integrity = pacquet_cafs::write_sync(store_dir, &buffer).unwrap();
 
             (
                 cleaned_entry_path.to_str().expect("invalid UTF-8").to_string(),
