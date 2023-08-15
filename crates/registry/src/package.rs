@@ -41,7 +41,7 @@ impl Package {
             .pipe(Ok)
     }
 
-    pub fn get_pinned_version(
+    pub fn pinned_version(
         &self,
         version_field: &str,
     ) -> Result<Option<&PackageVersion>, RegistryError> {
@@ -59,7 +59,7 @@ impl Package {
         Ok(satisfied_versions.last().copied())
     }
 
-    pub fn get_latest(&self) -> Result<&PackageVersion, RegistryError> {
+    pub fn latest(&self) -> Result<&PackageVersion, RegistryError> {
         let version =
             self.dist_tags.get("latest").expect("latest tag is expected but not found for package");
         Ok(self.versions.get(version).unwrap())
@@ -91,13 +91,12 @@ mod tests {
             peer_dependencies: Some(peer_dependencies),
         };
 
-        let get_dependencies = |peer| version.get_dependencies(peer).collect::<HashMap<_, _>>();
-
-        assert!(get_dependencies(false).contains_key("fastify"));
-        assert!(!get_dependencies(false).contains_key("fast-querystring"));
-        assert!(get_dependencies(true).contains_key("fastify"));
-        assert!(get_dependencies(true).contains_key("fast-querystring"));
-        assert!(!get_dependencies(true).contains_key("hello-world"));
+        let dependencies = |peer| version.dependencies(peer).collect::<HashMap<_, _>>();
+        assert!(dependencies(false).contains_key("fastify"));
+        assert!(!dependencies(false).contains_key("fast-querystring"));
+        assert!(dependencies(true).contains_key("fastify"));
+        assert!(dependencies(true).contains_key("fast-querystring"));
+        assert!(!dependencies(true).contains_key("hello-world"));
     }
 
     #[test]

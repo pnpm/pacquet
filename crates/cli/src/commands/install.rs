@@ -26,7 +26,7 @@ pub struct InstallCommandArgs {
 impl InstallCommandArgs {
     /// Convert the command arguments to an iterator of [`DependencyGroup`]
     /// which filters the types of dependencies to install.
-    fn get_dependency_groups(&self) -> impl Iterator<Item = DependencyGroup> {
+    fn dependency_groups(&self) -> impl Iterator<Item = DependencyGroup> {
         let &InstallCommandArgs { prod, dev, no_optional } = self;
         let has_both = prod == dev;
         let has_prod = has_both || prod;
@@ -48,7 +48,7 @@ impl PackageManager {
 
         let direct_dependency_handles = self
             .package_json
-            .get_dependencies(args.get_dependency_groups())
+            .dependencies(args.dependency_groups())
             .map(|(name, version)| async move {
                 find_package_version_from_registry(config, http_client, name, version, path)
                     .await
@@ -62,10 +62,10 @@ impl PackageManager {
                 let node_modules_path = self
                     .config
                     .virtual_store_dir
-                    .join(dependency.get_store_name())
+                    .join(dependency.to_store_name())
                     .join("node_modules");
 
-                let handles = dependency.get_dependencies(self.config.auto_install_peers).map(
+                let handles = dependency.dependencies(self.config.auto_install_peers).map(
                     |(name, version)| async {
                         find_package_version_from_registry(
                             config,
@@ -101,8 +101,7 @@ mod tests {
     #[test]
     fn install_args_to_dependency_groups() {
         use DependencyGroup::{Default, Dev, Optional};
-        let create_list =
-            |args: InstallCommandArgs| args.get_dependency_groups().collect::<Vec<_>>();
+        let create_list = |args: InstallCommandArgs| args.dependency_groups().collect::<Vec<_>>();
 
         // no flags -> prod + dev + optional
         assert_eq!(

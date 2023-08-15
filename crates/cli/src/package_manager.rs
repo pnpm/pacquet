@@ -4,7 +4,7 @@ use pacquet_diagnostics::{
     miette::{self, Diagnostic},
     thiserror::{self, Error},
 };
-use pacquet_npmrc::{get_current_npmrc, Npmrc};
+use pacquet_npmrc::{current_npmrc, Npmrc};
 use pacquet_package_json::PackageJson;
 
 #[derive(Error, Debug, Diagnostic)]
@@ -36,7 +36,7 @@ pub struct PackageManager {
 impl PackageManager {
     pub fn new<P: Into<PathBuf>>(package_json_path: P) -> Result<Self, PackageManagerError> {
         Ok(PackageManager {
-            config: Box::new(get_current_npmrc()),
+            config: Box::new(current_npmrc()),
             package_json: Box::new(PackageJson::create_if_needed(package_json_path.into())?),
             http_client: Box::new(reqwest::Client::new()),
         })

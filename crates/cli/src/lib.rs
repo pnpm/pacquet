@@ -14,7 +14,7 @@ use pacquet_diagnostics::{
     miette::{IntoDiagnostic, Result, WrapErr},
 };
 use pacquet_executor::execute_shell;
-use pacquet_npmrc::get_current_npmrc;
+use pacquet_npmrc::current_npmrc;
 use pacquet_package_json::PackageJson;
 
 pub async fn run_cli() -> Result<()> {
@@ -50,14 +50,14 @@ async fn run_commands(cli: Cli) -> Result<()> {
         Subcommands::Test => {
             let package_json = PackageJson::from_path(package_json_path)
                 .wrap_err("getting the package.json in current directory")?;
-            if let Some(script) = package_json.get_script("test", false)? {
+            if let Some(script) = package_json.script("test", false)? {
                 execute_shell(script).wrap_err(format!("executing command: \"{0}\"", script))?;
             }
         }
         Subcommands::Run(args) => {
             let package_json = PackageJson::from_path(package_json_path)
                 .wrap_err("getting the package.json in current directory")?;
-            if let Some(script) = package_json.get_script(&args.command, args.if_present)? {
+            if let Some(script) = package_json.script(&args.command, args.if_present)? {
                 let mut command = script.to_string();
                 // append an empty space between script and additional args
                 command.push(' ');
@@ -73,7 +73,7 @@ async fn run_commands(cli: Cli) -> Result<()> {
             // The intended usage of the property is to specify a command that starts your program.
             let package_json = PackageJson::from_path(package_json_path)
                 .wrap_err("getting the package.json in current directory")?;
-            let command = if let Some(script) = package_json.get_script("start", true)? {
+            let command = if let Some(script) = package_json.script("start", true)? {
                 script
             } else {
                 "node server.js"
@@ -81,7 +81,7 @@ async fn run_commands(cli: Cli) -> Result<()> {
             execute_shell(command).wrap_err(format!("executing command: \"{0}\"", command))?;
         }
         Subcommands::Store(subcommand) => {
-            let config = get_current_npmrc();
+            let config = current_npmrc();
             match subcommand {
                 StoreSubcommands::Store => {
                     panic!("Not implemented")
