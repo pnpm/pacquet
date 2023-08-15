@@ -71,6 +71,8 @@ async fn internal_fetch<P: Into<PathBuf>>(
             };
         }
     } else {
+        tracing::debug!(?saved_path, "Cache miss");
+
         let (sender, receiver) = tokio::sync::watch::channel(PackageState::InProcess);
         package_cache.insert(saved_path.clone(), receiver);
 
