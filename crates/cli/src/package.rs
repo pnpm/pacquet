@@ -47,6 +47,7 @@ async fn internal_fetch<P: Into<PathBuf>>(
     let store_folder_name = package_version.to_store_name();
     let node_modules_path = config.virtual_store_dir.join(store_folder_name).join("node_modules");
 
+    // TODO: skip when it already exists in store?
     let cas_paths = download_tarball_to_store(
         &config.store_dir,
         &package_version.dist.integrity,
