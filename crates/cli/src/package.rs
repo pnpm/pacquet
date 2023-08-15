@@ -45,7 +45,6 @@ async fn internal_fetch<P: Into<PathBuf>>(
     symlink_path: P,
 ) -> Result<(), PackageManagerError> {
     let store_folder_name = package_version.to_store_name();
-    let node_modules_path = config.virtual_store_dir.join(store_folder_name).join("node_modules");
 
     // TODO: skip when it already exists in store?
     let cas_paths = download_tarball_to_store(
@@ -58,7 +57,11 @@ async fn internal_fetch<P: Into<PathBuf>>(
 
     config.package_import_method.import(
         &cas_paths,
-        node_modules_path.join(&package_version.name),
+        config
+            .virtual_store_dir
+            .join(store_folder_name)
+            .join("node_modules")
+            .join(&package_version.name),
         symlink_path.into().join(&package_version.name),
     )?;
 
