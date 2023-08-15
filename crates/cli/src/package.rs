@@ -5,7 +5,8 @@ use pacquet_diagnostics::tracing;
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::download_tarball_to_store;
-use std::path::PathBuf;
+use pipe_trait::Pipe;
+use std::{path::PathBuf, sync::Arc};
 
 /// This function execute the following and returns the package
 /// - retrieves the package from the registry
@@ -57,41 +58,42 @@ async fn internal_fetch<P: Into<PathBuf>>(
         .join("node_modules")
         .join(&package_version.name);
 
-    if let Some(mut receiver) = package_cache.get_mut(&saved_path) {
+    let cas_paths = if let Some(mut receiver) = package_cache.get_mut(&saved_path) {
         tracing::debug!("Cache hit");
 
-        // TODO: if it turns out that internal_fetch doesn't need to be waited, remove this loop
         loop {
             if let Err(error) = receiver.changed().await {
                 panic!("Unexpected error when listening to channel: {error}");
             }
-            match *receiver.borrow() {
+            match &*receiver.borrow() {
                 PackageState::InProcess => continue,
-                PackageState::Available => break,
+                PackageState::Available(cas_paths) => break cas_paths.clone(),
             };
         }
-        return Ok(());
-    }
+    } else {
+        let (sender, receiver) = tokio::sync::watch::channel(PackageState::InProcess);
+        package_cache.insert(saved_path.clone(), receiver);
 
-    let (sender, receiver) = tokio::sync::watch::channel(PackageState::InProcess);
-    package_cache.insert(saved_path.clone(), receiver);
+        // TODO: skip when it already exists in store?
+        let cas_paths = download_tarball_to_store(
+            &config.store_dir,
+            &package_version.dist.integrity,
+            package_version.dist.unpacked_size,
+            package_version.as_tarball_url(),
+        )
+        .await?
+        .pipe(Arc::new);
 
-    // TODO: skip when it already exists in store?
-    let cas_paths = download_tarball_to_store(
-        &config.store_dir,
-        &package_version.dist.integrity,
-        package_version.dist.unpacked_size,
-        package_version.as_tarball_url(),
-    )
-    .await?;
+        sender.send(PackageState::Available(cas_paths.clone())).expect("send state");
+
+        cas_paths
+    };
 
     config.package_import_method.import(
         &cas_paths,
         saved_path,
         symlink_path.into().join(&package_version.name),
     )?;
-
-    sender.send(PackageState::Available).expect("send state");
 
     Ok(())
 }

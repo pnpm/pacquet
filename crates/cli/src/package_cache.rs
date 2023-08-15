@@ -1,16 +1,16 @@
 // TODO: find a better name
 
 use dashmap::DashMap;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::sync::watch::Receiver;
 
 /// Value of the cache.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PackageState {
     /// The package is being processed.
     InProcess,
     /// The package is saved.
-    Available,
+    Available(Arc<HashMap<String, PathBuf>>),
 }
 
 /// Internal cache of [`crate::PackageManager`].
