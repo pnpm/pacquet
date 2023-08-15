@@ -163,7 +163,7 @@ impl Default for Npmrc {
     }
 }
 
-pub fn get_current_npmrc() -> Npmrc {
+pub fn current_npmrc() -> Npmrc {
     // Look for current folder `.npmrc` and if not found, look for home directory.
     let path = match env::current_dir() {
         Ok(dir) => Some(dir.join(".npmrc")),
@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     pub fn should_return_npmrc() {
-        let value = get_current_npmrc();
+        let value = current_npmrc();
         assert!(value.symlink);
     }
 
@@ -280,7 +280,7 @@ mod tests {
         let mut f = fs::File::create(tmp.path().join(".npmrc")).expect("Unable to create file");
         f.write_all(b"symlink=false").unwrap();
         env::set_current_dir(tmp.path()).unwrap();
-        let config = get_current_npmrc();
+        let config = current_npmrc();
         assert!(!config.symlink);
         env::set_current_dir(current_directory).unwrap();
     }
@@ -293,7 +293,7 @@ mod tests {
         // write invalid utf-8 value to npmrc
         f.write_all(b"Hello \xff World").unwrap();
         env::set_current_dir(tmp.path()).unwrap();
-        let config = get_current_npmrc();
+        let config = current_npmrc();
         assert!(config.symlink);
         env::set_current_dir(current_directory).unwrap();
     }

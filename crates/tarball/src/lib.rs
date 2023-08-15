@@ -112,7 +112,7 @@ pub async fn download_tarball_to_store(
     .await?
 }
 
-pub fn get_package_store_folder_name(input: &str, version: &str) -> String {
+pub fn package_store_dirname(input: &str, version: &str) -> String {
     format!("{0}@{1}", input.replace('/', "+"), version)
 }
 
@@ -125,14 +125,8 @@ mod tests {
 
     #[test]
     fn generate_correct_package_name() {
-        assert_eq!(
-            get_package_store_folder_name("@fastify/error", "3.3.0"),
-            "@fastify+error@3.3.0"
-        );
-        assert_eq!(
-            get_package_store_folder_name("fast-querystring", "1.1.0"),
-            "fast-querystring@1.1.0"
-        );
+        assert_eq!(package_store_dirname("@fastify/error", "3.3.0"), "@fastify+error@3.3.0");
+        assert_eq!(package_store_dirname("fast-querystring", "1.1.0"), "fast-querystring@1.1.0");
     }
 
     #[tokio::test]

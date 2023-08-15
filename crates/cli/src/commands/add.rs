@@ -34,7 +34,7 @@ pub struct AddCommandArgs {
 }
 
 impl AddCommandArgs {
-    pub fn get_dependency_group(&self) -> DependencyGroup {
+    pub fn dependency_group(&self) -> DependencyGroup {
         if self.save_dev {
             DependencyGroup::Dev
         } else if self.save_optional {
@@ -62,20 +62,16 @@ impl PackageManager {
             &self.config.modules_dir,
         )
         .await?;
-        let package_node_modules_path = self
-            .config
-            .virtual_store_dir
-            .join(latest_version.get_store_name())
-            .join("node_modules");
+        let package_node_modules_path =
+            self.config.virtual_store_dir.join(latest_version.to_store_name()).join("node_modules");
 
         let mut queue: VecDeque<Vec<Result<PackageVersion, PackageManagerError>>> = VecDeque::new();
         let config = &self.config;
         let http_client = &self.http_client;
         let path = &package_node_modules_path;
 
-        let direct_dependency_handles = latest_version
-            .get_dependencies(self.config.auto_install_peers)
-            .map(|(name, version)| {
+        let direct_dependency_handles =
+            latest_version.dependencies(self.config.auto_install_peers).map(|(name, version)| {
                 find_package_version_from_registry(config, http_client, name, version, path)
             });
 
@@ -88,10 +84,10 @@ impl PackageManager {
                 let node_modules_path = self
                     .config
                     .virtual_store_dir
-                    .join(dependency.get_store_name())
+                    .join(dependency.to_store_name())
                     .join("node_modules");
 
-                let handles = dependency.get_dependencies(self.config.auto_install_peers).map(
+                let handles = dependency.dependencies(self.config.auto_install_peers).map(
                     |(name, version)| {
                         find_package_version_from_registry(
                             config,
@@ -110,7 +106,7 @@ impl PackageManager {
         self.package_json.add_dependency(
             &args.package,
             &latest_version.serialize(args.save_exact),
-            args.get_dependency_group(),
+            args.dependency_group(),
         )?;
         self.package_json.save()?;
 
@@ -219,7 +215,7 @@ mod tests {
         };
         manager.add(&args).await.unwrap();
         let file = PackageJson::from_path(dir.path().join("package.json")).unwrap();
-        assert!(file.get_dependencies([DependencyGroup::Default]).any(|(k, _)| k == "is-odd"));
+        assert!(file.dependencies([DependencyGroup::Default]).any(|(k, _)| k == "is-odd"));
         env::set_current_dir(&current_directory).unwrap();
     }
 }

@@ -62,7 +62,7 @@ pub struct PackageJson {
 }
 
 impl PackageJson {
-    fn get_init_package_json(name: &str) -> Value {
+    fn create_init_package_json(name: &str) -> Value {
         json!({
             "name": name,
             "version": "1.0.0",
@@ -83,7 +83,7 @@ impl PackageJson {
             .and_then(|folder| folder.file_name())
             .and_then(|file_name| file_name.to_str())
             .unwrap_or("");
-        let package_json = PackageJson::get_init_package_json(name);
+        let package_json = PackageJson::create_init_package_json(name);
         let contents = serde_json::to_string_pretty(&package_json)?;
         fs::write(path, &contents)?; // TODO: forbid overwriting existing files
         Ok((package_json, contents))
@@ -129,7 +129,7 @@ impl PackageJson {
         Ok(())
     }
 
-    pub fn get_dependencies<'a>(
+    pub fn dependencies<'a>(
         &'a self,
         groups: impl IntoIterator<Item = DependencyGroup> + 'a,
     ) -> impl Iterator<Item = (&'a str, &'a str)> + 'a {
@@ -166,7 +166,7 @@ impl PackageJson {
         Ok(())
     }
 
-    pub fn get_script(
+    pub fn script(
         &self,
         command: &str,
         if_present: bool,
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_init_package_json_content() {
-        let package_json = PackageJson::get_init_package_json("test");
+        let package_json = PackageJson::create_init_package_json("test");
         assert_snapshot!(serde_json::to_string_pretty(&package_json).unwrap());
     }
 
@@ -230,7 +230,7 @@ mod tests {
         package_json.add_dependency("fastify", "1.0.0", DependencyGroup::Default).unwrap();
 
         let dependencies: HashMap<_, _> =
-            package_json.get_dependencies([DependencyGroup::Default]).collect();
+            package_json.dependencies([DependencyGroup::Default]).collect();
         assert!(dependencies.contains_key("fastify"));
         assert_eq!(dependencies.get("fastify").unwrap(), &"1.0.0");
         package_json.save().unwrap();
@@ -242,7 +242,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let tmp = dir.path().join("package.json");
         let package_json = PackageJson::create_if_needed(tmp).unwrap();
-        package_json.get_script("dev", false).expect_err("dev command should not exist");
+        package_json.script("dev", false).expect_err("dev command should not exist");
     }
 
     #[test]
@@ -257,9 +257,9 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "{}", data).unwrap();
         let package_json = PackageJson::create_if_needed(tmp.path().to_path_buf()).unwrap();
-        package_json.get_script("test", false).unwrap();
-        package_json.get_script("invalid", false).expect_err("invalid command should not exist");
-        package_json.get_script("invalid", true).unwrap();
+        package_json.script("test", false).unwrap();
+        package_json.script("invalid", false).expect_err("invalid command should not exist");
+        package_json.script("invalid", true).unwrap();
     }
 
     #[test]
@@ -277,9 +277,8 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "{}", data).unwrap();
         let package_json = PackageJson::create_if_needed(tmp.path().to_path_buf()).unwrap();
-        let get_dependencies =
-            |groups| package_json.get_dependencies(groups).collect::<HashMap<_, _>>();
-        assert!(get_dependencies([DependencyGroup::Peer]).contains_key("fast-querystring"));
-        assert!(get_dependencies([DependencyGroup::Default]).contains_key("fastify"));
+        let dependencies = |groups| package_json.dependencies(groups).collect::<HashMap<_, _>>();
+        assert!(dependencies([DependencyGroup::Peer]).contains_key("fast-querystring"));
+        assert!(dependencies([DependencyGroup::Default]).contains_key("fastify"));
     }
 }

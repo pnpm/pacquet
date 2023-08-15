@@ -40,6 +40,10 @@ The act of cloning or creating an owned data from another owned/borrowed data.
 
 ## Guides
 
+### Naming convention
+
+Follow [the Rust API guidelines](https://rust-lang.github.io/api-guidelines/naming.html).
+
 ### When to use [owned] parameter? When to use [borrowed] parameter?
 
 This is a trade-off between API flexibility and performance.

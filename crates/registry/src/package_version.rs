@@ -40,15 +40,15 @@ impl PackageVersion {
             .pipe(Ok)
     }
 
-    pub fn get_store_name(&self) -> String {
+    pub fn to_store_name(&self) -> String {
         format!("{0}@{1}", self.name.replace('/', "+"), self.version)
     }
 
-    pub fn get_tarball_url(&self) -> &str {
+    pub fn as_tarball_url(&self) -> &str {
         self.dist.tarball.as_str()
     }
 
-    pub fn get_dependencies(
+    pub fn dependencies(
         &self,
         with_peer_dependencies: bool,
     ) -> impl Iterator<Item = (&'_ str, &'_ str)> {

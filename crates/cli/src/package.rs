@@ -21,7 +21,7 @@ pub async fn find_package_version_from_registry<P: Into<PathBuf>>(
     symlink_path: P,
 ) -> Result<PackageVersion, PackageManagerError> {
     let package = Package::fetch_from_registry(name, http_client, &config.registry).await?;
-    let package_version = package.get_pinned_version(version)?.unwrap();
+    let package_version = package.pinned_version(version)?.unwrap();
     internal_fetch(package_version, config, symlink_path).await?;
     Ok(package_version.to_owned())
 }
@@ -44,14 +44,14 @@ async fn internal_fetch<P: Into<PathBuf>>(
     config: &Npmrc,
     symlink_path: P,
 ) -> Result<(), PackageManagerError> {
-    let store_folder_name = package_version.get_store_name();
+    let store_folder_name = package_version.to_store_name();
     let node_modules_path = config.virtual_store_dir.join(store_folder_name).join("node_modules");
 
     let cas_paths = download_tarball_to_store(
         &config.store_dir,
         &package_version.dist.integrity,
         package_version.dist.unpacked_size,
-        package_version.get_tarball_url(),
+        package_version.as_tarball_url(),
     )
     .await?;
 
@@ -74,7 +74,7 @@ mod tests {
     use std::path::Path;
     use tempfile::tempdir;
 
-    fn get_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path) -> Npmrc {
+    fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path) -> Npmrc {
         Npmrc {
             hoist: false,
             hoist_pattern: vec![],
@@ -103,7 +103,7 @@ mod tests {
         let store_dir = tempdir().unwrap();
         let modules_dir = tempdir().unwrap();
         let virtual_store_dir = tempdir().unwrap();
-        let config = get_config(store_dir.path(), modules_dir.path(), virtual_store_dir.path());
+        let config = create_config(store_dir.path(), modules_dir.path(), virtual_store_dir.path());
         let http_client = reqwest::Client::new();
         let symlink_path = tempdir().unwrap();
         let package = find_package_version_from_registry(
@@ -124,7 +124,7 @@ mod tests {
 
         let virtual_store_path = virtual_store_dir
             .path()
-            .join(package.get_store_name())
+            .join(package.to_store_name())
             .join("node_modules")
             .join(&package.name);
         assert!(virtual_store_path.is_dir());
