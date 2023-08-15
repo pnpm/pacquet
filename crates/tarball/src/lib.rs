@@ -87,8 +87,7 @@ pub async fn download_tarball_to_store(
     let data = decompress_gzip(&response, package_unpacked_size).unwrap();
     let mut archive = Archive::new(Cursor::new(data));
     let cas_files = archive
-        .entries()
-        .unwrap()
+        .entries()?
         .map(|entry| {
             let mut entry = entry.unwrap();
 
