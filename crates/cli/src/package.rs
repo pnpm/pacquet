@@ -1,6 +1,7 @@
 use crate::package_cache::{PackageCache, PackageState};
 use crate::package_import::ImportMethodImpl;
 use crate::package_manager::PackageManagerError;
+use pacquet_diagnostics::tracing;
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::download_tarball_to_store;
@@ -57,7 +58,7 @@ async fn internal_fetch<P: Into<PathBuf>>(
         .join(&package_version.name);
 
     if let Some(mut receiver) = package_cache.get_mut(&saved_path) {
-        eprintln!("Cache hit!"); // TODO: use tracing library
+        tracing::debug!("Cache hit");
 
         // TODO: is this loop necessary?
         loop {
