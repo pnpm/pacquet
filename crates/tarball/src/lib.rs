@@ -103,7 +103,10 @@ pub async fn download_tarball_to_store(
             let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>();
             let integrity = pacquet_cafs::write_sync(store_dir.as_path(), &buffer).unwrap();
 
-            (cleaned_entry_path.to_string_lossy().to_string(), store_dir.join(integrity))
+            (
+                cleaned_entry_path.to_str().expect("invalid UTF-8").to_string(),
+                store_dir.join(integrity),
+            )
         })
         .collect::<HashMap<String, PathBuf>>();
 
