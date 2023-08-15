@@ -57,6 +57,8 @@ async fn internal_fetch<P: Into<PathBuf>>(
         .join(&package_version.name);
 
     if let Some(mut receiver) = package_cache.get_mut(&saved_path) {
+        eprintln!("Cache hit!"); // TODO: use tracing library
+
         // TODO: is this loop necessary?
         loop {
             if let Err(error) = receiver.changed().await {
