@@ -59,7 +59,7 @@ async fn internal_fetch<P: Into<PathBuf>>(
         .join(&package_version.name);
 
     let cas_paths = if let Some(mut receiver) = package_cache.get_mut(&saved_path) {
-        tracing::debug!("Cache hit");
+        tracing::debug!(?saved_path, "Cache hit");
 
         loop {
             if let Err(error) = receiver.changed().await {
