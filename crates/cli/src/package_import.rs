@@ -54,7 +54,6 @@ fn auto_import<P: AsRef<Path>>(
     symlink_path: P,
 ) -> Result<(), PackageManagerError> {
     if !symlink_path.as_ref().exists() {
-        // Create parent folder
         if let Some(parent_dir) = &symlink_path.as_ref().parent() {
             fs::create_dir_all(parent_dir)?;
         }
