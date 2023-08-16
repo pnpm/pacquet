@@ -50,8 +50,8 @@ impl ImportMethodImpl for PackageImportMethod {
 }
 
 fn auto_import<P: AsRef<Path>>(
-    original_path: P,
-    symlink_path: P,
+    original_path: P, // TODO: same generic type is an unnecessary restriction
+    symlink_path: P,  // TODO: same generic type is an unnecessary restriction
 ) -> Result<(), PackageManagerError> {
     if !symlink_path.as_ref().exists() {
         if let Some(parent_dir) = &symlink_path.as_ref().parent() {
