@@ -66,14 +66,14 @@ async fn internal_fetch<P: Into<PathBuf>>(
                 panic!("Unexpected error when listening to channel: {error}");
             }
             match &*receiver.borrow() {
-                PackageState::InProcess => continue,
+                PackageState::InProgress => continue,
                 PackageState::Available(cas_paths) => break cas_paths.clone(),
             };
         }
     } else {
         tracing::info!(target: "pacquet::fetch", ?saved_path, "Cache miss");
 
-        let (sender, receiver) = tokio::sync::watch::channel(PackageState::InProcess);
+        let (sender, receiver) = tokio::sync::watch::channel(PackageState::InProgress);
         package_cache.insert(saved_path.clone(), receiver);
 
         // TODO: skip when it already exists in store?

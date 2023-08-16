@@ -8,7 +8,7 @@ use tokio::sync::watch::Receiver;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PackageState {
     /// The package is being processed.
-    InProcess,
+    InProgress,
     /// The package is saved.
     Available(Arc<HashMap<String, PathBuf>>),
 }
