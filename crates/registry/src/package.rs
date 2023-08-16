@@ -56,10 +56,10 @@ impl Package {
         satisfied_versions.last().copied()
     }
 
-    pub fn latest(&self) -> Result<&PackageVersion, RegistryError> {
+    pub fn latest(&self) -> &PackageVersion {
         let version =
             self.dist_tags.get("latest").expect("latest tag is expected but not found for package");
-        Ok(self.versions.get(version).unwrap())
+        self.versions.get(version).unwrap()
     }
 }
 
