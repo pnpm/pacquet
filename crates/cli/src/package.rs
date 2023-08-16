@@ -59,7 +59,7 @@ async fn internal_fetch<P: Into<PathBuf>>(
         .join(&package_version.name);
 
     let cas_paths = if let Some(mut receiver) = package_cache.get_mut(&saved_path) {
-        tracing::info!(target = "pacquet::fetch", ?saved_path, "Cache hit");
+        tracing::info!(target: "pacquet::fetch", ?saved_path, "Cache hit");
 
         loop {
             if let Err(error) = receiver.changed().await {
@@ -71,7 +71,7 @@ async fn internal_fetch<P: Into<PathBuf>>(
             };
         }
     } else {
-        tracing::info!(target = "pacquet::fetch", ?saved_path, "Cache miss");
+        tracing::info!(target: "pacquet::fetch", ?saved_path, "Cache miss");
 
         let (sender, receiver) = tokio::sync::watch::channel(PackageState::InProcess);
         package_cache.insert(saved_path.clone(), receiver);
