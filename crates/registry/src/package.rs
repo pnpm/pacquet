@@ -32,7 +32,7 @@ impl Package {
         registry: &str,
     ) -> Result<Self, RegistryError> {
         http_client
-            .get(format!("{registry}{name}"))
+            .get(format!("{registry}{name}")) // TODO: use reqwest URL directly
             .header("content-type", "application/json")
             .send()
             .await?
