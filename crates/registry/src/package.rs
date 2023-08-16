@@ -32,7 +32,7 @@ impl Package {
         registry: &str,
     ) -> Result<Self, RegistryError> {
         http_client
-            .get(format!("{0}{name}", &registry))
+            .get(format!("{registry}{name}"))
             .header("content-type", "application/json")
             .send()
             .await?
