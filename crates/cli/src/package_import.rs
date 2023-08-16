@@ -58,7 +58,7 @@ fn auto_import<P: AsRef<Path>>(
             fs::create_dir_all(parent_dir)?;
         }
 
-        reflink_copy::reflink_or_copy(original_path, &symlink_path)?;
+        reflink_copy::reflink_or_copy(original_path, &symlink_path)?; // TODO: add hardlink
     }
 
     Ok(())
