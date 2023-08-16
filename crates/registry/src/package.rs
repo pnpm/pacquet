@@ -41,10 +41,7 @@ impl Package {
             .pipe(Ok)
     }
 
-    pub fn pinned_version(
-        &self,
-        version_field: &str,
-    ) -> Result<Option<&PackageVersion>, RegistryError> {
+    pub fn pinned_version(&self, version_field: &str) -> Option<&PackageVersion> {
         let range: node_semver::Range = version_field.parse().unwrap();
         let mut satisfied_versions = self
             .versions
@@ -56,7 +53,7 @@ impl Package {
 
         // Optimization opportunity:
         // We can store this in a cache to remove filter operation and make this a O(1) operation.
-        Ok(satisfied_versions.last().copied())
+        satisfied_versions.last().copied()
     }
 
     pub fn latest(&self) -> Result<&PackageVersion, RegistryError> {
