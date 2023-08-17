@@ -82,8 +82,8 @@ pub async fn download_tarball_to_store(
     let http_client = Client::new();
     let response = http_client.get(package_url).send().await?.bytes().await?;
 
-    let store_dir = store_dir.to_path_buf();
-    let package_integrity = package_integrity.to_string();
+    let store_dir = store_dir.to_path_buf(); // TODO: use Arc
+    let package_integrity = package_integrity.to_string(); // TODO: use Arc
     tokio::task::spawn_blocking(move || {
         verify_checksum(&response, &package_integrity)?;
         let data = decompress_gzip(&response, package_unpacked_size).unwrap();
