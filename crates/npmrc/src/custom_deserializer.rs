@@ -16,30 +16,40 @@ pub fn default_public_hoist_pattern() -> Vec<String> {
     vec!["*eslint*".to_string(), "*prettier*".to_string()]
 }
 
+/// Get absolute path with home_dir
+pub fn get_absolute_path_with_home_dir(relate_path: Option<String>) -> PathBuf {
+    let home_dir = dirs::home_dir().expect("Home directory is not available");
+    match relate_path {
+        Some(p) => {
+            // prefix should start with ~/
+            if let Some(path_without_tilde) = p.strip_prefix("~/") {
+                return home_dir.join(path_without_tilde);
+            }
+            PathBuf::from(p)
+        }
+        None => home_dir,
+    }
+}
+
 /// If the $PACQUET_HOME env variable is set, then $PACQUET_HOME/store
 /// If the $XDG_DATA_HOME env variable is set, then $XDG_DATA_HOME/pacquet/store
 /// On Windows: ~/AppData/Local/pacquet/store
 /// On macOS: ~/Library/pacquet/store
 /// On Linux: ~/.local/share/pacquet/store
 pub fn default_store_dir() -> PathBuf {
-    // TODO: If env variables start with ~, make sure to resolve it into home_dir.
     if let Ok(pacquet_home) = env::var("PACQUET_HOME") {
-        return PathBuf::from(pacquet_home).join("store");
+        return get_absolute_path_with_home_dir(Some(pacquet_home)).join("store");
     }
 
     if let Ok(xdg_data_home) = env::var("XDG_DATA_HOME") {
-        return PathBuf::from(xdg_data_home).join("pacquet/store");
+        return get_absolute_path_with_home_dir(Some(xdg_data_home)).join("pacquet/store");
     }
-
-    // Using ~ (tilde) for defining home path is not supported in Rust and
-    // needs to be resolved into an absolute path.
-    let home_dir = home::home_dir().expect("Home directory is not available");
 
     // https://doc.rust-lang.org/std/env/consts/constant.OS.html
     match env::consts::OS {
-        "linux" => home_dir.join(".local/share/pacquet/store"),
-        "macos" => home_dir.join("Library/pacquet/store"),
-        "windows" => home_dir.join("AppData/Local/pacquet/store"),
+        "linux" => get_absolute_path_with_home_dir(None).join(".local/share/pacquet/store"),
+        "macos" => get_absolute_path_with_home_dir(None).join("Library/pacquet/store"),
+        "windows" => get_absolute_path_with_home_dir(None).join("AppData/Local/pacquet/store"),
         _ => panic!("unsupported operating system: {}", env::consts::OS),
     }
 }
@@ -124,5 +134,25 @@ mod tests {
         let store_dir = default_store_dir();
         assert_eq!(store_dir, Path::new("/tmp/xdg_data_home/pacquet/store"));
         env::remove_var("XDG_DATA_HOME");
+    }
+
+    #[test]
+    fn test_get_absolute_path_with_home_dir_none() {
+        let home_dir = dirs::home_dir().unwrap();
+        let p = get_absolute_path_with_home_dir(None);
+        assert_eq!(home_dir, p)
+    }
+
+    #[test]
+    fn test_get_absolute_path_with_home_dir_prefix() {
+        let home_dir = dirs::home_dir().unwrap();
+        let p = get_absolute_path_with_home_dir(Some("~/deps/pacquet_home".to_string()));
+        assert_eq!(home_dir.join("deps/pacquet_home"), p);
+    }
+
+    #[test]
+    fn test_get_absolute_path_with_home_dir_absolute() {
+        let p = get_absolute_path_with_home_dir(Some("/tmp/pacquet_home".to_string()));
+        assert_eq!(PathBuf::from("/tmp/pacquet_home"), p);
     }
 }

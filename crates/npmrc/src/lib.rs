@@ -167,7 +167,7 @@ pub fn current_npmrc() -> Npmrc {
     // Look for current folder `.npmrc` and if not found, look for home directory.
     let path = match env::current_dir() {
         Ok(dir) => Some(dir.join(".npmrc")),
-        _ => home::home_dir().map(|dir| dir.join(".npmrc")),
+        _ => dirs::home_dir().map(|dir| dir.join(".npmrc")),
     };
 
     if let Some(file) = path {

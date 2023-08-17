@@ -25,7 +25,7 @@ pacquet_diagnostics  = { path = "crates/diagnostics" }
 
 # Dependencies
 clap               = { version = "4", features = ["derive", "string"] }
-home               = { version = "0.5.5" }
+dirs               = { version = "5.0.1" }
 insta              = { version = "1.31.0", features = ["yaml", "glob", "walkdir"] }
 futures-util       = { version = "0.3.28" }
 miette             = { version = "5.9.0", features = ["fancy"] }
