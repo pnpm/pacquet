@@ -13,7 +13,7 @@ pub trait ImportMethodImpl {
         &self,
         cas_files: &HashMap<String, PathBuf>,
         save_path: PathBuf,
-        symlink_to: PathBuf,
+        symlink_to: &Path,
     ) -> Result<(), PackageManagerError>;
 }
 
@@ -22,7 +22,7 @@ impl ImportMethodImpl for PackageImportMethod {
         &self,
         cas_files: &HashMap<String, PathBuf>,
         save_path: PathBuf,
-        symlink_to: PathBuf,
+        symlink_to: &Path,
     ) -> Result<(), PackageManagerError> {
         match self {
             PackageImportMethod::Auto => {
@@ -39,7 +39,7 @@ impl ImportMethodImpl for PackageImportMethod {
                     if let Some(parent_dir) = symlink_to.parent() {
                         fs::create_dir_all(parent_dir)?;
                     }
-                    crate::fs::symlink_dir(save_path, symlink_to)?;
+                    crate::fs::symlink_dir(&save_path, symlink_to)?;
                 }
             }
             _ => panic!("Not implemented yet"),
@@ -49,16 +49,13 @@ impl ImportMethodImpl for PackageImportMethod {
     }
 }
 
-fn auto_import<P: AsRef<Path>>(
-    original_path: P, // TODO: same generic type is an unnecessary restriction
-    symlink_path: P,  // TODO: same generic type is an unnecessary restriction
-) -> Result<(), PackageManagerError> {
-    if !symlink_path.as_ref().exists() {
-        if let Some(parent_dir) = &symlink_path.as_ref().parent() {
+fn auto_import(original_path: &Path, symlink_path: &Path) -> Result<(), PackageManagerError> {
+    if !symlink_path.exists() {
+        if let Some(parent_dir) = symlink_path.parent() {
             fs::create_dir_all(parent_dir)?;
         }
 
-        reflink_copy::reflink_or_copy(original_path, &symlink_path)?; // TODO: add hardlink
+        reflink_copy::reflink_or_copy(original_path, symlink_path)?; // TODO: add hardlink
     }
 
     Ok(())

@@ -6,7 +6,7 @@ use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::download_tarball_to_store;
 use pipe_trait::Pipe;
-use std::{path::PathBuf, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 /// This function execute the following and returns the package
 /// - retrieves the package from the registry
@@ -16,13 +16,13 @@ use std::{path::PathBuf, sync::Arc};
 /// symlink_path will be appended by the name of the package. Therefore,
 /// it should be resolved into the node_modules folder of a subdependency such as
 /// `node_modules/.pacquet/fastify@1.0.0/node_modules`.
-pub async fn find_package_version_from_registry<P: Into<PathBuf>>(
+pub async fn find_package_version_from_registry(
     package_cache: &PackageCache,
     config: &Npmrc,
     http_client: &reqwest::Client,
     name: &str,
     version: &str,
-    symlink_path: P,
+    symlink_path: &Path,
 ) -> Result<PackageVersion, PackageManagerError> {
     let package = Package::fetch_from_registry(name, http_client, &config.registry).await?;
     let package_version = package.pinned_version(version).unwrap();
@@ -30,13 +30,13 @@ pub async fn find_package_version_from_registry<P: Into<PathBuf>>(
     Ok(package_version.to_owned())
 }
 
-pub async fn fetch_package_version_directly<P: Into<PathBuf>>(
+pub async fn fetch_package_version_directly(
     package_cache: &PackageCache,
     config: &Npmrc,
     http_client: &reqwest::Client,
     name: &str,
     version: &str,
-    symlink_path: P,
+    symlink_path: &Path,
 ) -> Result<PackageVersion, PackageManagerError> {
     let package_version =
         PackageVersion::fetch_from_registry(name, version, http_client, &config.registry).await?;
@@ -44,11 +44,11 @@ pub async fn fetch_package_version_directly<P: Into<PathBuf>>(
     Ok(package_version.to_owned())
 }
 
-async fn internal_fetch<P: Into<PathBuf>>(
+async fn internal_fetch(
     package_cache: &PackageCache,
     package_version: &PackageVersion,
     config: &Npmrc,
-    symlink_path: P,
+    symlink_path: &Path,
 ) -> Result<(), PackageManagerError> {
     let store_folder_name = package_version.to_store_name();
 
@@ -94,7 +94,7 @@ async fn internal_fetch<P: Into<PathBuf>>(
     config.package_import_method.import(
         &cas_paths,
         saved_path,
-        symlink_path.into().join(&package_version.name),
+        &symlink_path.join(&package_version.name),
     )?;
 
     Ok(())

@@ -103,7 +103,7 @@ impl PackageManager {
                             http_client,
                             name,
                             version,
-                            node_modules_path.to_owned(),
+                            &node_modules_path,
                         )
                     },
                 );
