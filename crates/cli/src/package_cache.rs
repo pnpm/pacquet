@@ -2,7 +2,7 @@
 
 use dashmap::DashMap;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
-use tokio::sync::broadcast::Receiver;
+use tokio::sync::mpsc::UnboundedReceiver;
 
 /// Value of the cache.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,4 +16,4 @@ pub enum PackageState {
 /// Internal cache of [`crate::PackageManager`].
 ///
 /// The key of this hashmap is saved path of each package.
-pub type PackageCache = DashMap<PathBuf, Receiver<PackageState>>;
+pub type PackageCache = DashMap<PathBuf, UnboundedReceiver<PackageState>>;

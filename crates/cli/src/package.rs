@@ -63,15 +63,15 @@ async fn internal_fetch(
 
         loop {
             match receiver.recv().await {
-                Err(error) => panic!("Unexpected error when listening to channel: {error}"),
-                Ok(PackageState::InProgress) => continue,
-                Ok(PackageState::Available(cas_paths)) => break cas_paths,
+                None => panic!("Channel ended unexpectedly"),
+                Some(PackageState::InProgress) => continue,
+                Some(PackageState::Available(cas_paths)) => break cas_paths,
             }
         }
     } else {
         tracing::info!(target: "pacquet::fetch", ?saved_path, "Cache miss");
 
-        let (sender, receiver) = tokio::sync::broadcast::channel(20);
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         package_cache.insert(saved_path.clone(), receiver);
         sender.send(PackageState::InProgress).expect("send in-progress signal");
 
