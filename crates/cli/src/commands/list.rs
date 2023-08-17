@@ -1,7 +1,7 @@
-use std::path::{ MAIN_SEPARATOR, PathBuf };
+use std::path::{PathBuf, MAIN_SEPARATOR};
 
 use clap::Parser;
-use serde_json::{json, Map, Value};
+use termtree::Tree;
 
 use pacquet_package_json::{DependencyGroup, PackageJson};
 
@@ -70,38 +70,45 @@ impl PackageManager {
         dependency_group: DependencyGroup,
         node_modules_path: &PathBuf,
         depth: u32,
-    ) -> Result<String, PackageManagerError> {
-        let mut scope: String = String::new();
+    ) -> Result<Tree<&str>, PackageManagerError> {
         match dependency_group {
             DependencyGroup::Default => {
+                let mut root = Tree::new("");
                 let dependencies = package_json.get_dependencies(vec![DependencyGroup::Default]);
-                
-                for (name, version) in &dependencies {
-                    scope = format!("{} - {}\n", name, version);
+
+                for (name, version) in dependencies {
+                    // let label = format!("{} - {}", name, version);
+                    // print!("{}", label);
+                    let mut tree = helper::create_tree(name, version);
 
                     if depth > 1 {
                         let path = format!("{}{}{}", &name, MAIN_SEPARATOR, "package.json");
                         let pjson = PackageJson::from_path(&node_modules_path.join(path))?;
-                        let n_dependencies = self.list(&pjson, DependencyGroup::Default, node_modules_path, depth - 1)?;
-                        // TODO: fix format
-                        scope = format!("\n\t{}", n_dependencies)
+                        let subtree = self.list(
+                            &pjson,
+                            DependencyGroup::Default,
+                            node_modules_path,
+                            depth - 1,
+                        )?;
+
+                        tree.push(subtree);
                     }
+
+                    root.push(tree.clone());
                 }
+
+                Ok(root)
             }
-            DependencyGroup::Dev => scope = "dependencies".to_string(),
-            _ => scope = "all".to_string(),
+            // DependencyGroup::Dev => Ok(root),
+            _ => Ok(Tree::new("".clone())),
         }
+    }
+}
 
-        // let binding = Value::default();
-        // let mut dependencies = self.value.get(scope).unwrap_or(&binding).as_object().into_iter();
-
-        // let mut dep = dependencies.next();
-        // while !dep.is_none() {
-        //     println!("{:?}", dep);
-        //     dep = dependencies.next();
-        // }
-
-        println!("{}", scope);
-        Ok(scope.clone())
+mod helper {
+    use termtree::Tree;
+    pub fn create_tree<'a>(name: &'a str, version: &str) -> Tree<&'a str> {
+        let label = format!("{}@{}", name.clone().to_owned(), version.clone().to_owned());
+        Tree::new(label.to_owned().as_str())
     }
 }
