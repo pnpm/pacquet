@@ -1326,6 +1326,7 @@ version = "0.0.1"
 dependencies = [
  "pacquet_cafs",
  "pacquet_diagnostics",
+ "pipe-trait",
  "pretty_assertions",
  "reqwest",
  "ssri",

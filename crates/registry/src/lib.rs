@@ -11,6 +11,14 @@ use pacquet_diagnostics::{
     thiserror::{self, Error},
 };
 
+#[derive(Debug, Error)]
+#[error("failed to request {url}: {error}")]
+pub struct NetworkError {
+    pub url: String,
+    #[source]
+    pub error: reqwest::Error,
+}
+
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
 pub enum RegistryError {
@@ -24,7 +32,7 @@ pub enum RegistryError {
 
     #[error(transparent)]
     #[diagnostic(code(pacquet_registry::network_error))]
-    Network(#[from] reqwest::Error),
+    Network(#[from] NetworkError),
 
     #[error(transparent)]
     #[diagnostic(code(pacquet_registry::io_error))]

@@ -10,27 +10,35 @@ use pacquet_diagnostics::{
     thiserror::{self, Error},
     tracing::{self, instrument},
 };
+use pipe_trait::Pipe;
 use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
 use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
 
 #[derive(Error, Debug, Diagnostic)]
+#[error("Failed to fetch {url}: {error}")]
+pub struct NetworkError {
+    pub url: String,
+    pub error: reqwest::Error,
+}
+
+#[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
 pub enum TarballError {
     #[error(transparent)]
-    #[diagnostic(code(pacquet_tarball::network_error))]
-    Network(#[from] reqwest::Error),
+    #[diagnostic(code(pacquet_tarball::request_error))]
+    Network(#[from] NetworkError),
 
     #[error(transparent)]
     #[diagnostic(code(pacquet_tarball::io_error))]
     Io(#[from] std::io::Error),
 
-    #[error("checksum mismatch")]
+    #[error("checksum failed: {}", _0)]
     #[diagnostic(code(pacquet_tarball::checksum_mismatch_error))]
-    ChecksumMismatch,
+    Checksum(#[from] VerifyChecksumError),
 
-    #[error("integrity creation failed")]
+    #[error("integrity creation failed: {}", _0)]
     #[diagnostic(code(pacquet_tarball::integrity_error))]
     Integrity(#[from] ssri::Error),
 
@@ -61,15 +69,23 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
     Ok(decompressed)
 }
 
-#[instrument]
-fn verify_checksum(data: &[u8], integrity: &str) -> Result<(), TarballError> {
-    let validation = IntegrityChecker::new(Integrity::from_str(integrity)?).chain(data).result();
+// TODO: add more information
+#[derive(Error, Debug)]
+pub enum VerifyChecksumError {
+    #[error(transparent)]
+    FromStr(ssri::Error),
+    #[error(transparent)]
+    Mismatch(ssri::Error),
+}
 
-    if validation.is_err() {
-        Err(TarballError::ChecksumMismatch)
-    } else {
-        Ok(())
-    }
+#[instrument]
+fn verify_checksum(data: &[u8], integrity: &str) -> Result<ssri::Algorithm, VerifyChecksumError> {
+    Integrity::from_str(integrity)
+        .map_err(VerifyChecksumError::FromStr)?
+        .pipe(IntegrityChecker::new)
+        .chain(data)
+        .result()
+        .map_err(VerifyChecksumError::Mismatch)
 }
 
 // #[instrument]
@@ -79,8 +95,15 @@ pub async fn download_tarball_to_store(
     package_unpacked_size: Option<usize>,
     package_url: &str,
 ) -> Result<HashMap<String, PathBuf>, TarballError> {
-    let http_client = Client::new();
-    let response = http_client.get(package_url).send().await?.bytes().await?;
+    let network_error = |error| NetworkError { url: package_url.to_string(), error };
+    let response = Client::new()
+        .get(package_url)
+        .send()
+        .await
+        .map_err(network_error)?
+        .bytes()
+        .await
+        .map_err(network_error)?;
 
     let store_dir = store_dir.to_path_buf(); // TODO: use Arc
     let package_integrity = package_integrity.to_string(); // TODO: use Arc

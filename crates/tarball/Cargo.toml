@@ -14,6 +14,7 @@ repository.workspace  = true
 pacquet_cafs        = { workspace = true }
 pacquet_diagnostics = { workspace = true }
 
+pipe-trait   = { workspace = true }
 reqwest      = { workspace = true }
 ssri         = { workspace = true }
 tar          = { workspace = true }
