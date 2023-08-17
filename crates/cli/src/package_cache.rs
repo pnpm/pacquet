@@ -2,7 +2,7 @@
 
 use dashmap::DashMap;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
-use tokio::sync::watch::Receiver;
+use tokio::sync::broadcast::Receiver;
 
 /// Value of the cache.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -62,19 +62,18 @@ async fn internal_fetch(
         tracing::info!(target: "pacquet::fetch", ?saved_path, "Cache hit");
 
         loop {
-            if let Err(error) = receiver.changed().await {
-                panic!("Unexpected error when listening to channel: {error}");
+            match receiver.recv().await {
+                Err(error) => panic!("Unexpected error when listening to channel: {error}"),
+                Ok(PackageState::InProgress) => continue,
+                Ok(PackageState::Available(cas_paths)) => break cas_paths,
             }
-            match &*receiver.borrow() {
-                PackageState::InProgress => continue,
-                PackageState::Available(cas_paths) => break cas_paths.clone(),
-            };
         }
     } else {
         tracing::info!(target: "pacquet::fetch", ?saved_path, "Cache miss");
 
-        let (sender, receiver) = tokio::sync::watch::channel(PackageState::InProgress);
+        let (sender, receiver) = tokio::sync::broadcast::channel(20);
         package_cache.insert(saved_path.clone(), receiver);
+        sender.send(PackageState::InProgress).expect("send in-progress signal");
 
         // TODO: skip when it already exists in store?
         let cas_paths = download_tarball_to_store(
@@ -86,7 +85,7 @@ async fn internal_fetch(
         .await?
         .pipe(Arc::new);
 
-        sender.send(PackageState::Available(cas_paths.clone())).expect("send state");
+        sender.send(PackageState::Available(cas_paths.clone())).expect("send available signal");
 
         cas_paths
     };
