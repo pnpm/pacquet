@@ -1,8 +1,7 @@
-use std::path::Path;
 use std::{
     collections::HashMap,
     io::{Cursor, Read},
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
 };
 
@@ -83,30 +82,36 @@ pub async fn download_tarball_to_store(
     let http_client = Client::new();
     let response = http_client.get(package_url).send().await?.bytes().await?;
 
-    verify_checksum(&response, package_integrity)?;
-    let data = decompress_gzip(&response, package_unpacked_size).unwrap();
-    let mut archive = Archive::new(Cursor::new(data));
-    let cas_files = archive
-        .entries()?
-        .map(|entry| {
-            let mut entry = entry.unwrap();
+    let store_dir = store_dir.to_path_buf();
+    let package_integrity = package_integrity.to_string();
+    tokio::task::spawn_blocking(move || {
+        verify_checksum(&response, &package_integrity)?;
+        let data = decompress_gzip(&response, package_unpacked_size).unwrap();
+        let mut archive = Archive::new(Cursor::new(data));
+        let cas_files = archive
+            .entries()?
+            .map(|entry| {
+                let mut entry = entry.unwrap();
 
-            // Read the contents of the entry
-            let mut buffer = Vec::with_capacity(entry.size() as usize);
-            entry.read_to_end(&mut buffer).unwrap();
+                // Read the contents of the entry
+                let mut buffer = Vec::with_capacity(entry.size() as usize);
+                entry.read_to_end(&mut buffer).unwrap();
 
-            let entry_path = entry.path().unwrap();
-            let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>(); // QUESTION: why not collect Vec instead?
-            let integrity = pacquet_cafs::write_sync(store_dir, &buffer).unwrap();
+                let entry_path = entry.path().unwrap();
+                let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>(); // QUESTION: why not collect Vec instead?
+                let integrity = pacquet_cafs::write_sync(&store_dir, &buffer).unwrap();
 
-            (
-                cleaned_entry_path.to_str().expect("invalid UTF-8").to_string(),
-                store_dir.join(integrity),
-            )
-        })
-        .collect::<HashMap<String, PathBuf>>();
+                (
+                    cleaned_entry_path.to_str().expect("invalid UTF-8").to_string(),
+                    store_dir.join(integrity),
+                )
+            })
+            .collect::<HashMap<String, PathBuf>>();
 
-    Ok(cas_files)
+        Ok::<_, TarballError>(cas_files)
+    })
+    .await
+    .expect("no join error")
 }
 
 #[cfg(test)]
