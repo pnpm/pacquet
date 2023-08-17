@@ -92,6 +92,7 @@ pub async fn download_tarball_to_store(
         let cas_files = archive
             .entries()
             .unwrap()
+            .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir())
             .map(|entry| {
                 let mut entry = entry.unwrap();
 
