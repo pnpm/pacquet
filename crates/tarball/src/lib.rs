@@ -87,8 +87,7 @@ pub async fn download_tarball_to_store(
     tokio::task::spawn_blocking(move || {
         verify_checksum(&response, &package_integrity)?;
         let data = decompress_gzip(&response, package_unpacked_size)?;
-        let mut archive = Archive::new(Cursor::new(data));
-        let cas_files = archive
+        Archive::new(Cursor::new(data))
             .entries()?
             .map(|entry| -> Result<(String, PathBuf), TarballError> {
                 let mut entry = entry.unwrap();
@@ -106,9 +105,7 @@ pub async fn download_tarball_to_store(
                     store_dir.join(integrity),
                 ))
             })
-            .collect::<Result<HashMap<String, PathBuf>, TarballError>>()?;
-
-        Ok::<_, TarballError>(cas_files)
+            .collect::<Result<HashMap<String, PathBuf>, TarballError>>()
     })
     .await
     .expect("no join error")
