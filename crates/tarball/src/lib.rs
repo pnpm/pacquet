@@ -90,7 +90,7 @@ pub async fn download_tarball_to_store(
         let mut archive = Archive::new(Cursor::new(data));
         let cas_files = archive
             .entries()?
-            .map(|entry| {
+            .map(|entry| -> Result<(String, PathBuf), TarballError> {
                 let mut entry = entry.unwrap();
 
                 // Read the contents of the entry
@@ -99,14 +99,14 @@ pub async fn download_tarball_to_store(
 
                 let entry_path = entry.path().unwrap();
                 let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>(); // QUESTION: why not collect Vec instead?
-                let integrity = pacquet_cafs::write_sync(&store_dir, &buffer).unwrap(); // TODO: propagate this error
+                let integrity = pacquet_cafs::write_sync(&store_dir, &buffer)?;
 
-                (
+                Ok((
                     cleaned_entry_path.to_str().expect("invalid UTF-8").to_string(),
                     store_dir.join(integrity),
-                )
+                ))
             })
-            .collect::<HashMap<String, PathBuf>>();
+            .collect::<Result<HashMap<String, PathBuf>, TarballError>>()?;
 
         Ok::<_, TarballError>(cas_files)
     })
