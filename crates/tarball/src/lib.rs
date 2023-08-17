@@ -86,7 +86,7 @@ pub async fn download_tarball_to_store(
     let package_integrity = package_integrity.to_string(); // TODO: use Arc
     tokio::task::spawn_blocking(move || {
         verify_checksum(&response, &package_integrity)?;
-        let data = decompress_gzip(&response, package_unpacked_size).unwrap();
+        let data = decompress_gzip(&response, package_unpacked_size)?;
         let mut archive = Archive::new(Cursor::new(data));
         let cas_files = archive
             .entries()?
@@ -99,7 +99,7 @@ pub async fn download_tarball_to_store(
 
                 let entry_path = entry.path().unwrap();
                 let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>(); // QUESTION: why not collect Vec instead?
-                let integrity = pacquet_cafs::write_sync(&store_dir, &buffer).unwrap();
+                let integrity = pacquet_cafs::write_sync(&store_dir, &buffer).unwrap(); // TODO: propagate this error
 
                 (
                     cleaned_entry_path.to_str().expect("invalid UTF-8").to_string(),
