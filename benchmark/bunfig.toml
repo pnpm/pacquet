@@ -1,8 +1,8 @@
 [install]
 optional = false
 dev = false
-# The following does not work
-#registry = "http://localhost:4873/"
+peer = false
+registry = "http://localhost:4873/"
 
 [install.cache]
 disable = true

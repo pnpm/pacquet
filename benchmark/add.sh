@@ -6,12 +6,13 @@
 PACQUET="../target/release/pacquet add fastify"
 PNPM="pnpm add fastify --silent"
 YARN="yarn add fastify --silent"
-BUN="bun add fastify --no-cache --no-save --silent"
+BUN="bun add fastify --no-cache --silent --backend=symlink"
 
 FILE_CLEAN="rm -rf package.json node_modules .yarn yarn.lock .pnp* && echo {} > package.json || true"
+PACQUET_CLEAN="../target/release/pacquet store prune"
 PNPM_CLEAN="pnpm store prune"
 YARN_CLEAN="yarn cache clean --all"
-CLEANUP="${PNPM_CLEAN} && ${YARN_CLEAN} && ${FILE_CLEAN}"
+CLEANUP="${PACQUET_CLEAN} && ${PNPM_CLEAN} && ${YARN_CLEAN} && ${FILE_CLEAN}"
 
 $FILE_CLEAN
 

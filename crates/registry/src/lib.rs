@@ -1,120 +1,36 @@
-mod error;
-mod http_client;
 mod package;
+mod package_distribution;
+mod package_version;
 
-use std::path::{Path, PathBuf};
+pub use package::Package;
+pub use package_distribution::PackageDistribution;
+pub use package_version::PackageVersion;
 
-use async_recursion::async_recursion;
-use futures_util::future::join_all;
-use pacquet_npmrc::{get_current_npmrc, Npmrc};
-use pacquet_package_json::{DependencyGroup, PackageJson};
-use pacquet_tarball::{get_package_store_folder_name, TarballManager};
+use pacquet_diagnostics::{
+    miette::{self, Diagnostic},
+    thiserror::{self, Error},
+};
 
-use crate::{error::RegistryError, http_client::HttpClient};
+#[derive(Error, Debug, Diagnostic)]
+#[non_exhaustive]
+pub enum RegistryError {
+    #[error("missing latest tag on {0}")]
+    #[diagnostic(code(pacquet_registry::missing_latest_tag))]
+    MissingLatestTag(String),
 
-pub struct RegistryManager {
-    client: Box<HttpClient>,
-    config: Box<Npmrc>,
-    package_json: Box<PackageJson>,
-    tarball_manager: Box<TarballManager>,
-}
+    #[error("missing version {0} on package {1}")]
+    #[diagnostic(code(pacquet_registry::missing_version_release))]
+    MissingVersionRelease(String, String),
 
-impl RegistryManager {
-    pub fn new<P: Into<PathBuf>>(package_json_path: P) -> Result<RegistryManager, RegistryError> {
-        let config = get_current_npmrc();
-        Ok(RegistryManager {
-            client: Box::new(HttpClient::new(&config.registry)),
-            config: Box::new(config),
-            package_json: Box::new(PackageJson::create_if_needed(&package_json_path.into())?),
-            tarball_manager: Box::new(TarballManager::new()),
-        })
-    }
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_registry::network_error))]
+    Network(#[from] reqwest::Error),
 
-    /// Here is a brief overview of what this package does.
-    /// 1. Get a dependency
-    /// 2. Save the dependency to node_modules/.pacquet/pkg@version/node_modules/pkg
-    /// 3. Create a symlink to node_modules/pkg
-    /// 4. Download all dependencies to node_modules/.pacquet
-    /// 5. Symlink all dependencies to node_modules/.pacquet/pkg@version/node_modules
-    /// 6. Update package.json
-    pub async fn add_dependency(
-        &mut self,
-        name: &str,
-        dependency_group: DependencyGroup,
-    ) -> Result<(), RegistryError> {
-        let latest_version = self.client.get_package_by_version(name, "latest").await?;
-        let dependency_store_folder_name =
-            get_package_store_folder_name(name, &latest_version.version.to_string());
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_registry::io_error))]
+    Io(#[from] std::io::Error),
 
-        let package_node_modules_path =
-            self.config.virtual_store_dir.join(dependency_store_folder_name).join("node_modules");
-
-        self.tarball_manager
-            .download_dependency(
-                &latest_version.dist.integrity,
-                latest_version.get_tarball_url(),
-                &package_node_modules_path.join(name),
-                &self.config.modules_dir.join(name),
-            )
-            .await?;
-
-        join_all(
-            latest_version
-                .get_dependencies(self.config.auto_install_peers)
-                .iter()
-                .map(|(name, version)| self.add_package(name, version, &package_node_modules_path))
-                .collect::<Vec<_>>(),
-        )
-        .await;
-
-        self.package_json.add_dependency(
-            name,
-            &format!("^{0}", &latest_version.version),
-            dependency_group,
-        )?;
-        self.package_json.save()?;
-
-        Ok(())
-    }
-
-    #[async_recursion(?Send)]
-    async fn add_package(
-        &self,
-        name: &str,
-        version: &str,
-        symlink_path: &Path,
-    ) -> Result<(), RegistryError> {
-        let package = self.client.get_package(name).await?;
-        let package_version = package.get_suitable_version_of(version)?.unwrap();
-        let dependency_store_folder_name =
-            get_package_store_folder_name(name, &package_version.version.to_string());
-        let package_node_modules_path =
-            self.config.virtual_store_dir.join(dependency_store_folder_name).join("node_modules");
-
-        // Make sure to lock the package's mutex so we don't install the same package's tarball
-        // in different threads.
-        let mutex_guard = package.mutex.lock().await;
-
-        self.tarball_manager
-            .download_dependency(
-                &package_version.dist.integrity,
-                package_version.get_tarball_url(),
-                &package_node_modules_path.join(name),
-                &symlink_path.join(&package.name),
-            )
-            .await?;
-
-        drop(mutex_guard);
-
-        join_all(
-            package_version
-                .get_dependencies(self.config.auto_install_peers)
-                .iter()
-                .map(|(name, version)| self.add_package(name, version, &package_node_modules_path))
-                .collect::<Vec<_>>(),
-        )
-        .await;
-
-        Ok(())
-    }
+    #[error("serialization failed: {0}")]
+    #[diagnostic(code(pacquet_registry::serialization_error))]
+    Serialization(String),
 }

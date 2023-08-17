@@ -1,61 +1,17 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
+use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
 
-use crate::error::RegistryError;
+use crate::{package_version::PackageVersion, RegistryError};
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PackageDistribution {
-    pub integrity: String,
-    #[serde(alias = "npm-signature")]
-    pub npm_signature: Option<String>,
-    pub shasum: String,
-    pub tarball: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PackageVersion {
-    pub name: String,
-    pub version: node_semver::Version,
-    pub dist: PackageDistribution,
-    pub dependencies: Option<HashMap<String, String>>,
-    #[serde(alias = "devDependencies")]
-    pub dev_dependencies: Option<HashMap<String, String>>,
-    #[serde(alias = "peerDependencies")]
-    pub peer_dependencies: Option<HashMap<String, String>>,
-}
-
-impl PackageVersion {
-    pub fn get_tarball_url(&self) -> &str {
-        self.dist.tarball.as_str()
-    }
-
-    pub fn get_dependencies(&self, with_peer_dependencies: bool) -> HashMap<&str, &str> {
-        let mut dependencies = HashMap::<&str, &str>::new();
-
-        if let Some(deps) = self.dependencies.as_ref() {
-            for dep in deps {
-                dependencies.insert(dep.0.as_str(), dep.1.as_str());
-            }
-        }
-
-        if with_peer_dependencies {
-            if let Some(deps) = self.peer_dependencies.as_ref() {
-                for dep in deps {
-                    dependencies.insert(dep.0.as_str(), dep.1.as_str());
-                }
-            }
-        }
-
-        dependencies
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Package {
     pub name: String,
-    #[serde(alias = "dist-tags")]
+    #[serde(rename = "dist-tags")]
     dist_tags: HashMap<String, String>,
     pub versions: HashMap<String, PackageVersion>,
 
@@ -63,8 +19,29 @@ pub struct Package {
     pub mutex: Arc<Mutex<u8>>,
 }
 
+impl PartialEq for Package {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
 impl Package {
-    pub fn get_suitable_version_of(
+    pub async fn fetch_from_registry(
+        name: &str,
+        http_client: &reqwest::Client,
+        registry: &str,
+    ) -> Result<Self, RegistryError> {
+        http_client
+            .get(format!("{0}{name}", &registry))
+            .header("content-type", "application/json")
+            .send()
+            .await?
+            .json::<Package>()
+            .await?
+            .pipe(Ok)
+    }
+
+    pub fn pinned_version(
         &self,
         version_field: &str,
     ) -> Result<Option<&PackageVersion>, RegistryError> {
@@ -73,14 +50,19 @@ impl Package {
             .versions
             .values()
             .filter(|v| v.version.satisfies(&range))
-            .collect::<Vec<&PackageVersion>>()
-            .clone();
+            .collect::<Vec<&PackageVersion>>();
 
         satisfied_versions.sort_by(|a, b| a.version.partial_cmp(&b.version).unwrap());
 
         // Optimization opportunity:
         // We can store this in a cache to remove filter operation and make this a O(1) operation.
         Ok(satisfied_versions.last().copied())
+    }
+
+    pub fn latest(&self) -> Result<&PackageVersion, RegistryError> {
+        let version =
+            self.dist_tags.get("latest").expect("latest tag is expected but not found for package");
+        Ok(self.versions.get(version).unwrap())
     }
 }
 
@@ -89,8 +71,10 @@ mod tests {
     use std::collections::HashMap;
 
     use node_semver::Version;
+    use pretty_assertions::assert_eq;
 
-    use crate::package::{PackageDistribution, PackageVersion};
+    use super::*;
+    use crate::package_distribution::PackageDistribution;
 
     #[test]
     pub fn package_version_should_include_peers() {
@@ -101,21 +85,32 @@ mod tests {
         let version = PackageVersion {
             name: "".to_string(),
             version: Version::parse("1.0.0").unwrap(),
-            dist: PackageDistribution {
-                integrity: "".to_string(),
-                npm_signature: None,
-                shasum: "".to_string(),
-                tarball: "".to_string(),
-            },
+            dist: PackageDistribution::default(),
             dependencies: Some(dependencies),
             dev_dependencies: None,
             peer_dependencies: Some(peer_dependencies),
         };
 
-        assert!(version.get_dependencies(false).contains_key("fastify"));
-        assert!(!version.get_dependencies(false).contains_key("fast-querystring"));
-        assert!(version.get_dependencies(true).contains_key("fastify"));
-        assert!(version.get_dependencies(true).contains_key("fast-querystring"));
-        assert!(!version.get_dependencies(true).contains_key("hello-world"));
+        let dependencies = |peer| version.dependencies(peer).collect::<HashMap<_, _>>();
+        assert!(dependencies(false).contains_key("fastify"));
+        assert!(!dependencies(false).contains_key("fast-querystring"));
+        assert!(dependencies(true).contains_key("fastify"));
+        assert!(dependencies(true).contains_key("fast-querystring"));
+        assert!(!dependencies(true).contains_key("hello-world"));
+    }
+
+    #[test]
+    pub fn serialized_according_to_params() {
+        let version = PackageVersion {
+            name: "".to_string(),
+            version: Version { major: 3, minor: 2, patch: 1, build: vec![], pre_release: vec![] },
+            dist: PackageDistribution::default(),
+            dependencies: None,
+            dev_dependencies: None,
+            peer_dependencies: None,
+        };
+
+        assert_eq!(version.serialize(true), "3.2.1");
+        assert_eq!(version.serialize(false), "^3.2.1");
     }
 }

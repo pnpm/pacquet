@@ -1,5 +1,7 @@
 mod package;
 
+pub use package::{LockfilePackage, LockfilePackageResolution};
+
 use std::{
     collections::HashMap,
     env, fs,
@@ -7,17 +9,21 @@ use std::{
     path::PathBuf,
 };
 
+use pacquet_diagnostics::{
+    miette::{self, Diagnostic},
+    thiserror::{self, Error},
+};
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
-use crate::package::LockfilePackage;
-
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
 pub enum LockfileError {
-    #[error("filesystem error: `{0}`")]
-    FileSystem(#[from] std::io::Error),
-    #[error("serialization error: `{0}")]
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_lockfile::io_error))]
+    Io(#[from] std::io::Error),
+
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_lockfile::serialization_error))]
     Serialization(#[from] serde_yaml::Error),
 }
 
@@ -33,19 +39,17 @@ pub struct LockfilePeerDependencyMeta {
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LockfileSettings {
-    #[serde(alias = "autoInstallPeers")]
     auto_install_peers: bool,
-    #[serde(alias = "excludeLinksFromLockfile")]
     exclude_links_from_lockfile: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Lockfile {
-    #[serde(alias = "lockFileVersion")]
     pub lock_file_version: String,
     pub settings: Option<LockfileSettings>,
-    #[serde(alias = "neverBuiltDependencies")]
     pub never_built_dependencies: Option<Vec<String>>,
     pub overrides: Option<HashMap<String, String>>,
     pub dependencies: Option<HashMap<String, LockfileDependency>>,
@@ -94,7 +98,11 @@ impl Lockfile {
 
     pub fn create_or_open() -> Result<Lockfile, LockfileError> {
         let yaml_path = Lockfile::path()?;
-        if yaml_path.exists() { Ok(Lockfile::open()?) } else { Ok(Lockfile::create()?) }
+        if yaml_path.exists() {
+            Ok(Lockfile::open()?)
+        } else {
+            Ok(Lockfile::create()?)
+        }
     }
 
     pub fn save(&self) -> Result<(), LockfileError> {
