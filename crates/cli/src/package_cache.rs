@@ -16,4 +16,4 @@ pub enum PackageState {
 /// Internal cache of [`crate::PackageManager`].
 ///
 /// The key of this hashmap is saved path of each package.
-pub type PackageCache = DashMap<PathBuf, UnboundedReceiver<PackageState>>;
+pub type PackageCache = DashMap<PathBuf, UnboundedReceiver<PackageState>>; // TODO: use bounded channels to avoid out-of-memory errors
