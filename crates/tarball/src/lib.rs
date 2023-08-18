@@ -112,6 +112,7 @@ pub async fn download_tarball_to_store(
         let data = decompress_gzip(&response, package_unpacked_size)?;
         Archive::new(Cursor::new(data))
             .entries()?
+            .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir())
             .map(|entry| -> Result<(String, PathBuf), TarballError> {
                 let mut entry = entry.unwrap();
 
