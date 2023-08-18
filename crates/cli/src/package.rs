@@ -92,7 +92,7 @@ async fn internal_fetch(
 
     config.package_import_method.import(
         &cas_paths,
-        saved_path,
+        &saved_path,
         &symlink_path.join(&package_version.name),
     )?;
 

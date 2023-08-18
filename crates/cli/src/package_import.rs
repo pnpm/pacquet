@@ -12,7 +12,7 @@ pub trait ImportMethodImpl {
     fn import(
         &self,
         cas_files: &HashMap<String, PathBuf>,
-        save_path: PathBuf,
+        save_path: &Path,
         symlink_to: &Path,
     ) -> Result<(), PackageManagerError>;
 }
@@ -21,7 +21,7 @@ impl ImportMethodImpl for PackageImportMethod {
     fn import(
         &self,
         cas_files: &HashMap<String, PathBuf>,
-        save_path: PathBuf,
+        save_path: &Path,
         symlink_to: &Path,
     ) -> Result<(), PackageManagerError> {
         match self {
@@ -39,7 +39,7 @@ impl ImportMethodImpl for PackageImportMethod {
                     if let Some(parent_dir) = symlink_to.parent() {
                         fs::create_dir_all(parent_dir)?;
                     }
-                    crate::fs::symlink_dir(&save_path, symlink_to)?;
+                    crate::fs::symlink_dir(save_path, symlink_to)?;
                 }
             }
             _ => panic!("Not implemented yet"),
