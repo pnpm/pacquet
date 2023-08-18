@@ -1,12 +1,11 @@
 use std::{
     collections::HashMap,
-    fs, io,
+    fs,
     path::{Path, PathBuf},
 };
 
 use crate::package_manager::{AutoImportError, PackageManagerError};
 use pacquet_npmrc::PackageImportMethod;
-use pipe_trait::Pipe;
 use rayon::prelude::*;
 
 pub trait ImportMethodImpl {
@@ -27,22 +26,6 @@ impl ImportMethodImpl for PackageImportMethod {
     ) -> Result<(), PackageManagerError> {
         match self {
             PackageImportMethod::Auto => {
-                save_path.parent().expect("save_path has parent").pipe(fs::create_dir_all)?; // ignore "already exists" error for the parent
-
-                match fs::create_dir(save_path) {
-                    Ok(()) => cas_files
-                        .into_par_iter()
-                        .try_for_each(|(cleaned_entry, store_path)| {
-                            auto_import(store_path, &save_path.join(cleaned_entry))
-                        })
-                        .expect("expected no write errors"),
-                    Err(error) => {
-                        if error.kind() != io::ErrorKind::AlreadyExists {
-                            return error.pipe(PackageManagerError::Io).pipe(Err);
-                        }
-                    }
-                }
-
                 if !save_path.exists() {
                     cas_files
                         .into_par_iter()
