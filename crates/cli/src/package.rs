@@ -7,6 +7,7 @@ use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::download_tarball_to_store;
 use pipe_trait::Pipe;
 use std::{path::Path, sync::Arc};
+use tokio::sync::RwLock;
 
 /// This function execute the following and returns the package
 /// - retrieves the package from the registry
@@ -58,22 +59,20 @@ async fn internal_fetch(
         .join("node_modules")
         .join(&package_version.name);
 
-    let cas_paths = if let Some(mut receiver) = package_cache.get_mut(&saved_path) {
+    let cas_paths = if let Some(cache_lock) = package_cache.get(&saved_path) {
         tracing::info!(target: "pacquet::fetch", ?saved_path, "Cache hit");
 
         loop {
-            match receiver.recv().await {
-                None => panic!("Channel ended unexpectedly"),
-                Some(PackageState::InProgress) => continue,
-                Some(PackageState::Available(cas_paths)) => break cas_paths,
+            match &*cache_lock.read().await {
+                PackageState::InProgress => continue,
+                PackageState::Available(cas_paths) => break cas_paths.clone(),
             }
         }
     } else {
         tracing::info!(target: "pacquet::fetch", ?saved_path, "Cache miss");
 
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-        package_cache.insert(saved_path.clone(), receiver);
-        sender.send(PackageState::InProgress).expect("send in-progress signal");
+        let cache_lock = PackageState::InProgress.pipe(RwLock::new).pipe(Arc::new);
+        package_cache.insert(saved_path.clone(), cache_lock.clone());
 
         // TODO: skip when it already exists in store?
         let cas_paths = download_tarball_to_store(
@@ -85,7 +84,8 @@ async fn internal_fetch(
         .await?
         .pipe(Arc::new);
 
-        sender.send(PackageState::Available(cas_paths.clone())).expect("send available signal");
+        let mut cache_write = cache_lock.write().await;
+        *cache_write = PackageState::Available(cas_paths.clone());
 
         cas_paths
     };
