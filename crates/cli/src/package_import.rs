@@ -67,22 +67,24 @@ impl ImportMethodImpl for PackageImportMethod {
 }
 
 fn auto_import(source_file: &Path, target_link: &Path) -> Result<(), AutoImportError> {
-    if !target_link.exists() {
-        if let Some(parent_dir) = target_link.parent() {
-            fs::create_dir_all(parent_dir).map_err(|error| AutoImportError::CreateDir {
-                dirname: parent_dir.to_path_buf(),
-                error,
-            })?;
-        }
-
-        reflink_copy::reflink_or_copy(source_file, target_link).map_err(|error| {
-            AutoImportError::CreateLink {
-                from: source_file.to_path_buf(),
-                to: target_link.to_path_buf(),
-                error,
-            }
-        })?; // TODO: add hardlink
+    if target_link.exists() {
+        return Ok(());
     }
+
+    if let Some(parent_dir) = target_link.parent() {
+        fs::create_dir_all(parent_dir).map_err(|error| AutoImportError::CreateDir {
+            dirname: parent_dir.to_path_buf(),
+            error,
+        })?;
+    }
+
+    reflink_copy::reflink_or_copy(source_file, target_link).map_err(|error| {
+        AutoImportError::CreateLink {
+            from: source_file.to_path_buf(),
+            to: target_link.to_path_buf(),
+            error,
+        }
+    })?; // TODO: add hardlink
 
     Ok(())
 }
