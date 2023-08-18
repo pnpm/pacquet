@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{io, path::PathBuf};
 
 use pacquet_diagnostics::{
     miette::{self, Diagnostic},
@@ -8,6 +8,23 @@ use pacquet_npmrc::{current_npmrc, Npmrc};
 use pacquet_package_json::PackageJson;
 
 use crate::package_cache::PackageCache;
+
+#[derive(Error, Debug, Diagnostic)]
+pub enum AutoImportError {
+    #[error("cannot create directory at {dirname:?}: {error}")]
+    CreateDir {
+        dirname: PathBuf,
+        #[source]
+        error: io::Error,
+    },
+    #[error("fail to create a link from {from:?} to {to:?}: {error}")]
+    CreateLink {
+        from: PathBuf,
+        to: PathBuf,
+        #[source]
+        error: io::Error,
+    },
+}
 
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
@@ -26,7 +43,11 @@ pub enum PackageManagerError {
 
     #[error(transparent)]
     #[diagnostic(code(pacquet_package_manager::io_error))]
-    Io(#[from] std::io::Error),
+    Io(#[from] io::Error),
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    AutoImport(#[from] AutoImportError),
 }
 
 pub struct PackageManager {

@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::package_manager::PackageManagerError;
+use crate::package_manager::{AutoImportError, PackageManagerError};
 use pacquet_npmrc::PackageImportMethod;
 use rayon::prelude::*;
 
@@ -49,13 +49,22 @@ impl ImportMethodImpl for PackageImportMethod {
     }
 }
 
-fn auto_import(original_path: &Path, symlink_path: &Path) -> Result<(), PackageManagerError> {
+fn auto_import(original_path: &Path, symlink_path: &Path) -> Result<(), AutoImportError> {
     if !symlink_path.exists() {
         if let Some(parent_dir) = symlink_path.parent() {
-            fs::create_dir_all(parent_dir)?;
+            fs::create_dir_all(parent_dir).map_err(|error| AutoImportError::CreateDir {
+                dirname: parent_dir.to_path_buf(),
+                error,
+            })?;
         }
 
-        reflink_copy::reflink_or_copy(original_path, symlink_path)?; // TODO: add hardlink
+        reflink_copy::reflink_or_copy(original_path, symlink_path).map_err(|error| {
+            AutoImportError::CreateLink {
+                from: original_path.to_path_buf(),
+                to: symlink_path.to_path_buf(),
+                error,
+            }
+        })?; // TODO: add hardlink
     }
 
     Ok(())
