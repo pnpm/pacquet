@@ -2,6 +2,7 @@ use crate::package::find_package_version_from_registry;
 use crate::package_manager::{PackageManager, PackageManagerError};
 use clap::Parser;
 use futures_util::future;
+use pacquet_diagnostics::tracing;
 use pacquet_package_json::DependencyGroup;
 use pacquet_registry::PackageVersion;
 use std::collections::VecDeque;
@@ -46,6 +47,7 @@ impl PackageManager {
         let http_client = &self.http_client;
         let mut queue: VecDeque<Vec<PackageVersion>> = VecDeque::new();
 
+        tracing::info!(target: "pacquet::install", node_modules = ?path, "direct dependencies");
         let direct_dependency_handles = self
             .package_json
             .dependencies(args.dependency_groups())
@@ -72,6 +74,11 @@ impl PackageManager {
                     .join(dependency.to_store_name())
                     .join("node_modules");
 
+                tracing::info!(
+                    target: "pacquet::install",
+                    node_modules = ?node_modules_path,
+                    "indirect dependencies",
+                );
                 let handles = dependency.dependencies(self.config.auto_install_peers).map(
                     |(name, version)| async {
                         find_package_version_from_registry(
