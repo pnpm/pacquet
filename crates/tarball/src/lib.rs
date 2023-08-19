@@ -105,6 +105,7 @@ pub async fn download_tarball_to_store(
         .await
         .map_err(network_error)?;
 
+    // TODO: benchmark and profile to see if spawning is actually necessary
     let store_dir = store_dir.to_path_buf(); // TODO: use Arc
     let package_integrity = package_integrity.to_string(); // TODO: use Arc
     tokio::task::spawn_blocking(move || {
