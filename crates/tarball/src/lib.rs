@@ -55,7 +55,7 @@ pub enum TarballError {
     TaskJoin(#[from] tokio::task::JoinError),
 }
 
-#[instrument]
+#[instrument(skip(gz_data), fields(gz_data_len = gz_data.len()))]
 fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u8>, TarballError> {
     let mut options = DeflateOptions::default().set_confirm_checksum(false);
 
@@ -78,7 +78,7 @@ pub enum VerifyChecksumError {
     Mismatch(ssri::Error),
 }
 
-#[instrument]
+#[instrument(skip(data), fields(data_len = data.len()))]
 fn verify_checksum(data: &[u8], integrity: &str) -> Result<ssri::Algorithm, VerifyChecksumError> {
     Integrity::from_str(integrity)
         .map_err(VerifyChecksumError::FromStr)?
@@ -88,7 +88,7 @@ fn verify_checksum(data: &[u8], integrity: &str) -> Result<ssri::Algorithm, Veri
         .map_err(VerifyChecksumError::Mismatch)
 }
 
-// #[instrument]
+#[instrument]
 pub async fn download_tarball_to_store(
     store_dir: &Path,
     package_integrity: &str,
