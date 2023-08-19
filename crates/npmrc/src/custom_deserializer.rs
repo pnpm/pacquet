@@ -16,40 +16,32 @@ pub fn default_public_hoist_pattern() -> Vec<String> {
     vec!["*eslint*".to_string(), "*prettier*".to_string()]
 }
 
-/// Get absolute path with home_dir
-pub fn get_absolute_path_with_home_dir(relate_path: Option<String>) -> PathBuf {
-    let home_dir = dirs::home_dir().expect("Home directory is not available");
-    match relate_path {
-        Some(p) => {
-            // prefix should start with ~/
-            if let Some(path_without_tilde) = p.strip_prefix("~/") {
-                return home_dir.join(path_without_tilde);
-            }
-            PathBuf::from(p)
-        }
-        None => home_dir,
-    }
-}
-
 /// If the $PACQUET_HOME env variable is set, then $PACQUET_HOME/store
 /// If the $XDG_DATA_HOME env variable is set, then $XDG_DATA_HOME/pacquet/store
 /// On Windows: ~/AppData/Local/pacquet/store
 /// On macOS: ~/Library/pacquet/store
 /// On Linux: ~/.local/share/pacquet/store
 pub fn default_store_dir() -> PathBuf {
+    let home_dir = dirs::home_dir().unwrap();
+
     if let Ok(pacquet_home) = env::var("PACQUET_HOME") {
-        return get_absolute_path_with_home_dir(Some(pacquet_home)).join("store");
+        // if variable start with `~/`,it should be removed,or use default value.
+        let pacquet_home_without_tilde =
+            pacquet_home.strip_prefix("~/").unwrap_or(pacquet_home.as_str());
+        return home_dir.join(pacquet_home_without_tilde).join("store");
     }
 
     if let Ok(xdg_data_home) = env::var("XDG_DATA_HOME") {
-        return get_absolute_path_with_home_dir(Some(xdg_data_home)).join("pacquet/store");
+        let xdg_data_home_without_tilde =
+            xdg_data_home.strip_prefix("~/").unwrap_or(xdg_data_home.as_str());
+        return home_dir.join(xdg_data_home_without_tilde).join("pacquet/store");
     }
 
     // https://doc.rust-lang.org/std/env/consts/constant.OS.html
     match env::consts::OS {
-        "linux" => get_absolute_path_with_home_dir(None).join(".local/share/pacquet/store"),
-        "macos" => get_absolute_path_with_home_dir(None).join("Library/pacquet/store"),
-        "windows" => get_absolute_path_with_home_dir(None).join("AppData/Local/pacquet/store"),
+        "linux" => home_dir.join(".local/share/pacquet/store"),
+        "macos" => home_dir.join("Library/pacquet/store"),
+        "windows" => home_dir.join("AppData/Local/pacquet/store"),
         _ => panic!("unsupported operating system: {}", env::consts::OS),
     }
 }
@@ -129,6 +121,15 @@ mod tests {
     }
 
     #[test]
+    fn test_default_store_dir_with_pac_env_with_prefix() {
+        env::set_var("PACQUET_HOME", "~/prefix/pacquet_home");
+        let home_dir = dirs::home_dir().unwrap();
+        let store_dir = default_store_dir();
+        assert_eq!(store_dir, home_dir.join("prefix/pacquet_home/store"));
+        env::remove_var("PACQUET_HOME");
+    }
+
+    #[test]
     fn test_default_store_dir_with_xdg_env() {
         env::set_var("XDG_DATA_HOME", "/tmp/xdg_data_home");
         let store_dir = default_store_dir();
@@ -137,22 +138,11 @@ mod tests {
     }
 
     #[test]
-    fn test_get_absolute_path_with_home_dir_none() {
+    fn test_default_store_dir_with_xdg_env_with_prefix() {
+        env::set_var("XDG_DATA_HOME", "~/prefix/xdg_data_home");
         let home_dir = dirs::home_dir().unwrap();
-        let p = get_absolute_path_with_home_dir(None);
-        assert_eq!(home_dir, p)
-    }
-
-    #[test]
-    fn test_get_absolute_path_with_home_dir_prefix() {
-        let home_dir = dirs::home_dir().unwrap();
-        let p = get_absolute_path_with_home_dir(Some("~/deps/pacquet_home".to_string()));
-        assert_eq!(home_dir.join("deps/pacquet_home"), p);
-    }
-
-    #[test]
-    fn test_get_absolute_path_with_home_dir_absolute() {
-        let p = get_absolute_path_with_home_dir(Some("/tmp/pacquet_home".to_string()));
-        assert_eq!(PathBuf::from("/tmp/pacquet_home"), p);
+        let store_dir = default_store_dir();
+        assert_eq!(store_dir, home_dir.join("prefix/xdg_data_home/pacquet/store"));
+        env::remove_var("XDG_DATA_HOME");
     }
 }
