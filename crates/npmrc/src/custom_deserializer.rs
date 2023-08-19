@@ -22,7 +22,7 @@ pub fn default_public_hoist_pattern() -> Vec<String> {
 /// On macOS: ~/Library/pacquet/store
 /// On Linux: ~/.local/share/pacquet/store
 pub fn default_store_dir() -> PathBuf {
-    let home_dir = dirs::home_dir().unwrap();
+    let home_dir = dirs::home_dir().expect("Home directory is not available");
 
     if let Ok(pacquet_home) = env::var("PACQUET_HOME") {
         // if variable start with `~/`,it should be removed,or use default value.
