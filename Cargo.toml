@@ -12,12 +12,9 @@ license     = "MIT"
 repository  = "https://github.com/anonrig/pacquet"
 
 [workspace.dependencies]
-# Crates
-pacquet_cli          = { path = "crates/cli" }
 pacquet_registry     = { path = "crates/registry" }
 pacquet_tarball      = { path = "crates/tarball" }
 pacquet_package_json = { path = "crates/package_json" }
-pacquet_lockfile     = { path = "crates/lockfile" }
 pacquet_npmrc        = { path = "crates/npmrc" }
 pacquet_executor     = { path = "crates/executor" }
 pacquet_cafs         = { path = "crates/cafs" }
