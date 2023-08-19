@@ -16,6 +16,18 @@ pub fn default_public_hoist_pattern() -> Vec<String> {
     vec!["*eslint*".to_string(), "*prettier*".to_string()]
 }
 
+pub fn is_home(path: String) -> bool {
+    path.starts_with("~/") || path.starts_with("~\\")
+}
+
+pub fn resolve_store_dir(pacquet_home: String) -> PathBuf {
+    if is_home(pacquet_home.clone()) {
+        let home_dir = dirs::home_dir().expect("Home directory is not available");
+        return home_dir.join(&pacquet_home[2..]);
+    }
+    PathBuf::from(pacquet_home.as_str())
+}
+
 /// If the $PACQUET_HOME env variable is set, then $PACQUET_HOME/store
 /// If the $XDG_DATA_HOME env variable is set, then $XDG_DATA_HOME/pacquet/store
 /// On Windows: ~/AppData/Local/pacquet/store
@@ -24,15 +36,13 @@ pub fn default_public_hoist_pattern() -> Vec<String> {
 pub fn default_store_dir() -> PathBuf {
     let home_dir = dirs::home_dir().expect("Home directory is not available");
 
+    // just home need to support resolve ~ prefix
     if let Ok(pacquet_home) = env::var("PACQUET_HOME") {
-        // if variable start with `~/`,it should be removed,or use default value.
-        let pacquet_home = pacquet_home.strip_prefix("~/").unwrap_or(pacquet_home.as_str());
-        return home_dir.join(pacquet_home).join("store");
+        return resolve_store_dir(pacquet_home).join("store");
     }
 
     if let Ok(xdg_data_home) = env::var("XDG_DATA_HOME") {
-        let xdg_data_home = xdg_data_home.strip_prefix("~/").unwrap_or(xdg_data_home.as_str());
-        return home_dir.join(xdg_data_home).join("pacquet/store");
+        return PathBuf::from(xdg_data_home).join("pacquet/store");
     }
 
     // https://doc.rust-lang.org/std/env/consts/constant.OS.html
@@ -113,9 +123,8 @@ mod tests {
     #[test]
     fn test_default_store_dir_with_pac_env() {
         env::set_var("PACQUET_HOME", "/tmp/pacquet_home");
-        let home_dir = dirs::home_dir().unwrap();
         let store_dir = default_store_dir();
-        assert_eq!(store_dir, home_dir.join("/tmp/pacquet_home/store"));
+        assert_eq!(store_dir, PathBuf::from("/tmp/pacquet_home/store"));
         env::remove_var("PACQUET_HOME");
     }
 
@@ -131,18 +140,26 @@ mod tests {
     #[test]
     fn test_default_store_dir_with_xdg_env() {
         env::set_var("XDG_DATA_HOME", "/tmp/xdg_data_home");
-        let home_dir = dirs::home_dir().unwrap();
         let store_dir = default_store_dir();
-        assert_eq!(store_dir, home_dir.join("/tmp/xdg_data_home/pacquet/store"));
+        assert_eq!(store_dir, PathBuf::from("/tmp/xdg_data_home/pacquet/store"));
         env::remove_var("XDG_DATA_HOME");
     }
 
     #[test]
-    fn test_default_store_dir_with_xdg_env_with_prefix() {
-        env::set_var("XDG_DATA_HOME", "~/prefix/xdg_data_home");
+    fn test_is_home() {
+        let with_prefix = is_home("~/.pacuqet".to_string());
+        assert_eq!(with_prefix, true);
+        let without_prefix = is_home("/tmp/store".to_string());
+        assert_eq!(without_prefix, false);
+    }
+
+    #[test]
+    fn test_resolve_store_dir() {
         let home_dir = dirs::home_dir().unwrap();
-        let store_dir = default_store_dir();
-        assert_eq!(store_dir, home_dir.join("prefix/xdg_data_home/pacquet/store"));
-        env::remove_var("XDG_DATA_HOME");
+        let store_dir = resolve_store_dir("~/.store".to_string());
+        assert_eq!(store_dir, home_dir.join(".store"));
+
+        let store_dir_without_prefix = resolve_store_dir("/tmp/store".to_string());
+        assert_eq!(store_dir_without_prefix, PathBuf::from("/tmp/store"))
     }
 }
