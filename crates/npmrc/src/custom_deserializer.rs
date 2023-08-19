@@ -109,14 +109,15 @@ where
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
-    use std::{env, path::Path};
+    use std::env;
 
     use super::*;
     #[test]
     fn test_default_store_dir_with_pac_env() {
         env::set_var("PACQUET_HOME", "/tmp/pacquet_home");
+        let home_dir = dirs::home_dir().unwrap();
         let store_dir = default_store_dir();
-        assert_eq!(store_dir, Path::new("/tmp/pacquet_home/store"));
+        assert_eq!(store_dir, home_dir.join("/tmp/pacquet_home/store"));
         env::remove_var("PACQUET_HOME");
     }
 
@@ -132,8 +133,9 @@ mod tests {
     #[test]
     fn test_default_store_dir_with_xdg_env() {
         env::set_var("XDG_DATA_HOME", "/tmp/xdg_data_home");
+        let home_dir = dirs::home_dir().unwrap();
         let store_dir = default_store_dir();
-        assert_eq!(store_dir, Path::new("/tmp/xdg_data_home/pacquet/store"));
+        assert_eq!(store_dir, home_dir.join("/tmp/xdg_data_home/pacquet/store"));
         env::remove_var("XDG_DATA_HOME");
     }
 
