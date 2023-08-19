@@ -26,15 +26,13 @@ pub fn default_store_dir() -> PathBuf {
 
     if let Ok(pacquet_home) = env::var("PACQUET_HOME") {
         // if variable start with `~/`,it should be removed,or use default value.
-        let pacquet_home_without_tilde =
-            pacquet_home.strip_prefix("~/").unwrap_or(pacquet_home.as_str());
-        return home_dir.join(pacquet_home_without_tilde).join("store");
+        let pacquet_home = pacquet_home.strip_prefix("~/").unwrap_or(pacquet_home.as_str());
+        return home_dir.join(pacquet_home).join("store");
     }
 
     if let Ok(xdg_data_home) = env::var("XDG_DATA_HOME") {
-        let xdg_data_home_without_tilde =
-            xdg_data_home.strip_prefix("~/").unwrap_or(xdg_data_home.as_str());
-        return home_dir.join(xdg_data_home_without_tilde).join("pacquet/store");
+        let xdg_data_home = xdg_data_home.strip_prefix("~/").unwrap_or(xdg_data_home.as_str());
+        return home_dir.join(xdg_data_home).join("pacquet/store");
     }
 
     // https://doc.rust-lang.org/std/env/consts/constant.OS.html
