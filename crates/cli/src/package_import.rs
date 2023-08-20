@@ -5,6 +5,7 @@ use std::{
 };
 
 use crate::package_manager::{AutoImportError, PackageManagerError};
+use pacquet_diagnostics::tracing;
 use pacquet_npmrc::PackageImportMethod;
 use rayon::prelude::*;
 
@@ -24,6 +25,7 @@ impl ImportMethodImpl for PackageImportMethod {
         save_path: &Path,
         symlink_to: &Path,
     ) -> Result<(), PackageManagerError> {
+        tracing::info!(target: "pacquet::import", ?save_path, ?symlink_to, "Import package");
         match self {
             PackageImportMethod::Auto => {
                 if !save_path.exists() {
