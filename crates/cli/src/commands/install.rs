@@ -1,11 +1,12 @@
 use crate::package::find_package_version_from_registry;
 use crate::package_manager::{PackageManager, PackageManagerError};
+use async_recursion::async_recursion;
 use clap::Parser;
 use futures_util::future;
 use pacquet_diagnostics::tracing;
 use pacquet_package_json::DependencyGroup;
 use pacquet_registry::PackageVersion;
-use std::collections::VecDeque;
+use pipe_trait::Pipe;
 
 #[derive(Parser, Debug)]
 pub struct InstallCommandArgs {
@@ -41,62 +42,54 @@ impl InstallCommandArgs {
 }
 
 impl PackageManager {
-    pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
-        let config = &self.config;
-        let path = &self.config.modules_dir;
-        let http_client = &self.http_client;
-        let mut queue: VecDeque<Vec<PackageVersion>> = VecDeque::new();
+    /// Install dependencies of a dependency.
+    ///
+    /// This function is used by [`PackageManager::install`].
+    #[async_recursion]
+    async fn install_dependencies(&self, package: &PackageVersion) {
+        let node_modules_path =
+            self.config.virtual_store_dir.join(package.to_store_name()).join("node_modules");
 
-        tracing::info!(target: "pacquet::install", node_modules = ?path, "direct dependencies");
-        let direct_dependency_handles = self
-            .package_json
-            .dependencies(args.dependency_groups())
-            .map(|(name, version)| async move {
-                find_package_version_from_registry(
+        tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Install dependencies");
+
+        package
+            .dependencies(self.config.auto_install_peers)
+            .map(|(name, version)| async {
+                let dependency = find_package_version_from_registry(
                     &self.tarball_cache,
-                    config,
-                    http_client,
+                    &self.config,
+                    &self.http_client,
                     name,
                     version,
-                    path,
+                    &node_modules_path,
                 )
                 .await
-                .unwrap()
-            });
+                .unwrap();
+                self.install_dependencies(&dependency).await;
+            })
+            .pipe(future::join_all)
+            .await;
+    }
 
-        queue.push_front(future::join_all(direct_dependency_handles).await);
-
-        while let Some(dependencies) = queue.pop_front() {
-            for dependency in dependencies {
-                let node_modules_path = self
-                    .config
-                    .virtual_store_dir
-                    .join(dependency.to_store_name())
-                    .join("node_modules");
-
-                tracing::info!(
-                    target: "pacquet::install",
-                    node_modules = ?node_modules_path,
-                    "indirect dependencies",
-                );
-                let handles = dependency.dependencies(self.config.auto_install_peers).map(
-                    |(name, version)| async {
-                        find_package_version_from_registry(
-                            &self.tarball_cache,
-                            config,
-                            http_client,
-                            name,
-                            version,
-                            &node_modules_path,
-                        )
-                        .await
-                        .unwrap()
-                    },
-                );
-
-                queue.push_back(future::join_all(handles).await);
-            }
-        }
+    /// Jobs of the `install` command.
+    pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
+        self.package_json
+            .dependencies(args.dependency_groups())
+            .map(|(name, version)| async move {
+                let dependency = find_package_version_from_registry(
+                    &self.tarball_cache,
+                    &self.config,
+                    &self.http_client,
+                    name,
+                    version,
+                    &self.config.modules_dir,
+                )
+                .await
+                .unwrap();
+                self.install_dependencies(&dependency).await;
+            })
+            .pipe(future::join_all)
+            .await;
 
         Ok(())
     }
