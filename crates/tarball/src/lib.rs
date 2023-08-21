@@ -123,9 +123,7 @@ pub async fn download_tarball_to_store(
 
         return Ok(match &mut *cache_value {
             CacheValue::InProgress(receiver) => {
-                let cas_paths = receiver.recv().await.expect("Channel close unexpectedly");
-                cache.insert(package_url.to_string(), CacheValue::Available(cas_paths.clone()));
-                cas_paths
+                receiver.recv().await.expect("Channel close unexpectedly")
             }
             CacheValue::Available(cas_paths) => cas_paths.clone(),
         });
@@ -192,6 +190,7 @@ pub async fn download_tarball_to_store(
     tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
 
     sender.send(cas_paths.clone()).expect("send cas_paths");
+    cache.insert(package_url.to_string(), CacheValue::Available(cas_paths.clone()));
 
     Ok(cas_paths)
 }
