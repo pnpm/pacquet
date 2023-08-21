@@ -127,8 +127,6 @@ pub async fn download_tarball_to_store(
                 let cas_paths = receiver.recv().await.expect("Channel close unexpectedly");
                 eprintln!("{package_url} received from channel");
                 dbg!(&cas_paths);
-                cache.insert(package_url.to_string(), CacheValue::Available(cas_paths.clone()));
-                eprintln!("{package_url} inserted");
                 cas_paths
             }
             CacheValue::Available(cas_paths) => {
@@ -201,6 +199,7 @@ pub async fn download_tarball_to_store(
     eprintln!("{package_url} sends created cache");
 
     sender.send(cas_paths.clone()).expect("send cas_paths");
+    cache.insert(package_url.to_string(), CacheValue::Available(cas_paths.clone()));
 
     Ok(cas_paths)
 }
