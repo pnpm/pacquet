@@ -41,8 +41,8 @@ pub enum TarballError {
     #[diagnostic(code(pacquet_tarball::io_error))]
     Io(#[from] std::io::Error),
 
-    #[error("checksum failed: {}", _0)]
-    #[diagnostic(code(pacquet_tarball::checksum_mismatch_error))]
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_tarball::verify_checksum_error))]
     Checksum(#[from] VerifyChecksumError),
 
     #[error("integrity creation failed: {}", _0)]
