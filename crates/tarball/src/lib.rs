@@ -111,7 +111,7 @@ fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm,
     integrity.pipe(IntegrityChecker::new).chain(data).result()
 }
 
-#[instrument(skip(cache))]
+#[instrument(skip(cache), fields(cache_len = cache.len()))]
 pub async fn download_tarball_to_store(
     cache: &Cache,
     store_dir: &Path,
