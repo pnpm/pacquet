@@ -1324,6 +1324,7 @@ dependencies = [
 name = "pacquet_tarball"
 version = "0.0.1"
 dependencies = [
+ "dashmap",
  "pacquet_cafs",
  "pacquet_diagnostics",
  "pipe-trait",

@@ -2,8 +2,10 @@ use std::{
     collections::HashMap,
     io::{Cursor, Read},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
+use dashmap::DashMap;
 use pacquet_diagnostics::{
     miette::{self, Diagnostic},
     thiserror::{self, Error},
@@ -13,6 +15,7 @@ use pipe_trait::Pipe;
 use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
+use tokio::sync::RwLock;
 use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
 
 #[derive(Error, Debug, Diagnostic)]
@@ -75,6 +78,20 @@ pub enum TarballError {
     TaskJoin(#[from] tokio::task::JoinError),
 }
 
+/// Value of the cache.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CacheValue {
+    /// The package is being processed.
+    InProgress,
+    /// The package is saved.
+    Available(Arc<HashMap<String, PathBuf>>),
+}
+
+/// Internal cache of tarballs.
+///
+/// The key of this hashmap is the url of each tarball.
+pub type Cache = DashMap<String, Arc<RwLock<CacheValue>>>;
+
 #[instrument(skip(gz_data), fields(gz_data_len = gz_data.len()))]
 fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u8>, TarballError> {
     let mut options = DeflateOptions::default().set_confirm_checksum(false);
@@ -96,11 +113,30 @@ fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm,
 
 #[instrument]
 pub async fn download_tarball_to_store(
+    cache: &Cache,
     store_dir: &Path,
     package_integrity: &str,
     package_unpacked_size: Option<usize>,
     package_url: &str,
-) -> Result<HashMap<String, PathBuf>, TarballError> {
+) -> Result<Arc<HashMap<String, PathBuf>>, TarballError> {
+    if let Some(cache_lock) = cache.get(package_url) {
+        tracing::info!(target: "pacquet::download", ?package_url, "Cache hit");
+
+        loop {
+            match &*cache_lock.read().await {
+                CacheValue::InProgress => continue,
+                CacheValue::Available(cas_paths) => return Ok(cas_paths.clone()),
+            }
+        }
+    }
+
+    tracing::info!(target: "pacquet::download", ?package_url, "Cache miss");
+
+    let cache_lock = CacheValue::InProgress.pipe(RwLock::new).pipe(Arc::new);
+    if cache.insert(package_url.to_string(), cache_lock.clone()).is_some() {
+        tracing::warn!(target: "pacquet::download", ?package_url, "Race condition detected when writing to cache");
+    }
+
     let network_error = |error| NetworkError { url: package_url.to_string(), error };
     let response = Client::new()
         .get(package_url)
@@ -111,6 +147,8 @@ pub async fn download_tarball_to_store(
         .await
         .map_err(network_error)?;
 
+    tracing::info!(target: "pacquet::download", ?package_url, "Downloaded completed");
+
     // TODO: benchmark and profile to see if spawning is actually necessary
     let store_dir = store_dir.to_path_buf(); // TODO: use Arc
     let package_integrity: Integrity =
@@ -119,10 +157,10 @@ pub async fn download_tarball_to_store(
             integrity: package_integrity.to_string(),
             error,
         })?;
-    let package_url = package_url.to_string(); // TODO: use Arc
-    tokio::task::spawn_blocking(move || {
+    let url = package_url.to_string(); // TODO: use Arc
+    let cas_paths = tokio::task::spawn_blocking(move || {
         verify_checksum(&response, package_integrity)
-            .map_err(|error| VerifyChecksumError { url: package_url, error })?;
+            .map_err(|error| VerifyChecksumError { url, error })?;
         let data = decompress_gzip(&response, package_unpacked_size)?;
         Archive::new(Cursor::new(data))
             .entries()?
@@ -146,7 +184,15 @@ pub async fn download_tarball_to_store(
             .collect::<Result<HashMap<String, PathBuf>, TarballError>>()
     })
     .await
-    .expect("no join error")
+    .expect("no join error")?
+    .pipe(Arc::new);
+
+    tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
+
+    let mut cache_write = cache_lock.write().await;
+    *cache_write = CacheValue::Available(cas_paths.clone());
+
+    Ok(cas_paths)
 }
 
 #[cfg(test)]
@@ -161,6 +207,7 @@ mod tests {
     async fn packages_under_orgs_should_work() {
         let store_path = tempdir().unwrap();
         let cas_files = download_tarball_to_store(
+            &Default::default(),
             store_path.path(),
             "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
             Some(16697),
@@ -196,6 +243,7 @@ mod tests {
     async fn should_throw_error_on_checksum_mismatch() {
         let store_path = tempdir().unwrap();
         download_tarball_to_store(
+            &Default::default(),
             store_path.path(),
             "sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
             Some(16697),

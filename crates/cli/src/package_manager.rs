@@ -6,8 +6,7 @@ use pacquet_diagnostics::{
 };
 use pacquet_npmrc::{current_npmrc, Npmrc};
 use pacquet_package_json::PackageJson;
-
-use crate::package_cache::PackageCache;
+use pacquet_tarball::Cache;
 
 #[derive(Error, Debug, Diagnostic)]
 pub enum AutoImportError {
@@ -54,7 +53,7 @@ pub struct PackageManager {
     pub config: Box<Npmrc>,
     pub package_json: Box<PackageJson>,
     pub http_client: Box<reqwest::Client>,
-    pub(crate) package_cache: PackageCache,
+    pub(crate) tarball_cache: Cache,
 }
 
 impl PackageManager {
@@ -63,7 +62,7 @@ impl PackageManager {
             config: Box::new(current_npmrc()),
             package_json: Box::new(PackageJson::create_if_needed(package_json_path.into())?),
             http_client: Box::new(reqwest::Client::new()),
-            package_cache: PackageCache::new(),
+            tarball_cache: Cache::new(),
         })
     }
 }

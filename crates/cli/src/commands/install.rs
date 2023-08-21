@@ -53,7 +53,7 @@ impl PackageManager {
             .dependencies(args.dependency_groups())
             .map(|(name, version)| async move {
                 find_package_version_from_registry(
-                    &self.package_cache,
+                    &self.tarball_cache,
                     config,
                     http_client,
                     name,
@@ -82,7 +82,7 @@ impl PackageManager {
                 let handles = dependency.dependencies(self.config.auto_install_peers).map(
                     |(name, version)| async {
                         find_package_version_from_registry(
-                            &self.package_cache,
+                            &self.tarball_cache,
                             config,
                             http_client,
                             name,

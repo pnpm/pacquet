@@ -55,7 +55,7 @@ impl PackageManager {
     /// 6. Update package.json
     pub async fn add(&mut self, args: &AddCommandArgs) -> Result<(), PackageManagerError> {
         let latest_version = fetch_package_version_directly(
-            &self.package_cache,
+            &self.tarball_cache,
             &self.config,
             &self.http_client,
             &args.package,
@@ -74,7 +74,7 @@ impl PackageManager {
         let direct_dependency_handles =
             latest_version.dependencies(self.config.auto_install_peers).map(|(name, version)| {
                 find_package_version_from_registry(
-                    &self.package_cache,
+                    &self.tarball_cache,
                     config,
                     http_client,
                     name,
@@ -98,7 +98,7 @@ impl PackageManager {
                 let handles = dependency.dependencies(self.config.auto_install_peers).map(
                     |(name, version)| {
                         find_package_version_from_registry(
-                            &self.package_cache,
+                            &self.tarball_cache,
                             config,
                             http_client,
                             name,
