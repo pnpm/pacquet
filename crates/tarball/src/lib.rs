@@ -2,7 +2,6 @@ use std::{
     collections::HashMap,
     io::{Cursor, Read},
     path::{Path, PathBuf},
-    str::FromStr,
 };
 
 use pacquet_diagnostics::{
@@ -21,6 +20,14 @@ use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
 pub struct NetworkError {
     pub url: String,
     pub error: reqwest::Error,
+}
+
+#[derive(Error, Debug, Diagnostic)]
+#[error("Failed to verify the integrity of {url}: {error}")]
+pub struct VerifyChecksumError {
+    pub url: String,
+    #[source]
+    pub error: ssri::Error,
 }
 
 #[derive(Error, Debug, Diagnostic)]
@@ -69,23 +76,9 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
     Ok(decompressed)
 }
 
-// TODO: add more information
-#[derive(Error, Debug)]
-pub enum VerifyChecksumError {
-    #[error(transparent)]
-    FromStr(ssri::Error),
-    #[error(transparent)]
-    Mismatch(ssri::Error),
-}
-
 #[instrument(skip(data), fields(data_len = data.len()))]
-fn verify_checksum(data: &[u8], integrity: &str) -> Result<ssri::Algorithm, VerifyChecksumError> {
-    Integrity::from_str(integrity)
-        .map_err(VerifyChecksumError::FromStr)?
-        .pipe(IntegrityChecker::new)
-        .chain(data)
-        .result()
-        .map_err(VerifyChecksumError::Mismatch)
+fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm, ssri::Error> {
+    integrity.pipe(IntegrityChecker::new).chain(data).result()
 }
 
 #[instrument]
@@ -107,9 +100,11 @@ pub async fn download_tarball_to_store(
 
     // TODO: benchmark and profile to see if spawning is actually necessary
     let store_dir = store_dir.to_path_buf(); // TODO: use Arc
-    let package_integrity = package_integrity.to_string(); // TODO: use Arc
+    let package_integrity: Integrity = package_integrity.parse().expect("parse integrity");
+    let package_url = package_url.to_string(); // TODO: use Arc
     tokio::task::spawn_blocking(move || {
-        verify_checksum(&response, &package_integrity)?;
+        verify_checksum(&response, package_integrity.clone())
+            .map_err(|error| VerifyChecksumError { url: package_url, error })?;
         let data = decompress_gzip(&response, package_unpacked_size)?;
         Archive::new(Cursor::new(data))
             .entries()?
