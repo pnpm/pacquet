@@ -190,7 +190,7 @@ pub async fn download_tarball_to_store(
     tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
 
     sender.send(cas_paths.clone()).expect("send cas_paths");
-    cache.insert(package_url.to_string(), CacheValue::Available(cas_paths.clone()));
+    cache.insert(package_url.to_string(), CacheValue::Available(cas_paths.clone())); // TODO: fix deadlock here
 
     Ok(cas_paths)
 }
