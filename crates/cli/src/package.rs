@@ -56,6 +56,7 @@ async fn internal_fetch(
         .join(&package_version.name);
 
     // TODO: skip when it already exists in store?
+    eprintln!("{} begins", package_version.as_tarball_url());
     let cas_paths = download_tarball_to_store(
         tarball_cache,
         &config.store_dir,
@@ -64,6 +65,7 @@ async fn internal_fetch(
         package_version.as_tarball_url(),
     )
     .await?;
+    eprintln!("{} ends", package_version.as_tarball_url());
 
     config.package_import_method.import(
         &cas_paths,

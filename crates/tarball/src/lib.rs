@@ -123,15 +123,23 @@ pub async fn download_tarball_to_store(
 
         return Ok(match &mut *cache_value {
             CacheValue::InProgress(receiver) => {
+                eprintln!("{package_url} waits for channel");
                 let cas_paths = receiver.recv().await.expect("Channel close unexpectedly");
+                eprintln!("{package_url} received from channel");
+                dbg!(&cas_paths);
                 cache.insert(package_url.to_string(), CacheValue::Available(cas_paths.clone()));
+                eprintln!("{package_url} inserted");
                 cas_paths
             }
-            CacheValue::Available(cas_paths) => cas_paths.clone(),
+            CacheValue::Available(cas_paths) => {
+                eprintln!("{package_url} read the cache");
+                cas_paths.clone()
+            }
         });
     }
 
     tracing::info!(target: "pacquet::download", ?package_url, "Cache miss");
+    eprintln!("{package_url} creates new cache");
 
     let (sender, receiver) = unbounded_channel();
     let cache_value = CacheValue::InProgress(receiver);
@@ -190,6 +198,7 @@ pub async fn download_tarball_to_store(
     .pipe(Arc::new);
 
     tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
+    eprintln!("{package_url} sends created cache");
 
     sender.send(cas_paths.clone()).expect("send cas_paths");
 
