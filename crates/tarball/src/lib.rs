@@ -23,6 +23,15 @@ pub struct NetworkError {
 }
 
 #[derive(Error, Debug, Diagnostic)]
+#[error("Cannot parse {integrity:?} from {url} as an integrity: {error}")]
+pub struct ParseIntegrityError {
+    pub url: String,
+    pub integrity: String,
+    #[source]
+    pub error: ssri::Error,
+}
+
+#[derive(Error, Debug, Diagnostic)]
 #[error("Failed to verify the integrity of {url}: {error}")]
 pub struct VerifyChecksumError {
     pub url: String,
@@ -40,6 +49,10 @@ pub enum TarballError {
     #[error(transparent)]
     #[diagnostic(code(pacquet_tarball::io_error))]
     Io(#[from] std::io::Error),
+
+    #[error(transparent)]
+    #[diagnostic(code(pacquet_tarball::parse_integrity_error))]
+    ParseIntegrity(#[from] ParseIntegrityError),
 
     #[error(transparent)]
     #[diagnostic(code(pacquet_tarball::verify_checksum_error))]
@@ -100,7 +113,12 @@ pub async fn download_tarball_to_store(
 
     // TODO: benchmark and profile to see if spawning is actually necessary
     let store_dir = store_dir.to_path_buf(); // TODO: use Arc
-    let package_integrity: Integrity = package_integrity.parse().expect("parse integrity");
+    let package_integrity: Integrity =
+        package_integrity.parse().map_err(|error| ParseIntegrityError {
+            url: package_url.to_string(),
+            integrity: package_integrity.to_string(),
+            error,
+        })?;
     let package_url = package_url.to_string(); // TODO: use Arc
     tokio::task::spawn_blocking(move || {
         verify_checksum(&response, package_integrity.clone())
