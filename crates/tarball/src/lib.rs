@@ -121,7 +121,7 @@ pub async fn download_tarball_to_store(
         })?;
     let package_url = package_url.to_string(); // TODO: use Arc
     tokio::task::spawn_blocking(move || {
-        verify_checksum(&response, package_integrity.clone())
+        verify_checksum(&response, package_integrity)
             .map_err(|error| VerifyChecksumError { url: package_url, error })?;
         let data = decompress_gzip(&response, package_unpacked_size)?;
         Archive::new(Cursor::new(data))
