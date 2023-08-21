@@ -79,18 +79,12 @@ pub enum TarballError {
 }
 
 /// Value of the cache.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CacheValue {
-    /// The package is being processed.
-    InProgress,
-    /// The package is saved.
-    Available(Arc<HashMap<String, PathBuf>>),
-}
+pub type CacheValue = RwLock<Arc<HashMap<String, PathBuf>>>;
 
 /// Internal cache of tarballs.
 ///
 /// The key of this hashmap is the url of each tarball.
-pub type Cache = DashMap<String, Arc<RwLock<CacheValue>>>;
+pub type Cache = DashMap<String, Arc<CacheValue>>;
 
 #[instrument(skip(gz_data), fields(gz_data_len = gz_data.len()))]
 fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u8>, TarballError> {
@@ -121,18 +115,13 @@ pub async fn download_tarball_to_store(
 ) -> Result<Arc<HashMap<String, PathBuf>>, TarballError> {
     if let Some(cache_lock) = cache.get(package_url) {
         tracing::info!(target: "pacquet::download", ?package_url, "Cache hit");
-
-        loop {
-            match &*cache_lock.read().await {
-                CacheValue::InProgress => continue,
-                CacheValue::Available(cas_paths) => return Ok(cas_paths.clone()),
-            }
-        }
+        return cache_lock.read().await.clone().pipe(Ok);
     }
 
     tracing::info!(target: "pacquet::download", ?package_url, "Cache miss");
 
-    let cache_lock = CacheValue::InProgress.pipe(RwLock::new).pipe(Arc::new);
+    let cache_lock: Arc<CacheValue> = Default::default();
+    let mut cache_write = cache_lock.write().await;
     if cache.insert(package_url.to_string(), cache_lock.clone()).is_some() {
         tracing::warn!(target: "pacquet::download", ?package_url, "Race condition detected when writing to cache");
     }
@@ -189,8 +178,7 @@ pub async fn download_tarball_to_store(
 
     tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
 
-    let mut cache_write = cache_lock.write().await;
-    *cache_write = CacheValue::Available(cas_paths.clone());
+    *cache_write = cas_paths.clone();
 
     Ok(cas_paths)
 }
