@@ -15,7 +15,7 @@ use pipe_trait::Pipe;
 use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
-use tokio::sync::RwLock;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
 
 #[derive(Error, Debug, Diagnostic)]
@@ -79,10 +79,9 @@ pub enum TarballError {
 }
 
 /// Value of the cache.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheValue {
     /// The package is being processed.
-    InProgress,
+    InProgress(UnboundedReceiver<Arc<HashMap<String, PathBuf>>>),
     /// The package is saved.
     Available(Arc<HashMap<String, PathBuf>>),
 }
@@ -90,7 +89,7 @@ pub enum CacheValue {
 /// Internal cache of tarballs.
 ///
 /// The key of this hashmap is the url of each tarball.
-pub type Cache = DashMap<String, Arc<RwLock<CacheValue>>>;
+pub type Cache = DashMap<String, CacheValue>;
 
 #[instrument(skip(gz_data), fields(gz_data_len = gz_data.len()))]
 fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u8>, TarballError> {
@@ -119,21 +118,24 @@ pub async fn download_tarball_to_store(
     package_unpacked_size: Option<usize>,
     package_url: &str,
 ) -> Result<Arc<HashMap<String, PathBuf>>, TarballError> {
-    if let Some(cache_lock) = cache.get(package_url) {
+    if let Some(mut cache_value) = cache.get_mut(package_url) {
         tracing::info!(target: "pacquet::download", ?package_url, "Cache hit");
 
-        loop {
-            match &*cache_lock.read().await {
-                CacheValue::InProgress => continue,
-                CacheValue::Available(cas_paths) => return Ok(cas_paths.clone()),
+        return Ok(match &mut *cache_value {
+            CacheValue::InProgress(receiver) => {
+                let cas_paths = receiver.recv().await.expect("Channel close unexpectedly");
+                cache.insert(package_url.to_string(), CacheValue::Available(cas_paths.clone()));
+                cas_paths
             }
-        }
+            CacheValue::Available(cas_paths) => cas_paths.clone(),
+        });
     }
 
     tracing::info!(target: "pacquet::download", ?package_url, "Cache miss");
 
-    let cache_lock = CacheValue::InProgress.pipe(RwLock::new).pipe(Arc::new);
-    if cache.insert(package_url.to_string(), cache_lock.clone()).is_some() {
+    let (sender, receiver) = unbounded_channel();
+    let cache_value = CacheValue::InProgress(receiver);
+    if cache.insert(package_url.to_string(), cache_value).is_some() {
         tracing::warn!(target: "pacquet::download", ?package_url, "Race condition detected when writing to cache");
     }
 
@@ -189,8 +191,7 @@ pub async fn download_tarball_to_store(
 
     tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
 
-    let mut cache_write = cache_lock.write().await;
-    *cache_write = CacheValue::Available(cas_paths.clone());
+    sender.send(cas_paths.clone()).expect("send cas_paths");
 
     Ok(cas_paths)
 }
