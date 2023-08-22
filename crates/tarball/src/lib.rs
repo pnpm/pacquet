@@ -15,7 +15,10 @@ use pipe_trait::Pipe;
 use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
-use tokio::sync::RwLock;
+use tokio::{
+    sync::RwLock,
+    time::{sleep, Duration},
+};
 use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
 
 #[derive(Error, Debug, Diagnostic)]
@@ -119,15 +122,21 @@ pub async fn download_tarball_to_store(
     package_unpacked_size: Option<usize>,
     package_url: &str,
 ) -> Result<Arc<HashMap<String, PathBuf>>, TarballError> {
-    if let Some(cache_lock) = cache.get(package_url) {
-        tracing::info!(target: "pacquet::download", ?package_url, "Cache hit");
+    while let Some(cache_lock) = cache.get(package_url) {
+        tracing::info!(target: "pacquet::download", ?package_url, "Job taken");
 
-        loop {
-            match &*cache_lock.read().await {
-                CacheValue::InProgress => continue,
-                CacheValue::Available(cas_paths) => return Ok(cas_paths.clone()),
+        match &*cache_lock.read().await {
+            CacheValue::Available(cas_paths) => {
+                tracing::info!(target: "pacquet::download", ?package_url, cas_paths_len = cas_paths.len(), "Cache hit");
+                return Ok(cas_paths.clone());
+            }
+            CacheValue::InProgress => {
+                tracing::info!(target: "pacquet::download", ?package_url, "Wait for cache");
             }
         }
+        drop(cache_lock);
+        sleep(Duration::from_millis(100)).await;
+        continue;
     }
 
     tracing::info!(target: "pacquet::download", ?package_url, "Cache miss");
