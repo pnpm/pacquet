@@ -167,7 +167,7 @@ pub fn current_npmrc() -> Npmrc {
     // Look for current folder `.npmrc` and if not found, look for home directory.
     let path = match env::current_dir() {
         Ok(dir) => Some(dir.join(".npmrc")),
-        _ => home::home_dir().map(|dir| dir.join(".npmrc")),
+        _ => dirs::home_dir().map(|dir| dir.join(".npmrc")),
     };
 
     if let Some(file) = path {
@@ -230,7 +230,7 @@ mod tests {
     pub fn should_use_pacquet_home_env_var() {
         env::set_var("PACQUET_HOME", "/hello");
         let value: Npmrc = serde_ini::from_str("").unwrap();
-        assert_eq!(value.store_dir, PathBuf::from_str("/hello/store").unwrap());
+        assert_eq!(value.store_dir, PathBuf::from("/hello/store"));
         env::remove_var("PACQUET_HOME");
     }
 
@@ -238,7 +238,7 @@ mod tests {
     pub fn should_use_xdg_data_home_env_var() {
         env::set_var("XDG_DATA_HOME", "/hello");
         let value: Npmrc = serde_ini::from_str("").unwrap();
-        assert_eq!(value.store_dir, PathBuf::from_str("/hello/pacquet/store").unwrap());
+        assert_eq!(value.store_dir, PathBuf::from("/hello/pacquet/store"));
         env::remove_var("XDG_DATA_HOME");
     }
 
