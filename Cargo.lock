@@ -1244,7 +1244,6 @@ version = "0.0.1"
 dependencies = [
  "async-recursion",
  "clap",
- "dashmap",
  "futures-util",
  "insta",
  "node-semver",

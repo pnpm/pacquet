@@ -25,7 +25,6 @@ pacquet_diagnostics  = { workspace = true }
 
 async-recursion = { workspace = true }
 clap            = { workspace = true }
-dashmap         = { workspace = true }
 futures-util    = { workspace = true }
 rayon           = { workspace = true }
 reflink-copy    = { workspace = true }
