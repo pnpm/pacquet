@@ -50,18 +50,18 @@ pub enum PackageManagerError {
 }
 
 pub struct PackageManager {
-    pub config: Box<Npmrc>,
-    pub package_json: Box<PackageJson>,
-    pub http_client: Box<reqwest::Client>,
+    pub config: Npmrc,
+    pub package_json: PackageJson,
+    pub http_client: reqwest::Client,
     pub(crate) tarball_cache: Cache,
 }
 
 impl PackageManager {
     pub fn new<P: Into<PathBuf>>(package_json_path: P) -> Result<Self, PackageManagerError> {
         Ok(PackageManager {
-            config: Box::new(current_npmrc()),
-            package_json: Box::new(PackageJson::create_if_needed(package_json_path.into())?),
-            http_client: Box::new(reqwest::Client::new()),
+            config: current_npmrc(),
+            package_json: PackageJson::create_if_needed(package_json_path.into())?,
+            http_client: reqwest::Client::new(),
             tarball_cache: Cache::new(),
         })
     }
