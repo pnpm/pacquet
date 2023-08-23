@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    ffi::OsString,
     io::{Cursor, Read},
     path::{Path, PathBuf},
     sync::Arc,
@@ -87,7 +88,7 @@ pub enum CacheValue {
     /// The package is being processed.
     InProgress,
     /// The package is saved.
-    Available(Arc<HashMap<String, PathBuf>>),
+    Available(Arc<HashMap<OsString, PathBuf>>),
 }
 
 /// Internal cache of tarballs.
@@ -121,7 +122,7 @@ pub async fn download_tarball_to_store(
     package_integrity: &str,
     package_unpacked_size: Option<usize>,
     package_url: &str,
-) -> Result<Arc<HashMap<String, PathBuf>>, TarballError> {
+) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
     while let Some(cache_lock) = cache.get(package_url) {
         tracing::info!(target: "pacquet::download", ?package_url, "Job taken");
 
@@ -174,7 +175,7 @@ pub async fn download_tarball_to_store(
         Archive::new(Cursor::new(data))
             .entries()?
             .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir())
-            .map(|entry| -> Result<(String, PathBuf), TarballError> {
+            .map(|entry| -> Result<(OsString, PathBuf), TarballError> {
                 let mut entry = entry.unwrap();
 
                 // Read the contents of the entry
@@ -182,15 +183,13 @@ pub async fn download_tarball_to_store(
                 entry.read_to_end(&mut buffer).unwrap();
 
                 let entry_path = entry.path().unwrap();
-                let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>();
+                let cleaned_entry_path =
+                    entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
                 let integrity = pacquet_cafs::write_sync(&store_dir, &buffer)?;
 
-                Ok((
-                    cleaned_entry_path.to_str().expect("invalid UTF-8").to_string(),
-                    store_dir.join(integrity),
-                ))
+                Ok((cleaned_entry_path, store_dir.join(integrity)))
             })
-            .collect::<Result<HashMap<String, PathBuf>, TarballError>>()
+            .collect::<Result<HashMap<OsString, PathBuf>, TarballError>>()
     })
     .await
     .expect("no join error")?

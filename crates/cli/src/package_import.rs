@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    ffi::OsString,
     fs,
     path::{Path, PathBuf},
 };
@@ -12,7 +13,7 @@ use rayon::prelude::*;
 pub trait ImportMethodImpl {
     fn import(
         &self,
-        cas_files: &HashMap<String, PathBuf>,
+        cas_files: &HashMap<OsString, PathBuf>,
         save_path: &Path,
         symlink_to: &Path,
     ) -> Result<(), PackageManagerError>;
@@ -21,7 +22,7 @@ pub trait ImportMethodImpl {
 impl ImportMethodImpl for PackageImportMethod {
     fn import(
         &self,
-        cas_files: &HashMap<String, PathBuf>,
+        cas_files: &HashMap<OsString, PathBuf>,
         save_path: &Path,
         symlink_to: &Path,
     ) -> Result<(), PackageManagerError> {
