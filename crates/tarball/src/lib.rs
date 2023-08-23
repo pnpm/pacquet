@@ -156,7 +156,7 @@ pub async fn download_tarball_to_store(
         .await
         .map_err(network_error)?;
 
-    tracing::info!(target: "pacquet::download", ?package_url, "Downloaded completed");
+    tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
 
     // TODO: benchmark and profile to see if spawning is actually necessary
     let store_dir = store_dir.to_path_buf(); // TODO: use Arc
