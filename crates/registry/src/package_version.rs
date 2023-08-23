@@ -33,7 +33,7 @@ impl PackageVersion {
         let network_error = |error| NetworkError { error, url: url() };
 
         http_client
-            .get(format!("{registry}{name}/{version}"))
+            .get(url())
             .header("content-type", "application/json")
             .send()
             .await
