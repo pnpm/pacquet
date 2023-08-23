@@ -49,7 +49,7 @@ async fn internal_fetch(
 ) -> Result<(), PackageManagerError> {
     let store_folder_name = package_version.to_store_name();
 
-    let saved_path = config
+    let save_path = config
         .virtual_store_dir
         .join(store_folder_name)
         .join("node_modules")
@@ -67,7 +67,7 @@ async fn internal_fetch(
 
     config.package_import_method.import(
         &cas_paths,
-        &saved_path,
+        &save_path,
         &symlink_path.join(&package_version.name),
     )?;
 
