@@ -16,10 +16,7 @@ use pipe_trait::Pipe;
 use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
-use tokio::{
-    sync::RwLock,
-    time::{sleep, Duration},
-};
+use tokio::sync::RwLock;
 use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
 
 #[derive(Error, Debug, Diagnostic)]
@@ -136,7 +133,7 @@ pub async fn download_tarball_to_store(
             }
         }
         drop(cache_lock);
-        sleep(Duration::from_millis(100)).await; // avoid deadlock, the millis can be any number
+        tokio::task::yield_now().await; // prevent deadlock
         continue;
     }
 
