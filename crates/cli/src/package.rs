@@ -49,12 +49,6 @@ async fn internal_fetch(
 ) -> Result<(), PackageManagerError> {
     let store_folder_name = package_version.to_store_name();
 
-    let save_path = config
-        .virtual_store_dir
-        .join(store_folder_name)
-        .join("node_modules")
-        .join(&package_version.name);
-
     // TODO: skip when it already exists in store?
     let cas_paths = download_tarball_to_store(
         tarball_cache,
@@ -64,6 +58,12 @@ async fn internal_fetch(
         package_version.as_tarball_url(),
     )
     .await?;
+
+    let save_path = config
+        .virtual_store_dir
+        .join(store_folder_name)
+        .join("node_modules")
+        .join(&package_version.name);
 
     config.package_import_method.import(
         &cas_paths,
