@@ -29,7 +29,7 @@ impl PackageVersion {
         http_client: &reqwest::Client,
         registry: &str,
     ) -> Result<Self, RegistryError> {
-        let url = || format!("{registry}{name}/{version}"); // TODO: use reqwest url type
+        let url = || format!("{registry}{name}/{version}");
         let network_error = |error| NetworkError { error, url: url() };
 
         http_client
