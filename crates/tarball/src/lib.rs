@@ -182,7 +182,7 @@ pub async fn download_tarball_to_store(
                 entry.read_to_end(&mut buffer).unwrap();
 
                 let entry_path = entry.path().unwrap();
-                let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>(); // QUESTION: why not collect Vec instead?
+                let cleaned_entry_path = entry_path.components().skip(1).collect::<PathBuf>();
                 let integrity = pacquet_cafs::write_sync(&store_dir, &buffer)?;
 
                 Ok((
