@@ -135,7 +135,7 @@ pub async fn download_tarball_to_store(
             }
         }
         drop(cache_lock);
-        sleep(Duration::from_millis(100)).await; // TODO: millis can be any small number, even 0, further testing is required to find the ideal number
+        sleep(Duration::from_millis(100)).await; // avoid deadlock, the millis can be any number
         continue;
     }
 
