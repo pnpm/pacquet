@@ -29,11 +29,11 @@ impl PackageVersion {
         http_client: &reqwest::Client,
         registry: &str,
     ) -> Result<Self, RegistryError> {
-        let url = || format!("{0}{name}/{version}", &registry); // TODO: use reqwest url type
+        let url = || format!("{registry}{name}/{version}"); // TODO: use reqwest url type
         let network_error = |error| NetworkError { error, url: url() };
 
         http_client
-            .get(format!("{0}{name}/{version}", &registry))
+            .get(format!("{registry}{name}/{version}"))
             .header("content-type", "application/json")
             .send()
             .await
