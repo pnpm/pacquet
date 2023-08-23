@@ -139,7 +139,7 @@ pub async fn download_tarball_to_store(
         continue;
     }
 
-    tracing::info!(target: "pacquet::download", ?package_url, "Cache miss");
+    tracing::info!(target: "pacquet::download", ?package_url, "New cache");
 
     let cache_lock = CacheValue::InProgress.pipe(RwLock::new).pipe(Arc::new);
     if cache.insert(package_url.to_string(), cache_lock.clone()).is_some() {
