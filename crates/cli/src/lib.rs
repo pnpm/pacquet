@@ -11,7 +11,7 @@ use crate::commands::{Cli, Subcommands};
 use clap::Parser;
 use pacquet_diagnostics::{
     enable_tracing_by_env,
-    miette::{IntoDiagnostic, Result, WrapErr},
+    miette::{set_panic_hook, IntoDiagnostic, Result, WrapErr},
 };
 use pacquet_executor::execute_shell;
 use pacquet_npmrc::current_npmrc;
@@ -19,6 +19,7 @@ use pacquet_package_json::PackageJson;
 
 pub async fn run_cli() -> Result<()> {
     enable_tracing_by_env();
+    set_panic_hook();
     let cli = Cli::parse();
     run_commands(cli).await
 }

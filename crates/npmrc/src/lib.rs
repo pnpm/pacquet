@@ -128,7 +128,7 @@ pub struct Npmrc {
 
     /// The base URL of the npm package registry (trailing slash included).
     #[serde(default = "default_registry", deserialize_with = "deserialize_registry")]
-    pub registry: String,
+    pub registry: String, // TODO: use Url type (compatible with reqwest)
 
     /// When true, any missing non-optional peer dependencies are automatically installed.
     #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]

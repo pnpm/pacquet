@@ -21,7 +21,13 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
         b.to_async(&rt).iter(|| async {
             let dir = tempdir().unwrap();
             let cas_map =
-                download_tarball_to_store(dir.path(), "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==", Some(16697), url).await.unwrap();
+                download_tarball_to_store(
+                    &Default::default(),
+                    dir.path(),
+                    "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
+                    Some(16697),
+                    url,
+                ).await.unwrap();
             drop(dir);
             cas_map.len()
         });

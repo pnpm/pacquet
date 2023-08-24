@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{io, path::PathBuf};
 
 use pacquet_diagnostics::{
     miette::{self, Diagnostic},
@@ -6,6 +6,24 @@ use pacquet_diagnostics::{
 };
 use pacquet_npmrc::{current_npmrc, Npmrc};
 use pacquet_package_json::PackageJson;
+use pacquet_tarball::Cache;
+
+#[derive(Error, Debug, Diagnostic)]
+pub enum AutoImportError {
+    #[error("cannot create directory at {dirname:?}: {error}")]
+    CreateDir {
+        dirname: PathBuf,
+        #[source]
+        error: io::Error,
+    },
+    #[error("fail to create a link from {from:?} to {to:?}: {error}")]
+    CreateLink {
+        from: PathBuf,
+        to: PathBuf,
+        #[source]
+        error: io::Error,
+    },
+}
 
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
@@ -24,21 +42,27 @@ pub enum PackageManagerError {
 
     #[error(transparent)]
     #[diagnostic(code(pacquet_package_manager::io_error))]
-    Io(#[from] std::io::Error),
+    Io(#[from] io::Error),
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    AutoImport(#[from] AutoImportError),
 }
 
 pub struct PackageManager {
-    pub config: Box<Npmrc>,
-    pub package_json: Box<PackageJson>,
-    pub http_client: Box<reqwest::Client>,
+    pub config: Npmrc,
+    pub package_json: PackageJson,
+    pub http_client: reqwest::Client,
+    pub(crate) tarball_cache: Cache,
 }
 
 impl PackageManager {
     pub fn new<P: Into<PathBuf>>(package_json_path: P) -> Result<Self, PackageManagerError> {
         Ok(PackageManager {
-            config: Box::new(current_npmrc()),
-            package_json: Box::new(PackageJson::create_if_needed(package_json_path.into())?),
-            http_client: Box::new(reqwest::Client::new()),
+            config: current_npmrc(),
+            package_json: PackageJson::create_if_needed(package_json_path.into())?,
+            http_client: reqwest::Client::new(),
+            tarball_cache: Cache::new(),
         })
     }
 }

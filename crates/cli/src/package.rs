@@ -2,8 +2,8 @@ use crate::package_import::ImportMethodImpl;
 use crate::package_manager::PackageManagerError;
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageVersion};
-use pacquet_tarball::download_tarball_to_store;
-use std::path::PathBuf;
+use pacquet_tarball::{download_tarball_to_store, Cache};
+use std::path::Path;
 
 /// This function execute the following and returns the package
 /// - retrieves the package from the registry
@@ -13,41 +13,45 @@ use std::path::PathBuf;
 /// symlink_path will be appended by the name of the package. Therefore,
 /// it should be resolved into the node_modules folder of a subdependency such as
 /// `node_modules/.pacquet/fastify@1.0.0/node_modules`.
-pub async fn find_package_version_from_registry<P: Into<PathBuf>>(
+pub async fn find_package_version_from_registry(
+    tarball_cache: &Cache,
     config: &Npmrc,
     http_client: &reqwest::Client,
     name: &str,
     version: &str,
-    symlink_path: P,
+    symlink_path: &Path,
 ) -> Result<PackageVersion, PackageManagerError> {
     let package = Package::fetch_from_registry(name, http_client, &config.registry).await?;
-    let package_version = package.pinned_version(version)?.unwrap();
-    internal_fetch(package_version, config, symlink_path).await?;
+    let package_version = package.pinned_version(version).unwrap();
+    internal_fetch(tarball_cache, package_version, config, symlink_path).await?;
     Ok(package_version.to_owned())
 }
 
-pub async fn fetch_package_version_directly<P: Into<PathBuf>>(
+pub async fn fetch_package_version_directly(
+    tarball_cache: &Cache,
     config: &Npmrc,
     http_client: &reqwest::Client,
     name: &str,
     version: &str,
-    symlink_path: P,
+    symlink_path: &Path,
 ) -> Result<PackageVersion, PackageManagerError> {
     let package_version =
         PackageVersion::fetch_from_registry(name, version, http_client, &config.registry).await?;
-    internal_fetch(&package_version, config, symlink_path).await?;
+    internal_fetch(tarball_cache, &package_version, config, symlink_path).await?;
     Ok(package_version.to_owned())
 }
 
-async fn internal_fetch<P: Into<PathBuf>>(
+async fn internal_fetch(
+    tarball_cache: &Cache,
     package_version: &PackageVersion,
     config: &Npmrc,
-    symlink_path: P,
+    symlink_path: &Path,
 ) -> Result<(), PackageManagerError> {
     let store_folder_name = package_version.to_store_name();
-    let node_modules_path = config.virtual_store_dir.join(store_folder_name).join("node_modules");
 
+    // TODO: skip when it already exists in store?
     let cas_paths = download_tarball_to_store(
+        tarball_cache,
         &config.store_dir,
         &package_version.dist.integrity,
         package_version.dist.unpacked_size,
@@ -55,10 +59,16 @@ async fn internal_fetch<P: Into<PathBuf>>(
     )
     .await?;
 
+    let save_path = config
+        .virtual_store_dir
+        .join(store_folder_name)
+        .join("node_modules")
+        .join(&package_version.name);
+
     config.package_import_method.import(
         &cas_paths,
-        node_modules_path.join(&package_version.name),
-        symlink_path.into().join(&package_version.name),
+        &save_path,
+        &symlink_path.join(&package_version.name),
     )?;
 
     Ok(())
@@ -107,6 +117,7 @@ mod tests {
         let http_client = reqwest::Client::new();
         let symlink_path = tempdir().unwrap();
         let package = find_package_version_from_registry(
+            &Default::default(),
             &config,
             &http_client,
             "fast-querystring",

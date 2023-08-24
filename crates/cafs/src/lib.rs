@@ -36,11 +36,11 @@ fn content_path_from_hex(file_type: FileType, hex: &str) -> PathBuf {
     p.join(format!("{}{}", &hex[2..], extension))
 }
 
-pub fn write_sync<P: Into<PathBuf>>(store_dir: P, buffer: &Vec<u8>) -> Result<PathBuf, CafsError> {
+pub fn write_sync(store_dir: &Path, buffer: &Vec<u8>) -> Result<PathBuf, CafsError> {
     let hex_integrity =
         IntegrityOpts::new().algorithm(Algorithm::Sha512).chain(buffer).result().to_hex().1;
     let content_path = content_path_from_hex(FileType::NonExec, &hex_integrity);
-    let file_path = store_dir.into().join(&content_path);
+    let file_path = store_dir.join(&content_path);
 
     if !file_path.exists() {
         let parent_dir = file_path.parent().unwrap();
@@ -51,10 +51,10 @@ pub fn write_sync<P: Into<PathBuf>>(store_dir: P, buffer: &Vec<u8>) -> Result<Pa
     Ok(content_path)
 }
 
-pub fn prune_sync<P: Into<PathBuf>>(store_dir: P) -> Result<(), CafsError> {
+pub fn prune_sync(store_dir: &Path) -> Result<(), CafsError> {
     // TODO: This should remove unreferenced packages, not all packages.
     // Ref: https://pnpm.io/cli/store#prune
-    fs::remove_dir_all(store_dir.into())?;
+    fs::remove_dir_all(store_dir)?;
     Ok(())
 }
 

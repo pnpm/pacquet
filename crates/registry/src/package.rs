@@ -6,7 +6,7 @@ use std::{
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 
-use crate::{package_version::PackageVersion, RegistryError};
+use crate::{package_version::PackageVersion, NetworkError, RegistryError};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Package {
@@ -31,20 +31,21 @@ impl Package {
         http_client: &reqwest::Client,
         registry: &str,
     ) -> Result<Self, RegistryError> {
+        let url = || format!("{registry}{name}"); // TODO: use reqwest URL directly
+        let network_error = |error| NetworkError { error, url: url() };
         http_client
-            .get(format!("{0}{name}", &registry))
+            .get(url())
             .header("content-type", "application/json")
             .send()
-            .await?
+            .await
+            .map_err(network_error)?
             .json::<Package>()
-            .await?
+            .await
+            .map_err(network_error)?
             .pipe(Ok)
     }
 
-    pub fn pinned_version(
-        &self,
-        version_field: &str,
-    ) -> Result<Option<&PackageVersion>, RegistryError> {
+    pub fn pinned_version(&self, version_field: &str) -> Option<&PackageVersion> {
         let range: node_semver::Range = version_field.parse().unwrap();
         let mut satisfied_versions = self
             .versions
@@ -56,13 +57,13 @@ impl Package {
 
         // Optimization opportunity:
         // We can store this in a cache to remove filter operation and make this a O(1) operation.
-        Ok(satisfied_versions.last().copied())
+        satisfied_versions.last().copied()
     }
 
-    pub fn latest(&self) -> Result<&PackageVersion, RegistryError> {
+    pub fn latest(&self) -> &PackageVersion {
         let version =
             self.dist_tags.get("latest").expect("latest tag is expected but not found for package");
-        Ok(self.versions.get(version).unwrap())
+        self.versions.get(version).unwrap()
     }
 }
 

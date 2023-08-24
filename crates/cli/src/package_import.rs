@@ -1,29 +1,32 @@
 use std::{
     collections::HashMap,
+    ffi::OsString,
     fs,
     path::{Path, PathBuf},
 };
 
-use crate::package_manager::PackageManagerError;
+use crate::package_manager::{AutoImportError, PackageManagerError};
+use pacquet_diagnostics::tracing;
 use pacquet_npmrc::PackageImportMethod;
 use rayon::prelude::*;
 
 pub trait ImportMethodImpl {
     fn import(
         &self,
-        cas_files: &HashMap<String, PathBuf>,
-        save_path: PathBuf,
-        symlink_to: PathBuf,
+        cas_files: &HashMap<OsString, PathBuf>,
+        save_path: &Path,
+        symlink_to: &Path,
     ) -> Result<(), PackageManagerError>;
 }
 
 impl ImportMethodImpl for PackageImportMethod {
     fn import(
         &self,
-        cas_files: &HashMap<String, PathBuf>,
-        save_path: PathBuf,
-        symlink_to: PathBuf,
+        cas_files: &HashMap<OsString, PathBuf>,
+        save_path: &Path,
+        symlink_to: &Path,
     ) -> Result<(), PackageManagerError> {
+        tracing::info!(target: "pacquet::import", ?save_path, ?symlink_to, "Import package");
         match self {
             PackageImportMethod::Auto => {
                 if !save_path.exists() {
@@ -49,18 +52,25 @@ impl ImportMethodImpl for PackageImportMethod {
     }
 }
 
-fn auto_import<P: AsRef<Path>>(
-    original_path: P,
-    symlink_path: P,
-) -> Result<(), PackageManagerError> {
-    if !symlink_path.as_ref().exists() {
-        // Create parent folder
-        if let Some(parent_dir) = &symlink_path.as_ref().parent() {
-            fs::create_dir_all(parent_dir)?;
-        }
-
-        reflink_copy::reflink_or_copy(original_path, &symlink_path)?;
+fn auto_import(source_file: &Path, target_link: &Path) -> Result<(), AutoImportError> {
+    if target_link.exists() {
+        return Ok(());
     }
+
+    if let Some(parent_dir) = target_link.parent() {
+        fs::create_dir_all(parent_dir).map_err(|error| AutoImportError::CreateDir {
+            dirname: parent_dir.to_path_buf(),
+            error,
+        })?;
+    }
+
+    reflink_copy::reflink_or_copy(source_file, target_link).map_err(|error| {
+        AutoImportError::CreateLink {
+            from: source_file.to_path_buf(),
+            to: target_link.to_path_buf(),
+            error,
+        }
+    })?; // TODO: add hardlink
 
     Ok(())
 }

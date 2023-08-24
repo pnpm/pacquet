@@ -23,15 +23,17 @@ pacquet_registry     = { workspace = true }
 pacquet_tarball      = { workspace = true }
 pacquet_diagnostics  = { workspace = true }
 
-clap         = { workspace = true }
-futures-util = { workspace = true }
-rayon        = { workspace = true }
-reflink-copy = { workspace = true }
-reqwest      = { workspace = true }
-node-semver  = { workspace = true }
-serde        = { workspace = true }
-serde_json   = { workspace = true }
-tokio        = { workspace = true }
+async-recursion = { workspace = true }
+clap            = { workspace = true }
+futures-util    = { workspace = true }
+rayon           = { workspace = true }
+reflink-copy    = { workspace = true }
+reqwest         = { workspace = true }
+node-semver     = { workspace = true }
+pipe-trait      = { workspace = true }
+serde           = { workspace = true }
+serde_json      = { workspace = true }
+tokio           = { workspace = true }
 
 [dev-dependencies]
 insta             = { workspace = true }

@@ -3,8 +3,7 @@ use std::collections::HashMap;
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 
-use crate::package_distribution::PackageDistribution;
-use crate::RegistryError;
+use crate::{package_distribution::PackageDistribution, NetworkError, RegistryError};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -30,13 +29,18 @@ impl PackageVersion {
         http_client: &reqwest::Client,
         registry: &str,
     ) -> Result<Self, RegistryError> {
+        let url = || format!("{registry}{name}/{version}");
+        let network_error = |error| NetworkError { error, url: url() };
+
         http_client
-            .get(format!("{0}{name}/{version}", &registry))
+            .get(url())
             .header("content-type", "application/json")
             .send()
-            .await?
+            .await
+            .map_err(network_error)?
             .json::<PackageVersion>()
-            .await?
+            .await
+            .map_err(network_error)?
             .pipe(Ok)
     }
 
