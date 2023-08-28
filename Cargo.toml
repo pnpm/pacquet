@@ -36,7 +36,7 @@ reqwest            = { version = "0.11", default-features = false, features = ["
 node-semver        = { version = "2.1.0" }
 pipe-trait         = { version = "0.4.0" }
 rayon              = { version = "1.7.0" }
-serde              = { version = "1.0.183", features = ["derive"] }
+serde              = { version = "1.0.188", features = ["derive"] }
 serde_ini          = { version = "0.2.0" }
 serde_json         = { version = "1.0.105", features = ["preserve_order"] }
 serde_yaml         = { version = "0.9.1" }
