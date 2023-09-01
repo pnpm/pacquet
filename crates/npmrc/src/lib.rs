@@ -1,12 +1,17 @@
 mod custom_deserializer;
 
 use serde::Deserialize;
-use std::{env, fs, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use crate::custom_deserializer::{
     bool_true, default_hoist_pattern, default_modules_cache_max_age, default_modules_dir,
     default_public_hoist_pattern, default_registry, default_store_dir, default_virtual_store_dir,
-    deserialize_bool, deserialize_pathbuf, deserialize_registry, deserialize_u64,
+    deserialize_arc_path, deserialize_bool, deserialize_pathbuf, deserialize_registry,
+    deserialize_u64,
 };
 
 #[derive(Debug, Deserialize, Default, PartialEq)]
@@ -78,8 +83,8 @@ pub struct Npmrc {
     pub shamefully_hoist: bool,
 
     /// The location where all the packages are saved on the disk.
-    #[serde(default = "default_store_dir", deserialize_with = "deserialize_pathbuf")]
-    pub store_dir: PathBuf,
+    #[serde(default = "default_store_dir", deserialize_with = "deserialize_arc_path")]
+    pub store_dir: Arc<Path>,
 
     /// The directory in which dependencies will be installed (instead of node_modules).
     #[serde(default = "default_modules_dir", deserialize_with = "deserialize_pathbuf")]
@@ -230,7 +235,7 @@ mod tests {
     pub fn should_use_pacquet_home_env_var() {
         env::set_var("PACQUET_HOME", "/hello");
         let value: Npmrc = serde_ini::from_str("").unwrap();
-        assert_eq!(value.store_dir, PathBuf::from_str("/hello/store").unwrap());
+        assert_eq!(value.store_dir.as_ref(), Path::new("/hello/store"));
         env::remove_var("PACQUET_HOME");
     }
 
@@ -238,7 +243,7 @@ mod tests {
     pub fn should_use_xdg_data_home_env_var() {
         env::set_var("XDG_DATA_HOME", "/hello");
         let value: Npmrc = serde_ini::from_str("").unwrap();
-        assert_eq!(value.store_dir, PathBuf::from_str("/hello/pacquet/store").unwrap());
+        assert_eq!(value.store_dir.as_ref(), Path::new("/hello/pacquet/store"));
         env::remove_var("XDG_DATA_HOME");
     }
 

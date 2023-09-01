@@ -1,4 +1,9 @@
-use std::{env, path::PathBuf, str::FromStr};
+use std::{
+    env,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+};
 
 use serde::{de, Deserialize, Deserializer};
 
@@ -21,14 +26,14 @@ pub fn default_public_hoist_pattern() -> Vec<String> {
 /// On Windows: ~/AppData/Local/pacquet/store
 /// On macOS: ~/Library/pacquet/store
 /// On Linux: ~/.local/share/pacquet/store
-pub fn default_store_dir() -> PathBuf {
+pub fn default_store_dir() -> Arc<Path> {
     // TODO: If env variables start with ~, make sure to resolve it into home_dir.
     if let Ok(pacquet_home) = env::var("PACQUET_HOME") {
-        return PathBuf::from(pacquet_home).join("store");
+        return PathBuf::from(pacquet_home).join("store").into();
     }
 
     if let Ok(xdg_data_home) = env::var("XDG_DATA_HOME") {
-        return PathBuf::from(xdg_data_home).join("pacquet/store");
+        return PathBuf::from(xdg_data_home).join("pacquet/store").into();
     }
 
     // Using ~ (tilde) for defining home path is not supported in Rust and
@@ -37,9 +42,9 @@ pub fn default_store_dir() -> PathBuf {
 
     // https://doc.rust-lang.org/std/env/consts/constant.OS.html
     match env::consts::OS {
-        "linux" => home_dir.join(".local/share/pacquet/store"),
-        "macos" => home_dir.join("Library/pacquet/store"),
-        "windows" => home_dir.join("AppData/Local/pacquet/store"),
+        "linux" => home_dir.join(".local/share/pacquet/store").into(),
+        "macos" => home_dir.join("Library/pacquet/store").into(),
+        "windows" => home_dir.join("AppData/Local/pacquet/store").into(),
         _ => panic!("unsupported operating system: {}", env::consts::OS),
     }
 }
@@ -90,6 +95,13 @@ where
     Ok(env::current_dir().map_err(de::Error::custom)?.join(path))
 }
 
+pub fn deserialize_arc_path<'de, D>(deserializer: D) -> Result<Arc<Path>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_pathbuf(deserializer).map(Arc::from)
+}
+
 /// This deserializer adds a trailing "/" if not exist to make our life easier.
 pub fn deserialize_registry<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
@@ -114,7 +126,7 @@ mod tests {
     fn test_default_store_dir_with_pac_env() {
         env::set_var("PACQUET_HOME", "/tmp/pacquet_home");
         let store_dir = default_store_dir();
-        assert_eq!(store_dir, Path::new("/tmp/pacquet_home/store"));
+        assert_eq!(store_dir.as_ref(), Path::new("/tmp/pacquet_home/store"));
         env::remove_var("PACQUET_HOME");
     }
 
@@ -122,7 +134,7 @@ mod tests {
     fn test_default_store_dir_with_xdg_env() {
         env::set_var("XDG_DATA_HOME", "/tmp/xdg_data_home");
         let store_dir = default_store_dir();
-        assert_eq!(store_dir, Path::new("/tmp/xdg_data_home/pacquet/store"));
+        assert_eq!(store_dir.as_ref(), Path::new("/tmp/xdg_data_home/pacquet/store"));
         env::remove_var("XDG_DATA_HOME");
     }
 }

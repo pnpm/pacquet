@@ -115,7 +115,7 @@ fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm,
 #[instrument(skip(cache), fields(cache_len = cache.len()))]
 pub async fn download_tarball_to_store(
     cache: &Cache,
-    store_dir: &Path,
+    store_dir: Arc<Path>,
     package_integrity: &str,
     package_unpacked_size: Option<usize>,
     package_url: &str,
@@ -157,7 +157,7 @@ pub async fn download_tarball_to_store(
     tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
 
     // TODO: benchmark and profile to see if spawning is actually necessary
-    let store_dir = store_dir.to_path_buf(); // TODO: use Arc
+    let store_dir = Arc::clone(&store_dir);
     let package_integrity: Integrity =
         package_integrity.parse().map_err(|error| ParseIntegrityError {
             url: package_url.to_string(),
@@ -213,7 +213,7 @@ mod tests {
         let store_path = tempdir().unwrap();
         let cas_files = download_tarball_to_store(
             &Default::default(),
-            store_path.path(),
+            store_path.path().into(),
             "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
             Some(16697),
             "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
@@ -249,7 +249,7 @@ mod tests {
         let store_path = tempdir().unwrap();
         download_tarball_to_store(
             &Default::default(),
-            store_path.path(),
+            store_path.path().into(),
             "sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
             Some(16697),
             "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",

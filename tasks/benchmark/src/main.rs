@@ -23,7 +23,7 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
             let cas_map =
                 download_tarball_to_store(
                     &Default::default(),
-                    dir.path(),
+                    dir.path().into(),
                     "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
                     Some(16697),
                     url,

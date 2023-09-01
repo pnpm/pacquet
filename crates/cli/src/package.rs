@@ -3,7 +3,7 @@ use crate::package_manager::PackageManagerError;
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::{download_tarball_to_store, Cache};
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 /// This function execute the following and returns the package
 /// - retrieves the package from the registry
@@ -52,7 +52,7 @@ async fn internal_fetch(
     // TODO: skip when it already exists in store?
     let cas_paths = download_tarball_to_store(
         tarball_cache,
-        &config.store_dir,
+        Arc::clone(&config.store_dir),
         &package_version.dist.integrity,
         package_version.dist.unpacked_size,
         package_version.as_tarball_url(),
@@ -90,7 +90,7 @@ mod tests {
             hoist_pattern: vec![],
             public_hoist_pattern: vec![],
             shamefully_hoist: false,
-            store_dir: store_dir.to_path_buf(),
+            store_dir: store_dir.into(),
             modules_dir: modules_dir.to_path_buf(),
             node_linker: Default::default(),
             symlink: false,
