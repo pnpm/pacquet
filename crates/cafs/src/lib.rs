@@ -36,7 +36,7 @@ fn content_path_from_hex(file_type: FileType, hex: &str) -> PathBuf {
     p.join(format!("{}{}", &hex[2..], extension))
 }
 
-pub fn write_sync(store_dir: &Path, buffer: &Vec<u8>) -> Result<PathBuf, CafsError> {
+pub fn write_sync(store_dir: &Path, buffer: &[u8]) -> Result<PathBuf, CafsError> {
     let hex_integrity =
         IntegrityOpts::new().algorithm(Algorithm::Sha512).chain(buffer).result().to_hex().1;
     let content_path = content_path_from_hex(FileType::NonExec, &hex_integrity);
