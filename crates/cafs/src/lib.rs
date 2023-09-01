@@ -27,13 +27,13 @@ fn content_path_from_hex(file_type: FileType, hex: &str) -> PathBuf {
     let mut p = PathBuf::new();
     p.push(&hex[0..2]);
 
-    let extension = match file_type {
+    let suffix = match file_type {
         FileType::Exec => "-exec",
         FileType::NonExec => "",
         FileType::Index => "-index.json",
     };
 
-    p.join(format!("{}{}", &hex[2..], extension))
+    p.join(format!("{}{}", &hex[2..], suffix))
 }
 
 pub fn write_sync(store_dir: &Path, buffer: &[u8]) -> Result<PathBuf, CafsError> {
