@@ -34,10 +34,8 @@ impl FileType {
 }
 
 fn content_path_from_hex(file_type: FileType, hex: &str) -> PathBuf {
-    let mut p = PathBuf::new();
-    p.push(&hex[0..2]);
-
-    p.join(format!("{}{}", &hex[2..], file_type.file_name_suffix()))
+    let file_name = format!("{}{}", &hex[2..], file_type.file_name_suffix());
+    Path::new(&hex[..2]).join(file_name)
 }
 
 pub fn write_sync(store_dir: &Path, buffer: &[u8]) -> Result<PathBuf, CafsError> {
