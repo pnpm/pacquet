@@ -23,20 +23,22 @@ enum FileType {
     Index,
 }
 
-fn content_path_from_hex(file_type: FileType, hex: &str) -> PathBuf {
-    let mut p = PathBuf::new();
-    p.push(&hex[0..2]);
-
-    let extension = match file_type {
-        FileType::Exec => "-exec",
-        FileType::NonExec => "",
-        FileType::Index => "-index.json",
-    };
-
-    p.join(format!("{}{}", &hex[2..], extension))
+impl FileType {
+    fn file_name_suffix(&self) -> &'static str {
+        match self {
+            FileType::Exec => "-exec",
+            FileType::NonExec => "",
+            FileType::Index => "-index.json",
+        }
+    }
 }
 
-pub fn write_sync(store_dir: &Path, buffer: &Vec<u8>) -> Result<PathBuf, CafsError> {
+fn content_path_from_hex(file_type: FileType, hex: &str) -> PathBuf {
+    let file_name = format!("{}{}", &hex[2..], file_type.file_name_suffix());
+    Path::new(&hex[..2]).join(file_name)
+}
+
+pub fn write_sync(store_dir: &Path, buffer: &[u8]) -> Result<PathBuf, CafsError> {
     let hex_integrity =
         IntegrityOpts::new().algorithm(Algorithm::Sha512).chain(buffer).result().to_hex().1;
     let content_path = content_path_from_hex(FileType::NonExec, &hex_integrity);
