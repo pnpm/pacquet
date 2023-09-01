@@ -23,17 +23,21 @@ enum FileType {
     Index,
 }
 
+impl FileType {
+    fn file_name_suffix(&self) -> &'static str {
+        match self {
+            FileType::Exec => "-exec",
+            FileType::NonExec => "",
+            FileType::Index => "-index.json",
+        }
+    }
+}
+
 fn content_path_from_hex(file_type: FileType, hex: &str) -> PathBuf {
     let mut p = PathBuf::new();
     p.push(&hex[0..2]);
 
-    let suffix = match file_type {
-        FileType::Exec => "-exec",
-        FileType::NonExec => "",
-        FileType::Index => "-index.json",
-    };
-
-    p.join(format!("{}{}", &hex[2..], suffix))
+    p.join(format!("{}{}", &hex[2..], file_type.file_name_suffix()))
 }
 
 pub fn write_sync(store_dir: &Path, buffer: &[u8]) -> Result<PathBuf, CafsError> {
