@@ -105,6 +105,12 @@ impl WorkEnv {
                 .arg(revision)
                 .pipe(executor("git checkout"));
 
+            eprintln!("List of branches:");
+            Command::new("git")
+                .current_dir(&revision_repo)
+                .arg("branch")
+                .pipe(executor("git branch"));
+
             eprintln!("Building {revision:?}...");
             Command::new("cargo")
                 .current_dir(&revision_repo)
