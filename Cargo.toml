@@ -24,7 +24,7 @@ pacquet_cafs         = { path = "crates/cafs" }
 pacquet_diagnostics  = { path = "crates/diagnostics" }
 
 # Dependencies
-async-recursion    = { version = "1.0.4" }
+async-recursion    = { version = "1.0.5" }
 clap               = { version = "4", features = ["derive", "string"] }
 dashmap            = { version = "5.5.1" }
 home               = { version = "0.5.5" }
