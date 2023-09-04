@@ -84,14 +84,15 @@ impl WorkEnv {
                 eprintln!("Updating {revision_repo:?} to upstream...");
                 Command::new("git")
                     .current_dir(&revision_repo)
-                    .arg("pull")
+                    .arg("fetch")
                     .arg("origin")
                     .arg(revision)
-                    .pipe(executor("git pull"));
+                    .pipe(executor("git fetch"));
             } else {
                 eprintln!("Cloning {repository:?} to {revision_repo:?}...");
                 Command::new("git")
                     .arg("clone")
+                    .arg("--no-checkout")
                     .arg(repository)
                     .arg(&revision_repo)
                     .pipe(executor("git clone"));
