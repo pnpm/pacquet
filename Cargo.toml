@@ -43,7 +43,7 @@ serde_yaml         = { version = "0.9.1" }
 ssri               = { version = "9.0.0" }
 strum              = { version = "0.25.0", features = ["derive"] }
 tar                = { version = "0.4.40" }
-thiserror          = { version = "1.0.47" }
+thiserror          = { version = "1.0.48" }
 tracing            = { version = "0.1.37" }
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 tokio              = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
