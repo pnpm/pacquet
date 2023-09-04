@@ -26,7 +26,7 @@ pacquet_diagnostics  = { path = "crates/diagnostics" }
 # Dependencies
 async-recursion    = { version = "1.0.4" }
 clap               = { version = "4", features = ["derive", "string"] }
-dashmap            = { version = "5.5.1" }
+dashmap            = { version = "5.5.3" }
 home               = { version = "0.5.5" }
 insta              = { version = "1.31.0", features = ["yaml", "glob", "walkdir"] }
 futures-util       = { version = "0.3.28" }
