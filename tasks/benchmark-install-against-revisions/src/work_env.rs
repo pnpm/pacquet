@@ -51,6 +51,25 @@ impl WorkEnv {
         self.revision_root(revision).join("pacquet")
     }
 
+    fn resolve_revision(&self, revision: &str) -> String {
+        let output = Command::new("git")
+            .current_dir(self.repository())
+            .arg("rev-parse")
+            .arg(revision)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .output()
+            .expect("git rev-parse");
+        assert!(output.status.success());
+        output
+            .stdout
+            .pipe(String::from_utf8)
+            .expect("output of rev-parse is valid UTF-8")
+            .trim()
+            .to_string()
+    }
+
     fn init(&self) {
         const INIT_PROXY_CACHE: &str = ".init-proxy-cache";
 
@@ -96,11 +115,12 @@ impl WorkEnv {
                     .pipe(executor("git clone"));
             }
 
-            eprintln!("Checking out {revision:?}...");
+            let commit = self.resolve_revision(revision);
+            eprintln!("Checking out {commit:?}...");
             Command::new("git")
                 .current_dir(&revision_repo)
                 .arg("checkout")
-                .arg(revision)
+                .arg(commit)
                 .pipe(executor("git checkout"));
 
             eprintln!("List of branches:");
