@@ -2,3 +2,4 @@
 .pacquet
 node_modules
 .npmrc
+tmp
