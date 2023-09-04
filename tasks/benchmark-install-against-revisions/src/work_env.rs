@@ -85,8 +85,6 @@ impl WorkEnv {
                 Command::new("git")
                     .current_dir(&revision_repo)
                     .arg("fetch")
-                    .arg("origin")
-                    .arg(revision)
                     .pipe(executor("git fetch"));
             } else {
                 eprintln!("Cloning {repository:?} to {revision_repo:?}...");
