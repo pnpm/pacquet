@@ -24,9 +24,9 @@ pacquet_cafs         = { path = "crates/cafs" }
 pacquet_diagnostics  = { path = "crates/diagnostics" }
 
 # Dependencies
-async-recursion    = { version = "1.0.4" }
+async-recursion    = { version = "1.0.5" }
 clap               = { version = "4", features = ["derive", "string"] }
-dashmap            = { version = "5.5.1" }
+dashmap            = { version = "5.5.3" }
 home               = { version = "0.5.5" }
 insta              = { version = "1.31.0", features = ["yaml", "glob", "walkdir"] }
 futures-util       = { version = "0.3.28" }
@@ -43,7 +43,7 @@ serde_yaml         = { version = "0.9.1" }
 ssri               = { version = "9.0.0" }
 strum              = { version = "0.25.0", features = ["derive"] }
 tar                = { version = "0.4.40" }
-thiserror          = { version = "1.0.47" }
+thiserror          = { version = "1.0.48" }
 tracing            = { version = "0.1.37" }
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 tokio              = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }

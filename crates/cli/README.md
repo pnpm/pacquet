@@ -3,8 +3,8 @@
 [pnpm documentation](https://pnpm.io/pnpm-cli#options)
 
 | Done | Command                 | Notes |
-|------|-------------------------|-------|
-| ✅    | -C <path>, --dir <path> |       |
+| ---- | ----------------------- | ----- |
+| ✅   | -C <path>, --dir <path> |       |
 |      | -w, --workspace-root    |       |
 
 # Manage dependencies
@@ -21,12 +21,12 @@
 - [ ] Install from Git repository
 
 | Done | Command                       | Notes |
-|------|-------------------------------|-------|
-|      | --save-prod                   |       |
-| ✅    | --save-dev                    |       |
-| ✅    | --save-optional               |       |
-| ✅    | --save-exact                  |       |
-|      | --save-peer                   |       |
+| ---- | ----------------------------- | ----- |
+| ✅   | --save-prod                   |       |
+| ✅   | --save-dev                    |       |
+| ✅   | --save-optional               |       |
+| ✅   | --save-exact                  |       |
+| ✅   | --save-peer                   |       |
 |      | --ignore-workspace-root-check |       |
 |      | --global                      |       |
 |      | --workspace                   |       |
@@ -37,13 +37,13 @@
 [pnpm documentation](https://pnpm.io/cli/install)
 
 | Done | Command                     | Notes |
-|------|-----------------------------|-------|
+| ---- | --------------------------- | ----- |
 |      | --force                     |       |
 |      | --offline                   |       |
 |      | --prefer-offline            |       |
 |      | --prod                      |       |
-| ✅    | --dev                       |       |
-| ✅    | --no-optional               |       |
+| ✅   | --dev                       |       |
+| ✅   | --no-optional               |       |
 |      | --lockfile-only             |       |
 |      | --fix-lockfile              |       |
 |      | --frozen-lockfile           |       |
@@ -61,11 +61,11 @@
 [pnpm documentation](https://pnpm.io/cli/run)
 
 | Done | Command                      | Notes |
-|------|------------------------------|-------|
+| ---- | ---------------------------- | ----- |
 |      | script-shell                 |       |
 |      | shell-emulator               |       |
 |      | --recursive                  |       |
-| ✅    | --if-present                 |       |
+| ✅   | --if-present                 |       |
 |      | --parallel                   |       |
 |      | --stream                     |       |
 |      | --aggregate-output           |       |
@@ -89,11 +89,11 @@
 [pnpm documentation](https://pnpm.io/cli/store)
 
 | Done | Command | Notes                                                     |
-|------|---------|-----------------------------------------------------------|
+| ---- | ------- | --------------------------------------------------------- |
 |      | status  |                                                           |
 |      | add     |                                                           |
 | ~    | prune   | Currently prune removes all packages inside the directory |
-| ✅    | path    |                                                           |
+| ✅   | path    |                                                           |
 
 ## `pacquet init`
 

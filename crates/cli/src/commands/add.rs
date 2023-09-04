@@ -23,6 +23,9 @@ pub struct AddCommandArgs {
     /// Install the specified packages as optionalDependencies.
     #[arg(short = 'O', long = "save-optional", group = "dependency_group")]
     save_optional: bool,
+    /// Using --save-peer will add one or more packages to peerDependencies and install them as dev dependencies
+    #[arg(long = "save-peer", group = "dependency_group")]
+    save_peer: bool,
     /// Saved dependencies will be configured with an exact version rather than using
     /// pacquet's default semver range operator.
     #[arg(short = 'E', long = "save-exact")]
@@ -39,6 +42,8 @@ impl AddCommandArgs {
             DependencyGroup::Dev
         } else if self.save_optional {
             DependencyGroup::Optional
+        } else if self.save_peer {
+            DependencyGroup::Peer
         } else {
             DependencyGroup::Default
         }
@@ -117,6 +122,15 @@ impl PackageManager {
             &latest_version.serialize(args.save_exact),
             args.dependency_group(),
         )?;
+        // Using --save-peer will add one or more packages to peerDependencies and
+        // install them as dev dependencies
+        if args.dependency_group() == DependencyGroup::Peer {
+            self.package_json.add_dependency(
+                &args.package,
+                &latest_version.serialize(args.save_exact),
+                DependencyGroup::Dev,
+            )?;
+        }
         self.package_json.save()?;
 
         Ok(())
@@ -151,6 +165,7 @@ mod tests {
             package: "is-even".to_string(),
             save_prod: false,
             save_dev: false,
+            save_peer: false,
             save_optional: false,
             save_exact: false,
             virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
@@ -188,6 +203,7 @@ mod tests {
             package: "is-odd".to_string(),
             save_prod: false,
             save_dev: false,
+            save_peer: false,
             save_optional: false,
             save_exact: false,
             virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
@@ -218,6 +234,7 @@ mod tests {
             package: "is-odd".to_string(),
             save_prod: false,
             save_dev: false,
+            save_peer: false,
             save_optional: false,
             save_exact: false,
             virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
@@ -225,6 +242,55 @@ mod tests {
         manager.add(&args).await.unwrap();
         let file = PackageJson::from_path(dir.path().join("package.json")).unwrap();
         assert!(file.dependencies([DependencyGroup::Default]).any(|(k, _)| k == "is-odd"));
+        env::set_current_dir(&current_directory).unwrap();
+    }
+
+    #[tokio::test]
+    pub async fn should_add_dev_dependency() {
+        let dir = tempdir().unwrap();
+        let virtual_store_dir = dir.path().join("node_modules/.pacquet");
+        let current_directory = env::current_dir().unwrap();
+        env::set_current_dir(&dir).unwrap();
+        let package_json = dir.path().join("package.json");
+        let mut manager = PackageManager::new(&package_json).unwrap();
+
+        let args = AddCommandArgs {
+            package: "is-odd".to_string(),
+            save_prod: false,
+            save_dev: true,
+            save_peer: false,
+            save_optional: false,
+            save_exact: false,
+            virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
+        };
+        manager.add(&args).await.unwrap();
+        let file = PackageJson::from_path(dir.path().join("package.json")).unwrap();
+        assert!(file.dependencies([DependencyGroup::Dev]).any(|(k, _)| k == "is-odd"));
+        env::set_current_dir(&current_directory).unwrap();
+    }
+
+    #[tokio::test]
+    pub async fn should_add_peer_dependency() {
+        let dir = tempdir().unwrap();
+        let virtual_store_dir = dir.path().join("node_modules/.pacquet");
+        let current_directory = env::current_dir().unwrap();
+        env::set_current_dir(&dir).unwrap();
+        let package_json = dir.path().join("package.json");
+        let mut manager = PackageManager::new(&package_json).unwrap();
+
+        let args = AddCommandArgs {
+            package: "is-odd".to_string(),
+            save_prod: false,
+            save_dev: false,
+            save_peer: true,
+            save_optional: false,
+            save_exact: false,
+            virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
+        };
+        manager.add(&args).await.unwrap();
+        let file = PackageJson::from_path(dir.path().join("package.json")).unwrap();
+        assert!(file.dependencies([DependencyGroup::Dev]).any(|(k, _)| k == "is-odd"));
+        assert!(file.dependencies([DependencyGroup::Peer]).any(|(k, _)| k == "is-odd"));
         env::set_current_dir(&current_directory).unwrap();
     }
 }
