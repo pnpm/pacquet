@@ -21,3 +21,26 @@ Experimental package manager for node.js written in rust.
 TRACE=pacquet_tarball just cli add fastify
 ```
 
+## Benchmarking
+
+### Clean install between multiple revisions
+
+First, you to start a local registry server, such as [verdaccio](https://verdaccio.org/):
+
+```sh
+verdaccio
+```
+
+Then, you can use the script named `benchmark-install-against-revisions` to run the various benchmark, For example:
+
+```sh
+# Comparing the branch you're working on against main
+./benchmark-install-against-revisions.bash my-branch main
+```
+
+```sh
+# Comparing current commit against the previous commit
+./benchmark-install-against-revisions.bash "$(git rev-parse HEAD)" "$(git rev-parse HEAD~)"
+```
+
+Use the `--help` flag to see more options.
