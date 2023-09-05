@@ -53,7 +53,7 @@ async fn internal_fetch(
     let cas_paths = download_tarball_to_store(
         tarball_cache,
         &config.store_dir,
-        &package_version.dist.integrity,
+        package_version.dist.integrity.as_ref().expect("has integrity field"),
         package_version.dist.unpacked_size,
         package_version.as_tarball_url(),
     )
