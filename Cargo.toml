@@ -59,7 +59,6 @@ pretty_assertions = { version = "1.4.0" }
 project-root      = { version = "0.2.2" }
 tempfile          = { version = "3.8.0" }
 mockito           = { version = "1.1.0" }
-pico-args         = { version = "0.5.0" }
 
 [workspace.metadata.workspaces]
 allow_branch = "main"
