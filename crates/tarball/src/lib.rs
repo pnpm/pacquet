@@ -168,42 +168,40 @@ pub async fn download_tarball_to_store(
         Checksum(ssri::Error),
         Other(TarballError),
     }
-    let cas_paths =
-        tokio::task::spawn_blocking(move || -> Result<HashMap<OsString, PathBuf>, TaskError> {
-            verify_checksum(&response, package_integrity).map_err(TaskError::Checksum)?;
-            let data =
-                decompress_gzip(&response, package_unpacked_size).map_err(TaskError::Other)?;
-            Archive::new(Cursor::new(data))
-                .entries()
-                .map_err(TarballError::Io)
-                .map_err(TaskError::Other)?
-                .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir())
-                .map(|entry| -> Result<(OsString, PathBuf), TarballError> {
-                    let mut entry = entry.unwrap();
+    let cas_paths = tokio::task::spawn(async move {
+        verify_checksum(&response, package_integrity).map_err(TaskError::Checksum)?;
+        let data = decompress_gzip(&response, package_unpacked_size).map_err(TaskError::Other)?;
+        Archive::new(Cursor::new(data))
+            .entries()
+            .map_err(TarballError::Io)
+            .map_err(TaskError::Other)?
+            .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir())
+            .map(|entry| -> Result<(OsString, PathBuf), TarballError> {
+                let mut entry = entry.unwrap();
 
-                    // Read the contents of the entry
-                    let mut buffer = Vec::with_capacity(entry.size() as usize);
-                    entry.read_to_end(&mut buffer).unwrap();
+                // Read the contents of the entry
+                let mut buffer = Vec::with_capacity(entry.size() as usize);
+                entry.read_to_end(&mut buffer).unwrap();
 
-                    let entry_path = entry.path().unwrap();
-                    let cleaned_entry_path =
-                        entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
-                    let integrity = pacquet_cafs::write_sync(&store_dir, &buffer)?;
+                let entry_path = entry.path().unwrap();
+                let cleaned_entry_path =
+                    entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
+                let integrity = pacquet_cafs::write_sync(&store_dir, &buffer)?;
 
-                    Ok((cleaned_entry_path, store_dir.join(integrity)))
-                })
-                .collect::<Result<HashMap<OsString, PathBuf>, TarballError>>()
-                .map_err(TaskError::Other)
-        })
-        .await
-        .expect("no join error")
-        .map_err(|error| match error {
-            TaskError::Checksum(error) => {
-                TarballError::Checksum(VerifyChecksumError { url: package_url.to_string(), error })
-            }
-            TaskError::Other(error) => error,
-        })?
-        .pipe(Arc::new);
+                Ok((cleaned_entry_path, store_dir.join(integrity)))
+            })
+            .collect::<Result<HashMap<OsString, PathBuf>, TarballError>>()
+            .map_err(TaskError::Other)
+    })
+    .await
+    .expect("no join error")
+    .map_err(|error| match error {
+        TaskError::Checksum(error) => {
+            TarballError::Checksum(VerifyChecksumError { url: package_url.to_string(), error })
+        }
+        TaskError::Other(error) => error,
+    })?
+    .pipe(Arc::new);
 
     tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
 
