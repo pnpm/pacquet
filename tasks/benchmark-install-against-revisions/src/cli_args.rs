@@ -11,6 +11,10 @@ pub struct CliArgs {
     #[clap(long, short = 'R', default_value = ".")]
     pub repository: PathBuf,
 
+    /// Override default `package.json`.
+    #[clap(long, short)]
+    pub package_json: Option<PathBuf>,
+
     /// Path to the work environment.
     #[clap(long, short, default_value = "tmp")]
     pub work_env: PathBuf,

@@ -16,6 +16,7 @@ pub struct WorkEnv {
     pub revisions: Vec<String>,
     pub registry: String,
     pub repository: PathBuf,
+    pub package_json: Option<PathBuf>,
 }
 
 impl WorkEnv {
@@ -78,8 +79,7 @@ impl WorkEnv {
             eprintln!("Revision: {revision:?}");
             let dir = self.revision_root(revision);
             fs::create_dir_all(&dir).expect("create directory for the revision");
-            fs::write(dir.join("package.json"), PACKAGE_JSON)
-                .expect("create package.json for the revision");
+            create_package_json(&dir, self.package_json.as_deref());
             create_script(&self.revision_cleanup_script(revision), CLEANUP_SCRIPT);
             create_script(&self.revision_install_script(revision), INSTALL_SCRIPT);
             create_npmrc(&dir, self.registry());
@@ -162,6 +162,17 @@ impl WorkEnv {
         self.init();
         self.build();
         self.benchmark();
+    }
+}
+
+fn create_package_json(dir: &Path, src: Option<&Path>) {
+    let dst = dir.join("package.json");
+    if let Some(src) = src {
+        assert!(src.is_file(), "{src:?} must be a file");
+        assert_ne!(src, dst);
+        fs::copy(src, dst).expect("copy package.json for the revision");
+    } else {
+        fs::write(dst, PACKAGE_JSON).expect("write package.json for the revision");
     }
 }
 
