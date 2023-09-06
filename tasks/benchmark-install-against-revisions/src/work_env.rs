@@ -1,4 +1,4 @@
-use crate::fixtures::{CLEANUP_SCRIPT, INSTALL_SCRIPT, PACKAGE_JSON};
+use crate::fixtures::{INSTALL_SCRIPT, PACKAGE_JSON};
 use itertools::Itertools;
 use os_display::Quotable;
 use pipe_trait::Pipe;
@@ -40,10 +40,6 @@ impl WorkEnv {
         self.root().join(revision)
     }
 
-    fn revision_cleanup_script(&self, revision: &str) -> PathBuf {
-        self.revision_root(revision).join("cleanup.bash")
-    }
-
     fn revision_install_script(&self, revision: &str) -> PathBuf {
         self.revision_root(revision).join("install.bash")
     }
@@ -80,7 +76,6 @@ impl WorkEnv {
             let dir = self.revision_root(revision);
             fs::create_dir_all(&dir).expect("create directory for the revision");
             create_package_json(&dir, self.package_json.as_deref());
-            create_script(&self.revision_cleanup_script(revision), CLEANUP_SCRIPT);
             create_script(&self.revision_install_script(revision), INSTALL_SCRIPT);
             create_npmrc(&dir, self.registry());
         }
