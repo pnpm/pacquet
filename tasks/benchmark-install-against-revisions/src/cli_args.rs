@@ -20,7 +20,7 @@ pub struct CliArgs {
     pub hyperfine_options: HyperfineOptions,
 
     /// Path to the work environment.
-    #[clap(long, short, default_value = "tmp")]
+    #[clap(long, short, default_value = "bench-work-env")]
     pub work_env: PathBuf,
 
     /// Branch name, tag name, or commit id of the pacquet repo.

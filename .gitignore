@@ -2,4 +2,4 @@
 .pacquet
 node_modules
 .npmrc
-tmp
+/bench-work-env
