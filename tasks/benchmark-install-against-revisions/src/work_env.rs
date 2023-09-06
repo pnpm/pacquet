@@ -156,6 +156,12 @@ impl WorkEnv {
             command.arg("--command-name").arg(revision).arg(self.revision_install_script(revision));
         }
 
+        command
+            .arg("--export-json")
+            .arg(self.root().join("BENCHMARK_REPORT.json"))
+            .arg("--export-markdown")
+            .arg(self.root().join("BENCHMARK_REPORT.md"));
+
         executor("hyperfine")(&mut command);
     }
 
