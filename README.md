@@ -35,15 +35,15 @@ Then, you can use the script named `benchmark-install-against-revisions` to run 
 
 ```sh
 # Comparing the branch you're working on against main
-just benchmark-install-against-revisions my-branch main
+cargo benchmark-install-against-revisions my-branch main
 ```
 
 ```sh
 # Comparing current commit against the previous commit
-just benchmark-install-against-revisions HEAD HEAD~
+cargo benchmark-install-against-revisions HEAD HEAD~
 ```
 
 ```sh
 # See more options
-just benchmark-install-against-revisions --help
+cargo benchmark-install-against-revisions --help
 ```
