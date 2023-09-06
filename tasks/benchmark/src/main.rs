@@ -1,11 +1,17 @@
 use std::{fs, path::Path};
 
+use clap::Parser;
 use criterion::{Criterion, Throughput};
 use mockito::ServerGuard;
 use pacquet_tarball::download_tarball_to_store;
-use pico_args::Arguments;
 use project_root::get_project_root;
 use tempfile::tempdir;
+
+#[derive(Debug, Parser)]
+struct CliArgs {
+    #[clap(long)]
+    save_baseline: Option<String>,
+}
 
 fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &Path) {
     let mut group = c.benchmark_group("tarball");
@@ -38,14 +44,13 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
 
 pub fn main() -> Result<(), String> {
     let mut server = mockito::Server::new();
-    let mut args = Arguments::from_env();
+    let CliArgs { save_baseline } = CliArgs::parse();
     let root = get_project_root().unwrap();
     let fixtures_folder = root.join("tasks/benchmark/fixtures");
-    let baseline: Option<String> = args.opt_value_from_str("--save-baseline").unwrap();
 
     let mut criterion = Criterion::default().without_plots();
-    if let Some(ref baseline) = baseline {
-        criterion = criterion.save_baseline(baseline.to_string());
+    if let Some(baseline) = save_baseline {
+        criterion = criterion.save_baseline(baseline);
     }
 
     bench_tarball(&mut criterion, &mut server, &fixtures_folder);

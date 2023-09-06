@@ -165,7 +165,7 @@ pub async fn download_tarball_to_store(
             error,
         })?;
     let url = package_url.to_string(); // TODO: use Arc
-    let cas_paths = tokio::task::spawn_blocking(move || {
+    let cas_paths = tokio::task::spawn(async move {
         verify_checksum(&response, package_integrity)
             .map_err(|error| VerifyChecksumError { url, error })?;
         let data = decompress_gzip(&response, package_unpacked_size)?;
