@@ -40,7 +40,7 @@ Then, you can use the script named `benchmark-install-against-revisions` to run 
 
 ```sh
 # Comparing current commit against the previous commit
-./benchmark-install-against-revisions.bash "$(git rev-parse HEAD)" "$(git rev-parse HEAD~)"
+./benchmark-install-against-revisions.bash HEAD HEAD~
 ```
 
 Use the `--help` flag to see more options.
