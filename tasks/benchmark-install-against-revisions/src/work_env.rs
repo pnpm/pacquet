@@ -1,4 +1,7 @@
-use crate::fixtures::{INSTALL_SCRIPT, PACKAGE_JSON};
+use crate::{
+    cli_args::HyperfineOptions,
+    fixtures::{INSTALL_SCRIPT, PACKAGE_JSON},
+};
 use itertools::Itertools;
 use os_display::Quotable;
 use pipe_trait::Pipe;
@@ -16,6 +19,7 @@ pub struct WorkEnv {
     pub revisions: Vec<String>,
     pub registry: String,
     pub repository: PathBuf,
+    pub hyperfine_options: HyperfineOptions,
     pub package_json: Option<PathBuf>,
 }
 
@@ -144,7 +148,9 @@ impl WorkEnv {
         let cleanup_command = format!("rm -rf {cleanup_targets}");
 
         let mut command = Command::new("hyperfine");
-        command.current_dir(self.root()).arg("--warmup=1").arg("--prepare").arg(&cleanup_command);
+        command.current_dir(self.root()).arg("--prepare").arg(&cleanup_command);
+
+        self.hyperfine_options.append_to(&mut command);
 
         for revision in self.revisions() {
             command.arg("--command-name").arg(revision).arg(self.revision_install_script(revision));
