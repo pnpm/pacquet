@@ -47,7 +47,7 @@ thiserror          = { version = "1.0.48" }
 tracing            = { version = "0.1.37" }
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 tokio              = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
-walkdir            = { version = "2.3.3" }
+walkdir            = { version = "2.4.0" }
 zune-inflate       = { version = "0.2.54" }
 
 
