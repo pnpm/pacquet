@@ -22,7 +22,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout Main Branch
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: main # Checkout main first because the cache is warm
 
@@ -42,7 +42,7 @@ jobs:
         run: cargo benchmark --save-baseline main
 
       - name: Checkout PR Branch
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           clean: false
           ref: ${{ github.event.pull_request.head.sha }}
