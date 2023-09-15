@@ -29,8 +29,10 @@ clap               = { version = "4", features = ["derive", "string"] }
 dashmap            = { version = "5.5.3" }
 home               = { version = "0.5.5" }
 insta              = { version = "1.31.0", features = ["yaml", "glob", "walkdir"] }
+itertools          = { version = "0.11.0" }
 futures-util       = { version = "0.3.28" }
 miette             = { version = "5.9.0", features = ["fancy"] }
+os_display         = { version = "0.1.3" }
 reflink-copy       = { version = "0.1.6" }
 reqwest            = { version = "0.11", default-features = false, features = ["json", "native-tls-vendored"] }
 node-semver        = { version = "2.1.0" }

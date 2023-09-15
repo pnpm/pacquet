@@ -1,0 +1,11 @@
+{
+  "dependencies": {
+    "@tsfun/all": "0.0.37",
+    "@types/node": "^16.18.39",
+    "cross-env": "^7.0.3",
+    "husky": "^8.0.3",
+    "keyv": "4.5.3",
+    "rimraf": "^3.0.2",
+    "shx": "^0.3.4"
+  }
+}

@@ -59,5 +59,8 @@ codecov:
 bench:
   cargo benchmark
 
+benchmark-install-against-revisions +args:
+  cargo run --bin=benchmark-install-against-revisions -- {{args}}
+
 cli +args:
   cargo run --bin pacquet -- {{args}}
