@@ -1219,6 +1219,7 @@ dependencies = [
  "node-semver",
  "pacquet_registry",
  "pacquet_tarball",
+ "pipe-trait",
  "project-root",
  "reqwest",
  "tempfile",
@@ -1295,6 +1296,7 @@ name = "pacquet_npmrc"
 version = "0.0.1"
 dependencies = [
  "home",
+ "pipe-trait",
  "pretty_assertions",
  "serde",
  "serde_ini",

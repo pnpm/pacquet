@@ -1,5 +1,6 @@
 mod custom_deserializer;
 
+use pipe_trait::Pipe;
 use serde::Deserialize;
 use std::{env, fs, path::PathBuf};
 
@@ -154,6 +155,11 @@ impl Npmrc {
     pub fn new() -> Self {
         let config: Npmrc = serde_ini::from_str("").unwrap(); // TODO: derive `SmartDefault` for `Npmrc and call `Npmrc::default()`
         config
+    }
+
+    /// Persist the config data until the program terminates.
+    pub fn leak(self) -> &'static mut Self {
+        self.pipe(Box::new).pipe(Box::leak)
     }
 }
 

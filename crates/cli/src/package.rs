@@ -15,7 +15,7 @@ use std::path::Path;
 /// `node_modules/.pacquet/fastify@1.0.0/node_modules`.
 pub async fn find_package_version_from_registry(
     tarball_cache: &Cache,
-    config: &Npmrc,
+    config: &'static Npmrc,
     http_client: &reqwest::Client,
     name: &str,
     version: &str,
@@ -29,7 +29,7 @@ pub async fn find_package_version_from_registry(
 
 pub async fn fetch_package_version_directly(
     tarball_cache: &Cache,
-    config: &Npmrc,
+    config: &'static Npmrc,
     http_client: &reqwest::Client,
     name: &str,
     version: &str,
@@ -44,7 +44,7 @@ pub async fn fetch_package_version_directly(
 async fn internal_fetch(
     tarball_cache: &Cache,
     package_version: &PackageVersion,
-    config: &Npmrc,
+    config: &'static Npmrc,
     symlink_path: &Path,
 ) -> Result<(), PackageManagerError> {
     let store_folder_name = package_version.to_store_name();
@@ -79,6 +79,7 @@ mod tests {
     use crate::package::find_package_version_from_registry;
     use node_semver::Version;
     use pacquet_npmrc::Npmrc;
+    use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
     use std::fs;
     use std::path::Path;
@@ -113,12 +114,15 @@ mod tests {
         let store_dir = tempdir().unwrap();
         let modules_dir = tempdir().unwrap();
         let virtual_store_dir = tempdir().unwrap();
-        let config = create_config(store_dir.path(), modules_dir.path(), virtual_store_dir.path());
+        let config: &'static Npmrc =
+            create_config(store_dir.path(), modules_dir.path(), virtual_store_dir.path())
+                .pipe(Box::new)
+                .pipe(Box::leak);
         let http_client = reqwest::Client::new();
         let symlink_path = tempdir().unwrap();
         let package = find_package_version_from_registry(
             &Default::default(),
-            &config,
+            config,
             &http_client,
             "fast-querystring",
             "1.0.0",

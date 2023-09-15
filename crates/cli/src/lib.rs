@@ -14,17 +14,18 @@ use pacquet_diagnostics::{
     miette::{set_panic_hook, IntoDiagnostic, Result, WrapErr},
 };
 use pacquet_executor::execute_shell;
-use pacquet_npmrc::current_npmrc;
+use pacquet_npmrc::{current_npmrc, Npmrc};
 use pacquet_package_json::PackageJson;
 
 pub async fn run_cli() -> Result<()> {
     enable_tracing_by_env();
     set_panic_hook();
     let cli = Cli::parse();
-    run_commands(cli).await
+    let config = current_npmrc().leak();
+    run_commands(cli, config).await
 }
 
-async fn run_commands(cli: Cli) -> Result<()> {
+async fn run_commands(cli: Cli, config: &'static Npmrc) -> Result<()> {
     let package_json_path = cli.current_dir.join("package.json");
 
     match &cli.subcommand {
@@ -33,14 +34,14 @@ async fn run_commands(cli: Cli) -> Result<()> {
             PackageJson::init(&package_json_path).wrap_err("initialize package.json")?;
         }
         Subcommands::Add(args) => {
-            let mut package_manager = PackageManager::new(&package_json_path)
+            let mut package_manager = PackageManager::new(&package_json_path, config)
                 .wrap_err("initializing the package manager")?;
             // TODO if a package already exists in another dependency group, we don't remove
             // the existing entry.
             package_manager.add(args).await.wrap_err("adding a new package")?;
         }
         Subcommands::Install(args) => {
-            let package_manager = PackageManager::new(&package_json_path)
+            let package_manager = PackageManager::new(&package_json_path, config)
                 .wrap_err("initializing the package manager")?;
             package_manager
                 .install(args)
@@ -81,23 +82,20 @@ async fn run_commands(cli: Cli) -> Result<()> {
             };
             execute_shell(command).wrap_err(format!("executing command: \"{0}\"", command))?;
         }
-        Subcommands::Store(subcommand) => {
-            let config = current_npmrc();
-            match subcommand {
-                StoreSubcommands::Store => {
-                    panic!("Not implemented")
-                }
-                StoreSubcommands::Add => {
-                    panic!("Not implemented")
-                }
-                StoreSubcommands::Prune => {
-                    pacquet_cafs::prune_sync(&config.store_dir).wrap_err("pruning store")?;
-                }
-                StoreSubcommands::Path => {
-                    println!("{}", config.store_dir.display());
-                }
+        Subcommands::Store(subcommand) => match subcommand {
+            StoreSubcommands::Store => {
+                panic!("Not implemented")
             }
-        }
+            StoreSubcommands::Add => {
+                panic!("Not implemented")
+            }
+            StoreSubcommands::Prune => {
+                pacquet_cafs::prune_sync(&config.store_dir).wrap_err("pruning store")?;
+            }
+            StoreSubcommands::Path => {
+                println!("{}", config.store_dir.display());
+            }
+        },
     }
 
     Ok(())
@@ -115,7 +113,7 @@ mod tests {
     async fn init_command_should_create_package_json() {
         let parent_folder = tempdir().unwrap();
         let cli = Cli::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "init"]);
-        run_commands(cli).await.unwrap();
+        run_commands(cli, current_npmrc().leak()).await.unwrap();
         assert!(parent_folder.path().join("package.json").exists());
     }
 
@@ -126,7 +124,7 @@ mod tests {
         file.write_all("{}".as_bytes()).unwrap();
         assert!(parent_folder.path().join("package.json").exists());
         let cli = Cli::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "init"]);
-        run_commands(cli).await.expect_err("should have thrown");
+        run_commands(cli, current_npmrc().leak()).await.expect_err("should have thrown");
     }
 
     #[tokio::test]
@@ -134,6 +132,6 @@ mod tests {
         let parent_folder = tempdir().unwrap();
         let cli =
             Cli::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "store", "path"]);
-        run_commands(cli).await.unwrap();
+        run_commands(cli, current_npmrc().leak()).await.unwrap();
     }
 }

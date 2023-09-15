@@ -115,7 +115,7 @@ fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm,
 #[instrument(skip(cache), fields(cache_len = cache.len()))]
 pub async fn download_tarball_to_store(
     cache: &Cache,
-    store_dir: &Path,
+    store_dir: &'static Path,
     package_integrity: &str,
     package_unpacked_size: Option<usize>,
     package_url: &str,
@@ -156,8 +156,6 @@ pub async fn download_tarball_to_store(
 
     tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
 
-    // TODO: benchmark and profile to see if spawning is actually necessary
-    let store_dir = store_dir.to_path_buf(); // TODO: use Arc
     let package_integrity: Integrity =
         package_integrity.parse().map_err(|error| ParseIntegrityError {
             url: package_url.to_string(),
@@ -182,7 +180,7 @@ pub async fn download_tarball_to_store(
                 let entry_path = entry.path().unwrap();
                 let cleaned_entry_path =
                     entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
-                let integrity = pacquet_cafs::write_sync(&store_dir, &buffer)?;
+                let integrity = pacquet_cafs::write_sync(store_dir, &buffer)?;
 
                 Ok((cleaned_entry_path, store_dir.join(integrity)))
             })
@@ -202,6 +200,7 @@ pub async fn download_tarball_to_store(
 
 #[cfg(test)]
 mod tests {
+    use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
 
@@ -210,7 +209,7 @@ mod tests {
     #[tokio::test]
     #[cfg(not(target_os = "windows"))]
     async fn packages_under_orgs_should_work() {
-        let store_path = tempdir().unwrap();
+        let store_path = tempdir().unwrap().pipe(Box::new).pipe(Box::leak);
         let cas_files = download_tarball_to_store(
             &Default::default(),
             store_path.path(),
@@ -246,7 +245,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_throw_error_on_checksum_mismatch() {
-        let store_path = tempdir().unwrap();
+        let store_path = tempdir().unwrap().pipe(Box::new).pipe(Box::leak);
         download_tarball_to_store(
             &Default::default(),
             store_path.path(),

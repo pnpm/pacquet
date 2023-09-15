@@ -4,7 +4,7 @@ use pacquet_diagnostics::{
     miette::{self, Diagnostic},
     thiserror::{self, Error},
 };
-use pacquet_npmrc::{current_npmrc, Npmrc};
+use pacquet_npmrc::Npmrc;
 use pacquet_package_json::PackageJson;
 use pacquet_tarball::Cache;
 
@@ -50,16 +50,19 @@ pub enum PackageManagerError {
 }
 
 pub struct PackageManager {
-    pub config: Npmrc,
+    pub config: &'static Npmrc,
     pub package_json: PackageJson,
     pub http_client: reqwest::Client,
     pub(crate) tarball_cache: Cache,
 }
 
 impl PackageManager {
-    pub fn new<P: Into<PathBuf>>(package_json_path: P) -> Result<Self, PackageManagerError> {
+    pub fn new<P: Into<PathBuf>>(
+        package_json_path: P,
+        config: &'static Npmrc,
+    ) -> Result<Self, PackageManagerError> {
         Ok(PackageManager {
-            config: current_npmrc(),
+            config,
             package_json: PackageJson::create_if_needed(package_json_path.into())?,
             http_client: reqwest::Client::new(),
             tarball_cache: Cache::new(),
