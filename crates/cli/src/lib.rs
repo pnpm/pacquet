@@ -14,14 +14,14 @@ use pacquet_diagnostics::{
     miette::{set_panic_hook, IntoDiagnostic, Result, WrapErr},
 };
 use pacquet_executor::execute_shell;
-use pacquet_npmrc::{current_npmrc, Npmrc};
+use pacquet_npmrc::Npmrc;
 use pacquet_package_json::PackageJson;
 
 pub async fn run_cli() -> Result<()> {
     enable_tracing_by_env();
     set_panic_hook();
     let cli = Cli::parse();
-    let config = current_npmrc().leak();
+    let config = Npmrc::current().leak();
     run_commands(cli, config).await
 }
 
@@ -113,7 +113,7 @@ mod tests {
     async fn init_command_should_create_package_json() {
         let parent_folder = tempdir().unwrap();
         let cli = Cli::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "init"]);
-        run_commands(cli, current_npmrc().leak()).await.unwrap();
+        run_commands(cli, Npmrc::current().leak()).await.unwrap();
         assert!(parent_folder.path().join("package.json").exists());
     }
 
@@ -124,7 +124,7 @@ mod tests {
         file.write_all("{}".as_bytes()).unwrap();
         assert!(parent_folder.path().join("package.json").exists());
         let cli = Cli::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "init"]);
-        run_commands(cli, current_npmrc().leak()).await.expect_err("should have thrown");
+        run_commands(cli, Npmrc::current().leak()).await.expect_err("should have thrown");
     }
 
     #[tokio::test]
@@ -132,6 +132,6 @@ mod tests {
         let parent_folder = tempdir().unwrap();
         let cli =
             Cli::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "store", "path"]);
-        run_commands(cli, current_npmrc().leak()).await.unwrap();
+        run_commands(cli, Npmrc::current().leak()).await.unwrap();
     }
 }

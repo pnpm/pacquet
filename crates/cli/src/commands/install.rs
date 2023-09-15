@@ -107,7 +107,7 @@ mod tests {
     use crate::commands::install::InstallCommandArgs;
     use crate::fs::get_all_folders;
     use crate::package_manager::PackageManager;
-    use pacquet_npmrc::current_npmrc;
+    use pacquet_npmrc::Npmrc;
     use pacquet_package_json::{DependencyGroup, PackageJson};
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
@@ -183,7 +183,7 @@ mod tests {
         package_json.save().unwrap();
 
         let package_manager =
-            PackageManager::new(&package_json_path, current_npmrc().leak()).unwrap();
+            PackageManager::new(&package_json_path, Npmrc::current().leak()).unwrap();
         let args = InstallCommandArgs { prod: false, dev: false, no_optional: false };
         package_manager.install(&args).await.unwrap();
 
