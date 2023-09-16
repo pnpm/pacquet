@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{fs, path::Path, sync::Arc};
 
 use clap::Parser;
 use criterion::{Criterion, Throughput};
@@ -6,6 +6,7 @@ use mockito::ServerGuard;
 use pacquet_tarball::download_tarball_to_store;
 use project_root::get_project_root;
 use tempfile::tempdir;
+use tokio::sync::Semaphore;
 
 #[derive(Debug, Parser)]
 struct CliArgs {
@@ -25,6 +26,7 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
     group.throughput(Throughput::Bytes(file.len() as u64));
     group.bench_function("download_dependency", |b| {
         b.to_async(&rt).iter(|| async {
+            let semaphore = Arc::new(Semaphore::new(16));
             let dir = tempdir().unwrap();
             let cas_map =
                 download_tarball_to_store(
@@ -33,6 +35,7 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
                     "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
                     Some(16697),
                     url,
+                    &semaphore,
                 ).await.unwrap();
             drop(dir);
             cas_map.len()

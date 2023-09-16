@@ -1,5 +1,5 @@
 use clap::Parser;
-use std::collections::VecDeque;
+use std::{collections::VecDeque, sync::Arc};
 
 use crate::{
     package::{fetch_package_version_directly, find_package_version_from_registry},
@@ -9,6 +9,7 @@ use futures_util::future;
 use pacquet_diagnostics::miette::WrapErr;
 use pacquet_package_json::DependencyGroup;
 use pacquet_registry::PackageVersion;
+use tokio::sync::Semaphore;
 
 #[derive(Parser, Debug)]
 pub struct AddCommandArgs {
@@ -59,6 +60,7 @@ impl PackageManager {
     /// 5. Symlink all dependencies to node_modules/.pacquet/pkg@version/node_modules
     /// 6. Update package.json
     pub async fn add(&mut self, args: &AddCommandArgs) -> Result<(), PackageManagerError> {
+        let semaphore = Arc::new(Semaphore::new(16));
         let latest_version = fetch_package_version_directly(
             &self.tarball_cache,
             &self.config,
@@ -66,6 +68,7 @@ impl PackageManager {
             &args.package,
             "latest",
             &self.config.modules_dir,
+            &semaphore,
         )
         .await?;
         let package_node_modules_path =
@@ -85,6 +88,7 @@ impl PackageManager {
                     name,
                     version,
                     path,
+                    &semaphore,
                 )
             });
 
@@ -109,6 +113,7 @@ impl PackageManager {
                             name,
                             version,
                             &node_modules_path,
+                            &semaphore,
                         )
                     },
                 );

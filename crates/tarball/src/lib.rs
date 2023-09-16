@@ -16,7 +16,7 @@ use pipe_trait::Pipe;
 use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
 
 #[derive(Error, Debug, Diagnostic)]
@@ -119,6 +119,7 @@ pub async fn download_tarball_to_store(
     package_integrity: &str,
     package_unpacked_size: Option<usize>,
     package_url: &str,
+    semaphore: &Semaphore
 ) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
     while let Some(cache_lock) = cache.get(package_url) {
         tracing::info!(target: "pacquet::download", ?package_url, "Job taken");
@@ -145,6 +146,7 @@ pub async fn download_tarball_to_store(
     }
 
     let network_error = |error| NetworkError { url: package_url.to_string(), error };
+    let permit = semaphore.acquire().await;
     let response = Client::new()
         .get(package_url)
         .send()
@@ -153,6 +155,7 @@ pub async fn download_tarball_to_store(
         .bytes()
         .await
         .map_err(network_error)?;
+    drop(permit);
 
     tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
 

@@ -4,6 +4,7 @@ use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 
 use crate::{package_distribution::PackageDistribution, NetworkError, RegistryError};
+use tokio::sync::Semaphore;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -28,9 +29,11 @@ impl PackageVersion {
         version: &str,
         http_client: &reqwest::Client,
         registry: &str,
+        semaphore: &Semaphore,
     ) -> Result<Self, RegistryError> {
         let url = || format!("{registry}{name}/{version}");
         let network_error = |error| NetworkError { error, url: url() };
+        let _permit = semaphore.acquire().await;
 
         http_client
             .get(url())

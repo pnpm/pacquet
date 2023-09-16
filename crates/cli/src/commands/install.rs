@@ -7,6 +7,8 @@ use pacquet_diagnostics::tracing;
 use pacquet_package_json::DependencyGroup;
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
+use tokio::sync::Semaphore;
+use std::sync::Arc;
 
 #[derive(Parser, Debug)]
 pub struct InstallCommandArgs {
@@ -46,7 +48,7 @@ impl PackageManager {
     ///
     /// This function is used by [`PackageManager::install`].
     #[async_recursion]
-    async fn install_dependencies(&self, package: &PackageVersion) {
+    async fn install_dependencies(&self, package: &PackageVersion, semaphore: &Semaphore) {
         let node_modules_path =
             self.config.virtual_store_dir.join(package.to_store_name()).join("node_modules");
 
@@ -55,6 +57,7 @@ impl PackageManager {
         package
             .dependencies(self.config.auto_install_peers)
             .map(|(name, version)| async {
+                let semaphore_clone = semaphore.clone();
                 let dependency = find_package_version_from_registry(
                     &self.tarball_cache,
                     &self.config,
@@ -62,10 +65,11 @@ impl PackageManager {
                     name,
                     version,
                     &node_modules_path,
+                    &semaphore_clone,
                 )
                 .await
                 .unwrap();
-                self.install_dependencies(&dependency).await;
+                self.install_dependencies(&dependency, &semaphore_clone).await;
             })
             .pipe(future::join_all)
             .await;
@@ -76,21 +80,26 @@ impl PackageManager {
     /// Jobs of the `install` command.
     pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
         tracing::info!(target: "pacquet::install", "Start all");
+        let semaphore = Arc::new(Semaphore::new(16));
 
         self.package_json
             .dependencies(args.dependency_groups())
-            .map(|(name, version)| async move {
-                let dependency = find_package_version_from_registry(
-                    &self.tarball_cache,
-                    &self.config,
-                    &self.http_client,
-                    name,
-                    version,
-                    &self.config.modules_dir,
-                )
-                .await
-                .unwrap();
-                self.install_dependencies(&dependency).await;
+            .map(|(name, version)| {
+                let semaphore_clone = semaphore.clone();
+                async move {
+                    let dependency = find_package_version_from_registry(
+                        &self.tarball_cache,
+                        &self.config,
+                        &self.http_client,
+                        name,
+                        version,
+                        &self.config.modules_dir,
+                        &semaphore_clone,
+                    )
+                    .await
+                    .unwrap();
+                    self.install_dependencies(&dependency, &semaphore_clone).await;
+                }
             })
             .pipe(future::join_all)
             .await;

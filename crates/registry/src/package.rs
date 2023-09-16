@@ -7,6 +7,7 @@ use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 
 use crate::{package_version::PackageVersion, NetworkError, RegistryError};
+use tokio::sync::Semaphore;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Package {
@@ -30,9 +31,11 @@ impl Package {
         name: &str,
         http_client: &reqwest::Client,
         registry: &str,
+        semaphore: &Semaphore,
     ) -> Result<Self, RegistryError> {
         let url = || format!("{registry}{name}"); // TODO: use reqwest URL directly
         let network_error = |error| NetworkError { error, url: url() };
+        let _permit = semaphore.acquire().await;
         http_client
             .get(url())
             .header("content-type", "application/json")
