@@ -4,6 +4,7 @@ use clap::Parser;
 use criterion::{Criterion, Throughput};
 use mockito::ServerGuard;
 use pacquet_tarball::download_tarball_to_store;
+use pipe_trait::Pipe;
 use project_root::get_project_root;
 use tempfile::tempdir;
 
@@ -25,7 +26,9 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
     group.throughput(Throughput::Bytes(file.len() as u64));
     group.bench_function("download_dependency", |b| {
         b.to_async(&rt).iter(|| async {
-            let dir = tempdir().unwrap();
+            // NOTE: the tempdir is being leaked, meaning the cleanup would be postponed until the end of the benchmark
+            let dir = tempdir().unwrap().pipe(Box::new).pipe(Box::leak);
+
             let cas_map =
                 download_tarball_to_store(
                     &Default::default(),
@@ -34,7 +37,6 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
                     Some(16697),
                     url,
                 ).await.unwrap();
-            drop(dir);
             cas_map.len()
         });
     });

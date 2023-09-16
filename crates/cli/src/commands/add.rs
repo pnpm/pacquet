@@ -61,7 +61,7 @@ impl PackageManager {
     pub async fn add(&mut self, args: &AddCommandArgs) -> Result<(), PackageManagerError> {
         let latest_version = fetch_package_version_directly(
             &self.tarball_cache,
-            &self.config,
+            self.config,
             &self.http_client,
             &args.package,
             "latest",
@@ -143,6 +143,7 @@ mod tests {
     use std::{env, fs};
 
     use crate::fs::get_filenames_in_folder;
+    use pacquet_npmrc::Npmrc;
     use pacquet_package_json::{DependencyGroup, PackageJson};
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
@@ -156,7 +157,7 @@ mod tests {
         let current_directory = env::current_dir().unwrap();
         env::set_current_dir(&dir).unwrap();
         let package_json = dir.path().join("package.json");
-        let mut manager = PackageManager::new(&package_json).unwrap();
+        let mut manager = PackageManager::new(&package_json, Npmrc::current().leak()).unwrap();
 
         // It should create a package_json if not exist
         assert!(package_json.exists());
@@ -197,7 +198,7 @@ mod tests {
         let current_directory = env::current_dir().unwrap();
         env::set_current_dir(&dir).unwrap();
         let package_json = dir.path().join("package.json");
-        let mut manager = PackageManager::new(&package_json).unwrap();
+        let mut manager = PackageManager::new(&package_json, Npmrc::current().leak()).unwrap();
 
         let args = AddCommandArgs {
             package: "is-odd".to_string(),
@@ -228,7 +229,7 @@ mod tests {
         let current_directory = env::current_dir().unwrap();
         env::set_current_dir(&dir).unwrap();
         let package_json = dir.path().join("package.json");
-        let mut manager = PackageManager::new(&package_json).unwrap();
+        let mut manager = PackageManager::new(&package_json, Npmrc::current().leak()).unwrap();
 
         let args = AddCommandArgs {
             package: "is-odd".to_string(),
@@ -252,7 +253,7 @@ mod tests {
         let current_directory = env::current_dir().unwrap();
         env::set_current_dir(&dir).unwrap();
         let package_json = dir.path().join("package.json");
-        let mut manager = PackageManager::new(&package_json).unwrap();
+        let mut manager = PackageManager::new(&package_json, Npmrc::current().leak()).unwrap();
 
         let args = AddCommandArgs {
             package: "is-odd".to_string(),
@@ -276,7 +277,7 @@ mod tests {
         let current_directory = env::current_dir().unwrap();
         env::set_current_dir(&dir).unwrap();
         let package_json = dir.path().join("package.json");
-        let mut manager = PackageManager::new(&package_json).unwrap();
+        let mut manager = PackageManager::new(&package_json, Npmrc::current().leak()).unwrap();
 
         let args = AddCommandArgs {
             package: "is-odd".to_string(),

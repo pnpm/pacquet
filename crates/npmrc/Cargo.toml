@@ -11,9 +11,10 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-home      = { workspace = true }
-serde     = { workspace = true }
-serde_ini = { workspace = true }
+home       = { workspace = true }
+pipe-trait = { workspace = true }
+serde      = { workspace = true }
+serde_ini  = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

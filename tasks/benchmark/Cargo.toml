@@ -19,6 +19,7 @@ criterion    = { workspace = true }
 mockito      = { workspace = true }
 tokio        = { workspace = true }
 tempfile     = { workspace = true }
+pipe-trait   = { workspace = true }
 project-root = { workspace = true }
 reqwest      = { workspace = true }
 node-semver  = { workspace = true }
