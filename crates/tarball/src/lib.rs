@@ -162,13 +162,17 @@ pub async fn download_tarball_to_store(
             integrity: package_integrity.to_string(),
             error,
         })?;
-    let url = package_url.to_string(); // TODO: use Arc
+    enum TaskError {
+        Checksum(ssri::Error),
+        Other(TarballError),
+    }
     let cas_paths = tokio::task::spawn(async move {
-        verify_checksum(&response, package_integrity)
-            .map_err(|error| VerifyChecksumError { url, error })?;
-        let data = decompress_gzip(&response, package_unpacked_size)?;
+        verify_checksum(&response, package_integrity).map_err(TaskError::Checksum)?;
+        let data = decompress_gzip(&response, package_unpacked_size).map_err(TaskError::Other)?;
         Archive::new(Cursor::new(data))
-            .entries()?
+            .entries()
+            .map_err(TarballError::Io)
+            .map_err(TaskError::Other)?
             .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir())
             .map(|entry| -> Result<(OsString, PathBuf), TarballError> {
                 let mut entry = entry.unwrap();
@@ -185,9 +189,16 @@ pub async fn download_tarball_to_store(
                 Ok((cleaned_entry_path, store_dir.join(integrity)))
             })
             .collect::<Result<HashMap<OsString, PathBuf>, TarballError>>()
+            .map_err(TaskError::Other)
     })
     .await
-    .expect("no join error")?
+    .expect("no join error")
+    .map_err(|error| match error {
+        TaskError::Checksum(error) => {
+            TarballError::Checksum(VerifyChecksumError { url: package_url.to_string(), error })
+        }
+        TaskError::Other(error) => error,
+    })?
     .pipe(Arc::new);
 
     tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
