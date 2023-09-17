@@ -6,6 +6,7 @@ use mockito::ServerGuard;
 use pacquet_tarball::download_tarball_to_store;
 use pipe_trait::Pipe;
 use project_root::get_project_root;
+use reqwest::Client;
 use tempfile::tempdir;
 
 #[derive(Debug, Parser)]
@@ -28,10 +29,12 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
         b.to_async(&rt).iter(|| async {
             // NOTE: the tempdir is being leaked, meaning the cleanup would be postponed until the end of the benchmark
             let dir = tempdir().unwrap().pipe(Box::new).pipe(Box::leak);
+            let http_client = Client::new();
 
             let cas_map =
                 download_tarball_to_store(
                     &Default::default(),
+                    &http_client,
                     dir.path(),
                     "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
                     Some(16697),
