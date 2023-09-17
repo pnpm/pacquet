@@ -115,6 +115,7 @@ fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm,
 #[instrument(skip(cache), fields(cache_len = cache.len()))]
 pub async fn download_tarball_to_store(
     cache: &Cache,
+    http_client: &Client,
     store_dir: &'static Path,
     package_integrity: &str,
     package_unpacked_size: Option<usize>,
@@ -145,7 +146,7 @@ pub async fn download_tarball_to_store(
     }
 
     let network_error = |error| NetworkError { url: package_url.to_string(), error };
-    let response = Client::new()
+    let response = http_client
         .get(package_url)
         .send()
         .await
@@ -239,6 +240,7 @@ mod tests {
         let (store_dir, store_path) = tempdir_with_leaked_path();
         let cas_files = download_tarball_to_store(
             &Default::default(),
+            &Client::new(),
             store_path,
             "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
             Some(16697),
@@ -277,6 +279,7 @@ mod tests {
         let (store_dir, store_path) = tempdir_with_leaked_path();
         download_tarball_to_store(
             &Default::default(),
+            &Client::new(),
             store_path,
             "sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
             Some(16697),

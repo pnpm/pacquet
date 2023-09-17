@@ -3,6 +3,7 @@ use crate::package_manager::PackageManagerError;
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::{download_tarball_to_store, Cache};
+use reqwest::Client;
 use std::path::Path;
 
 /// This function execute the following and returns the package
@@ -23,7 +24,7 @@ pub async fn find_package_version_from_registry(
 ) -> Result<PackageVersion, PackageManagerError> {
     let package = Package::fetch_from_registry(name, http_client, &config.registry).await?;
     let package_version = package.pinned_version(version).unwrap();
-    internal_fetch(tarball_cache, package_version, config, symlink_path).await?;
+    internal_fetch(tarball_cache, http_client, package_version, config, symlink_path).await?;
     Ok(package_version.to_owned())
 }
 
@@ -37,12 +38,13 @@ pub async fn fetch_package_version_directly(
 ) -> Result<PackageVersion, PackageManagerError> {
     let package_version =
         PackageVersion::fetch_from_registry(name, version, http_client, &config.registry).await?;
-    internal_fetch(tarball_cache, &package_version, config, symlink_path).await?;
+    internal_fetch(tarball_cache, http_client, &package_version, config, symlink_path).await?;
     Ok(package_version.to_owned())
 }
 
 async fn internal_fetch(
     tarball_cache: &Cache,
+    http_client: &Client,
     package_version: &PackageVersion,
     config: &'static Npmrc,
     symlink_path: &Path,
@@ -52,6 +54,7 @@ async fn internal_fetch(
     // TODO: skip when it already exists in store?
     let cas_paths = download_tarball_to_store(
         tarball_cache,
+        http_client,
         &config.store_dir,
         package_version.dist.integrity.as_ref().expect("has integrity field"),
         package_version.dist.unpacked_size,
