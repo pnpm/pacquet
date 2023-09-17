@@ -213,17 +213,33 @@ pub async fn download_tarball_to_store(
 mod tests {
     use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
-    use tempfile::tempdir;
+    use tempfile::{tempdir, TempDir};
 
     use super::*;
+
+    /// **Problem:**
+    /// The tested function requires `'static` paths, leaking would prevent
+    /// temporary files from being cleaned up.
+    ///
+    /// **Solution:**
+    /// Create [`TempDir`] as a temporary variable (which can be dropped)
+    /// but provide its path as `'static`.
+    ///
+    /// **Side effect:**
+    /// The `'static` path becomes dangling outside the scope of [`TempDir`].
+    fn tempdir_with_leaked_path() -> (TempDir, &'static Path) {
+        let tempdir = tempdir().unwrap();
+        let leaked_path = tempdir.path().to_path_buf().pipe(Box::new).pipe(Box::leak);
+        (tempdir, leaked_path)
+    }
 
     #[tokio::test]
     #[cfg(not(target_os = "windows"))]
     async fn packages_under_orgs_should_work() {
-        let store_path = tempdir().unwrap().pipe(Box::new).pipe(Box::leak);
+        let (store_dir, store_path) = tempdir_with_leaked_path();
         let cas_files = download_tarball_to_store(
             &Default::default(),
-            store_path.path(),
+            store_path,
             "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
             Some(16697),
             "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
@@ -252,19 +268,23 @@ mod tests {
                 "types/index.test-d.ts"
             ]
         );
+
+        drop(store_dir);
     }
 
     #[tokio::test]
     async fn should_throw_error_on_checksum_mismatch() {
-        let store_path = tempdir().unwrap().pipe(Box::new).pipe(Box::leak);
+        let (store_dir, store_path) = tempdir_with_leaked_path();
         download_tarball_to_store(
             &Default::default(),
-            store_path.path(),
+            store_path,
             "sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
             Some(16697),
             "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
         )
         .await
         .expect_err("checksum mismatch");
+
+        drop(store_dir);
     }
 }
