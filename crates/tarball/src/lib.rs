@@ -236,7 +236,7 @@ mod tests {
     #[tokio::test]
     #[cfg(not(target_os = "windows"))]
     async fn packages_under_orgs_should_work() {
-        let (_, store_path) = tempdir_with_leaked_path();
+        let (store_dir, store_path) = tempdir_with_leaked_path();
         let cas_files = download_tarball_to_store(
             &Default::default(),
             store_path,
@@ -268,11 +268,13 @@ mod tests {
                 "types/index.test-d.ts"
             ]
         );
+
+        drop(store_dir);
     }
 
     #[tokio::test]
     async fn should_throw_error_on_checksum_mismatch() {
-        let (_, store_path) = tempdir_with_leaked_path();
+        let (store_dir, store_path) = tempdir_with_leaked_path();
         download_tarball_to_store(
             &Default::default(),
             store_path,
@@ -282,5 +284,7 @@ mod tests {
         )
         .await
         .expect_err("checksum mismatch");
+
+        drop(store_dir);
     }
 }
