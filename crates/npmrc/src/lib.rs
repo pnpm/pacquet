@@ -1,5 +1,6 @@
 mod custom_deserializer;
 
+use pipe_trait::Pipe;
 use serde::Deserialize;
 use std::{env, fs, path::PathBuf};
 
@@ -155,30 +156,37 @@ impl Npmrc {
         let config: Npmrc = serde_ini::from_str("").unwrap(); // TODO: derive `SmartDefault` for `Npmrc and call `Npmrc::default()`
         config
     }
+
+    /// Try loading `.npmrc` in the current directory.
+    /// If fails, try in the home directory.
+    /// If fails again, return the default.
+    pub fn current() -> Self {
+        let path = match env::current_dir() {
+            Ok(dir) => Some(dir.join(".npmrc")),
+            _ => home::home_dir().map(|dir| dir.join(".npmrc")),
+        };
+
+        if let Some(file) = path {
+            if let Ok(content) = fs::read_to_string(file) {
+                if let Ok(npmrc) = serde_ini::from_str(&content) {
+                    return npmrc;
+                }
+            }
+        }
+
+        Npmrc::default()
+    }
+
+    /// Persist the config data until the program terminates.
+    pub fn leak(self) -> &'static mut Self {
+        self.pipe(Box::new).pipe(Box::leak)
+    }
 }
 
 impl Default for Npmrc {
     fn default() -> Self {
         Self::new()
     }
-}
-
-pub fn current_npmrc() -> Npmrc {
-    // Look for current folder `.npmrc` and if not found, look for home directory.
-    let path = match env::current_dir() {
-        Ok(dir) => Some(dir.join(".npmrc")),
-        _ => home::home_dir().map(|dir| dir.join(".npmrc")),
-    };
-
-    if let Some(file) = path {
-        if let Ok(content) = fs::read_to_string(file) {
-            if let Ok(npmrc) = serde_ini::from_str(&content) {
-                return npmrc;
-            }
-        }
-    }
-
-    Npmrc::new()
 }
 
 #[cfg(test)]
@@ -244,7 +252,7 @@ mod tests {
 
     #[test]
     pub fn should_return_npmrc() {
-        let value = current_npmrc();
+        let value = Npmrc::current();
         assert!(value.symlink);
     }
 
@@ -280,7 +288,7 @@ mod tests {
         let mut f = fs::File::create(tmp.path().join(".npmrc")).expect("Unable to create file");
         f.write_all(b"symlink=false").unwrap();
         env::set_current_dir(tmp.path()).unwrap();
-        let config = current_npmrc();
+        let config = Npmrc::current();
         assert!(!config.symlink);
         env::set_current_dir(current_directory).unwrap();
     }
@@ -293,7 +301,7 @@ mod tests {
         // write invalid utf-8 value to npmrc
         f.write_all(b"Hello \xff World").unwrap();
         env::set_current_dir(tmp.path()).unwrap();
-        let config = current_npmrc();
+        let config = Npmrc::current();
         assert!(config.symlink);
         env::set_current_dir(current_directory).unwrap();
     }

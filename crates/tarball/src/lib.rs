@@ -115,7 +115,8 @@ fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm,
 #[instrument(skip(cache), fields(cache_len = cache.len()))]
 pub async fn download_tarball_to_store(
     cache: &Cache,
-    store_dir: &Path,
+    http_client: &Client,
+    store_dir: &'static Path,
     package_integrity: &str,
     package_unpacked_size: Option<usize>,
     package_url: &str,
@@ -147,7 +148,7 @@ pub async fn download_tarball_to_store(
 
     let network_error = |error| NetworkError { url: package_url.to_string(), error };
     let permit = semaphore.acquire().await;
-    let response = Client::new()
+    let response = http_client
         .get(package_url)
         .send()
         .await
@@ -159,21 +160,23 @@ pub async fn download_tarball_to_store(
 
     tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
 
-    // TODO: benchmark and profile to see if spawning is actually necessary
-    let store_dir = store_dir.to_path_buf(); // TODO: use Arc
     let package_integrity: Integrity =
         package_integrity.parse().map_err(|error| ParseIntegrityError {
             url: package_url.to_string(),
             integrity: package_integrity.to_string(),
             error,
         })?;
-    let url = package_url.to_string(); // TODO: use Arc
+    enum TaskError {
+        Checksum(ssri::Error),
+        Other(TarballError),
+    }
     let cas_paths = tokio::task::spawn(async move {
-        verify_checksum(&response, package_integrity)
-            .map_err(|error| VerifyChecksumError { url, error })?;
-        let data = decompress_gzip(&response, package_unpacked_size)?;
+        verify_checksum(&response, package_integrity).map_err(TaskError::Checksum)?;
+        let data = decompress_gzip(&response, package_unpacked_size).map_err(TaskError::Other)?;
         Archive::new(Cursor::new(data))
-            .entries()?
+            .entries()
+            .map_err(TarballError::Io)
+            .map_err(TaskError::Other)?
             .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir())
             .map(|entry| -> Result<(OsString, PathBuf), TarballError> {
                 let mut entry = entry.unwrap();
@@ -185,14 +188,21 @@ pub async fn download_tarball_to_store(
                 let entry_path = entry.path().unwrap();
                 let cleaned_entry_path =
                     entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
-                let integrity = pacquet_cafs::write_sync(&store_dir, &buffer)?;
+                let integrity = pacquet_cafs::write_sync(store_dir, &buffer)?;
 
                 Ok((cleaned_entry_path, store_dir.join(integrity)))
             })
             .collect::<Result<HashMap<OsString, PathBuf>, TarballError>>()
+            .map_err(TaskError::Other)
     })
     .await
-    .expect("no join error")?
+    .expect("no join error")
+    .map_err(|error| match error {
+        TaskError::Checksum(error) => {
+            TarballError::Checksum(VerifyChecksumError { url: package_url.to_string(), error })
+        }
+        TaskError::Other(error) => error,
+    })?
     .pipe(Arc::new);
 
     tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
@@ -205,18 +215,36 @@ pub async fn download_tarball_to_store(
 
 #[cfg(test)]
 mod tests {
+    use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
-    use tempfile::tempdir;
+    use tempfile::{tempdir, TempDir};
 
     use super::*;
+
+    /// **Problem:**
+    /// The tested function requires `'static` paths, leaking would prevent
+    /// temporary files from being cleaned up.
+    ///
+    /// **Solution:**
+    /// Create [`TempDir`] as a temporary variable (which can be dropped)
+    /// but provide its path as `'static`.
+    ///
+    /// **Side effect:**
+    /// The `'static` path becomes dangling outside the scope of [`TempDir`].
+    fn tempdir_with_leaked_path() -> (TempDir, &'static Path) {
+        let tempdir = tempdir().unwrap();
+        let leaked_path = tempdir.path().to_path_buf().pipe(Box::new).pipe(Box::leak);
+        (tempdir, leaked_path)
+    }
 
     #[tokio::test]
     #[cfg(not(target_os = "windows"))]
     async fn packages_under_orgs_should_work() {
-        let store_path = tempdir().unwrap();
+        let (store_dir, store_path) = tempdir_with_leaked_path();
         let cas_files = download_tarball_to_store(
             &Default::default(),
-            store_path.path(),
+            &Client::new(),
+            store_path,
             "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
             Some(16697),
             "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
@@ -245,19 +273,24 @@ mod tests {
                 "types/index.test-d.ts"
             ]
         );
+
+        drop(store_dir);
     }
 
     #[tokio::test]
     async fn should_throw_error_on_checksum_mismatch() {
-        let store_path = tempdir().unwrap();
+        let (store_dir, store_path) = tempdir_with_leaked_path();
         download_tarball_to_store(
             &Default::default(),
-            store_path.path(),
+            &Client::new(),
+            store_path,
             "sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
             Some(16697),
             "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
         )
         .await
         .expect_err("checksum mismatch");
+
+        drop(store_dir);
     }
 }

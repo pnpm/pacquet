@@ -60,7 +60,7 @@ impl PackageManager {
                 let semaphore_clone = semaphore.clone();
                 let dependency = find_package_version_from_registry(
                     &self.tarball_cache,
-                    &self.config,
+                    self.config,
                     &self.http_client,
                     name,
                     version,
@@ -89,7 +89,7 @@ impl PackageManager {
                 async move {
                     let dependency = find_package_version_from_registry(
                         &self.tarball_cache,
-                        &self.config,
+                        self.config,
                         &self.http_client,
                         name,
                         version,
@@ -116,6 +116,7 @@ mod tests {
     use crate::commands::install::InstallCommandArgs;
     use crate::fs::get_all_folders;
     use crate::package_manager::PackageManager;
+    use pacquet_npmrc::Npmrc;
     use pacquet_package_json::{DependencyGroup, PackageJson};
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
@@ -190,7 +191,8 @@ mod tests {
 
         package_json.save().unwrap();
 
-        let package_manager = PackageManager::new(&package_json_path).unwrap();
+        let package_manager =
+            PackageManager::new(&package_json_path, Npmrc::current().leak()).unwrap();
         let args = InstallCommandArgs { prod: false, dev: false, no_optional: false };
         package_manager.install(&args).await.unwrap();
 
