@@ -5,6 +5,7 @@ use std::{
 
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Semaphore;
 
 use crate::{package_version::PackageVersion, NetworkError, RegistryError};
 
@@ -29,11 +30,13 @@ impl Package {
     pub async fn fetch_from_registry(
         name: &str,
         http_client: &reqwest::Client,
+        semaphore: &'static Semaphore,
         registry: &str,
     ) -> Result<Self, RegistryError> {
         let url = || format!("{registry}{name}"); // TODO: use reqwest URL directly
         let network_error = |error| NetworkError { error, url: url() };
-        http_client
+        let permit = semaphore.acquire().await.expect("acquire permit for fetch");
+        let result = http_client
             .get(url())
             .header("content-type", "application/json")
             .send()
@@ -42,7 +45,9 @@ impl Package {
             .json::<Package>()
             .await
             .map_err(network_error)?
-            .pipe(Ok)
+            .pipe(Ok);
+        drop(permit);
+        result
     }
 
     pub fn pinned_version(&self, version_field: &str) -> Option<&PackageVersion> {

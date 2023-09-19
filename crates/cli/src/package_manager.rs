@@ -7,6 +7,7 @@ use pacquet_diagnostics::{
 use pacquet_npmrc::Npmrc;
 use pacquet_package_json::PackageJson;
 use pacquet_tarball::Cache;
+use tokio::sync::Semaphore;
 
 #[derive(Error, Debug, Diagnostic)]
 pub enum AutoImportError {
@@ -53,18 +54,21 @@ pub struct PackageManager {
     pub config: &'static Npmrc,
     pub package_json: PackageJson,
     pub http_client: reqwest::Client,
+    pub semaphore: &'static Semaphore,
     pub(crate) tarball_cache: Cache,
 }
 
 impl PackageManager {
     pub fn new<P: Into<PathBuf>>(
         package_json_path: P,
+        semaphore: &'static Semaphore,
         config: &'static Npmrc,
     ) -> Result<Self, PackageManagerError> {
         Ok(PackageManager {
             config,
             package_json: PackageJson::create_if_needed(package_json_path.into())?,
             http_client: reqwest::Client::new(),
+            semaphore,
             tarball_cache: Cache::new(),
         })
     }

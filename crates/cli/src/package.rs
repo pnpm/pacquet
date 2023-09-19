@@ -5,6 +5,7 @@ use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::{download_tarball_to_store, Cache};
 use reqwest::Client;
 use std::path::Path;
+use tokio::sync::Semaphore;
 
 /// This function execute the following and returns the package
 /// - retrieves the package from the registry
@@ -18,13 +19,16 @@ pub async fn find_package_version_from_registry(
     tarball_cache: &Cache,
     config: &'static Npmrc,
     http_client: &reqwest::Client,
+    semaphore: &'static Semaphore,
     name: &str,
     version: &str,
     symlink_path: &Path,
 ) -> Result<PackageVersion, PackageManagerError> {
-    let package = Package::fetch_from_registry(name, http_client, &config.registry).await?;
+    let package =
+        Package::fetch_from_registry(name, http_client, semaphore, &config.registry).await?;
     let package_version = package.pinned_version(version).unwrap();
-    internal_fetch(tarball_cache, http_client, package_version, config, symlink_path).await?;
+    internal_fetch(tarball_cache, http_client, semaphore, package_version, config, symlink_path)
+        .await?;
     Ok(package_version.to_owned())
 }
 
@@ -32,19 +36,22 @@ pub async fn fetch_package_version_directly(
     tarball_cache: &Cache,
     config: &'static Npmrc,
     http_client: &reqwest::Client,
+    semaphore: &'static Semaphore,
     name: &str,
     version: &str,
     symlink_path: &Path,
 ) -> Result<PackageVersion, PackageManagerError> {
     let package_version =
         PackageVersion::fetch_from_registry(name, version, http_client, &config.registry).await?;
-    internal_fetch(tarball_cache, http_client, &package_version, config, symlink_path).await?;
+    internal_fetch(tarball_cache, http_client, semaphore, &package_version, config, symlink_path)
+        .await?;
     Ok(package_version.to_owned())
 }
 
 async fn internal_fetch(
     tarball_cache: &Cache,
     http_client: &Client,
+    semaphore: &'static Semaphore,
     package_version: &PackageVersion,
     config: &'static Npmrc,
     symlink_path: &Path,
@@ -55,6 +62,7 @@ async fn internal_fetch(
     let cas_paths = download_tarball_to_store(
         tarball_cache,
         http_client,
+        semaphore,
         &config.store_dir,
         package_version.dist.integrity.as_ref().expect("has integrity field"),
         package_version.dist.unpacked_size,
@@ -68,11 +76,13 @@ async fn internal_fetch(
         .join("node_modules")
         .join(&package_version.name);
 
+    let permit = semaphore.acquire().await.expect("acquire semaphore");
     config.package_import_method.import(
         &cas_paths,
         &save_path,
         &symlink_path.join(&package_version.name),
     )?;
+    drop(permit);
 
     Ok(())
 }
@@ -87,6 +97,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use tempfile::tempdir;
+    use tokio::sync::Semaphore;
 
     fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path) -> Npmrc {
         Npmrc {
@@ -122,11 +133,13 @@ mod tests {
                 .pipe(Box::new)
                 .pipe(Box::leak);
         let http_client = reqwest::Client::new();
+        let semaphore: &'static Semaphore = Semaphore::new(1000).pipe(Box::new).pipe(Box::leak);
         let symlink_path = tempdir().unwrap();
         let package = find_package_version_from_registry(
             &Default::default(),
             config,
             &http_client,
+            semaphore,
             "fast-querystring",
             "1.0.0",
             symlink_path.path(),

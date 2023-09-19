@@ -63,6 +63,7 @@ impl PackageManager {
             &self.tarball_cache,
             self.config,
             &self.http_client,
+            self.semaphore,
             &args.package,
             "latest",
             &self.config.modules_dir,
@@ -82,6 +83,7 @@ impl PackageManager {
                     &self.tarball_cache,
                     config,
                     http_client,
+                    self.semaphore,
                     name,
                     version,
                     path,
@@ -106,6 +108,7 @@ impl PackageManager {
                             &self.tarball_cache,
                             config,
                             http_client,
+                            self.semaphore,
                             name,
                             version,
                             &node_modules_path,
@@ -145,8 +148,10 @@ mod tests {
     use crate::fs::get_filenames_in_folder;
     use pacquet_npmrc::Npmrc;
     use pacquet_package_json::{DependencyGroup, PackageJson};
+    use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
+    use tokio::sync::Semaphore;
 
     use super::*;
 
@@ -157,7 +162,12 @@ mod tests {
         let current_directory = env::current_dir().unwrap();
         env::set_current_dir(&dir).unwrap();
         let package_json = dir.path().join("package.json");
-        let mut manager = PackageManager::new(&package_json, Npmrc::current().leak()).unwrap();
+        let mut manager = PackageManager::new(
+            &package_json,
+            Semaphore::new(1000).pipe(Box::new).pipe(Box::leak),
+            Npmrc::current().leak(),
+        )
+        .unwrap();
 
         // It should create a package_json if not exist
         assert!(package_json.exists());
@@ -198,7 +208,12 @@ mod tests {
         let current_directory = env::current_dir().unwrap();
         env::set_current_dir(&dir).unwrap();
         let package_json = dir.path().join("package.json");
-        let mut manager = PackageManager::new(&package_json, Npmrc::current().leak()).unwrap();
+        let mut manager = PackageManager::new(
+            &package_json,
+            Semaphore::new(1000).pipe(Box::new).pipe(Box::leak),
+            Npmrc::current().leak(),
+        )
+        .unwrap();
 
         let args = AddCommandArgs {
             package: "is-odd".to_string(),
@@ -229,7 +244,12 @@ mod tests {
         let current_directory = env::current_dir().unwrap();
         env::set_current_dir(&dir).unwrap();
         let package_json = dir.path().join("package.json");
-        let mut manager = PackageManager::new(&package_json, Npmrc::current().leak()).unwrap();
+        let mut manager = PackageManager::new(
+            &package_json,
+            Semaphore::new(1000).pipe(Box::new).pipe(Box::leak),
+            Npmrc::current().leak(),
+        )
+        .unwrap();
 
         let args = AddCommandArgs {
             package: "is-odd".to_string(),
@@ -253,7 +273,12 @@ mod tests {
         let current_directory = env::current_dir().unwrap();
         env::set_current_dir(&dir).unwrap();
         let package_json = dir.path().join("package.json");
-        let mut manager = PackageManager::new(&package_json, Npmrc::current().leak()).unwrap();
+        let mut manager = PackageManager::new(
+            &package_json,
+            Semaphore::new(1000).pipe(Box::new).pipe(Box::leak),
+            Npmrc::current().leak(),
+        )
+        .unwrap();
 
         let args = AddCommandArgs {
             package: "is-odd".to_string(),
@@ -277,7 +302,12 @@ mod tests {
         let current_directory = env::current_dir().unwrap();
         env::set_current_dir(&dir).unwrap();
         let package_json = dir.path().join("package.json");
-        let mut manager = PackageManager::new(&package_json, Npmrc::current().leak()).unwrap();
+        let mut manager = PackageManager::new(
+            &package_json,
+            Semaphore::new(1000).pipe(Box::new).pipe(Box::leak),
+            Npmrc::current().leak(),
+        )
+        .unwrap();
 
         let args = AddCommandArgs {
             package: "is-odd".to_string(),

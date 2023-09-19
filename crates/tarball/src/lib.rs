@@ -16,7 +16,7 @@ use pipe_trait::Pipe;
 use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
 
 #[derive(Error, Debug, Diagnostic)]
@@ -116,6 +116,7 @@ fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm,
 pub async fn download_tarball_to_store(
     cache: &Cache,
     http_client: &Client,
+    semaphore: &'static Semaphore,
     store_dir: &'static Path,
     package_integrity: &str,
     package_unpacked_size: Option<usize>,
@@ -146,6 +147,7 @@ pub async fn download_tarball_to_store(
     }
 
     let network_error = |error| NetworkError { url: package_url.to_string(), error };
+    let permit = semaphore.acquire().await.expect("acquire permit for network request");
     let response = http_client
         .get(package_url)
         .send()
@@ -154,6 +156,7 @@ pub async fn download_tarball_to_store(
         .bytes()
         .await
         .map_err(network_error)?;
+    drop(permit);
 
     tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
 
@@ -241,6 +244,7 @@ mod tests {
         let cas_files = download_tarball_to_store(
             &Default::default(),
             &Client::new(),
+            Semaphore::new(1000).pipe(Box::new).pipe(Box::leak),
             store_path,
             "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
             Some(16697),
@@ -280,6 +284,7 @@ mod tests {
         download_tarball_to_store(
             &Default::default(),
             &Client::new(),
+            Semaphore::new(1000).pipe(Box::new).pipe(Box::leak),
             store_path,
             "sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
             Some(16697),
