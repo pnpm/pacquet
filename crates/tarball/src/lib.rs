@@ -121,60 +121,49 @@ pub async fn download_tarball_to_store(
     package_unpacked_size: Option<usize>,
     package_url: &str,
 ) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
-    // Check if a cache entry exists for the given URL
-    match cache.get(package_url) {
-        Some(cache_lock) => {
-            // If an entry exists, wait for it to be computed
-            let notify;
-            {
-                let cache_value = cache_lock.write().await;
-                match &*cache_value {
-                    CacheValue::Available(cas_paths) => {
-                        return Ok(cas_paths.clone());
-                    }
-                    CacheValue::InProgress(existing_notify) => {
-                        notify = existing_notify.clone();
-                    }
-                }
-            }
-            // Wait for the cache computation to be done
-            notify.notified().await;
-            // Return the computed cache value
-            if let Some(cached) = cache.get(package_url) {
-                if let CacheValue::Available(cas_paths) = &*cached.read().await {
+    if let Some(cache_lock) = cache.get(package_url) {
+        let notify;
+        {
+            let cache_value = cache_lock.write().await;
+            match &*cache_value {
+                CacheValue::Available(cas_paths) => {
                     return Ok(cas_paths.clone());
                 }
+                CacheValue::InProgress(existing_notify) => {
+                    notify = existing_notify.clone();
+                }
             }
         }
-        None => {
-            // No cache entry exists, compute the value
-            let notify = Arc::new(Notify::new());
-            let cache_lock = Arc::new(RwLock::new(CacheValue::InProgress(notify.clone())));
-            cache.insert(package_url.to_string(), cache_lock.clone());
-
-            let cas_paths = compute_tarball_data(
-                package_url,
-                http_client,
-                store_dir,
-                package_integrity,
-                package_unpacked_size,
-            )
-            .await?;
-            let mut cache_write = cache_lock.write().await;
-            *cache_write = CacheValue::Available(cas_paths.clone());
-            // Notify other waiting tasks that computation is done
-            notify.notify_waiters();
-            return Ok(cas_paths);
+        notify.notified().await;
+        if let Some(cached) = cache.get(package_url) {
+            if let CacheValue::Available(cas_paths) = &*cached.read().await {
+                return Ok(cas_paths.clone());
+            }
         }
+        Err(TarballError::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Failed to get or compute tarball data",
+        )))
+    } else {
+        let notify = Arc::new(Notify::new());
+        let cache_lock = Arc::new(RwLock::new(CacheValue::InProgress(notify.clone())));
+        cache.insert(package_url.to_string(), cache_lock.clone());
+        let cas_paths = download_tarball_to_store_uncached(
+            package_url,
+            http_client,
+            store_dir,
+            package_integrity,
+            package_unpacked_size,
+        )
+        .await?;
+        let mut cache_write = cache_lock.write().await;
+        *cache_write = CacheValue::Available(cas_paths.clone());
+        notify.notify_waiters();
+        return Ok(cas_paths);
     }
-
-    Err(TarballError::Io(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        "Failed to get or compute tarball data",
-    )))
 }
 
-async fn compute_tarball_data(
+async fn download_tarball_to_store_uncached(
     package_url: &str,
     http_client: &Client,
     store_dir: &'static Path,
