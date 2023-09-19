@@ -16,7 +16,7 @@ use pipe_trait::Pipe;
 use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::{RwLock, Semaphore, Notify};
 use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
 
 #[derive(Error, Debug, Diagnostic)]
@@ -80,10 +80,10 @@ pub enum TarballError {
 }
 
 /// Value of the cache.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum CacheValue {
     /// The package is being processed.
-    InProgress,
+    InProgress(Arc<Notify>),
     /// The package is saved.
     Available(Arc<HashMap<OsString, PathBuf>>),
 }
@@ -122,29 +122,64 @@ pub async fn download_tarball_to_store(
     package_url: &str,
     semaphore: &Semaphore
 ) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
-    while let Some(cache_lock) = cache.get(package_url) {
-        tracing::info!(target: "pacquet::download", ?package_url, "Job taken");
+    // Check if a cache entry exists for the given URL
+    match cache.get(package_url) {
+        Some(cache_lock) => {
+            // If an entry exists, wait for it to be computed
+            let notify = Arc::new(Notify::new());
+            {
+                let mut cache_value = cache_lock.write().await;
+                match &*cache_value {
+                    CacheValue::Available(cas_paths) => {
+                        return Ok(cas_paths.clone());
+                    },
+                    CacheValue::InProgress(_) => {
+                        cache.insert(package_url.to_string(), Arc::new(RwLock::new(CacheValue::InProgress(notify.clone()))));
+                    },
+                }
+            }
+            // Wait for the cache computation to be done
+            notify.notified().await;
+            // Return the computed cache value
+            if let Some(cached) = cache.get(package_url) {
+                if let CacheValue::Available(cas_paths) = &*cached.read().await {
+                    return Ok(cas_paths.clone());
+                }
+            }
+        },
+        None => {
+            // No cache entry exists, compute the value
+            let notify = Arc::new(Notify::new());
+            cache.insert(package_url.to_string(), Arc::new(RwLock::new(CacheValue::InProgress(notify.clone()))));
 
-        match &*cache_lock.read().await {
-            CacheValue::Available(cas_paths) => {
-                tracing::info!(target: "pacquet::download", ?package_url, cas_paths_len = cas_paths.len(), "Cache hit");
-                return Ok(cas_paths.clone());
-            }
-            CacheValue::InProgress => {
-                tracing::info!(target: "pacquet::download", ?package_url, "Wait for cache");
-            }
-        }
-        drop(cache_lock);
-        tokio::task::yield_now().await; // prevent deadlock
-        continue;
+            let cas_paths = compute_tarball_data(
+                package_url,
+                http_client,
+                store_dir,
+                package_integrity,
+                package_unpacked_size,
+                semaphore,
+            ).await?;
+
+            cache.insert(package_url.to_string(), Arc::new(RwLock::new(CacheValue::Available(cas_paths.clone()))));
+            // Notify other waiting tasks that computation is done
+            notify.notify_waiters();
+            return Ok(cas_paths);
+        },
     }
 
+    Err(TarballError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to get or compute tarball data")))
+}
+
+async fn compute_tarball_data(
+    package_url: &str,
+    http_client: &Client,
+    store_dir: &'static Path,
+    package_integrity: &str,
+    package_unpacked_size: Option<usize>,
+    semaphore: &Semaphore,
+) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
     tracing::info!(target: "pacquet::download", ?package_url, "New cache");
-
-    let cache_lock = CacheValue::InProgress.pipe(RwLock::new).pipe(Arc::new);
-    if cache.insert(package_url.to_string(), cache_lock.clone()).is_some() {
-        tracing::warn!(target: "pacquet::download", ?package_url, "Race condition detected when writing to cache");
-    }
 
     let network_error = |error| NetworkError { url: package_url.to_string(), error };
     let permit = semaphore.acquire().await;
@@ -206,9 +241,6 @@ pub async fn download_tarball_to_store(
     .pipe(Arc::new);
 
     tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
-
-    let mut cache_write = cache_lock.write().await;
-    *cache_write = CacheValue::Available(cas_paths.clone());
 
     Ok(cas_paths)
 }
