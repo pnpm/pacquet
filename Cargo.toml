@@ -40,7 +40,7 @@ pipe-trait         = { version = "0.4.0" }
 rayon              = { version = "1.7.0" }
 serde              = { version = "1.0.188", features = ["derive"] }
 serde_ini          = { version = "0.2.0" }
-serde_json         = { version = "1.0.106", features = ["preserve_order"] }
+serde_json         = { version = "1.0.107", features = ["preserve_order"] }
 serde_yaml         = { version = "0.9.1" }
 ssri               = { version = "9.0.0" }
 strum              = { version = "0.25.0", features = ["derive"] }
@@ -58,7 +58,7 @@ criterion         = { version = "0.5.1", features = ["async_tokio"] }
 pretty_assertions = { version = "1.4.0" }
 project-root      = { version = "0.2.2" }
 tempfile          = { version = "3.8.0" }
-mockito           = { version = "1.1.0" }
+mockito           = { version = "1.2.0" }
 
 [workspace.metadata.workspaces]
 allow_branch = "main"

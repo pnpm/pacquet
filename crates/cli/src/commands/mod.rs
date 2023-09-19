@@ -18,7 +18,7 @@ fn default_current_dir() -> OsString {
 #[derive(Parser, Debug)]
 #[command(name = "pacquet")]
 #[command(bin_name = "pacquet")]
-#[command(version = "0.1.3")]
+#[command(version = "0.2.1")]
 #[command(about = "Experimental package manager for node.js")]
 pub struct Cli {
     #[command(subcommand)]
