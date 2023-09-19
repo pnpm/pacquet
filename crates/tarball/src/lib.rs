@@ -149,10 +149,8 @@ pub async fn download_tarball_to_store(
         None => {
             // No cache entry exists, compute the value
             let notify = Arc::new(Notify::new());
-            cache.insert(
-                package_url.to_string(),
-                Arc::new(RwLock::new(CacheValue::InProgress(notify.clone()))),
-            );
+            let cache_lock = Arc::new(RwLock::new(CacheValue::InProgress(notify.clone())));
+            cache.insert(package_url.to_string(), cache_lock.clone());
 
             let cas_paths = compute_tarball_data(
                 package_url,
@@ -162,11 +160,8 @@ pub async fn download_tarball_to_store(
                 package_unpacked_size,
             )
             .await?;
-
-            cache.insert(
-                package_url.to_string(),
-                Arc::new(RwLock::new(CacheValue::Available(cas_paths.clone()))),
-            );
+            let mut cache_write = cache_lock.write().await;
+            *cache_write = CacheValue::Available(cas_paths.clone());
             // Notify other waiting tasks that computation is done
             notify.notify_waiters();
             return Ok(cas_paths);
