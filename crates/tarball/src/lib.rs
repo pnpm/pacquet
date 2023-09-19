@@ -159,7 +159,7 @@ pub async fn download_tarball_to_store(
         let mut cache_write = cache_lock.write().await;
         *cache_write = CacheValue::Available(cas_paths.clone());
         notify.notify_waiters();
-        return Ok(cas_paths);
+        Ok(cas_paths)
     }
 }
 
