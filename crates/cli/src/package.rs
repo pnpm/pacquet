@@ -24,9 +24,11 @@ pub async fn find_package_version_from_registry(
     symlink_path: &Path,
     semaphore: &Semaphore,
 ) -> Result<PackageVersion, PackageManagerError> {
-    let package = Package::fetch_from_registry(name, http_client, &config.registry, semaphore).await?;
+    let package =
+        Package::fetch_from_registry(name, http_client, &config.registry, semaphore).await?;
     let package_version = package.pinned_version(version).unwrap();
-    internal_fetch(tarball_cache, http_client, package_version, config, symlink_path, semaphore).await?;
+    internal_fetch(tarball_cache, http_client, package_version, config, symlink_path, semaphore)
+        .await?;
     Ok(package_version.to_owned())
 }
 
@@ -39,9 +41,16 @@ pub async fn fetch_package_version_directly(
     symlink_path: &Path,
     semaphore: &Semaphore,
 ) -> Result<PackageVersion, PackageManagerError> {
-    let package_version =
-        PackageVersion::fetch_from_registry(name, version, http_client, &config.registry, semaphore).await?;
-    internal_fetch(tarball_cache, http_client, &package_version, config, symlink_path, semaphore).await?;
+    let package_version = PackageVersion::fetch_from_registry(
+        name,
+        version,
+        http_client,
+        &config.registry,
+        semaphore,
+    )
+    .await?;
+    internal_fetch(tarball_cache, http_client, &package_version, config, symlink_path, semaphore)
+        .await?;
     Ok(package_version.to_owned())
 }
 

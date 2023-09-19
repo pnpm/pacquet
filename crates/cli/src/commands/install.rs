@@ -7,8 +7,8 @@ use pacquet_diagnostics::tracing;
 use pacquet_package_json::DependencyGroup;
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
-use tokio::sync::Semaphore;
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 
 #[derive(Parser, Debug)]
 pub struct InstallCommandArgs {
