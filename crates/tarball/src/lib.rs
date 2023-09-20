@@ -134,7 +134,7 @@ pub async fn download_tarball_to_store(
         if let CacheValue::Available(cas_paths) = &*cache_lock.read().await {
             return Ok(Arc::clone(cas_paths));
         }
-        panic!("Failed to get or compute tarball data for {package_url:?}");
+        unreachable!("Failed to get or compute tarball data for {package_url:?}");
     } else {
         let notify = Arc::new(Notify::new());
         let cache_lock = notify
