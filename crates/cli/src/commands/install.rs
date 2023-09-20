@@ -57,7 +57,6 @@ impl PackageManager {
         package
             .dependencies(self.config.auto_install_peers)
             .map(|(name, version)| async {
-                let semaphore_clone = semaphore.clone();
                 let dependency = find_package_version_from_registry(
                     &self.tarball_cache,
                     self.config,
@@ -65,11 +64,11 @@ impl PackageManager {
                     name,
                     version,
                     &node_modules_path,
-                    &semaphore_clone,
+                    &semaphore,
                 )
                 .await
                 .unwrap();
-                self.install_dependencies(&dependency, &semaphore_clone).await;
+                self.install_dependencies(&dependency, &semaphore).await;
             })
             .pipe(future::join_all)
             .await;
@@ -85,7 +84,7 @@ impl PackageManager {
         self.package_json
             .dependencies(args.dependency_groups())
             .map(|(name, version)| {
-                let semaphore_clone = semaphore.clone();
+                let semaphore_clone = Arc::clone(&semaphore);
                 async move {
                     let dependency = find_package_version_from_registry(
                         &self.tarball_cache,
