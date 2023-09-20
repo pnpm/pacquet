@@ -130,12 +130,9 @@ pub async fn download_tarball_to_store(
         };
 
         tracing::info!(target: "pacquet::download", ?package_url, "Wait for cache");
-        drop(cache_lock);
         notify.notified().await;
-        if let Some(cached) = cache.get(package_url) {
-            if let CacheValue::Available(cas_paths) = &*cached.read().await {
-                return Ok(Arc::clone(cas_paths));
-            }
+        if let CacheValue::Available(cas_paths) = &*cache_lock.read().await {
+            return Ok(Arc::clone(cas_paths));
         }
         panic!("Failed to get or compute tarball data for {package_url:?}");
     } else {
