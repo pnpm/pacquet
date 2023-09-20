@@ -140,7 +140,11 @@ pub async fn download_tarball_to_store(
         )))
     } else {
         let notify = Arc::new(Notify::new());
-        let cache_lock = Arc::new(RwLock::new(CacheValue::InProgress(Arc::clone(&notify))));
+        let cache_lock = notify
+            .pipe_ref(Arc::clone)
+            .pipe(CacheValue::InProgress)
+            .pipe(RwLock::new)
+            .pipe(Arc::new);
         cache.insert(package_url.to_string(), Arc::clone(&cache_lock));
         let cas_paths = download_tarball_to_store_uncached(
             package_url,
