@@ -122,18 +122,12 @@ pub async fn download_tarball_to_store(
     package_url: &str,
 ) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
     if let Some(cache_lock) = cache.get(package_url) {
-        let notify;
-        {
-            let cache_value = cache_lock.write().await;
-            match &*cache_value {
-                CacheValue::Available(cas_paths) => {
-                    return Ok(Arc::clone(cas_paths));
-                }
-                CacheValue::InProgress(existing_notify) => {
-                    notify = Arc::clone(existing_notify);
-                }
+        let notify = match &*cache_lock.write().await {
+            CacheValue::Available(cas_paths) => {
+                return Ok(Arc::clone(cas_paths));
             }
-        }
+            CacheValue::InProgress(notify) => Arc::clone(notify),
+        };
         notify.notified().await;
         if let Some(cached) = cache.get(package_url) {
             if let CacheValue::Available(cas_paths) = &*cached.read().await {
