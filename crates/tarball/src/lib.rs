@@ -135,10 +135,7 @@ pub async fn download_tarball_to_store(
                 return Ok(Arc::clone(cas_paths));
             }
         }
-        Err(TarballError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Failed to get or compute tarball data",
-        )))
+        panic!("Failed to get or compute tarball data for {package_url:?}");
     } else {
         let notify = Arc::new(Notify::new());
         let cache_lock = notify
