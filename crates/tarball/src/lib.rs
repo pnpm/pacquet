@@ -122,22 +122,16 @@ pub async fn download_tarball_to_store(
     package_url: &str,
 ) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
     if let Some(cache_lock) = cache.get(package_url) {
-        let notify;
-        {
-            let cache_value = cache_lock.write().await;
-            match &*cache_value {
-                CacheValue::Available(cas_paths) => {
-                    return Ok(cas_paths.clone());
-                }
-                CacheValue::InProgress(existing_notify) => {
-                    notify = existing_notify.clone();
-                }
+        let notify = match &*cache_lock.write().await {
+            CacheValue::Available(cas_paths) => {
+                return Ok(Arc::clone(cas_paths));
             }
-        }
+            CacheValue::InProgress(notify) => Arc::clone(notify),
+        };
         notify.notified().await;
         if let Some(cached) = cache.get(package_url) {
             if let CacheValue::Available(cas_paths) = &*cached.read().await {
-                return Ok(cas_paths.clone());
+                return Ok(Arc::clone(cas_paths));
             }
         }
         Err(TarballError::Io(std::io::Error::new(
@@ -146,8 +140,12 @@ pub async fn download_tarball_to_store(
         )))
     } else {
         let notify = Arc::new(Notify::new());
-        let cache_lock = Arc::new(RwLock::new(CacheValue::InProgress(notify.clone())));
-        cache.insert(package_url.to_string(), cache_lock.clone());
+        let cache_lock = notify
+            .pipe_ref(Arc::clone)
+            .pipe(CacheValue::InProgress)
+            .pipe(RwLock::new)
+            .pipe(Arc::new);
+        cache.insert(package_url.to_string(), Arc::clone(&cache_lock));
         let cas_paths = download_tarball_to_store_uncached(
             package_url,
             http_client,
@@ -157,7 +155,7 @@ pub async fn download_tarball_to_store(
         )
         .await?;
         let mut cache_write = cache_lock.write().await;
-        *cache_write = CacheValue::Available(cas_paths.clone());
+        *cache_write = CacheValue::Available(Arc::clone(&cas_paths));
         notify.notify_waiters();
         Ok(cas_paths)
     }

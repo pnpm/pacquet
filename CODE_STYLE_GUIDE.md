@@ -174,3 +174,57 @@ assert_eq!(received, 5);
 ```
 
 If the assertion fails, the value of `received` will appear alongside the error message.
+
+### Cloning an atomic counter
+
+Prefer using `Arc::clone` or `Rc::clone` to vague `.clone()` or `Clone::clone`.
+
+**Error resistance:** Explicitly specifying the cloned type would avoid accidentally cloning the wrong type. As seen below:
+
+```rust
+fn my_function(value: Arc<Vec<u8>>) {
+    // ... do many things here
+    let value_clone = value.clone(); // inexpensive clone
+    tokio::task::spawn(async {
+        // ... do stuff with value_clone
+    })
+}
+```
+
+The above function could easily refactored into the following code:
+
+```rust
+fn my_function(value: &Vec<u8>) {
+    // ... do many things here
+    let value_clone = value.clone(); // expensive clone, oops
+    tokio::task::spawn(async {
+        // ... do stuff with value_clone
+    })
+}
+```
+
+With an explicit `Arc::clone`, however, the performance characteristic will never be missed:
+
+```rust
+fn my_function(value: Arc<Vec<u8>>) {
+    // ... do many things here
+    let value_clone = Arc::clone(&value); // no compile error
+    tokio::task::spawn(async {
+        // ... do stuff with value_clone
+    })
+}
+```
+
+```rust
+fn my_function(value: &Vec<u8>) {
+    // ... do many things here
+    let value_clone = Arc::clone(&value); // compile error
+    tokio::task::spawn(async {
+        // ... do stuff with value_clone
+    })
+}
+```
+
+The above code is still valid code, and the Rust compiler doesn't error, but it has a different performance characteristic now.
+
+**Readability:** The generic `.clone()` or `Clone::clone` often implies an expensive operation (for example: cloning a `Vec`), but `Arc` and `Rc` are not as expensive as the generic `.clone()`. Explicitly mark the cloned type would aid in future refactoring.
