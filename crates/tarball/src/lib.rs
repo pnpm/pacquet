@@ -128,16 +128,13 @@ pub async fn download_tarball_to_store(
             }
             CacheValue::InProgress(notify) => Arc::clone(notify),
         };
+
+        tracing::info!(target: "pacquet::download", ?package_url, "Wait for cache");
         notify.notified().await;
-        if let Some(cached) = cache.get(package_url) {
-            if let CacheValue::Available(cas_paths) = &*cached.read().await {
-                return Ok(Arc::clone(cas_paths));
-            }
+        if let CacheValue::Available(cas_paths) = &*cache_lock.read().await {
+            return Ok(Arc::clone(cas_paths));
         }
-        Err(TarballError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Failed to get or compute tarball data",
-        )))
+        unreachable!("Failed to get or compute tarball data for {package_url:?}");
     } else {
         let notify = Arc::new(Notify::new());
         let cache_lock = notify
@@ -145,7 +142,9 @@ pub async fn download_tarball_to_store(
             .pipe(CacheValue::InProgress)
             .pipe(RwLock::new)
             .pipe(Arc::new);
-        cache.insert(package_url.to_string(), Arc::clone(&cache_lock));
+        if cache.insert(package_url.to_string(), Arc::clone(&cache_lock)).is_some() {
+            tracing::warn!(target: "pacquet::download", ?package_url, "Race condition detected when writing to cache");
+        }
         let cas_paths = download_tarball_to_store_uncached(
             package_url,
             http_client,
