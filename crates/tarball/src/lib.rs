@@ -128,6 +128,7 @@ pub async fn download_tarball_to_store(
             }
             CacheValue::InProgress(notify) => Arc::clone(notify),
         };
+        drop(cache_lock);
         notify.notified().await;
         if let Some(cached) = cache.get(package_url) {
             if let CacheValue::Available(cas_paths) = &*cached.read().await {
