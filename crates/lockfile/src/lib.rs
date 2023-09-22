@@ -4,12 +4,7 @@ mod package;
 pub use comver::{ComVer, ParseComVerError};
 pub use package::{LockfilePackage, LockfilePackageResolution};
 
-use std::{
-    collections::HashMap,
-    env, fs,
-    io::{Read, Write},
-    path::PathBuf,
-};
+use std::collections::HashMap;
 
 use pacquet_diagnostics::{
     miette::{self, Diagnostic},
@@ -56,62 +51,4 @@ pub struct Lockfile {
     pub overrides: Option<HashMap<String, String>>,
     pub dependencies: Option<HashMap<String, LockfileDependency>>,
     pub packages: Option<HashMap<String, LockfilePackage>>,
-}
-
-impl Default for Lockfile {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Lockfile {
-    pub fn path() -> Result<PathBuf, LockfileError> {
-        Ok(env::current_dir()?.join("pacquet-lock.yaml"))
-    }
-
-    pub fn new() -> Self {
-        Lockfile {
-            lockfile_version: ComVer::new(6, 0),
-            settings: Some(LockfileSettings {
-                auto_install_peers: true,
-                exclude_links_from_lockfile: false,
-            }),
-            never_built_dependencies: None,
-            overrides: None,
-            dependencies: None,
-            packages: None,
-        }
-    }
-
-    pub fn create() -> Result<Self, LockfileError> {
-        let file = Lockfile::new();
-        file.save()?;
-        Ok(file)
-    }
-
-    pub fn open() -> Result<Lockfile, LockfileError> {
-        let yaml_path = Lockfile::path()?;
-        let mut file = fs::File::open(yaml_path)?;
-        let mut buffer = String::new();
-        file.read_to_string(&mut buffer)?;
-        let lockfile: Lockfile = serde_yaml::from_str(&buffer)?;
-        Ok(lockfile)
-    }
-
-    pub fn create_or_open() -> Result<Lockfile, LockfileError> {
-        let yaml_path = Lockfile::path()?;
-        if yaml_path.exists() {
-            Ok(Lockfile::open()?)
-        } else {
-            Ok(Lockfile::create()?)
-        }
-    }
-
-    pub fn save(&self) -> Result<(), LockfileError> {
-        let yaml_path = Lockfile::path()?;
-        let mut file = fs::File::create(yaml_path)?;
-        let yaml = serde_yaml::to_string(&self)?;
-        file.write_all(yaml.as_bytes())?;
-        Ok(())
-    }
 }
