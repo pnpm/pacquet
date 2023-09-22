@@ -1297,6 +1297,7 @@ dependencies = [
  "pacquet_cafs",
  "pacquet_diagnostics",
  "pacquet_executor",
+ "pacquet_lockfile",
  "pacquet_npmrc",
  "pacquet_package_json",
  "pacquet_registry",

@@ -4,6 +4,7 @@ use pacquet_diagnostics::{
     miette::{self, Diagnostic},
     thiserror::{self, Error},
 };
+use pacquet_lockfile::Lockfile;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_json::PackageJson;
 use pacquet_tarball::Cache;
@@ -38,6 +39,10 @@ pub enum PackageManagerError {
 
     #[error(transparent)]
     #[diagnostic(transparent)]
+    LoadLockfileError(#[from] pacquet_lockfile::LoadLockfileError),
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
     Registry(#[from] pacquet_registry::RegistryError),
 
     #[error(transparent)]
@@ -52,6 +57,7 @@ pub enum PackageManagerError {
 pub struct PackageManager {
     pub config: &'static Npmrc,
     pub package_json: PackageJson,
+    pub lockfile: Option<Lockfile>,
     pub http_client: reqwest::Client,
     pub(crate) tarball_cache: Cache,
 }
@@ -64,6 +70,7 @@ impl PackageManager {
         Ok(PackageManager {
             config,
             package_json: PackageJson::create_if_needed(package_json_path.into())?,
+            lockfile: Lockfile::load_from_current_dir()?,
             http_client: reqwest::Client::new(),
             tarball_cache: Cache::new(),
         })
