@@ -7,7 +7,7 @@ use std::{num::ParseIntError, str::FromStr};
 /// It contains only major and minor.
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[display(fmt = "{major}.{minor}")]
-#[serde(try_from = "String", into = "String")]
+#[serde(try_from = "&'de str", into = "String")]
 pub struct ComVer {
     pub major: u16,
     pub minor: u16,
@@ -41,9 +41,9 @@ impl FromStr for ComVer {
     }
 }
 
-impl TryFrom<String> for ComVer {
+impl<'a> TryFrom<&'a str> for ComVer {
     type Error = ParseComVerError;
-    fn try_from(value: String) -> Result<Self, Self::Error> {
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
         value.parse()
     }
 }
