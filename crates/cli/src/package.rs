@@ -17,7 +17,7 @@ use std::path::Path;
 pub async fn find_package_version_from_registry(
     tarball_cache: &Cache,
     config: &'static Npmrc,
-    http_client: &reqwest::Client,
+    http_client: &Client,
     name: &str,
     version: &str,
     symlink_path: &Path,
@@ -31,7 +31,7 @@ pub async fn find_package_version_from_registry(
 pub async fn fetch_package_version_directly(
     tarball_cache: &Cache,
     config: &'static Npmrc,
-    http_client: &reqwest::Client,
+    http_client: &Client,
     name: &str,
     version: &str,
     symlink_path: &Path,
