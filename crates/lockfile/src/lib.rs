@@ -48,7 +48,7 @@ pub struct LockfileSettings {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Lockfile {
-    pub lock_file_version: String,
+    pub lockfile_version: String,
     pub settings: Option<LockfileSettings>,
     pub never_built_dependencies: Option<Vec<String>>,
     pub overrides: Option<HashMap<String, String>>,
@@ -69,7 +69,7 @@ impl Lockfile {
 
     pub fn new() -> Self {
         Lockfile {
-            lock_file_version: "6.0".to_string(),
+            lockfile_version: "6.0".to_string(),
             settings: Some(LockfileSettings {
                 auto_install_peers: true,
                 exclude_links_from_lockfile: false,
