@@ -14,6 +14,7 @@ repository.workspace  = true
 pacquet_diagnostics = { workspace = true }
 
 derive_more = { workspace = true }
+pipe-trait  = { workspace = true }
 serde       = { workspace = true }
 serde_yaml  = { workspace = true }
 
