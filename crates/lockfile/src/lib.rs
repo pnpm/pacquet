@@ -1,10 +1,12 @@
 mod comver;
+mod dependency_path;
 mod package;
 
 pub use comver::{ComVer, ParseComVerError};
+pub use dependency_path::DependencyPath;
 pub use package::{LockfilePackage, LockfilePackageResolution};
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display, hash::Hash, ops::Deref};
 
 use pacquet_diagnostics::{
     miette::{self, Diagnostic},
@@ -41,14 +43,19 @@ pub struct LockfileSettings {
     auto_install_peers: bool,
     exclude_links_from_lockfile: bool,
 }
-
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Lockfile {
+#[serde(
+    rename_all = "camelCase",
+    bound(
+        deserialize = "DependencyPath<Text>: TryFrom<&'de str>, <DependencyPath<Text> as TryFrom<&'de str>>::Error: Display",
+        serialize = "Text: Clone + Deref<Target = str>"
+    )
+)]
+pub struct Lockfile<Text: Eq + Hash> {
     pub lockfile_version: ComVer,
     pub settings: Option<LockfileSettings>,
     pub never_built_dependencies: Option<Vec<String>>,
     pub overrides: Option<HashMap<String, String>>,
     pub dependencies: Option<HashMap<String, LockfileDependency>>,
-    pub packages: Option<HashMap<String, LockfilePackage>>,
+    pub packages: Option<HashMap<DependencyPath<Text>, LockfilePackage>>,
 }
