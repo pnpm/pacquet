@@ -13,5 +13,9 @@ repository.workspace  = true
 [dependencies]
 pacquet_diagnostics = { workspace = true }
 
-serde      = { workspace = true }
-serde_yaml = { workspace = true }
+derive_more = { workspace = true }
+serde       = { workspace = true }
+serde_yaml  = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

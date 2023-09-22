@@ -1,5 +1,7 @@
+mod comver;
 mod package;
 
+pub use comver::{ComVer, ParseComVerError};
 pub use package::{LockfilePackage, LockfilePackageResolution};
 
 use std::{
@@ -48,7 +50,7 @@ pub struct LockfileSettings {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Lockfile {
-    pub lockfile_version: String,
+    pub lockfile_version: ComVer,
     pub settings: Option<LockfileSettings>,
     pub never_built_dependencies: Option<Vec<String>>,
     pub overrides: Option<HashMap<String, String>>,
@@ -69,7 +71,7 @@ impl Lockfile {
 
     pub fn new() -> Self {
         Lockfile {
-            lockfile_version: "6.0".to_string(),
+            lockfile_version: ComVer::new(6, 0),
             settings: Some(LockfileSettings {
                 auto_install_peers: true,
                 exclude_links_from_lockfile: false,
