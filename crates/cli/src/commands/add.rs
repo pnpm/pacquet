@@ -242,7 +242,7 @@ mod tests {
         };
         manager.add(&args).await.unwrap();
         let file = PackageJson::from_path(dir.path().join("package.json")).unwrap();
-        assert!(file.dependencies([DependencyGroup::Default]).any(|(k, _)| k == "is-odd"));
+        assert!(file.dependencies([DependencyGroup::Default]).any(|(k, _, _)| k == "is-odd"));
         env::set_current_dir(&current_directory).unwrap();
     }
 
@@ -266,7 +266,7 @@ mod tests {
         };
         manager.add(&args).await.unwrap();
         let file = PackageJson::from_path(dir.path().join("package.json")).unwrap();
-        assert!(file.dependencies([DependencyGroup::Dev]).any(|(k, _)| k == "is-odd"));
+        assert!(file.dependencies([DependencyGroup::Dev]).any(|(k, _, _)| k == "is-odd"));
         env::set_current_dir(&current_directory).unwrap();
     }
 
@@ -290,8 +290,8 @@ mod tests {
         };
         manager.add(&args).await.unwrap();
         let file = PackageJson::from_path(dir.path().join("package.json")).unwrap();
-        assert!(file.dependencies([DependencyGroup::Dev]).any(|(k, _)| k == "is-odd"));
-        assert!(file.dependencies([DependencyGroup::Peer]).any(|(k, _)| k == "is-odd"));
+        assert!(file.dependencies([DependencyGroup::Dev]).any(|(k, _, _)| k == "is-odd"));
+        assert!(file.dependencies([DependencyGroup::Peer]).any(|(k, _, _)| k == "is-odd"));
         env::set_current_dir(&current_directory).unwrap();
     }
 }

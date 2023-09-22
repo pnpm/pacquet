@@ -132,15 +132,19 @@ impl PackageJson {
     pub fn dependencies<'a>(
         &'a self,
         groups: impl IntoIterator<Item = DependencyGroup> + 'a,
-    ) -> impl Iterator<Item = (&'a str, &'a str)> + 'a {
+    ) -> impl Iterator<Item = (&'a str, &'a str, DependencyGroup)> + 'a {
         // TODO: add error when `dependencies` is found to not be an object
         // TODO: add error when `version` is found to not be a string
-        groups
-            .into_iter()
-            .flat_map(|group| self.value.get::<&str>(group.into()))
-            .flat_map(|dependencies| dependencies.as_object())
-            .flatten()
-            .flat_map(|(name, version)| version.as_str().map(|value| (name.as_str(), value)))
+        groups.into_iter().flat_map(move |group| {
+            self.value
+                .get::<&str>(group.into())
+                .and_then(|dependencies| dependencies.as_object())
+                .into_iter()
+                .flatten()
+                .flat_map(move |(name, version)| {
+                    version.as_str().map(|value| (name.as_str(), value, group))
+                })
+        })
     }
 
     pub fn add_dependency(
@@ -229,10 +233,12 @@ mod tests {
         let mut package_json = PackageJson::create_if_needed(tmp.clone()).unwrap();
         package_json.add_dependency("fastify", "1.0.0", DependencyGroup::Default).unwrap();
 
-        let dependencies: HashMap<_, _> =
-            package_json.dependencies([DependencyGroup::Default]).collect();
+        let dependencies: HashMap<_, (_, _)> = package_json
+            .dependencies([DependencyGroup::Default])
+            .map(|(name, version, group)| (name, (version, group)))
+            .collect();
         assert!(dependencies.contains_key("fastify"));
-        assert_eq!(dependencies.get("fastify").unwrap(), &"1.0.0");
+        assert_eq!(dependencies.get("fastify").unwrap(), &("1.0.0", DependencyGroup::Default));
         package_json.save().unwrap();
         assert!(read_to_string(tmp).unwrap().contains("fastify"));
     }
@@ -277,7 +283,12 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "{}", data).unwrap();
         let package_json = PackageJson::create_if_needed(tmp.path().to_path_buf()).unwrap();
-        let dependencies = |groups| package_json.dependencies(groups).collect::<HashMap<_, _>>();
+        let dependencies = |groups| {
+            package_json
+                .dependencies(groups)
+                .map(|(name, version, group)| (name, (version, group)))
+                .collect::<HashMap<_, (_, _)>>()
+        };
         assert!(dependencies([DependencyGroup::Peer]).contains_key("fast-querystring"));
         assert!(dependencies([DependencyGroup::Default]).contains_key("fastify"));
     }
