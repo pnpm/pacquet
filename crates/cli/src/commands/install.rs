@@ -44,9 +44,9 @@ impl InstallCommandArgs {
 impl PackageManager {
     /// Install dependencies of a dependency.
     ///
-    /// This function is used by [`PackageManager::install`].
+    /// This function is used by [`PackageManager::install`] without a lockfile.
     #[async_recursion]
-    async fn install_dependencies(&self, package: &PackageVersion) {
+    async fn install_dependencies_from_registry(&self, package: &PackageVersion) {
         let node_modules_path =
             self.config.virtual_store_dir.join(package.to_store_name()).join("node_modules");
 
@@ -65,7 +65,7 @@ impl PackageManager {
                 )
                 .await
                 .unwrap();
-                self.install_dependencies(&dependency).await;
+                self.install_dependencies_from_registry(&dependency).await;
             })
             .pipe(future::join_all)
             .await;
@@ -90,7 +90,7 @@ impl PackageManager {
                 )
                 .await
                 .unwrap();
-                self.install_dependencies(&dependency).await;
+                self.install_dependencies_from_registry(&dependency).await;
             })
             .pipe(future::join_all)
             .await;
