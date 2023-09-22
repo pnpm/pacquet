@@ -77,23 +77,27 @@ impl PackageManager {
     pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
         tracing::info!(target: "pacquet::install", "Start all");
 
-        self.package_json
-            .dependencies(args.dependency_groups())
-            .map(|(name, version, _)| async move {
-                let dependency = find_package_version_from_registry(
-                    &self.tarball_cache,
-                    self.config,
-                    &self.http_client,
-                    name,
-                    version,
-                    &self.config.modules_dir,
-                )
-                .await
-                .unwrap();
-                self.install_dependencies_from_registry(&dependency).await;
-            })
-            .pipe(future::join_all)
-            .await;
+        if let Some(_lockfile) = &self.lockfile {
+            todo!();
+        } else {
+            self.package_json
+                .dependencies(args.dependency_groups())
+                .map(|(name, version, _)| async move {
+                    let dependency = find_package_version_from_registry(
+                        &self.tarball_cache,
+                        self.config,
+                        &self.http_client,
+                        name,
+                        version,
+                        &self.config.modules_dir,
+                    )
+                    .await
+                    .unwrap();
+                    self.install_dependencies_from_registry(&dependency).await;
+                })
+                .pipe(future::join_all)
+                .await;
+        }
 
         tracing::info!(target: "pacquet::install", "Complete all");
         Ok(())
