@@ -70,9 +70,49 @@ impl PackageManager {
         Ok(PackageManager {
             config,
             package_json: PackageJson::create_if_needed(package_json_path.into())?,
-            lockfile: Lockfile::load_from_current_dir()?,
+            lockfile: call_load_lockfile(config.lockfile, Lockfile::load_from_current_dir)?,
             http_client: reqwest::Client::new(),
             tarball_cache: Cache::new(),
         })
+    }
+}
+
+/// Private function to load lockfile from current directory should `config.lockfile` is `true`.
+///
+/// This function was extracted to be tested independently.
+fn call_load_lockfile<LoadLockfile, Lockfile, Error>(
+    config_lockfile: bool,
+    load_lockfile: LoadLockfile,
+) -> Result<Option<Lockfile>, Error>
+where
+    LoadLockfile: FnOnce() -> Result<Option<Lockfile>, Error>,
+{
+    config_lockfile.then(load_lockfile).transpose().map(Option::flatten)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_call_load_lockfile() {
+        macro_rules! case {
+            ($config_lockfile:expr, $load_lockfile:expr => $output:expr) => {{
+                let config_lockfile = $config_lockfile;
+                let load_lockfile = $load_lockfile;
+                let output: Result<Option<&str>, &str> = $output;
+                eprintln!(
+                    "CASE: {config_lockfile:?}, {load_lockfile} => {output:?}",
+                    load_lockfile = stringify!($load_lockfile),
+                );
+                assert_eq!(call_load_lockfile(config_lockfile, load_lockfile), output);
+            }};
+        }
+
+        case!(false, || unreachable!() => Ok(None));
+        case!(true, || Err("error") => Err("error"));
+        case!(true, || Ok(None) => Ok(None));
+        case!(true, || Ok(Some("value")) => Ok(Some("value")));
     }
 }
