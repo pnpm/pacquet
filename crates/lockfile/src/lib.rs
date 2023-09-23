@@ -10,7 +10,7 @@ pub use dependency::LockfileDependency;
 pub use dependency_path::DependencyPath;
 pub use load_lockfile::LoadLockfileError;
 pub use package::LockfilePackage;
-pub use resolution::LockfilePackageResolution;
+pub use resolution::IntegrityResolution;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
