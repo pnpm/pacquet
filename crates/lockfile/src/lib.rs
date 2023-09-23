@@ -28,6 +28,7 @@ pub struct LockfileSettings {
     auto_install_peers: bool,
     exclude_links_from_lockfile: bool,
 }
+
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Lockfile {
