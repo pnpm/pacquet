@@ -5,8 +5,8 @@ mod package;
 pub use comver::{ComVer, ParseComVerError};
 pub use dependency_path::DependencyPath;
 pub use package::{LockfilePackage, LockfilePackageResolution};
-use pipe_trait::Pipe;
 
+use pipe_trait::Pipe;
 use std::{
     collections::HashMap,
     env, fs,
