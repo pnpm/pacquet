@@ -2,8 +2,7 @@ use derive_more::{From, TryInto};
 use serde::{Deserialize, Serialize};
 
 macro_rules! tag {
-    ($(#[$attributes:meta])* $name:ident = $value:literal) => {
-        $(#[$attributes])*
+    ($name:ident = $value:literal) => {
         #[derive(Debug, Clone, Copy, Eq, PartialEq, Deserialize, Serialize)]
         #[serde(try_from = "&'de str", into = "&str")]
         struct $name;
@@ -36,10 +35,7 @@ pub struct TarballResolution {
     pub integrity: Option<String>,
 }
 
-tag! {
-    /// Tag of [`DirectoryResolution`].
-    DirectoryResolutionTag = "directory"
-}
+tag!(DirectoryResolutionTag = "directory");
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
 pub struct DirectoryResolution {
@@ -48,10 +44,7 @@ pub struct DirectoryResolution {
     pub directory: String,
 }
 
-tag! {
-    /// Tag of [`GitRepositoryResolution`].
-    GitResolutionTag = "git"
-}
+tag!(GitResolutionTag = "git");
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
 pub struct GitResolution {
