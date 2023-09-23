@@ -29,6 +29,7 @@ pub struct LockfileSettings {
     exclude_links_from_lockfile: bool,
 }
 
+/// Specification: https://github.com/pnpm/spec/blob/master/lockfile/6.0.md
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Lockfile {
