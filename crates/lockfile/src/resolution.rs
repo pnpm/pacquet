@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 macro_rules! tag {
     ($name:ident = $value:literal) => {
-        #[derive(Debug, Clone, Copy, Eq, PartialEq, Deserialize, Serialize)]
+        #[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Deserialize, Serialize)]
         #[serde(try_from = "&'de str", into = "&str")]
         struct $name;
 
@@ -22,29 +22,54 @@ macro_rules! tag {
     };
 }
 
-#[derive(Debug, PartialEq, Deserialize, Serialize)]
+macro_rules! middle {
+    ($wrapper:ident for $tag:ty, $target:ident) => {
+        #[derive(Deserialize, Serialize)]
+        struct $wrapper {
+            #[serde(rename = "type")]
+            tag: $tag,
+            #[serde(flatten)]
+            value: $target,
+        }
+
+        impl From<$wrapper> for $target {
+            fn from(value: $wrapper) -> Self {
+                value.value
+            }
+        }
+
+        impl From<$target> for $wrapper {
+            fn from(value: $target) -> Self {
+                $wrapper { tag: <$tag>::default(), value }
+            }
+        }
+    };
+}
+
+middle!(TarballResolutionSerde for Option<()>, TarballResolution);
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(from = "TarballResolutionSerde", into = "TarballResolutionSerde")]
 pub struct TarballResolution {
-    #[serde(rename = "type")]
-    tag: Option<()>,
     pub tarball: String,
     pub integrity: Option<String>,
 }
 
 tag!(DirectoryResolutionTag = "directory");
+middle!(DirectoryResolutionSerde for DirectoryResolutionTag, DirectoryResolution);
 
-#[derive(Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(from = "DirectoryResolutionSerde", into = "DirectoryResolutionSerde")]
 pub struct DirectoryResolution {
-    #[serde(rename = "type")]
-    tag: DirectoryResolutionTag,
     pub directory: String,
 }
 
 tag!(GitResolutionTag = "git");
+middle!(GitResolutionSerde for GitResolutionTag, GitResolution);
 
-#[derive(Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(from = "GitResolutionSerde", into = "GitResolutionSerde")]
 pub struct GitResolution {
-    #[serde(rename = "type")]
-    tag: GitResolutionTag,
     pub repo: String,
     pub commit: String,
 }
