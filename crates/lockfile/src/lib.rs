@@ -3,12 +3,14 @@ mod dependency;
 mod dependency_path;
 mod load_lockfile;
 mod package;
+mod resolution;
 
 pub use comver::{ComVer, ParseComVerError};
 pub use dependency::LockfileDependency;
 pub use dependency_path::DependencyPath;
 pub use load_lockfile::LoadLockfileError;
-pub use package::{LockfilePackage, LockfilePackageResolution};
+pub use package::LockfilePackage;
+pub use resolution::LockfilePackageResolution;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

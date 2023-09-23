@@ -2,12 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::LockfilePeerDependencyMeta;
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct LockfilePackageResolution {
-    integrity: String,
-}
+use crate::{LockfilePackageResolution, LockfilePeerDependencyMeta};
 
 // Reference: https://github.com/pnpm/pnpm/blob/main/lockfile/lockfile-file/src/sortLockfileKeys.ts#L5
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
