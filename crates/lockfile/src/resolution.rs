@@ -7,21 +7,16 @@ macro_rules! tag {
         #[serde(try_from = "&'de str", into = "&str")]
         struct $name;
 
-        impl $name {
-            /// Name of the tag.
-            pub const NAME: &str = $value;
-        }
-
         impl<'a> TryFrom<&'a str> for $name {
             type Error = &'a str;
             fn try_from(value: &'a str) -> Result<Self, Self::Error> {
-                (value == Self::NAME).then_some($name).ok_or(value)
+                (value == $value).then_some($name).ok_or(value)
             }
         }
 
         impl From<$name> for &'static str {
             fn from(_: $name) -> Self {
-                $name::NAME
+                $value
             }
         }
     };
