@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct LockfilePeerDependencyMeta {
+pub struct LockfilePeerDependencyMetaValue {
     optional: bool,
 }
 
@@ -28,7 +28,7 @@ pub struct PackageSnapshot {
 
     // TODO: Add `bundleDependencies`
     peer_dependencies: Option<HashMap<String, String>>,
-    peer_dependencies_meta: Option<HashMap<String, LockfilePeerDependencyMeta>>,
+    peer_dependencies_meta: Option<HashMap<String, LockfilePeerDependencyMetaValue>>,
 
     dependencies: Option<HashMap<String, String>>,
     optional_dependencies: Option<HashMap<String, String>>,

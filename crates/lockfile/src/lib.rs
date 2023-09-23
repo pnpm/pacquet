@@ -9,7 +9,7 @@ pub use comver::{ComVer, ParseComVerError};
 pub use dependency::LockfileDependency;
 pub use dependency_path::DependencyPath;
 pub use load_lockfile::LoadLockfileError;
-pub use package_snapshot::{LockfilePeerDependencyMeta, PackageSnapshot};
+pub use package_snapshot::{LockfilePeerDependencyMetaValue, PackageSnapshot};
 pub use resolution::{
     DirectoryResolution, GitResolution, IntegrityResolution, LockfileResolution, TarballResolution,
 };
