@@ -50,6 +50,7 @@ macro_rules! middle {
 #[serde(deny_unknown_fields)]
 pub struct TarballResolution {
     pub tarball: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub integrity: Option<String>,
 }
 
