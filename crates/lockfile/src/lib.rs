@@ -1,21 +1,17 @@
 mod comver;
+mod dependency;
 mod dependency_path;
 mod load_lockfile;
 mod package;
 
 pub use comver::{ComVer, ParseComVerError};
+pub use dependency::LockfileDependency;
 pub use dependency_path::DependencyPath;
 pub use load_lockfile::LoadLockfileError;
 pub use package::{LockfilePackage, LockfilePackageResolution};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct LockfileDependency {
-    specifier: String,
-    version: String,
-}
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct LockfilePeerDependencyMeta {
