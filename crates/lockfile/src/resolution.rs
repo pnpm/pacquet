@@ -47,7 +47,6 @@ macro_rules! middle {
 }
 
 middle!(TarballResolutionSerde for Option<()>, TarballResolution);
-
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(from = "TarballResolutionSerde", into = "TarballResolutionSerde")]
 pub struct TarballResolution {
@@ -57,7 +56,6 @@ pub struct TarballResolution {
 
 tag!(DirectoryResolutionTag = "directory");
 middle!(DirectoryResolutionSerde for DirectoryResolutionTag, DirectoryResolution);
-
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(from = "DirectoryResolutionSerde", into = "DirectoryResolutionSerde")]
 pub struct DirectoryResolution {
@@ -66,7 +64,6 @@ pub struct DirectoryResolution {
 
 tag!(GitResolutionTag = "git");
 middle!(GitResolutionSerde for GitResolutionTag, GitResolution);
-
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(from = "GitResolutionSerde", into = "GitResolutionSerde")]
 pub struct GitResolution {
