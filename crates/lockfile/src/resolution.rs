@@ -46,9 +46,8 @@ macro_rules! middle {
     };
 }
 
-middle!(TarballResolutionSerde for Option<()>, TarballResolution);
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(from = "TarballResolutionSerde", into = "TarballResolutionSerde")]
+#[derive(Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TarballResolution {
     pub tarball: String,
     pub integrity: Option<String>,
