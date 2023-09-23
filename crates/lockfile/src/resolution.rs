@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 macro_rules! tag {
     ($name:ident = $value:literal) => {
-        #[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Deserialize, Serialize)]
+        #[derive(Default, Clone, Eq, PartialEq, Deserialize, Serialize)]
         #[serde(try_from = "&'de str", into = "&str")]
         struct $name;
 
