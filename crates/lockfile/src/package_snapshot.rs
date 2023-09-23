@@ -7,7 +7,7 @@ use crate::{LockfilePeerDependencyMeta, LockfileResolution};
 // Reference: https://github.com/pnpm/pnpm/blob/main/lockfile/lockfile-file/src/sortLockfileKeys.ts#L5
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LockfilePackage {
+pub struct PackageSnapshot {
     resolution: LockfileResolution,
     id: Option<String>,
 

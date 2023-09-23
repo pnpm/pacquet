@@ -2,14 +2,14 @@ mod comver;
 mod dependency;
 mod dependency_path;
 mod load_lockfile;
-mod package;
+mod package_snapshot;
 mod resolution;
 
 pub use comver::{ComVer, ParseComVerError};
 pub use dependency::LockfileDependency;
 pub use dependency_path::DependencyPath;
 pub use load_lockfile::LoadLockfileError;
-pub use package::LockfilePackage;
+pub use package_snapshot::PackageSnapshot;
 pub use resolution::{
     DirectoryResolution, GitResolution, IntegrityResolution, LockfileResolution, TarballResolution,
 };
@@ -39,7 +39,7 @@ pub struct Lockfile {
     pub never_built_dependencies: Option<Vec<String>>,
     pub overrides: Option<HashMap<String, String>>,
     pub dependencies: Option<HashMap<String, LockfileDependency>>,
-    pub packages: Option<HashMap<DependencyPath, LockfilePackage>>,
+    pub packages: Option<HashMap<DependencyPath, PackageSnapshot>>,
 }
 
 impl Lockfile {
