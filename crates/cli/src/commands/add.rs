@@ -2,7 +2,7 @@ use clap::Parser;
 use std::collections::VecDeque;
 
 use crate::{
-    package::{fetch_package_version_directly, find_package_version_from_registry},
+    package::{fetch_package_version_directly, install_package_from_registry},
     package_manager::{PackageManager, PackageManagerError},
 };
 use futures_util::future;
@@ -78,7 +78,7 @@ impl PackageManager {
 
         let direct_dependency_handles =
             latest_version.dependencies(self.config.auto_install_peers).map(|(name, version)| {
-                find_package_version_from_registry(
+                install_package_from_registry(
                     &self.tarball_cache,
                     config,
                     http_client,
@@ -102,7 +102,7 @@ impl PackageManager {
 
                 let handles = dependency.dependencies(self.config.auto_install_peers).map(
                     |(name, version)| {
-                        find_package_version_from_registry(
+                        install_package_from_registry(
                             &self.tarball_cache,
                             config,
                             http_client,

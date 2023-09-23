@@ -1,4 +1,4 @@
-use crate::package::find_package_version_from_registry;
+use crate::package::install_package_from_registry;
 use crate::package_manager::{PackageManager, PackageManagerError};
 use async_recursion::async_recursion;
 use clap::Parser;
@@ -55,7 +55,7 @@ impl PackageManager {
         package
             .dependencies(self.config.auto_install_peers)
             .map(|(name, version)| async {
-                let dependency = find_package_version_from_registry(
+                let dependency = install_package_from_registry(
                     &self.tarball_cache,
                     self.config,
                     &self.http_client,
@@ -82,7 +82,7 @@ impl PackageManager {
                 self.package_json
                     .dependencies(args.dependency_groups())
                     .map(|(name, version, _)| async move {
-                        let dependency = find_package_version_from_registry(
+                        let dependency = install_package_from_registry(
                             &self.tarball_cache,
                             self.config,
                             &self.http_client,

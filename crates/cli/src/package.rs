@@ -14,7 +14,7 @@ use std::path::Path;
 /// symlink_path will be appended by the name of the package. Therefore,
 /// it should be resolved into the node_modules folder of a subdependency such as
 /// `node_modules/.pacquet/fastify@1.0.0/node_modules`.
-pub async fn find_package_version_from_registry(
+pub async fn install_package_from_registry(
     tarball_cache: &Cache,
     config: &'static Npmrc,
     http_client: &Client,
@@ -79,7 +79,7 @@ async fn internal_fetch(
 
 #[cfg(test)]
 mod tests {
-    use crate::package::find_package_version_from_registry;
+    use crate::package::install_package_from_registry;
     use node_semver::Version;
     use pacquet_npmrc::Npmrc;
     use pipe_trait::Pipe;
@@ -123,7 +123,7 @@ mod tests {
                 .pipe(Box::leak);
         let http_client = reqwest::Client::new();
         let symlink_path = tempdir().unwrap();
-        let package = find_package_version_from_registry(
+        let package = install_package_from_registry(
             &Default::default(),
             config,
             &http_client,
