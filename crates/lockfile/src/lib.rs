@@ -9,18 +9,13 @@ pub use comver::{ComVer, ParseComVerError};
 pub use dependency::LockfileDependency;
 pub use dependency_path::DependencyPath;
 pub use load_lockfile::LoadLockfileError;
-pub use package_snapshot::PackageSnapshot;
+pub use package_snapshot::{LockfilePeerDependencyMeta, PackageSnapshot};
 pub use resolution::{
     DirectoryResolution, GitResolution, IntegrityResolution, LockfileResolution, TarballResolution,
 };
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct LockfilePeerDependencyMeta {
-    optional: bool,
-}
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
