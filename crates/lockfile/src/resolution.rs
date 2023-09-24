@@ -11,6 +11,11 @@ pub struct TarballResolution {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct RegistryResolution {
+    pub integrity: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct DirectoryResolution {
     pub directory: String,
 }
@@ -21,18 +26,13 @@ pub struct GitResolution {
     pub commit: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct RegistryResolution {
-    pub integrity: String,
-}
-
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, From, TryInto)]
 #[serde(from = "ResolutionSerde", into = "ResolutionSerde")]
 pub enum LockfileResolution {
     Tarball(TarballResolution),
+    Registry(RegistryResolution),
     Directory(DirectoryResolution),
     Git(GitResolution),
-    Registry(RegistryResolution),
 }
 
 #[derive(Deserialize, Serialize, From, TryInto)]
@@ -46,17 +46,17 @@ enum TaggedResolution {
 #[serde(untagged)]
 enum ResolutionSerde {
     Tarball(TarballResolution),
-    Tagged(TaggedResolution),
     Registry(RegistryResolution),
+    Tagged(TaggedResolution),
 }
 
 impl From<ResolutionSerde> for LockfileResolution {
     fn from(value: ResolutionSerde) -> Self {
         match value {
             ResolutionSerde::Tarball(resolution) => resolution.into(),
+            ResolutionSerde::Registry(resolution) => resolution.into(),
             ResolutionSerde::Tagged(TaggedResolution::Directory(resolution)) => resolution.into(),
             ResolutionSerde::Tagged(TaggedResolution::Git(resolution)) => resolution.into(),
-            ResolutionSerde::Registry(resolution) => resolution.into(),
         }
     }
 }
@@ -65,11 +65,11 @@ impl From<LockfileResolution> for ResolutionSerde {
     fn from(value: LockfileResolution) -> Self {
         match value {
             LockfileResolution::Tarball(resolution) => resolution.into(),
+            LockfileResolution::Registry(resolution) => resolution.into(),
             LockfileResolution::Directory(resolution) => {
                 resolution.pipe(TaggedResolution::from).into()
             }
             LockfileResolution::Git(resolution) => resolution.pipe(TaggedResolution::from).into(),
-            LockfileResolution::Registry(resolution) => resolution.into(),
         }
     }
 }
