@@ -20,3 +20,4 @@ serde_yaml  = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+text-block-macros = { workspace = true }

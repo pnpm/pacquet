@@ -78,12 +78,15 @@ impl From<LockfileResolution> for ResolutionSerde {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use text_block_macros::text_block;
 
     #[test]
     fn deserialize_tarball_resolution() {
         eprintln!("CASE: without integrity");
-        let yaml = ["tarball: file:react-18.2.0.tgz"].join("\n");
-        let received: LockfileResolution = serde_yaml::from_str(&yaml).unwrap();
+        let yaml = text_block! {
+            "tarball: file:react-18.2.0.tgz"
+        };
+        let received: LockfileResolution = serde_yaml::from_str(yaml).unwrap();
         dbg!(&received);
         let expected = LockfileResolution::Tarball(TarballResolution {
             tarball: "file:react-18.2.0.tgz".to_string(),
@@ -92,11 +95,11 @@ mod tests {
         assert_eq!(received, expected);
 
         eprintln!("CASE: with integrity");
-        let yaml = [
-            "tarball: file:react-18.2.0.tgz",
-            "integrity: sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ==",
-        ].join("\n");
-        let received: LockfileResolution = serde_yaml::from_str(&yaml).unwrap();
+        let yaml = text_block! {
+            "tarball: file:react-18.2.0.tgz"
+            "integrity: sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ=="
+        };
+        let received: LockfileResolution = serde_yaml::from_str(yaml).unwrap();
         dbg!(&received);
         let expected = LockfileResolution::Tarball(TarballResolution {
             tarball: "file:react-18.2.0.tgz".to_string(),
@@ -115,7 +118,9 @@ mod tests {
         let received = serde_yaml::to_string(&resolution).unwrap();
         let received = received.trim();
         eprintln!("RECEIVED:\n{received}");
-        let expected = ["tarball: file:react-18.2.0.tgz"].join("\n");
+        let expected = text_block! {
+            "tarball: file:react-18.2.0.tgz"
+        };
         assert_eq!(received, expected);
 
         eprintln!("CASE: with integrity");
@@ -126,17 +131,20 @@ mod tests {
         let received = serde_yaml::to_string(&resolution).unwrap();
         let received = received.trim();
         eprintln!("RECEIVED:\n{received}");
-        let expected = [
-            "tarball: file:react-18.2.0.tgz",
-            "integrity: sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ==",
-        ].join("\n");
+        let expected = text_block! {
+            "tarball: file:react-18.2.0.tgz"
+            "integrity: sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ=="
+        };
         assert_eq!(received, expected);
     }
 
     #[test]
     fn deserialize_directory_resolution() {
-        let yaml = ["type: directory", "directory: react-18.2.0/package"].join("\n");
-        let received: LockfileResolution = serde_yaml::from_str(&yaml).unwrap();
+        let yaml = text_block! {
+            "type: directory"
+            "directory: react-18.2.0/package"
+        };
+        let received: LockfileResolution = serde_yaml::from_str(yaml).unwrap();
         dbg!(&received);
         let expected = LockfileResolution::Directory(DirectoryResolution {
             directory: "react-18.2.0/package".to_string(),
@@ -152,7 +160,10 @@ mod tests {
         let received = serde_yaml::to_string(&resolution).unwrap();
         let received = received.trim();
         eprintln!("RECEIVED:\n{received}");
-        let expected = ["type: directory", "directory: react-18.2.0/package"].join("\n");
+        let expected = text_block! {
+            "type: directory"
+            "directory: react-18.2.0/package"
+        };
         assert_eq!(received, expected);
     }
 }
