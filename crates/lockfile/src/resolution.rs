@@ -2,6 +2,7 @@ use derive_more::{From, TryInto};
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 
+/// For tarball hosted remotely or locally.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TarballResolution {
@@ -10,18 +11,21 @@ pub struct TarballResolution {
     pub integrity: Option<String>,
 }
 
+/// For standard package specification, with package name and version range.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegistryResolution {
     pub integrity: String,
 }
 
+/// For local directory on a filesystem.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DirectoryResolution {
     pub directory: String,
 }
 
+/// For git repository.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct GitResolution {
@@ -29,6 +33,7 @@ pub struct GitResolution {
     pub commit: String,
 }
 
+/// Represent the resolution object.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, From, TryInto)]
 #[serde(from = "ResolutionSerde", into = "ResolutionSerde")]
 pub enum LockfileResolution {
@@ -49,6 +54,7 @@ impl LockfileResolution {
     }
 }
 
+/// Intermediate helper type for serde.
 #[derive(Deserialize, Serialize, From, TryInto)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 enum TaggedResolution {
@@ -56,6 +62,7 @@ enum TaggedResolution {
     Git(GitResolution),
 }
 
+/// Intermediate helper type for serde.
 #[derive(Deserialize, Serialize, From, TryInto)]
 #[serde(untagged)]
 enum ResolutionSerde {
