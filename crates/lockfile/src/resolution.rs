@@ -11,16 +11,19 @@ pub struct TarballResolution {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RegistryResolution {
     pub integrity: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct DirectoryResolution {
     pub directory: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct GitResolution {
     pub repo: String,
     pub commit: String,
