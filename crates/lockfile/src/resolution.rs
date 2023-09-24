@@ -21,12 +21,18 @@ pub struct GitResolution {
     pub commit: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct RegistryResolution {
+    pub integrity: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, From, TryInto)]
 #[serde(from = "ResolutionSerde", into = "ResolutionSerde")]
 pub enum LockfileResolution {
     Tarball(TarballResolution),
     Directory(DirectoryResolution),
     Git(GitResolution),
+    Registry(RegistryResolution),
 }
 
 #[derive(Deserialize, Serialize, From, TryInto)]
@@ -41,6 +47,7 @@ enum TaggedResolution {
 enum ResolutionSerde {
     Tarball(TarballResolution),
     Tagged(TaggedResolution),
+    Registry(RegistryResolution),
 }
 
 impl From<ResolutionSerde> for LockfileResolution {
@@ -49,6 +56,7 @@ impl From<ResolutionSerde> for LockfileResolution {
             ResolutionSerde::Tarball(resolution) => resolution.into(),
             ResolutionSerde::Tagged(TaggedResolution::Directory(resolution)) => resolution.into(),
             ResolutionSerde::Tagged(TaggedResolution::Git(resolution)) => resolution.into(),
+            ResolutionSerde::Registry(resolution) => resolution.into(),
         }
     }
 }
@@ -61,6 +69,7 @@ impl From<LockfileResolution> for ResolutionSerde {
                 resolution.pipe(TaggedResolution::from).into()
             }
             LockfileResolution::Git(resolution) => resolution.pipe(TaggedResolution::from).into(),
+            LockfileResolution::Registry(resolution) => resolution.into(),
         }
     }
 }
