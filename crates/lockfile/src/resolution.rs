@@ -56,7 +56,7 @@ impl LockfileResolution {
 
 /// Intermediate helper type for serde.
 #[derive(Deserialize, Serialize, From, TryInto)]
-#[serde(tag = "type", rename_all = "kebab-case")]
+#[serde(tag = "type", rename_all = "camelCase")]
 enum TaggedResolution {
     Directory(DirectoryResolution),
     Git(GitResolution),
