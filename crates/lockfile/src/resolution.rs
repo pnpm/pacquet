@@ -84,26 +84,26 @@ mod tests {
     fn deserialize_tarball_resolution() {
         eprintln!("CASE: without integrity");
         let yaml = text_block! {
-            "tarball: file:react-18.2.0.tgz"
+            "tarball: file:ts-pipe-compose-0.2.1.tgz"
         };
         let received: LockfileResolution = serde_yaml::from_str(yaml).unwrap();
         dbg!(&received);
         let expected = LockfileResolution::Tarball(TarballResolution {
-            tarball: "file:react-18.2.0.tgz".to_string(),
+            tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
             integrity: None,
         });
         assert_eq!(received, expected);
 
         eprintln!("CASE: with integrity");
         let yaml = text_block! {
-            "tarball: file:react-18.2.0.tgz"
-            "integrity: sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ=="
+            "tarball: file:ts-pipe-compose-0.2.1.tgz"
+            "integrity: sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg=="
         };
         let received: LockfileResolution = serde_yaml::from_str(yaml).unwrap();
         dbg!(&received);
         let expected = LockfileResolution::Tarball(TarballResolution {
-            tarball: "file:react-18.2.0.tgz".to_string(),
-            integrity: "sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ==".to_string().into()
+            tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
+            integrity: "sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==".to_string().into()
         });
         assert_eq!(received, expected);
     }
@@ -112,28 +112,28 @@ mod tests {
     fn serialize_tarball_resolution() {
         eprintln!("CASE: without integrity");
         let resolution = LockfileResolution::Tarball(TarballResolution {
-            tarball: "file:react-18.2.0.tgz".to_string(),
+            tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
             integrity: None,
         });
         let received = serde_yaml::to_string(&resolution).unwrap();
         let received = received.trim();
         eprintln!("RECEIVED:\n{received}");
         let expected = text_block! {
-            "tarball: file:react-18.2.0.tgz"
+            "tarball: file:ts-pipe-compose-0.2.1.tgz"
         };
         assert_eq!(received, expected);
 
         eprintln!("CASE: with integrity");
         let resolution = LockfileResolution::Tarball(TarballResolution {
-            tarball: "file:react-18.2.0.tgz".to_string(),
-            integrity: "sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ==".to_string().into()
+            tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
+            integrity: "sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==".to_string().into()
         });
         let received = serde_yaml::to_string(&resolution).unwrap();
         let received = received.trim();
         eprintln!("RECEIVED:\n{received}");
         let expected = text_block! {
-            "tarball: file:react-18.2.0.tgz"
-            "integrity: sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ=="
+            "tarball: file:ts-pipe-compose-0.2.1.tgz"
+            "integrity: sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg=="
         };
         assert_eq!(received, expected);
     }
@@ -142,12 +142,12 @@ mod tests {
     fn deserialize_directory_resolution() {
         let yaml = text_block! {
             "type: directory"
-            "directory: react-18.2.0/package"
+            "directory: ts-pipe-compose-0.2.1/package"
         };
         let received: LockfileResolution = serde_yaml::from_str(yaml).unwrap();
         dbg!(&received);
         let expected = LockfileResolution::Directory(DirectoryResolution {
-            directory: "react-18.2.0/package".to_string(),
+            directory: "ts-pipe-compose-0.2.1/package".to_string(),
         });
         assert_eq!(received, expected);
     }
@@ -155,14 +155,14 @@ mod tests {
     #[test]
     fn serialize_directory_resolution() {
         let resolution = LockfileResolution::Directory(DirectoryResolution {
-            directory: "react-18.2.0/package".to_string(),
+            directory: "ts-pipe-compose-0.2.1/package".to_string(),
         });
         let received = serde_yaml::to_string(&resolution).unwrap();
         let received = received.trim();
         eprintln!("RECEIVED:\n{received}");
         let expected = text_block! {
             "type: directory"
-            "directory: react-18.2.0/package"
+            "directory: ts-pipe-compose-0.2.1/package"
         };
         assert_eq!(received, expected);
     }
