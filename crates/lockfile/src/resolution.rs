@@ -166,4 +166,37 @@ mod tests {
         };
         assert_eq!(received, expected);
     }
+
+    #[test]
+    fn deserialize_git_resolution() {
+        let yaml = text_block! {
+            "type: git"
+            "repo: https://github.com/ksxnodemodules/ts-pipe-compose.git"
+            "commit: e63c09e460269b0c535e4c34debf69bb91d57b22"
+        };
+        let received: LockfileResolution = serde_yaml::from_str(yaml).unwrap();
+        dbg!(&received);
+        let expected = LockfileResolution::Git(GitResolution {
+            repo: "https://github.com/ksxnodemodules/ts-pipe-compose.git".to_string(),
+            commit: "e63c09e460269b0c535e4c34debf69bb91d57b22".to_string(),
+        });
+        assert_eq!(received, expected);
+    }
+
+    #[test]
+    fn serialize_git_resolution() {
+        let resolution = LockfileResolution::Git(GitResolution {
+            repo: "https://github.com/ksxnodemodules/ts-pipe-compose.git".to_string(),
+            commit: "e63c09e460269b0c535e4c34debf69bb91d57b22".to_string(),
+        });
+        let received = serde_yaml::to_string(&resolution).unwrap();
+        let received = received.trim();
+        eprintln!("RECEIVED:\n{received}");
+        let expected = text_block! {
+            "type: git"
+            "repo: https://github.com/ksxnodemodules/ts-pipe-compose.git"
+            "commit: e63c09e460269b0c535e4c34debf69bb91d57b22"
+        };
+        assert_eq!(received, expected);
+    }
 }
