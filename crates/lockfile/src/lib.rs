@@ -3,6 +3,7 @@ mod dependency;
 mod dependency_path;
 mod load_lockfile;
 mod package_snapshot;
+mod project_snapshot;
 mod resolution;
 
 pub use comver::{ComVer, ParseComVerError};
@@ -10,6 +11,7 @@ pub use dependency::LockfileDependency;
 pub use dependency_path::DependencyPath;
 pub use load_lockfile::LoadLockfileError;
 pub use package_snapshot::{LockfilePeerDependencyMetaValue, PackageSnapshot};
+pub use project_snapshot::{MultiProjectSnapshot, ProjectSnapshot, RootProjectSnapshot};
 pub use resolution::{
     DirectoryResolution, GitResolution, LockfileResolution, RegistryResolution, TarballResolution,
 };
@@ -36,8 +38,8 @@ pub struct Lockfile {
     pub never_built_dependencies: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overrides: Option<HashMap<String, String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dependencies: Option<HashMap<String, LockfileDependency>>,
+    #[serde(flatten)]
+    pub project_snapshot: RootProjectSnapshot,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub packages: Option<HashMap<DependencyPath, PackageSnapshot>>,
 }
