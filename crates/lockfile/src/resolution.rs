@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// For tarball hosted remotely or locally.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TarballResolution {
     pub tarball: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -13,21 +13,21 @@ pub struct TarballResolution {
 
 /// For standard package specification, with package name and version range.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RegistryResolution {
     pub integrity: String,
 }
 
 /// For local directory on a filesystem.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DirectoryResolution {
     pub directory: String,
 }
 
 /// For git repository.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct GitResolution {
     pub repo: String,
     pub commit: String,
