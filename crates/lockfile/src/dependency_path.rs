@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 /// Dependency path is the key of the `packages` map.
 ///
-/// Specification: https://github.com/pnpm/spec/blob/master/lockfile/6.0.md#packages
+/// Specification: <https://github.com/pnpm/spec/blob/master/lockfile/6.0.md#packages>
 #[derive(Debug, Display, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[display(fmt = "{}/{package_specifier}", "custom_registry.as_deref().unwrap_or_default()")]
 #[serde(try_from = "&'de str", into = "String")]
