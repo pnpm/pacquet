@@ -38,6 +38,17 @@ pub enum LockfileResolution {
     Git(GitResolution),
 }
 
+impl LockfileResolution {
+    /// Get the integrity field if available.
+    pub fn integrity(&self) -> Option<&'_ str> {
+        match self {
+            LockfileResolution::Tarball(resolution) => resolution.integrity.as_deref(),
+            LockfileResolution::Registry(resolution) => resolution.integrity.as_str().pipe(Some),
+            LockfileResolution::Directory(_) | LockfileResolution::Git(_) => None,
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize, From, TryInto)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 enum TaggedResolution {
