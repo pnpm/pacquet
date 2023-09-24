@@ -132,4 +132,27 @@ mod tests {
         ].join("\n");
         assert_eq!(received, expected);
     }
+
+    #[test]
+    fn deserialize_directory_resolution() {
+        let yaml = ["type: directory", "directory: react-18.2.0/package"].join("\n");
+        let received: LockfileResolution = serde_yaml::from_str(&yaml).unwrap();
+        dbg!(&received);
+        let expected = LockfileResolution::Directory(DirectoryResolution {
+            directory: "react-18.2.0/package".to_string(),
+        });
+        assert_eq!(received, expected);
+    }
+
+    #[test]
+    fn serialize_directory_resolution() {
+        let resolution = LockfileResolution::Directory(DirectoryResolution {
+            directory: "react-18.2.0/package".to_string(),
+        });
+        let received = serde_yaml::to_string(&resolution).unwrap();
+        let received = received.trim();
+        eprintln!("RECEIVED:\n{received}");
+        let expected = ["type: directory", "directory: react-18.2.0/package"].join("\n");
+        assert_eq!(received, expected);
+    }
 }
