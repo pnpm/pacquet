@@ -54,7 +54,7 @@ mod tests {
     }
 
     test_deserialization!(empty_object_is_considered_single: "{}" => RootProjectSnapshot::Single(Default::default()));
-    test_deserialization!(empty_importers_is_considered_multi: "{ importers: {} }" => RootProjectSnapshot::Multi(Default::default()));
+    test_deserialization!(empty_importers_is_considered_multi: "importers: {}" => RootProjectSnapshot::Multi(Default::default()));
 
     macro_rules! test_serialization {
         ($name:ident: $input:expr => $output:expr) => {
