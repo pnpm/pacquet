@@ -32,6 +32,6 @@ pub struct MultiProjectSnapshot {
 #[derive(Debug, PartialEq, Deserialize, Serialize, From, TryInto)]
 #[serde(untagged)]
 pub enum RootProjectSnapshot {
-    Single(ProjectSnapshot),
     Multi(MultiProjectSnapshot),
+    Single(ProjectSnapshot),
 }
