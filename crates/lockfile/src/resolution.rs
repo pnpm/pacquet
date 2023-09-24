@@ -71,18 +71,12 @@ pub struct GitResolution {
     pub commit: String,
 }
 
-#[derive(Debug, PartialEq, Deserialize, Serialize)]
-pub struct IntegrityResolution {
-    pub integrity: String,
-}
-
 #[derive(Debug, PartialEq, Deserialize, Serialize, From, TryInto)]
 #[serde(untagged)]
 pub enum LockfileResolution {
     Tarball(TarballResolution),
     // Directory(DirectoryResolution),
     // Git(GitResolution),
-    Integrity(IntegrityResolution),
 }
 
 #[cfg(test)]
