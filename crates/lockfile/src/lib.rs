@@ -30,10 +30,15 @@ pub struct LockfileSettings {
 #[serde(rename_all = "camelCase")]
 pub struct Lockfile {
     pub lockfile_version: ComVer,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub settings: Option<LockfileSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub never_built_dependencies: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub overrides: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub dependencies: Option<HashMap<String, LockfileDependency>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub packages: Option<HashMap<DependencyPath, PackageSnapshot>>,
 }
 
