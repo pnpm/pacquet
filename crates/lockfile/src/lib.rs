@@ -39,5 +39,5 @@ pub struct Lockfile {
 
 impl Lockfile {
     /// Base file name of the lockfile.
-    const FILE_NAME: &str = "pacquet-lock.yaml";
+    const FILE_NAME: &str = "pnpm-lock.yaml";
 }
