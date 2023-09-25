@@ -25,7 +25,7 @@ impl FromStr for PkgVerPeer {
 /// **NOTE:** The suffix isn't guaranteed to be correct. It is only assumed to be.
 pub type PkgNameVerPeer = PkgNameSuffix<PkgVerPeer>;
 
-/// Error when parsing [`PkgVerPeer`] from a string.
+/// Error when parsing [`PkgNameVerPeer`] from a string.
 pub type ParsePkgNameVerPeerError = ParsePkgNameSuffixError<Infallible>;
 
 #[cfg(test)]
