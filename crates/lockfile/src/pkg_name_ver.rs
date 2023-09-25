@@ -74,3 +74,83 @@ impl From<PkgNameVer> for String {
         value.to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pipe_trait::Pipe;
+    use pretty_assertions::assert_eq;
+    use serde_yaml::Value as YamlValue;
+
+    #[test]
+    fn parse_ok() {
+        macro_rules! case {
+            ($input:expr => $output:expr) => {{
+                let input = $input;
+                eprintln!("CASE: {input:?}");
+                let received: PkgNameVer = input.parse().unwrap();
+                let expected = $output;
+                assert_eq!(&received, &expected);
+            }};
+        }
+
+        case!("ts-node@10.9.1" => PkgNameVer::new("ts-node", (10, 9, 1)));
+        case!("@types/node@18.7.19" => PkgNameVer::new("@types/node", (18, 7, 19)));
+        case!("typescript@5.1.6" => PkgNameVer::new("typescript", (5, 1, 6)));
+    }
+
+    #[test]
+    fn deserialize_ok() {
+        macro_rules! case {
+            ($input:expr => $output:expr) => {{
+                let input = $input;
+                eprintln!("CASE: {input:?}");
+                let received: PkgNameVer = serde_yaml::from_str(input).unwrap();
+                let expected = $output;
+                assert_eq!(&received, &expected);
+            }};
+        }
+
+        case!("ts-node@10.9.1" => PkgNameVer::new("ts-node", (10, 9, 1)));
+        case!("'@types/node@18.7.19'" => PkgNameVer::new("@types/node", (18, 7, 19)));
+        case!("typescript@5.1.6" => PkgNameVer::new("typescript", (5, 1, 6)));
+    }
+
+    #[test]
+    fn parse_err() {
+        macro_rules! case {
+            ($title:literal: $input:expr => $message:expr, $pattern:pat) => {{
+                let title = $title;
+                let input = $input;
+                eprintln!("CASE: {title} (input = {input:?})");
+                let error = input.parse::<PkgNameVer>().unwrap_err();
+                dbg!(&error);
+                assert_eq!(error.to_string(), $message);
+                assert!(matches!(&error, $pattern));
+            }};
+        }
+
+        case!("Empty input": "" => "Input is empty", ParsePkgNameVerError::EmptyInput);
+        case!("Non-scope name without version": "ts-node" => "Version is missing", ParsePkgNameVerError::MissingVersion);
+        case!("Scoped name without version": "@types/node" => "Version is missing", ParsePkgNameVerError::MissingVersion);
+        case!("Non-scope name with empty version": "ts-node" => "Version is missing", ParsePkgNameVerError::MissingVersion);
+        case!("Scoped name with empty version": "@types/node" => "Version is missing", ParsePkgNameVerError::MissingVersion);
+        case!("Missing name": "10.9.1" => "Version is missing", ParsePkgNameVerError::MissingVersion);
+        case!("Empty non-scope name": "@19.9.1" => "Version is missing", ParsePkgNameVerError::MissingVersion);
+        case!("Empty scoped name": "@@18.7.19" => "Name is empty", ParsePkgNameVerError::EmptyName);
+    }
+
+    #[test]
+    fn to_string() {
+        let string = PkgNameVer::new("ts-node", (10, 9, 1)).to_string();
+        assert_eq!(string, "ts-node@10.9.1");
+    }
+
+    #[test]
+    fn serialize() {
+        let received =
+            PkgNameVer::new("ts-node", (10, 9, 1)).pipe_ref(serde_yaml::to_value).unwrap();
+        let expected = "ts-node@10.9.1".to_string().pipe(YamlValue::String);
+        assert_eq!(received, expected);
+    }
+}
