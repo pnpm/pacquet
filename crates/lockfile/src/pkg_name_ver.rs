@@ -27,8 +27,8 @@ impl PkgNameVer {
 pub enum ParsePkgNameVerError {
     #[display(fmt = "Input is empty")]
     EmptyInput,
-    #[display(fmt = "At sign (@) is missing")]
-    MissingAtSign,
+    #[display(fmt = "Version is missing")]
+    MissingVersion,
     #[display(fmt = "Name is empty")]
     EmptyName,
     #[display(fmt = "Failed to parse version: {_0}")]
@@ -42,15 +42,18 @@ impl FromStr for PkgNameVer {
             None => return Err(ParsePkgNameVerError::EmptyInput),
             Some(('@', rest)) => {
                 let (name_without_at, version) =
-                    rest.split_once('@').ok_or(ParsePkgNameVerError::MissingAtSign)?;
+                    rest.split_once('@').ok_or(ParsePkgNameVerError::MissingVersion)?;
                 let name = &value[..name_without_at.len() + 1];
                 debug_assert_eq!(name, format!("@{name_without_at}"));
                 (name, version)
             }
-            Some((_, _)) => value.split_once('@').ok_or(ParsePkgNameVerError::MissingAtSign)?,
+            Some((_, _)) => value.split_once('@').ok_or(ParsePkgNameVerError::MissingVersion)?,
         };
         if matches!(name, "" | "@" | "@/") {
             return Err(ParsePkgNameVerError::EmptyName);
+        }
+        if version.is_empty() {
+            return Err(ParsePkgNameVerError::MissingVersion);
         }
         let version =
             version.parse::<Version>().map_err(ParsePkgNameVerError::ParseVersionFailure)?;
