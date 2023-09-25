@@ -100,7 +100,16 @@ impl PackageManager {
             (true, None) => {
                 unimplemented!();
             }
-            (true, Some(_lockfile)) => {
+            (true, Some(lockfile)) => {
+                assert_eq!(lockfile.lockfile_version.major, 6); // compatibility check already happens at serde, but this still helps preventing programmer mistakes.
+                self.package_json
+                    .dependencies(args.dependency_groups())
+                    .map(|(name, version, group)| async move {
+                        // TODO: if `group` turns out to be unnecessary, revert the commit that introduced it
+                        todo!("Do something with {name:?} {version:?} {group:?}");
+                    })
+                    .pipe(future::join_all)
+                    .await;
                 todo!();
             }
         }
