@@ -6,6 +6,7 @@ mod lockfile_version;
 mod package_snapshot;
 mod pkg_name_suffix;
 mod pkg_name_ver;
+mod pkg_name_ver_peer;
 mod project_snapshot;
 mod resolution;
 
@@ -17,6 +18,7 @@ pub use lockfile_version::LockfileVersion;
 pub use package_snapshot::{LockfilePeerDependencyMetaValue, PackageSnapshot};
 pub use pkg_name_suffix::{ParsePkgNameSuffixError, PkgNameSuffix};
 pub use pkg_name_ver::{ParsePkgNameVerError, PkgNameVer};
+pub use pkg_name_ver_peer::{ParsePkgNameVerPeerError, PkgNameVerPeer};
 pub use project_snapshot::{MultiProjectSnapshot, ProjectSnapshot, RootProjectSnapshot};
 pub use resolution::{
     DirectoryResolution, GitResolution, LockfileResolution, RegistryResolution, TarballResolution,
