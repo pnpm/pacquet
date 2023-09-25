@@ -14,6 +14,13 @@ pub struct PkgNameVer {
     pub version: Version,
 }
 
+impl PkgNameVer {
+    /// Construct a [`PkgNameVer`].
+    pub fn new(name: impl Into<String>, version: impl Into<Version>) -> Self {
+        PkgNameVer { name: name.into(), version: version.into() }
+    }
+}
+
 /// Error when parsing [`PkgNameVer`] from a string.
 #[derive(Debug, Display, Error)]
 pub enum ParsePkgNameVerError {
