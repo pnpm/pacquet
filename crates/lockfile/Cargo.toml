@@ -13,11 +13,12 @@ repository.workspace  = true
 [dependencies]
 pacquet_diagnostics = { workspace = true }
 
-derive_more = { workspace = true }
-node-semver = { workspace = true }
-pipe-trait  = { workspace = true }
-serde       = { workspace = true }
-serde_yaml  = { workspace = true }
+derive_more       = { workspace = true }
+node-semver       = { workspace = true }
+pipe-trait        = { workspace = true }
+serde             = { workspace = true }
+serde_yaml        = { workspace = true }
+split-first-char  = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

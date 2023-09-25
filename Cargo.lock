@@ -1342,6 +1342,7 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "serde_yaml",
+ "split-first-char",
  "text-block-macros",
 ]
 
@@ -1935,6 +1936,12 @@ dependencies = [
  "libc",
  "winapi",
 ]
+
+[[package]]
+name = "split-first-char"
+version = "0.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87ce492fd669c5b32b3e629c0b35278c51d4fae83176e248c9dea71f39c86e58"
 
 [[package]]
 name = "ssri"

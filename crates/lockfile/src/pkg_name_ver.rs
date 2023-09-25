@@ -1,6 +1,7 @@
 use derive_more::{Display, Error};
 use node_semver::{SemverError, Version};
 use serde::{Deserialize, Serialize};
+use split_first_char::SplitFirstChar;
 use std::str::FromStr;
 
 /// Syntax: `{name}@{version}`
@@ -24,6 +25,8 @@ impl PkgNameVer {
 /// Error when parsing [`PkgNameVer`] from a string.
 #[derive(Debug, Display, Error)]
 pub enum ParsePkgNameVerError {
+    #[display(fmt = "Input is empty")]
+    EmptyInput,
     #[display(fmt = "At sign (@) is missing")]
     MissingAtSign,
     #[display(fmt = "Name is empty")]
@@ -35,7 +38,17 @@ pub enum ParsePkgNameVerError {
 impl FromStr for PkgNameVer {
     type Err = ParsePkgNameVerError;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        let (name, version) = value.split_once('@').ok_or(ParsePkgNameVerError::MissingAtSign)?;
+        let (name, version) = match value.split_first_char() {
+            None => return Err(ParsePkgNameVerError::EmptyInput),
+            Some(('@', rest)) => {
+                let (name_without_at, version) =
+                    rest.split_once('@').ok_or(ParsePkgNameVerError::MissingAtSign)?;
+                let name = &value[..name_without_at.len() + 1];
+                debug_assert_eq!(name, format!("@{name_without_at}"));
+                (name, version)
+            }
+            Some((_, _)) => value.split_once('@').ok_or(ParsePkgNameVerError::MissingAtSign)?,
+        };
         if name.is_empty() {
             return Err(ParsePkgNameVerError::EmptyName);
         }
