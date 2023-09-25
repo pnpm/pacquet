@@ -17,7 +17,7 @@ use std::str::FromStr;
 #[serde(try_from = "&'de str", into = "String")]
 pub struct DependencyPath {
     pub custom_registry: Option<String>,
-    pub package_specifier: String,
+    pub package_specifier: String, // TODO: PackageSpecifier syntax: ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)
 }
 
 /// Error when parsing [`DependencyPath`] from a string.
