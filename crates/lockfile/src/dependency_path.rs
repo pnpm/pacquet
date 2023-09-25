@@ -5,6 +5,13 @@ use std::str::FromStr;
 /// Dependency path is the key of the `packages` map.
 ///
 /// Specification: <https://github.com/pnpm/spec/blob/master/lockfile/6.0.md#packages>
+///
+/// Syntax: `{custom_registry}/{package_specifier}`
+///
+/// Syntax Examples:
+/// * `/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)`
+/// * `registry.npmjs.com/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)`
+/// * `registry.node-modules.io/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)`
 #[derive(Debug, Display, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[display(fmt = "{}/{package_specifier}", "custom_registry.as_deref().unwrap_or_default()")]
 #[serde(try_from = "&'de str", into = "String")]
