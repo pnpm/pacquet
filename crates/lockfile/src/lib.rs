@@ -2,6 +2,7 @@ mod comver;
 mod dependency;
 mod dependency_path;
 mod load_lockfile;
+mod lockfile_version;
 mod package_snapshot;
 mod project_snapshot;
 mod resolution;
@@ -10,6 +11,7 @@ pub use comver::{ComVer, ParseComVerError};
 pub use dependency::LockfileDependency;
 pub use dependency_path::DependencyPath;
 pub use load_lockfile::LoadLockfileError;
+pub use lockfile_version::LockfileVersion;
 pub use package_snapshot::{LockfilePeerDependencyMetaValue, PackageSnapshot};
 pub use project_snapshot::{MultiProjectSnapshot, ProjectSnapshot, RootProjectSnapshot};
 pub use resolution::{
@@ -31,7 +33,7 @@ pub struct LockfileSettings {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Lockfile {
-    pub lockfile_version: ComVer,
+    pub lockfile_version: LockfileVersion<6>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub settings: Option<LockfileSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
