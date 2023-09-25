@@ -10,6 +10,9 @@ use std::str::FromStr;
 /// Syntax: `{custom_registry}/{package_specifier}`
 ///
 /// Syntax Examples:
+/// * `/ts-node@10.9.1`
+/// * `registry.npmjs.com/ts-node@10.9.1`
+/// * `registry.node-modules.io/ts-node@10.9.1`
 /// * `/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)`
 /// * `registry.npmjs.com/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)`
 /// * `registry.node-modules.io/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)`
