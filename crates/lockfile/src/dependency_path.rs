@@ -79,8 +79,16 @@ mod tests {
             }};
         }
 
-        case!(None, "foo@1.0.0" => "/foo@1.0.0");
-        case!(Some("registry.node-modules.io"), "foo@1.0.0" => "registry.node-modules.io/foo@1.0.0");
+        case!(None, "ts-node@10.9.1" => "/ts-node@10.9.1");
+        case!(Some("registry.node-modules.io"), "ts-node@10.9.1" => "registry.node-modules.io/ts-node@10.9.1");
+        case!(
+            None, "ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
+                => "/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
+        );
+        case!(
+            Some("registry.node-modules.io"), "ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
+                => "registry.node-modules.io/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
+        );
     }
 
     #[test]
@@ -100,13 +108,21 @@ mod tests {
             }};
         }
 
-        case!("/foo@1.0.0" => None, "foo@1.0.0");
-        case!("registry.node-modules.io/foo@1.0.0" => Some("registry.node-modules.io"), "foo@1.0.0");
+        case!("/ts-node@10.9.1" => None, "ts-node@10.9.1");
+        case!("registry.node-modules.io/ts-node@10.9.1" => Some("registry.node-modules.io"), "ts-node@10.9.1");
+        case!(
+            "/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
+                => None, "ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
+        );
+        case!(
+            "registry.node-modules.io/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
+                => Some("registry.node-modules.io"), "ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
+        );
     }
 
     #[test]
     fn parse_error() {
-        let error = "foo@1.0.0".parse::<DependencyPath>().unwrap_err();
+        let error = "ts-node@10.9.1".parse::<DependencyPath>().unwrap_err();
         assert_eq!(error.to_string(), "Invalid syntax");
         assert!(matches!(error, ParseDependencyPathError::InvalidSyntax));
     }
