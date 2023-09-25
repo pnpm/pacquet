@@ -1,3 +1,4 @@
+use crate::PkgNameVerPeer;
 use derive_more::{Display, Error};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -17,7 +18,7 @@ use std::str::FromStr;
 #[serde(try_from = "&'de str", into = "String")]
 pub struct DependencyPath {
     pub custom_registry: Option<String>,
-    pub package_specifier: String, // TODO: PackageSpecifier syntax: ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)
+    pub package_specifier: PkgNameVerPeer,
 }
 
 /// Error when parsing [`DependencyPath`] from a string.
@@ -34,7 +35,8 @@ impl FromStr for DependencyPath {
             s.split_once('/').ok_or(ParseDependencyPathError::InvalidSyntax)?;
         let custom_registry =
             if custom_registry.is_empty() { None } else { Some(custom_registry.to_string()) };
-        let package_specifier = package_specifier.to_string();
+        let package_specifier =
+            package_specifier.parse().map_err(|_| ParseDependencyPathError::InvalidSyntax)?;
         Ok(DependencyPath { custom_registry, package_specifier })
     }
 }
@@ -62,7 +64,7 @@ mod tests {
         macro_rules! case {
             ($custom_registry:expr, $package_specifier:expr => $output:expr) => {{
                 let custom_registry = $custom_registry.map(|x: &str| x.to_string());
-                let package_specifier = $package_specifier.to_string();
+                let package_specifier = $package_specifier.parse().unwrap();
                 eprintln!("TEST: {custom_registry:?}, {package_specifier:?}");
                 let yaml =
                     serde_yaml::to_string(&DependencyPath { custom_registry, package_specifier })
@@ -86,7 +88,7 @@ mod tests {
                     dependency_path,
                     DependencyPath {
                         custom_registry: $custom_registry.map(|x: &str| x.to_string()),
-                        package_specifier: $package_specifier.to_string(),
+                        package_specifier: $package_specifier.parse().unwrap(),
                     }
                 );
             }};
