@@ -1,79 +1,92 @@
 use derive_more::{Display, Error};
-use node_semver::{SemverError, Version};
+use node_semver::Version;
 use serde::{Deserialize, Serialize};
 use split_first_char::SplitFirstChar;
-use std::str::FromStr;
+use std::{fmt::Display, str::FromStr};
 
-/// Syntax: `{name}@{version}`
+/// Syntax: `{name}@{suffix}`
 ///
-/// Examples: `ts-node@10.9.1`, `@types/node@18.7.19`, `typescript@5.1.6`
+/// Examples:
+/// * `ts-node@10.9.1`, `@types/node@18.7.19`, `typescript@5.1.6`
+/// * `react-json-view@1.21.3(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)`
 #[derive(Debug, Display, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
-#[display(fmt = "{name}@{version}")]
+#[display(fmt = "{name}@{suffix}")]
+#[display(bound = "Suffix: Display")]
 #[serde(try_from = "&'de str", into = "String")]
-pub struct PkgNameVer {
+#[serde(bound(
+    deserialize = "Suffix: FromStr, Suffix::Err: Display",
+    serialize = "Suffix: Display + Clone",
+))]
+pub struct PkgNameSuffix<Suffix> {
     pub name: String,
-    pub version: Version,
+    pub suffix: Suffix,
 }
 
-impl PkgNameVer {
-    /// Construct a [`PkgNameVer`].
-    pub fn new(name: impl Into<String>, version: impl Into<Version>) -> Self {
-        PkgNameVer { name: name.into(), version: version.into() }
+impl<Suffix> PkgNameSuffix<Suffix> {
+    /// Construct a [`PkgNameSuffix`].
+    pub fn new(name: impl Into<String>, suffix: impl Into<Suffix>) -> Self {
+        PkgNameSuffix { name: name.into(), suffix: suffix.into() }
     }
 }
 
-/// Error when parsing [`PkgNameVer`] from a string.
+/// Error when parsing [`PkgNameSuffix`] from a string.
 #[derive(Debug, Display, Error)]
-pub enum ParsePkgNameVerError {
+#[display(bound = "ParseSuffixError: Display")]
+pub enum ParsePkgNameSuffixError<ParseSuffixError> {
     #[display(fmt = "Input is empty")]
     EmptyInput,
-    #[display(fmt = "Version is missing")]
-    MissingVersion,
+    #[display(fmt = "Suffix is missing")]
+    MissingSuffix,
     #[display(fmt = "Name is empty")]
     EmptyName,
-    #[display(fmt = "Failed to parse version: {_0}")]
-    ParseVersionFailure(#[error(source)] SemverError),
+    #[display(fmt = "Failed to parse suffix: {_0}")]
+    ParseSuffixFailure(#[error(source)] ParseSuffixError),
 }
 
-impl FromStr for PkgNameVer {
-    type Err = ParsePkgNameVerError;
+impl<Suffix: FromStr> FromStr for PkgNameSuffix<Suffix> {
+    type Err = ParsePkgNameSuffixError<Suffix::Err>;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        let (name, version) = match value.split_first_char() {
-            None => return Err(ParsePkgNameVerError::EmptyInput),
+        let (name, suffix) = match value.split_first_char() {
+            None => return Err(ParsePkgNameSuffixError::EmptyInput),
             Some(('@', rest)) => {
-                let (name_without_at, version) =
-                    rest.split_once('@').ok_or(ParsePkgNameVerError::MissingVersion)?;
+                let (name_without_at, suffix) =
+                    rest.split_once('@').ok_or(ParsePkgNameSuffixError::MissingSuffix)?;
                 let name = &value[..name_without_at.len() + 1];
                 debug_assert_eq!(name, format!("@{name_without_at}"));
-                (name, version)
+                (name, suffix)
             }
-            Some((_, _)) => value.split_once('@').ok_or(ParsePkgNameVerError::MissingVersion)?,
+            Some((_, _)) => value.split_once('@').ok_or(ParsePkgNameSuffixError::MissingSuffix)?,
         };
         if matches!(name, "" | "@" | "@/") {
-            return Err(ParsePkgNameVerError::EmptyName);
+            return Err(ParsePkgNameSuffixError::EmptyName);
         }
-        if version.is_empty() {
-            return Err(ParsePkgNameVerError::MissingVersion);
+        if suffix.is_empty() {
+            return Err(ParsePkgNameSuffixError::MissingSuffix);
         }
-        let version =
-            version.parse::<Version>().map_err(ParsePkgNameVerError::ParseVersionFailure)?;
+        let suffix =
+            suffix.parse::<Suffix>().map_err(ParsePkgNameSuffixError::ParseSuffixFailure)?;
         let name = name.to_string();
-        Ok(PkgNameVer { name, version })
+        Ok(PkgNameSuffix { name, suffix })
     }
 }
 
-impl<'a> TryFrom<&'a str> for PkgNameVer {
-    type Error = ParsePkgNameVerError;
+impl<'a, Suffix: FromStr> TryFrom<&'a str> for PkgNameSuffix<Suffix> {
+    type Error = ParsePkgNameSuffixError<Suffix::Err>;
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
         value.parse()
     }
 }
 
-impl From<PkgNameVer> for String {
-    fn from(value: PkgNameVer) -> Self {
+impl<Suffix: Display> From<PkgNameSuffix<Suffix>> for String {
+    fn from(value: PkgNameSuffix<Suffix>) -> Self {
         value.to_string()
     }
 }
+
+/// Syntax: `{name}@{version}`
+///
+/// Examples: `ts-node@10.9.1`, `@types/node@18.7.19`, `typescript@5.1.6`
+pub type PkgNameVer = PkgNameSuffix<Version>;
 
 #[cfg(test)]
 mod tests {
@@ -130,14 +143,14 @@ mod tests {
             }};
         }
 
-        case!("Empty input": "" => "Input is empty", ParsePkgNameVerError::EmptyInput);
-        case!("Non-scope name without version": "ts-node" => "Version is missing", ParsePkgNameVerError::MissingVersion);
-        case!("Scoped name without version": "@types/node" => "Version is missing", ParsePkgNameVerError::MissingVersion);
-        case!("Non-scope name with empty version": "ts-node" => "Version is missing", ParsePkgNameVerError::MissingVersion);
-        case!("Scoped name with empty version": "@types/node" => "Version is missing", ParsePkgNameVerError::MissingVersion);
-        case!("Missing name": "10.9.1" => "Version is missing", ParsePkgNameVerError::MissingVersion); // can't fix without parser combinator
-        case!("Empty non-scope name": "@19.9.1" => "Version is missing", ParsePkgNameVerError::MissingVersion); // can't fix without parser combinator
-        case!("Empty scoped name": "@@18.7.19" => "Name is empty", ParsePkgNameVerError::EmptyName);
+        case!("Empty input": "" => "Input is empty", ParsePkgNameSuffixError::EmptyInput);
+        case!("Non-scope name without version": "ts-node" => "Suffix is missing", ParsePkgNameSuffixError::MissingSuffix);
+        case!("Scoped name without version": "@types/node" => "Suffix is missing", ParsePkgNameSuffixError::MissingSuffix);
+        case!("Non-scope name with empty version": "ts-node" => "Suffix is missing", ParsePkgNameSuffixError::MissingSuffix);
+        case!("Scoped name with empty version": "@types/node" => "Suffix is missing", ParsePkgNameSuffixError::MissingSuffix);
+        case!("Missing name": "10.9.1" => "Suffix is missing", ParsePkgNameSuffixError::MissingSuffix); // can't fix without parser combinator
+        case!("Empty non-scope name": "@19.9.1" => "Suffix is missing", ParsePkgNameSuffixError::MissingSuffix); // can't fix without parser combinator
+        case!("Empty scoped name": "@@18.7.19" => "Name is empty", ParsePkgNameSuffixError::EmptyName);
     }
 
     #[test]
