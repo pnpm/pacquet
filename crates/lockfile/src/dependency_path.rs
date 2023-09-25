@@ -1,4 +1,4 @@
-use crate::PkgNameVerPeer;
+use crate::{ParsePkgNameVerPeerError, PkgNameVerPeer};
 use derive_more::{Display, Error};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -26,6 +26,8 @@ pub struct DependencyPath {
 pub enum ParseDependencyPathError {
     #[display(fmt = "Invalid syntax")]
     InvalidSyntax,
+    #[display(fmt = "Failed to parse specifier: {_0}")]
+    ParsePackageSpecifierFailure(ParsePkgNameVerPeerError),
 }
 
 impl FromStr for DependencyPath {
@@ -35,8 +37,9 @@ impl FromStr for DependencyPath {
             s.split_once('/').ok_or(ParseDependencyPathError::InvalidSyntax)?;
         let custom_registry =
             if custom_registry.is_empty() { None } else { Some(custom_registry.to_string()) };
-        let package_specifier =
-            package_specifier.parse().map_err(|_| ParseDependencyPathError::InvalidSyntax)?;
+        let package_specifier = package_specifier
+            .parse()
+            .map_err(ParseDependencyPathError::ParsePackageSpecifierFailure)?;
         Ok(DependencyPath { custom_registry, package_specifier })
     }
 }
