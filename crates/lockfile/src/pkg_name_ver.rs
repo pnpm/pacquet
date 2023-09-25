@@ -135,8 +135,8 @@ mod tests {
         case!("Scoped name without version": "@types/node" => "Version is missing", ParsePkgNameVerError::MissingVersion);
         case!("Non-scope name with empty version": "ts-node" => "Version is missing", ParsePkgNameVerError::MissingVersion);
         case!("Scoped name with empty version": "@types/node" => "Version is missing", ParsePkgNameVerError::MissingVersion);
-        case!("Missing name": "10.9.1" => "Version is missing", ParsePkgNameVerError::MissingVersion);
-        case!("Empty non-scope name": "@19.9.1" => "Version is missing", ParsePkgNameVerError::MissingVersion);
+        case!("Missing name": "10.9.1" => "Version is missing", ParsePkgNameVerError::MissingVersion); // can't fix without parser combinator
+        case!("Empty non-scope name": "@19.9.1" => "Version is missing", ParsePkgNameVerError::MissingVersion); // can't fix without parser combinator
         case!("Empty scoped name": "@@18.7.19" => "Name is empty", ParsePkgNameVerError::EmptyName);
     }
 
