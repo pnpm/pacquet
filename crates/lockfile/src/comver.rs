@@ -2,7 +2,7 @@ use derive_more::{Display, Error};
 use serde::{Deserialize, Serialize};
 use std::{num::ParseIntError, str::FromStr};
 
-/// Version struct used in a lockfile.
+/// Information of the top-level field `lockfileVersion`.
 ///
 /// It contains only major and minor.
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
