@@ -1336,6 +1336,7 @@ name = "pacquet_lockfile"
 version = "0.0.1"
 dependencies = [
  "derive_more",
+ "node-semver",
  "pacquet_diagnostics",
  "pipe-trait",
  "pretty_assertions",
