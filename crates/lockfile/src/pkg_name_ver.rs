@@ -49,7 +49,7 @@ impl FromStr for PkgNameVer {
             }
             Some((_, _)) => value.split_once('@').ok_or(ParsePkgNameVerError::MissingAtSign)?,
         };
-        if name.is_empty() {
+        if matches!(name, "" | "@" | "@/") {
             return Err(ParsePkgNameVerError::EmptyName);
         }
         let version =
