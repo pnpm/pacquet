@@ -1338,6 +1338,7 @@ dependencies = [
  "derive_more",
  "node-semver",
  "pacquet_diagnostics",
+ "pacquet_package_json",
  "pipe-trait",
  "pretty_assertions",
  "serde",

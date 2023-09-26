@@ -11,7 +11,8 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-pacquet_diagnostics = { workspace = true }
+pacquet_diagnostics  = { workspace = true }
+pacquet_package_json = { workspace = true }
 
 derive_more       = { workspace = true }
 node-semver       = { workspace = true }
