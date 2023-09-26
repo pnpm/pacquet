@@ -1,4 +1,4 @@
-use crate::LockfileDependency;
+use crate::ResolvedDependencySpec;
 use derive_more::{From, TryInto};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -10,11 +10,11 @@ pub struct ProjectSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub specifiers: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub dependencies: Option<HashMap<String, LockfileDependency>>,
+    pub dependencies: Option<HashMap<String, ResolvedDependencySpec>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub optional_dependencies: Option<HashMap<String, LockfileDependency>>,
+    pub optional_dependencies: Option<HashMap<String, ResolvedDependencySpec>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub dev_dependencies: Option<HashMap<String, LockfileDependency>>,
+    pub dev_dependencies: Option<HashMap<String, ResolvedDependencySpec>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dependencies_meta: Option<serde_yaml::Value>, // TODO: DependenciesMeta
     #[serde(skip_serializing_if = "Option::is_none")]

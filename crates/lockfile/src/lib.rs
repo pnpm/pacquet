@@ -1,5 +1,4 @@
 mod comver;
-mod dependency;
 mod dependency_path;
 mod load_lockfile;
 mod lockfile_version;
@@ -10,9 +9,9 @@ mod pkg_name_ver_peer;
 mod pkg_ver_peer;
 mod project_snapshot;
 mod resolution;
+mod resolve_dependency_spec;
 
 pub use comver::{ComVer, ParseComVerError};
-pub use dependency::LockfileDependency;
 pub use dependency_path::DependencyPath;
 pub use load_lockfile::LoadLockfileError;
 pub use lockfile_version::LockfileVersion;
@@ -25,6 +24,7 @@ pub use project_snapshot::{MultiProjectSnapshot, ProjectSnapshot, RootProjectSna
 pub use resolution::{
     DirectoryResolution, GitResolution, LockfileResolution, RegistryResolution, TarballResolution,
 };
+pub use resolve_dependency_spec::ResolvedDependencySpec;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
