@@ -4,7 +4,7 @@ use async_recursion::async_recursion;
 use clap::Parser;
 use futures_util::future;
 use pacquet_diagnostics::tracing;
-use pacquet_lockfile::{Lockfile, RootProjectSnapshot};
+use pacquet_lockfile::{Lockfile, PkgVerPeer, ProjectSnapshot, RootProjectSnapshot};
 use pacquet_package_json::DependencyGroup;
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
@@ -74,6 +74,29 @@ impl PackageManager {
         tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Complete subset");
     }
 
+    /// Install dependencies of a dependency.
+    ///
+    /// This function is used by [`PackageManager::install`] with a lockfile.
+    #[allow(unused)] // for now
+    #[async_recursion]
+    async fn install_dependencies_with_lockfile(
+        &self,
+        project_snapshot: &ProjectSnapshot,
+        name: &str,
+        ver_peer: &PkgVerPeer,
+    ) {
+        // let node_modules_path =
+        //     self.config.virtual_store_dir.join(package.to_store_name()).join("node_modules");
+
+        // tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Start subset");
+
+        // TODO
+
+        // tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Complete subset");
+
+        todo!()
+    }
+
     /// Jobs of the `install` command.
     pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
         tracing::info!(target: "pacquet::install", "Start all");
@@ -117,7 +140,12 @@ impl PackageManager {
                 project_snapshot
                     .dependencies_by_groups(args.dependency_groups())
                     .map(|(name, dep_spec)| async move {
-                        todo!("Install package {name} according to {dep_spec:?}");
+                        self.install_dependencies_with_lockfile(
+                            project_snapshot,
+                            name,
+                            &dep_spec.version,
+                        )
+                        .await;
                     })
                     .pipe(future::join_all)
                     .await;
