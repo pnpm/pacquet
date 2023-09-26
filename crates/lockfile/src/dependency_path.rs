@@ -88,7 +88,7 @@ mod tests {
             ($custom_registry:expr, $package_specifier:expr => $output:expr) => {{
                 let custom_registry = $custom_registry.map(|x: &str| x.to_string());
                 let package_specifier = $package_specifier.parse().unwrap();
-                eprintln!("TEST: {custom_registry:?}, {package_specifier:?}");
+                eprintln!("CASE: {custom_registry:?}, {package_specifier:?}");
                 let yaml =
                     serde_yaml::to_string(&DependencyPath { custom_registry, package_specifier })
                         .unwrap();
@@ -126,7 +126,7 @@ mod tests {
         macro_rules! case {
             ($input:expr => $custom_registry:expr, $package_specifier:expr) => {{
                 let input = $input;
-                eprintln!("TEST: {input:?}");
+                eprintln!("CASE: {input:?}");
                 let dependency_path: DependencyPath = serde_yaml::from_str(input).unwrap();
                 assert_eq!(
                     dependency_path,
@@ -175,7 +175,7 @@ mod tests {
         macro_rules! case {
             ($input:expr => $output:expr) => {
                 let input = $input;
-                eprintln!("TEST: {input:?}");
+                eprintln!("CASE: {input:?}");
                 let dependency_path: DependencyPath = input.parse().unwrap();
                 dbg!(&dependency_path);
                 let received = dependency_path.to_store_name();
