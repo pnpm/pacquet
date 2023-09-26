@@ -52,8 +52,6 @@ pub enum DependencyGroup {
     Optional,
     #[strum(serialize = "peerDependencies")]
     Peer,
-    #[strum(serialize = "bundledDependencies")]
-    Bundled,
 }
 
 pub struct PackageJson {
