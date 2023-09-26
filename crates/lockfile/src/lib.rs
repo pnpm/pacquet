@@ -24,7 +24,7 @@ pub use project_snapshot::{MultiProjectSnapshot, ProjectSnapshot, RootProjectSna
 pub use resolution::{
     DirectoryResolution, GitResolution, LockfileResolution, RegistryResolution, TarballResolution,
 };
-pub use resolve_dependency_spec::ResolvedDependencySpec;
+pub use resolve_dependency_spec::{ResolvedDependencyMap, ResolvedDependencySpec};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
