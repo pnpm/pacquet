@@ -55,7 +55,7 @@ pub enum DependencyGroup {
     Peer,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum BundleDependencies {
     Boolean(bool),
     List(Vec<String>),
