@@ -106,6 +106,19 @@ mod tests {
             Some("registry.node-modules.io"), "ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
                 => "registry.node-modules.io/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
         );
+        case!(None, "@babel/plugin-proposal-object-rest-spread@7.12.1" => "/@babel/plugin-proposal-object-rest-spread@7.12.1");
+        case!(
+            Some("registry.node-modules.io"), "@babel/plugin-proposal-object-rest-spread@7.12.1"
+                => "registry.node-modules.io/@babel/plugin-proposal-object-rest-spread@7.12.1"
+        );
+        case!(
+            None, "@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)"
+                => "/@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)"
+        );
+        case!(
+            Some("registry.node-modules.io"), "@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)"
+                => "registry.node-modules.io/@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)"
+        );
     }
 
     #[test]
@@ -134,6 +147,19 @@ mod tests {
         case!(
             "registry.node-modules.io/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
                 => Some("registry.node-modules.io"), "ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
+        );
+        case!("/@babel/plugin-proposal-object-rest-spread@7.12.1" => None, "@babel/plugin-proposal-object-rest-spread@7.12.1");
+        case!(
+            "registry.node-modules.io/@babel/plugin-proposal-object-rest-spread@7.12.1"
+                => Some("registry.node-modules.io"), "@babel/plugin-proposal-object-rest-spread@7.12.1"
+        );
+        case!(
+            "/@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)"
+                => None, "@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)"
+        );
+        case!(
+            "registry.node-modules.io/@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)"
+                => Some("registry.node-modules.io"), "@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)"
         );
     }
 
