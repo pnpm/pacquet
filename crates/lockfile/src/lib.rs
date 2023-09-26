@@ -2,6 +2,7 @@ mod comver;
 mod dependency_path;
 mod load_lockfile;
 mod lockfile_version;
+mod multi_project_snapshot;
 mod package_snapshot;
 mod pkg_name_suffix;
 mod pkg_name_ver;
@@ -10,21 +11,24 @@ mod pkg_ver_peer;
 mod project_snapshot;
 mod resolution;
 mod resolved_dependency;
+mod root_project_snapshot;
 
 pub use comver::{ComVer, ParseComVerError};
 pub use dependency_path::DependencyPath;
 pub use load_lockfile::LoadLockfileError;
 pub use lockfile_version::LockfileVersion;
+pub use multi_project_snapshot::MultiProjectSnapshot;
 pub use package_snapshot::{LockfilePeerDependencyMetaValue, PackageSnapshot};
 pub use pkg_name_suffix::{ParsePkgNameSuffixError, PkgNameSuffix};
 pub use pkg_name_ver::{ParsePkgNameVerError, PkgNameVer};
 pub use pkg_name_ver_peer::{ParsePkgNameVerPeerError, PkgNameVerPeer};
 pub use pkg_ver_peer::PkgVerPeer;
-pub use project_snapshot::{MultiProjectSnapshot, ProjectSnapshot, RootProjectSnapshot};
+pub use project_snapshot::ProjectSnapshot;
 pub use resolution::{
     DirectoryResolution, GitResolution, LockfileResolution, RegistryResolution, TarballResolution,
 };
 pub use resolved_dependency::{ResolvedDependencyMap, ResolvedDependencySpec};
+pub use root_project_snapshot::RootProjectSnapshot;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
