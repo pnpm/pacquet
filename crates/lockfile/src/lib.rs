@@ -9,7 +9,7 @@ mod pkg_name_ver_peer;
 mod pkg_ver_peer;
 mod project_snapshot;
 mod resolution;
-mod resolve_dependency;
+mod resolved_dependency;
 
 pub use comver::{ComVer, ParseComVerError};
 pub use dependency_path::DependencyPath;
@@ -24,7 +24,7 @@ pub use project_snapshot::{MultiProjectSnapshot, ProjectSnapshot, RootProjectSna
 pub use resolution::{
     DirectoryResolution, GitResolution, LockfileResolution, RegistryResolution, TarballResolution,
 };
-pub use resolve_dependency::{ResolvedDependencyMap, ResolvedDependencySpec};
+pub use resolved_dependency::{ResolvedDependencyMap, ResolvedDependencySpec};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
