@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{convert::Infallible, str::FromStr};
 
 /// Suffix type of [`PkgNameVerPeer`](crate::PkgNameVerPeer) and
-/// type of [`LockfileDependency::version`](crate::LockfileDependency::version).
+/// type of [`ResolvedDependencySpec::version`](crate::ResolvedDependencySpec::version).
 ///
 /// Example: `1.21.3(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)`
 ///
