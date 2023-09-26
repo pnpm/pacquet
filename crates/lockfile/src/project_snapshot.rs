@@ -25,9 +25,10 @@ impl ProjectSnapshot {
     /// Lookup dependency map according to group.
     pub fn get_map_by_group(&self, group: DependencyGroup) -> Option<&'_ ResolvedDependencyMap> {
         match group {
-            DependencyGroup::Default | DependencyGroup::Peer => self.dependencies.as_ref(),
+            DependencyGroup::Default => self.dependencies.as_ref(),
             DependencyGroup::Optional => self.optional_dependencies.as_ref(),
             DependencyGroup::Dev => self.dev_dependencies.as_ref(),
+            DependencyGroup::Peer => None,
         }
     }
 
