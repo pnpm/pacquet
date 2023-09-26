@@ -212,6 +212,7 @@ mod tests {
     use std::{collections::HashMap, fs::read_to_string};
 
     use insta::assert_snapshot;
+    use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
     use tempfile::{tempdir, NamedTempFile};
 
@@ -306,5 +307,36 @@ mod tests {
         };
         assert!(dependencies([DependencyGroup::Peer]).contains_key("fast-querystring"));
         assert!(dependencies([DependencyGroup::Default]).contains_key("fastify"));
+    }
+
+    #[test]
+    fn bundle_dependencies() {
+        fn bundle_list<List>(list: List) -> BundleDependencies
+        where
+            List: IntoIterator,
+            List::Item: Into<String>,
+        {
+            list.into_iter().map(Into::into).collect::<Vec<_>>().pipe(BundleDependencies::List)
+        }
+
+        macro_rules! case {
+            ($input:expr => $output:expr) => {{
+                let data = $input;
+                eprintln!("CASE: {data}");
+                let tmp = NamedTempFile::new().unwrap();
+                write!(tmp.as_file(), "{}", data).unwrap();
+                let package_json = PackageJson::create_if_needed(tmp.path().to_path_buf()).unwrap();
+                let bundle = package_json.bundle_dependencies().unwrap();
+                assert_eq!(bundle, $output);
+            }};
+        }
+
+        case!(r#"{ "bundleDependencies": ["foo", "bar"] }"# => Some(bundle_list(["foo", "bar"])));
+        case!(r#"{ "bundledDependencies": ["foo", "bar"] }"# => Some(bundle_list(["foo", "bar"])));
+        case!(r#"{ "bundleDependencies": false }"# => false.pipe(BundleDependencies::Boolean).pipe(Some));
+        case!(r#"{ "bundledDependencies": false }"# => false.pipe(BundleDependencies::Boolean).pipe(Some));
+        case!(r#"{ "bundleDependencies": true }"# => true.pipe(BundleDependencies::Boolean).pipe(Some));
+        case!(r#"{ "bundledDependencies": true }"# => true.pipe(BundleDependencies::Boolean).pipe(Some));
+        case!(r#"{}"# => None);
     }
 }
