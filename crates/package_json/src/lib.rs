@@ -56,6 +56,7 @@ pub enum DependencyGroup {
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(untagged)]
 pub enum BundleDependencies {
     Boolean(bool),
     List(Vec<String>),
