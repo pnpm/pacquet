@@ -19,11 +19,11 @@ pub async fn install_package_from_registry(
     config: &'static Npmrc,
     http_client: &Client,
     name: &str,
-    version: &str,
+    version_range: &str,
     symlink_path: &Path,
 ) -> Result<PackageVersion, PackageManagerError> {
     let package = Package::fetch_from_registry(name, http_client, &config.registry).await?;
-    let package_version = package.pinned_version(version).unwrap();
+    let package_version = package.pinned_version(version_range).unwrap();
     internal_fetch(tarball_cache, http_client, package_version, config, symlink_path).await?;
     Ok(package_version.to_owned())
 }

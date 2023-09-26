@@ -55,13 +55,13 @@ impl PackageManager {
 
         package
             .dependencies(self.config.auto_install_peers)
-            .map(|(name, version)| async {
+            .map(|(name, version_range)| async {
                 let dependency = install_package_from_registry(
                     &self.tarball_cache,
                     self.config,
                     &self.http_client,
                     name,
-                    version,
+                    version_range,
                     &node_modules_path,
                 )
                 .await
@@ -82,13 +82,13 @@ impl PackageManager {
             (false, _) => {
                 self.package_json
                     .dependencies(args.dependency_groups())
-                    .map(|(name, version, _)| async move {
+                    .map(|(name, version_range, _)| async move {
                         let dependency = install_package_from_registry(
                             &self.tarball_cache,
                             self.config,
                             &self.http_client,
                             name,
-                            version,
+                            version_range,
                             &self.config.modules_dir,
                         )
                         .await
