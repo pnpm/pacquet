@@ -8,6 +8,7 @@ use pacquet_diagnostics::{
     miette::{self, Diagnostic},
     thiserror::{self, Error},
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use strum::IntoStaticStr;
 
@@ -52,6 +53,12 @@ pub enum DependencyGroup {
     Optional,
     #[strum(serialize = "peerDependencies")]
     Peer,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub enum BundleDependencies {
+    Boolean(bool),
+    List(Vec<String>),
 }
 
 pub struct PackageJson {
@@ -143,6 +150,15 @@ impl PackageJson {
                     version.as_str().map(|value| (name.as_str(), value, group))
                 })
         })
+    }
+
+    pub fn bundle_dependencies(&self) -> Result<Option<BundleDependencies>, serde_json::Error> {
+        self.value
+            .get("bundleDependencies")
+            .or_else(|| self.value.get("bundledDependencies"))
+            .map(serde_json::Value::clone)
+            .map(serde_json::from_value)
+            .transpose()
     }
 
     pub fn add_dependency(
