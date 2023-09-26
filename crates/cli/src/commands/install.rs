@@ -4,6 +4,7 @@ use async_recursion::async_recursion;
 use clap::Parser;
 use futures_util::future;
 use pacquet_diagnostics::tracing;
+use pacquet_lockfile::{Lockfile, ResolvedDependencySpec, RootProjectSnapshot};
 use pacquet_package_json::DependencyGroup;
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
@@ -101,12 +102,42 @@ impl PackageManager {
                 unimplemented!();
             }
             (true, Some(lockfile)) => {
-                assert_eq!(lockfile.lockfile_version.major, 6); // compatibility check already happens at serde, but this still helps preventing programmer mistakes.
+                let Lockfile { lockfile_version, project_snapshot, .. } = lockfile;
+                assert_eq!(lockfile_version.major, 6); // compatibility check already happens at serde, but this still helps preventing programmer mistakes.
+
+                let RootProjectSnapshot::Single(project_snapshot) = project_snapshot else {
+                    panic!("Monorepo is not yet supported");
+                };
+
                 self.package_json
                     .dependencies(args.dependency_groups())
-                    .map(|(name, version, group)| async move {
-                        // TODO: if `group` turns out to be unnecessary, revert the commit that introduced it
-                        todo!("Do something with {name:?} {version:?} {group:?}");
+                    .map(|(name, manifest_specifier, group)| async move {
+                        let dependency_map = match group {
+                            DependencyGroup::Default | DependencyGroup::Peer => {
+                                project_snapshot.dependencies.as_ref()
+                            }
+                            DependencyGroup::Optional => {
+                                project_snapshot.optional_dependencies.as_ref()
+                            }
+                            DependencyGroup::Dev => project_snapshot.dev_dependencies.as_ref(),
+                        };
+
+                        let Some(ResolvedDependencySpec {
+                            specifier: lockfile_specifier,
+                            version,
+                        }) = dependency_map.and_then(|map| map.get(name)) else {
+                            return
+                        };
+
+                        // TODO: only error when --frozen-lockfile
+                        // TODO: convert to proper Error variant
+                        assert_eq!(
+                            lockfile_specifier.as_str(),
+                            manifest_specifier,
+                            "mismatch specifier (package {name}): {lockfile_specifier:?} in lockfile but {manifest_specifier:?} in package.json",
+                        );
+
+                        todo!("Lookup {name}@{version} in the lockfile and install it");
                     })
                     .pipe(future::join_all)
                     .await;
