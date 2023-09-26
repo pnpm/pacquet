@@ -82,7 +82,7 @@ impl PackageManager {
             (false, _) => {
                 self.package_json
                     .dependencies(args.dependency_groups())
-                    .map(|(name, version_range, _)| async move {
+                    .map(|(name, version_range)| async move {
                         let dependency = install_package_from_registry(
                             &self.tarball_cache,
                             self.config,
