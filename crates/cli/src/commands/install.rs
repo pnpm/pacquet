@@ -149,6 +149,11 @@ impl PackageManager {
             let package_specifier = PkgNameVerPeer::new(name.to_string(), spec.version.clone());
             let dependency_path = DependencyPath { custom_registry, package_specifier };
             let virtual_store_name = dependency_path.to_virtual_store_name();
+            // NOTE: installing with and without a lockfile currently have different in regard to symlink targets that are directly
+            //       under the node_modules directory
+            //       * without a lockfile, the symlink targets is absolute
+            //       * with a lockfile, the symlink targets is relative
+            // TODO: change symlinks directly under node_modules directory to relative targets with or without a lockfile
             let symlink_target =
                 Path::new(".pacquet").join(virtual_store_name).join("node_modules").join(name);
             let symlink_path = self.config.modules_dir.join(name);
