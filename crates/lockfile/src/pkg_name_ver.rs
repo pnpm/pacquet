@@ -31,6 +31,8 @@ mod tests {
         case!("ts-node@10.9.1" => PkgNameVer::new("ts-node", (10, 9, 1)));
         case!("@types/node@18.7.19" => PkgNameVer::new("@types/node", (18, 7, 19)));
         case!("typescript@5.1.6" => PkgNameVer::new("typescript", (5, 1, 6)));
+        case!("foo@0.1.2-alpha.0" => PkgNameVer::new("foo", Version::parse("0.1.2-alpha.0").unwrap()));
+        case!("@foo/bar@0.1.2-rc.0" => PkgNameVer::new("@foo/bar", Version::parse("0.1.2-rc.0").unwrap()));
     }
 
     #[test]
@@ -48,6 +50,8 @@ mod tests {
         case!("ts-node@10.9.1" => PkgNameVer::new("ts-node", (10, 9, 1)));
         case!("'@types/node@18.7.19'" => PkgNameVer::new("@types/node", (18, 7, 19)));
         case!("typescript@5.1.6" => PkgNameVer::new("typescript", (5, 1, 6)));
+        case!("foo@0.1.2-alpha.0" => PkgNameVer::new("foo", Version::parse("0.1.2-alpha.0").unwrap()));
+        case!("'@foo/bar@0.1.2-rc.0'" => PkgNameVer::new("@foo/bar", Version::parse("0.1.2-rc.0").unwrap()));
     }
 
     #[test]
