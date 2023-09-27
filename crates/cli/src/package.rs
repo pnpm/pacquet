@@ -1,6 +1,5 @@
 use crate::package_import::ImportMethodImpl;
 use crate::package_manager::PackageManagerError;
-use pacquet_lockfile::DependencyPath;
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::{download_tarball_to_store, Cache};
@@ -27,25 +26,6 @@ pub async fn install_package_from_registry(
     let package_version = package.pinned_version(version_range).unwrap();
     internal_fetch(tarball_cache, http_client, package_version, config, symlink_path).await?;
     Ok(package_version.to_owned())
-}
-/// This function execute the following and returns the package
-/// - lookups the version in the lockfile
-/// - retrieves the package from the registry
-/// - extracts the tarball to global store directory (~/Library/../pacquet)
-/// - links global store directory to virtual dir (node_modules/.pacquet/..)
-///
-/// symlink_path will be appended by the name of the package. Therefore,
-/// it should be resolved into the node_modules folder of a subdependency such as
-/// `node_modules/.pacquet/fastify@1.0.0/node_modules`.
-#[allow(unused)] // TODO: consider if this function should really be removed
-pub async fn install_package_with_lockfile(
-    tarball_cache: &Cache,
-    config: &'static Npmrc,
-    http_client: &Client,
-    dependency_path: &DependencyPath,
-    symlink_path: &Path,
-) -> Result<PackageVersion, PackageManagerError> {
-    todo!()
 }
 
 pub async fn fetch_package_version_directly(
