@@ -173,22 +173,6 @@ impl PackageManager {
                     self.link_direct_dependencies(project_snapshot, args),
                 )
                 .await;
-
-                // let RootProjectSnapshot::Single(project_snapshot) = project_snapshot else {
-                //     panic!("Monorepo is not yet supported");
-                // };
-
-                // project_snapshot
-                //     .dependencies_by_groups(args.dependency_groups())
-                //     .map(move |(name, dep_spec)| {
-                //         self.install_dependencies_with_lockfile(
-                //             name.to_string(),
-                //             dep_spec.version.clone(),
-                //         )
-                //     })
-                //     .pipe(future::join_all)
-                //     .await;
-                // todo!();
             }
         }
 
