@@ -80,6 +80,7 @@ impl PackageManager {
     /// Install dependencies of a dependency.
     ///
     /// This function is used by [`PackageManager::install`] with a lockfile.
+    #[allow(unused)] // TODO: consider if this function should really be removed
     #[async_recursion]
     async fn install_dependencies_with_lockfile(&self, name: String, ver_peer: PkgVerPeer) {
         let custom_registry = None; // assuming all registries are default registries (custom registry is not yet supported)
@@ -147,21 +148,26 @@ impl PackageManager {
                     "Non frozen lockfile is not yet supported",
                 );
 
+                // TODO: iterate over lockfile.packages and create the directories at node_modules/.pacquet
+
                 let RootProjectSnapshot::Single(project_snapshot) = project_snapshot else {
                     panic!("Monorepo is not yet supported");
                 };
 
-                project_snapshot
-                    .dependencies_by_groups(args.dependency_groups())
-                    .map(move |(name, dep_spec)| {
-                        self.install_dependencies_with_lockfile(
-                            name.to_string(),
-                            dep_spec.version.clone(),
-                        )
-                    })
-                    .pipe(future::join_all)
-                    .await;
-                todo!();
+                // TODO: iterate over project_snapshot and link the direct dependencies.
+                todo!("{project_snapshot:?}");
+
+                // project_snapshot
+                //     .dependencies_by_groups(args.dependency_groups())
+                //     .map(move |(name, dep_spec)| {
+                //         self.install_dependencies_with_lockfile(
+                //             name.to_string(),
+                //             dep_spec.version.clone(),
+                //         )
+                //     })
+                //     .pipe(future::join_all)
+                //     .await;
+                // todo!();
             }
         }
 
