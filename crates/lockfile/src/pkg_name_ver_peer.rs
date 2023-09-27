@@ -19,7 +19,7 @@ mod tests {
 
     fn name_peer_ver(name: &str, peer_ver: &str) -> PkgNameVerPeer {
         let peer_ver = peer_ver.to_string().pipe(PkgVerPeer::new_unchecked);
-        PkgNameVerPeer::new(name, peer_ver)
+        PkgNameVerPeer::new(name.to_string(), peer_ver)
     }
 
     #[test]

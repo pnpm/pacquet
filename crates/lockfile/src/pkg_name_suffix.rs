@@ -23,8 +23,8 @@ pub struct PkgNameSuffix<Suffix> {
 
 impl<Suffix> PkgNameSuffix<Suffix> {
     /// Construct a [`PkgNameSuffix`].
-    pub fn new(name: impl Into<String>, suffix: impl Into<Suffix>) -> Self {
-        PkgNameSuffix { name: name.into(), suffix: suffix.into() }
+    pub fn new(name: String, suffix: Suffix) -> Self {
+        PkgNameSuffix { name, suffix }
     }
 }
 

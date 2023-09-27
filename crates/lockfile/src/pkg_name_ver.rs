@@ -16,6 +16,10 @@ mod tests {
     use pretty_assertions::assert_eq;
     use serde_yaml::Value as YamlValue;
 
+    fn name_ver(name: &str, ver: impl Into<Version>) -> PkgNameVer {
+        PkgNameVer::new(name.to_string(), ver.into())
+    }
+
     #[test]
     fn parse_ok() {
         macro_rules! case {
@@ -28,11 +32,11 @@ mod tests {
             }};
         }
 
-        case!("ts-node@10.9.1" => PkgNameVer::new("ts-node", (10, 9, 1)));
-        case!("@types/node@18.7.19" => PkgNameVer::new("@types/node", (18, 7, 19)));
-        case!("typescript@5.1.6" => PkgNameVer::new("typescript", (5, 1, 6)));
-        case!("foo@0.1.2-alpha.0" => PkgNameVer::new("foo", Version::parse("0.1.2-alpha.0").unwrap()));
-        case!("@foo/bar@0.1.2-rc.0" => PkgNameVer::new("@foo/bar", Version::parse("0.1.2-rc.0").unwrap()));
+        case!("ts-node@10.9.1" => name_ver("ts-node", (10, 9, 1)));
+        case!("@types/node@18.7.19" => name_ver("@types/node", (18, 7, 19)));
+        case!("typescript@5.1.6" => name_ver("typescript", (5, 1, 6)));
+        case!("foo@0.1.2-alpha.0" => name_ver("foo", Version::parse("0.1.2-alpha.0").unwrap()));
+        case!("@foo/bar@0.1.2-rc.0" => name_ver("@foo/bar", Version::parse("0.1.2-rc.0").unwrap()));
     }
 
     #[test]
@@ -47,11 +51,11 @@ mod tests {
             }};
         }
 
-        case!("ts-node@10.9.1" => PkgNameVer::new("ts-node", (10, 9, 1)));
-        case!("'@types/node@18.7.19'" => PkgNameVer::new("@types/node", (18, 7, 19)));
-        case!("typescript@5.1.6" => PkgNameVer::new("typescript", (5, 1, 6)));
-        case!("foo@0.1.2-alpha.0" => PkgNameVer::new("foo", Version::parse("0.1.2-alpha.0").unwrap()));
-        case!("'@foo/bar@0.1.2-rc.0'" => PkgNameVer::new("@foo/bar", Version::parse("0.1.2-rc.0").unwrap()));
+        case!("ts-node@10.9.1" => name_ver("ts-node", (10, 9, 1)));
+        case!("'@types/node@18.7.19'" => name_ver("@types/node", (18, 7, 19)));
+        case!("typescript@5.1.6" => name_ver("typescript", (5, 1, 6)));
+        case!("foo@0.1.2-alpha.0" => name_ver("foo", Version::parse("0.1.2-alpha.0").unwrap()));
+        case!("'@foo/bar@0.1.2-rc.0'" => name_ver("@foo/bar", Version::parse("0.1.2-rc.0").unwrap()));
     }
 
     #[test]
@@ -80,14 +84,13 @@ mod tests {
 
     #[test]
     fn to_string() {
-        let string = PkgNameVer::new("ts-node", (10, 9, 1)).to_string();
+        let string = name_ver("ts-node", (10, 9, 1)).to_string();
         assert_eq!(string, "ts-node@10.9.1");
     }
 
     #[test]
     fn serialize() {
-        let received =
-            PkgNameVer::new("ts-node", (10, 9, 1)).pipe_ref(serde_yaml::to_value).unwrap();
+        let received = name_ver("ts-node", (10, 9, 1)).pipe_ref(serde_yaml::to_value).unwrap();
         let expected = "ts-node@10.9.1".to_string().pipe(YamlValue::String);
         assert_eq!(received, expected);
     }
