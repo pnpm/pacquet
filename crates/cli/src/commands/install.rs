@@ -129,6 +129,19 @@ impl PackageManager {
             .await;
     }
 
+    /// Create symlinks for the direct dependencies.
+    ///
+    /// If package `foo@x.y.z` is declared as a dependency in `package.json`,
+    /// symlink `foo -> .pacquet/foo@x.y.z/node_modules/foo` shall be created
+    /// in the `node_modules` directory.
+    async fn link_direct_dependencies(project_snapshot: &RootProjectSnapshot) {
+        let RootProjectSnapshot::Single(project_snapshot) = project_snapshot else {
+            panic!("Monorepo is not yet supported");
+        };
+
+        todo!("iterate over {project_snapshot:?} and create symlinks to the virtual store");
+    }
+
     /// Jobs of the `install` command.
     pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
         tracing::info!(target: "pacquet::install", "Start all");
@@ -165,14 +178,15 @@ impl PackageManager {
                     "Non frozen lockfile is not yet supported",
                 );
 
-                Self::create_virtual_store(packages).await;
+                future::join(
+                    Self::create_virtual_store(packages),
+                    Self::link_direct_dependencies(project_snapshot),
+                )
+                .await;
 
-                let RootProjectSnapshot::Single(project_snapshot) = project_snapshot else {
-                    panic!("Monorepo is not yet supported");
-                };
-
-                // TODO: iterate over project_snapshot and link the direct dependencies.
-                todo!("{project_snapshot:?}");
+                // let RootProjectSnapshot::Single(project_snapshot) = project_snapshot else {
+                //     panic!("Monorepo is not yet supported");
+                // };
 
                 // project_snapshot
                 //     .dependencies_by_groups(args.dependency_groups())
