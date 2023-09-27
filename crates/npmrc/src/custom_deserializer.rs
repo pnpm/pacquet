@@ -45,10 +45,12 @@ pub fn default_store_dir() -> PathBuf {
 }
 
 pub fn default_modules_dir() -> PathBuf {
+    // TODO: find directory with package.json
     env::current_dir().expect("current directory is unavailable").join("node_modules")
 }
 
 pub fn default_virtual_store_dir() -> PathBuf {
+    // TODO: find directory with package.json
     env::current_dir().expect("current directory is unavailable").join("node_modules/.pacquet")
 }
 
