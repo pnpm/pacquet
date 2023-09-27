@@ -4,10 +4,13 @@ use async_recursion::async_recursion;
 use clap::Parser;
 use futures_util::future;
 use pacquet_diagnostics::tracing;
-use pacquet_lockfile::{DependencyPath, Lockfile, PkgNameVerPeer, PkgVerPeer, RootProjectSnapshot};
+use pacquet_lockfile::{
+    DependencyPath, Lockfile, PackageSnapshot, PkgNameVerPeer, PkgVerPeer, RootProjectSnapshot,
+};
 use pacquet_package_json::DependencyGroup;
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
+use std::collections::HashMap;
 
 #[derive(Parser, Debug)]
 pub struct InstallCommandArgs {
@@ -112,6 +115,20 @@ impl PackageManager {
         todo!()
     }
 
+    /// Generate filesystem layout for the virtual store at `node_modules/.pacquet`.
+    async fn create_virtual_store(packages: &Option<HashMap<DependencyPath, PackageSnapshot>>) {
+        let Some(packages) = packages else {
+            todo!("check project_snapshot, error if it's not empty, do nothing if empty");
+        };
+        packages
+            .iter()
+            .map(|(dependency_path, package_snapshot)| async move {
+                todo!("install packages from {package_snapshot:?} for {dependency_path}");
+            })
+            .pipe(future::join_all)
+            .await;
+    }
+
     /// Jobs of the `install` command.
     pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
         tracing::info!(target: "pacquet::install", "Start all");
@@ -140,7 +157,7 @@ impl PackageManager {
                 unimplemented!();
             }
             (true, Some(lockfile)) => {
-                let Lockfile { lockfile_version, project_snapshot, .. } = lockfile;
+                let Lockfile { lockfile_version, project_snapshot, packages, .. } = lockfile;
                 assert_eq!(lockfile_version.major, 6); // compatibility check already happens at serde, but this still helps preventing programmer mistakes.
 
                 assert!(
@@ -148,7 +165,7 @@ impl PackageManager {
                     "Non frozen lockfile is not yet supported",
                 );
 
-                // TODO: iterate over lockfile.packages and create the directories at node_modules/.pacquet
+                Self::create_virtual_store(packages).await;
 
                 let RootProjectSnapshot::Single(project_snapshot) = project_snapshot else {
                     panic!("Monorepo is not yet supported");
