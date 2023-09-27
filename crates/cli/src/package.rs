@@ -37,7 +37,7 @@ pub async fn install_package_from_registry(
 /// symlink_path will be appended by the name of the package. Therefore,
 /// it should be resolved into the node_modules folder of a subdependency such as
 /// `node_modules/.pacquet/fastify@1.0.0/node_modules`.
-#[allow(unused)] // for now
+#[allow(unused)] // TODO: consider if this function should really be removed
 pub async fn install_package_with_lockfile(
     tarball_cache: &Cache,
     config: &'static Npmrc,
