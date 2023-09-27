@@ -48,8 +48,11 @@ impl PackageManager {
     /// This function is used by [`PackageManager::install`] without a lockfile.
     #[async_recursion]
     async fn install_dependencies_from_registry(&self, package: &PackageVersion) {
-        let node_modules_path =
-            self.config.virtual_store_dir.join(package.to_store_name()).join("node_modules");
+        let node_modules_path = self
+            .config
+            .virtual_store_dir
+            .join(package.to_virtual_store_name())
+            .join("node_modules");
 
         tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Start subset");
 
@@ -86,7 +89,7 @@ impl PackageManager {
         ver_peer: &PkgVerPeer,
     ) {
         // let node_modules_path =
-        //     self.config.virtual_store_dir.join(package.to_store_name()).join("node_modules");
+        //     self.config.virtual_store_dir.join(package.to_virtual_store_name()).join("node_modules");
 
         // tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Start subset");
 

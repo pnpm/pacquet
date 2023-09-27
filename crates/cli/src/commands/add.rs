@@ -68,8 +68,11 @@ impl PackageManager {
             &self.config.modules_dir,
         )
         .await?;
-        let package_node_modules_path =
-            self.config.virtual_store_dir.join(latest_version.to_store_name()).join("node_modules");
+        let package_node_modules_path = self
+            .config
+            .virtual_store_dir
+            .join(latest_version.to_virtual_store_name())
+            .join("node_modules");
 
         let mut queue: VecDeque<Vec<Result<PackageVersion, PackageManagerError>>> = VecDeque::new();
         let config = &self.config;
@@ -97,7 +100,7 @@ impl PackageManager {
                 let node_modules_path = self
                     .config
                     .virtual_store_dir
-                    .join(dependency.to_store_name())
+                    .join(dependency.to_virtual_store_name())
                     .join("node_modules");
 
                 let handles = dependency.dependencies(self.config.auto_install_peers).map(

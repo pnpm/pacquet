@@ -62,7 +62,7 @@ impl From<DependencyPath> for String {
 
 impl DependencyPath {
     /// Construct the name of the corresponding subdirectory in the virtual store directory.
-    pub fn to_store_name(&self) -> String {
+    pub fn to_virtual_store_name(&self) -> String {
         let DependencyPath { custom_registry, package_specifier } = self;
         assert!(custom_registry.is_none(), "Custom registry is not yet supported ({self})");
 
@@ -171,14 +171,14 @@ mod tests {
     }
 
     #[test]
-    fn to_store_name() {
+    fn to_virtual_store_name() {
         macro_rules! case {
             ($input:expr => $output:expr) => {
                 let input = $input;
                 eprintln!("CASE: {input:?}");
                 let dependency_path: DependencyPath = input.parse().unwrap();
                 dbg!(&dependency_path);
-                let received = dependency_path.to_store_name();
+                let received = dependency_path.to_virtual_store_name();
                 let expected = $output;
                 assert_eq!(received, expected);
             };

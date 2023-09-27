@@ -70,7 +70,7 @@ async fn internal_fetch(
     config: &'static Npmrc,
     symlink_path: &Path,
 ) -> Result<(), PackageManagerError> {
-    let store_folder_name = package_version.to_store_name();
+    let store_folder_name = package_version.to_virtual_store_name();
 
     // TODO: skip when it already exists in store?
     let cas_paths = download_tarball_to_store(
@@ -163,7 +163,7 @@ mod tests {
 
         let virtual_store_path = virtual_store_dir
             .path()
-            .join(package.to_store_name())
+            .join(package.to_virtual_store_name())
             .join("node_modules")
             .join(&package.name);
         assert!(virtual_store_path.is_dir());

@@ -44,7 +44,7 @@ impl PackageVersion {
             .pipe(Ok)
     }
 
-    pub fn to_store_name(&self) -> String {
+    pub fn to_virtual_store_name(&self) -> String {
         format!("{0}@{1}", self.name.replace('/', "+"), self.version)
     }
 
