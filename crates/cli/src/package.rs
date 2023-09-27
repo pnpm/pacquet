@@ -1,6 +1,6 @@
 use crate::package_import::ImportMethodImpl;
 use crate::package_manager::PackageManagerError;
-use pacquet_lockfile::PkgVerPeer;
+use pacquet_lockfile::DependencyPath;
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::{download_tarball_to_store, Cache};
@@ -42,8 +42,7 @@ pub async fn install_package_with_lockfile(
     tarball_cache: &Cache,
     config: &'static Npmrc,
     http_client: &Client,
-    name: &str,
-    ver_peer: &PkgVerPeer,
+    dependency_path: &DependencyPath,
     symlink_path: &Path,
 ) -> Result<PackageVersion, PackageManagerError> {
     todo!()

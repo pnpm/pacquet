@@ -1,12 +1,10 @@
-use crate::package::install_package_from_registry;
+use crate::package::{install_package_from_registry, install_package_with_lockfile};
 use crate::package_manager::{PackageManager, PackageManagerError};
 use async_recursion::async_recursion;
 use clap::Parser;
 use futures_util::future;
 use pacquet_diagnostics::tracing;
-use pacquet_lockfile::{
-    DependencyPath, Lockfile, PkgNameVerPeer, PkgVerPeer, ProjectSnapshot, RootProjectSnapshot,
-};
+use pacquet_lockfile::{DependencyPath, Lockfile, PkgNameVerPeer, PkgVerPeer, RootProjectSnapshot};
 use pacquet_package_json::DependencyGroup;
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
@@ -82,16 +80,10 @@ impl PackageManager {
     /// Install dependencies of a dependency.
     ///
     /// This function is used by [`PackageManager::install`] with a lockfile.
-    #[allow(unused)] // for now
     #[async_recursion]
-    async fn install_dependencies_with_lockfile(
-        &self,
-        project_snapshot: &ProjectSnapshot,
-        name: &str,
-        ver_peer: &PkgVerPeer,
-    ) {
+    async fn install_dependencies_with_lockfile(&self, name: String, ver_peer: PkgVerPeer) {
         let custom_registry = None; // assuming all registries are default registries (custom registry is not yet supported)
-        let package_specifier = PkgNameVerPeer::new(name.to_string(), ver_peer.clone()); // TODO: see if this copying can be made explicit in function signature
+        let package_specifier = PkgNameVerPeer::new(name, ver_peer);
         let dependency_path = DependencyPath { custom_registry, package_specifier };
 
         let node_modules_path = self
@@ -100,11 +92,21 @@ impl PackageManager {
             .join(dependency_path.to_virtual_store_name())
             .join("node_modules");
 
-        tracing::info!(target: "pacquet::install", ?dependency_path, node_modules = ?node_modules_path, "Start subset");
+        // tracing::info!(target: "pacquet::install", ?dependency_path, node_modules = ?node_modules_path, "Start subset");
 
-        // TODO: lookup the dependency path in lockfile.packages then call install_packages_with_lockfile
+        install_package_with_lockfile(
+            &self.tarball_cache,
+            self.config,
+            &self.http_client,
+            &dependency_path,
+            &node_modules_path,
+        )
+        .await
+        .unwrap();
 
-        tracing::info!(target: "pacquet::install", ?dependency_path, node_modules = ?node_modules_path, "Complete subset");
+        // TODO
+
+        // tracing::info!(target: "pacquet::install", ?dependency_path, node_modules = ?node_modules_path, "Complete subset");
 
         todo!()
     }
@@ -151,13 +153,11 @@ impl PackageManager {
 
                 project_snapshot
                     .dependencies_by_groups(args.dependency_groups())
-                    .map(|(name, dep_spec)| async move {
+                    .map(move |(name, dep_spec)| {
                         self.install_dependencies_with_lockfile(
-                            project_snapshot,
-                            name,
-                            &dep_spec.version,
+                            name.to_string(),
+                            dep_spec.version.clone(),
                         )
-                        .await;
                     })
                     .pipe(future::join_all)
                     .await;
