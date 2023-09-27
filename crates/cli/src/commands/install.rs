@@ -10,7 +10,7 @@ use pacquet_lockfile::{
 use pacquet_package_json::DependencyGroup;
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
-use std::collections::HashMap;
+use std::{collections::HashMap, io::ErrorKind, path::Path};
 
 #[derive(Parser, Debug)]
 pub struct InstallCommandArgs {
@@ -134,12 +134,31 @@ impl PackageManager {
     /// If package `foo@x.y.z` is declared as a dependency in `package.json`,
     /// symlink `foo -> .pacquet/foo@x.y.z/node_modules/foo` shall be created
     /// in the `node_modules` directory.
-    async fn link_direct_dependencies(project_snapshot: &RootProjectSnapshot) {
+    async fn link_direct_dependencies(
+        &self,
+        project_snapshot: &RootProjectSnapshot,
+        args: &InstallCommandArgs,
+    ) {
         let RootProjectSnapshot::Single(project_snapshot) = project_snapshot else {
             panic!("Monorepo is not yet supported");
         };
 
-        todo!("iterate over {project_snapshot:?} and create symlinks to the virtual store");
+        // TODO: parallelize this, either by tokio or rayon
+        for (name, spec) in project_snapshot.dependencies_by_groups(args.dependency_groups()) {
+            let custom_registry = None; // assuming all registries are default registries (custom registry is not yet supported)
+            let package_specifier = PkgNameVerPeer::new(name.to_string(), spec.version.clone());
+            let dependency_path = DependencyPath { custom_registry, package_specifier };
+            let virtual_store_name = dependency_path.to_virtual_store_name();
+            let symlink_target =
+                Path::new(".pacquet").join(virtual_store_name).join("node_modules").join(name);
+            let symlink_path = self.config.modules_dir.join(name);
+            if let Err(error) = crate::fs::symlink_dir(&symlink_target, &symlink_path) {
+                match error.kind() {
+                    ErrorKind::AlreadyExists => {},
+                    _ => panic!("Failed to create symlink at {symlink_path:?} to {symlink_target:?}: {error}"), // TODO: proper error propagation
+                }
+            }
+        }
     }
 
     /// Jobs of the `install` command.
@@ -180,7 +199,7 @@ impl PackageManager {
 
                 future::join(
                     Self::create_virtual_store(packages),
-                    Self::link_direct_dependencies(project_snapshot),
+                    self.link_direct_dependencies(project_snapshot, args),
                 )
                 .await;
 
