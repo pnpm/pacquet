@@ -4,7 +4,9 @@ use async_recursion::async_recursion;
 use clap::Parser;
 use futures_util::future;
 use pacquet_diagnostics::tracing;
-use pacquet_lockfile::{Lockfile, PkgVerPeer, ProjectSnapshot, RootProjectSnapshot};
+use pacquet_lockfile::{
+    DependencyPath, Lockfile, PkgNameVerPeer, PkgVerPeer, ProjectSnapshot, RootProjectSnapshot,
+};
 use pacquet_package_json::DependencyGroup;
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
@@ -88,14 +90,21 @@ impl PackageManager {
         name: &str,
         ver_peer: &PkgVerPeer,
     ) {
-        // let node_modules_path =
-        //     self.config.virtual_store_dir.join(package.to_virtual_store_name()).join("node_modules");
+        let custom_registry = None; // assuming all registries are default registries (custom registry is not yet supported)
+        let package_specifier = PkgNameVerPeer::new(name.to_string(), ver_peer.clone()); // TODO: see if this copying can be made explicit in function signature
+        let dependency_path = DependencyPath { custom_registry, package_specifier };
 
-        // tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Start subset");
+        let node_modules_path = self
+            .config
+            .virtual_store_dir
+            .join(dependency_path.to_virtual_store_name())
+            .join("node_modules");
 
-        // TODO
+        tracing::info!(target: "pacquet::install", ?dependency_path, node_modules = ?node_modules_path, "Start subset");
 
-        // tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Complete subset");
+        // TODO: lookup the dependency path in lockfile.packages then call install_packages_with_lockfile
+
+        tracing::info!(target: "pacquet::install", ?dependency_path, node_modules = ?node_modules_path, "Complete subset");
 
         todo!()
     }
