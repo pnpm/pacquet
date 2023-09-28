@@ -130,7 +130,7 @@ pub async fn install_single_package_to_virtual_store(
         &cas_paths,
         config.package_import_method,
         package_snapshot,
-    );
+    )?;
 
     Ok(())
 }
