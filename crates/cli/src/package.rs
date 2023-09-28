@@ -113,7 +113,8 @@ pub async fn install_single_package_to_virtual_store(
         lockfile_integrity,
         package_version.dist.unpacked_size,
         package_version.as_tarball_url(),
-    );
+    )
+    .await?;
 
     let saved_path = config
         .virtual_store_dir
