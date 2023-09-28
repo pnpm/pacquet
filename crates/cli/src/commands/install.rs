@@ -1,4 +1,4 @@
-use crate::package::install_package_from_registry;
+use crate::package::{install_package_from_registry, install_single_package_to_virtual_store};
 use crate::package_manager::{PackageManager, PackageManagerError};
 use async_recursion::async_recursion;
 use clap::Parser;
@@ -81,14 +81,25 @@ impl PackageManager {
     }
 
     /// Generate filesystem layout for the virtual store at `node_modules/.pacquet`.
-    async fn create_virtual_store(packages: &Option<HashMap<DependencyPath, PackageSnapshot>>) {
+    async fn create_virtual_store(
+        &self,
+        packages: &Option<HashMap<DependencyPath, PackageSnapshot>>,
+    ) {
         let Some(packages) = packages else {
             todo!("check project_snapshot, error if it's not empty, do nothing if empty");
         };
         packages
             .iter()
             .map(|(dependency_path, package_snapshot)| async move {
-                todo!("install packages from {package_snapshot:?} for {dependency_path}");
+                install_single_package_to_virtual_store(
+                    &self.tarball_cache,
+                    &self.http_client,
+                    self.config,
+                    dependency_path,
+                    package_snapshot,
+                )
+                .await
+                .unwrap();
             })
             .pipe(future::join_all)
             .await;
@@ -169,7 +180,7 @@ impl PackageManager {
                 );
 
                 future::join(
-                    Self::create_virtual_store(packages),
+                    self.create_virtual_store(packages),
                     self.link_direct_dependencies(project_snapshot, args),
                 )
                 .await;

@@ -78,7 +78,6 @@ async fn internal_fetch(
     Ok(())
 }
 
-#[allow(unused)] // for now
 pub async fn install_single_package_to_virtual_store(
     tarball_cache: &Cache,
     http_client: &Client,
