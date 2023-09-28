@@ -82,7 +82,7 @@ pub fn install_virtdir_by_snapshot(
     // 1. Install the files from `cas_paths`
     let save_path = virtual_node_modules_dir.join(&dependency_path.package_specifier.name);
     if !save_path.exists() {
-        cas_paths.into_par_iter().try_for_each(|(cleaned_entry, store_path)| {
+        cas_paths.par_iter().try_for_each(|(cleaned_entry, store_path)| {
             auto_import(store_path, &save_path.join(cleaned_entry))
         })?;
     }
