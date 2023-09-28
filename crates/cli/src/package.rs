@@ -1,6 +1,6 @@
 use crate::package_import::ImportMethodImpl;
 use crate::package_manager::PackageManagerError;
-use pacquet_lockfile::{DependencyPath, LockfileResolution, PackageSnapshot};
+use pacquet_lockfile::{DependencyPath, LockfileResolution, PackageSnapshot, PkgNameVerPeer};
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::{download_tarball_to_store, Cache};
@@ -92,12 +92,38 @@ pub async fn install_single_package_to_virtual_store(
         panic!("Only TarballResolution is supported at the moment, but {dependency_path} requires {resolution:?}");
     };
 
-    // // TODO: skip when already exists in store?
-    // let cas_paths = download_tarball_to_store(
-    //     tarball_cache,
-    //     http_client,
-    //     &config.store_dir,
-    //     &registry_resolution.integrity,
+    let DependencyPath { custom_registry, package_specifier } = dependency_path;
+    let registry = custom_registry.as_ref().unwrap_or(&config.registry);
+    let PkgNameVerPeer { name, suffix: version } = package_specifier;
+    let package_version =
+        PackageVersion::fetch_from_registry(name, version, http_client, registry).await?;
+
+    let lockfile_integrity = registry_resolution.integrity.as_str();
+    let remote_integrity = package_version.dist.integrity.as_deref().expect("has integrity field");
+    if lockfile_integrity != remote_integrity {
+        // TODO: convert this to a proper error variant in PackageManagerError
+        panic!("Mismatch integrity for {dependency_path}: Expecting {lockfile_integrity}, but received {remote_integrity}");
+    }
+
+    // TODO: skip when already exists in store?
+    let cas_paths = download_tarball_to_store(
+        tarball_cache,
+        http_client,
+        &config.store_dir,
+        lockfile_integrity,
+        package_version.dist.unpacked_size,
+        package_version.as_tarball_url(),
+    );
+
+    let saved_path = config
+        .virtual_store_dir
+        .join(dependency_path.to_virtual_store_name())
+        .join("node_modules")
+        .join(name);
+
+    // config.package_import_method.import(
+    //     &cas_paths,
+    //     &saved_path,
     // );
 
     Ok(())
