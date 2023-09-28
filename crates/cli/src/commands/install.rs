@@ -111,7 +111,7 @@ impl PackageManager {
     /// If package `foo@x.y.z` is declared as a dependency in `package.json`,
     /// symlink `foo -> .pacquet/foo@x.y.z/node_modules/foo` shall be created
     /// in the `node_modules` directory.
-    async fn link_direct_dependencies(
+    fn link_direct_dependencies(
         &self,
         project_snapshot: &RootProjectSnapshot,
         args: &InstallCommandArgs,
@@ -187,11 +187,8 @@ impl PackageManager {
                     "Non frozen lockfile is not yet supported",
                 );
 
-                future::join(
-                    self.create_virtual_store(packages),
-                    self.link_direct_dependencies(project_snapshot, args),
-                )
-                .await;
+                self.create_virtual_store(packages).await;
+                self.link_direct_dependencies(project_snapshot, args);
             }
         }
 
