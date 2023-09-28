@@ -2,12 +2,13 @@ use std::{
     collections::HashMap,
     ffi::OsString,
     fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
 };
 
 use crate::package_manager::{AutoImportError, PackageManagerError};
 use pacquet_diagnostics::tracing;
-use pacquet_lockfile::{DependencyPath, PackageSnapshot};
+use pacquet_lockfile::{DependencyPath, PackageSnapshot, PkgNameVerPeer};
 use pacquet_npmrc::PackageImportMethod;
 use rayon::prelude::*;
 
@@ -85,7 +86,25 @@ pub fn install_virtdir_by_snapshot(
     }
 
     // 2. Create the symlink layout
-    // TODO
+    if let Some(dependencies) = &package_snapshot.dependencies {
+        dependencies.par_iter().for_each(|(name, ver_peer)| {
+            let custom_registry = None; // assuming all registries are default registries (custom registry is not yet supported)
+            let package_specifier = PkgNameVerPeer::new(name.to_string(), ver_peer.clone()); // TODO: remove copying here
+            let dependency_path = DependencyPath { custom_registry, package_specifier };
+            let virtual_store_name = dependency_path.to_virtual_store_name();
+            // NOTE: symlink target in pacquet is absolute yet in pnpm is relative
+            // TODO: change symlink target to relative
+            let symlink_target =
+                virtual_store_dir.join(virtual_store_name).join("node_modules").join(name);
+            let symlink_path = virtual_node_modules_dir.join(name);
+            if let Err(error) = crate::fs::symlink_dir(&symlink_target, &symlink_path) {
+                match error.kind() {
+                    ErrorKind::AlreadyExists => {},
+                    _ => panic!("Failed to create symlink at {symlink_path:?} to {symlink_target:?}: {error}"), // TODO: proper error propagation
+                }
+            }
+        });
+    }
 
     Ok(())
 }
