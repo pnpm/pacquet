@@ -116,7 +116,7 @@ pub async fn install_single_package_to_virtual_store(
     )
     .await?;
 
-    let saved_path = config
+    let save_path = config
         .virtual_store_dir
         .join(dependency_path.to_virtual_store_name())
         .join("node_modules")
