@@ -105,6 +105,14 @@ pub async fn install_single_package_to_virtual_store(
         panic!("Mismatch integrity for {dependency_path}: Expecting {lockfile_integrity}, but received {remote_integrity}");
     }
 
+    let lockfile_name = package_specifier.name.as_str();
+    let remote_name = package_version.name.as_str();
+    if lockfile_name != remote_name {
+        // TODO: convert this to a proper error variant in PackageManagerError
+        // TODO: or may be handle this gracefully somehow?
+        panic!("Mismatch name for {dependency_path}: Expecting {lockfile_name}, but received {remote_name}");
+    }
+
     // TODO: skip when already exists in store?
     let cas_paths = download_tarball_to_store(
         tarball_cache,
