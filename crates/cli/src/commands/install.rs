@@ -134,7 +134,10 @@ impl PackageManager {
                 .join("node_modules")
                 .join(name);
             let symlink_path = self.config.modules_dir.join(name);
-            fs::create_dir_all(&self.config.modules_dir).expect("make sure node_modules exist"); // TODO: proper error propagation
+            if let Some(parent) = symlink_path.parent() {
+                // TODO: proper error propagation
+                fs::create_dir_all(parent).expect("make sure node_modules exist");
+            }
             if let Err(error) = crate::fs::symlink_dir(&symlink_target, &symlink_path) {
                 match error.kind() {
                     ErrorKind::AlreadyExists => {},

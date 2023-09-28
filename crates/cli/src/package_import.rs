@@ -99,6 +99,10 @@ pub fn install_virtdir_by_snapshot(
             let symlink_target =
                 virtual_store_dir.join(virtual_store_name).join("node_modules").join(name);
             let symlink_path = virtual_node_modules_dir.join(name);
+            if let Some(parent) = symlink_path.parent() {
+                // TODO: proper error propagation
+                fs::create_dir_all(parent).expect("make sure node_modules exist");
+            }
             if let Err(error) = crate::fs::symlink_dir(&symlink_target, &symlink_path) {
                 match error.kind() {
                     ErrorKind::AlreadyExists => {},
