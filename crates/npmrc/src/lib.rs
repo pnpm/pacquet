@@ -27,7 +27,7 @@ pub enum NodeLinker {
     Pnp,
 }
 
-#[derive(Debug, Deserialize, Default, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PackageImportMethod {
     ///  try to clone packages from the store. If cloning is not supported then hardlink packages
