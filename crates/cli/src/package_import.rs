@@ -59,7 +59,6 @@ impl ImportMethodImpl for PackageImportMethod {
 /// 2. Create the symlink layout
 ///
 /// **TODO:** may break this function into 2 later
-#[allow(unused)] // for now
 pub fn install_virtdir_by_snapshot(
     dependency_path: &DependencyPath,
     virtual_store_dir: &Path,
