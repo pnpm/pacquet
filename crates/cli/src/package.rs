@@ -85,7 +85,6 @@ pub async fn install_single_package_to_virtual_store(
     config: &'static Npmrc,
     dependency_path: &DependencyPath,
     package_snapshot: &PackageSnapshot,
-    virtual_store_dir: &Path,
 ) -> Result<(), PackageManagerError> {
     let PackageSnapshot { resolution, .. } = package_snapshot;
     let LockfileResolution::Registry(registry_resolution) = resolution else {
