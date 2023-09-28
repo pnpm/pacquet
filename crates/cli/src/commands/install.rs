@@ -10,6 +10,7 @@ use pacquet_lockfile::{
 use pacquet_package_json::DependencyGroup;
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
+use rayon::prelude::*;
 use std::{collections::HashMap, fs, io::ErrorKind};
 
 #[derive(Parser, Debug)]
@@ -119,32 +120,35 @@ impl PackageManager {
             panic!("Monorepo is not yet supported");
         };
 
-        // TODO: parallelize this, either by tokio or rayon
-        for (name, spec) in project_snapshot.dependencies_by_groups(args.dependency_groups()) {
-            let custom_registry = None; // assuming all registries are default registries (custom registry is not yet supported)
-            let package_specifier = PkgNameVerPeer::new(name.to_string(), spec.version.clone());
-            let dependency_path = DependencyPath { custom_registry, package_specifier };
-            let virtual_store_name = dependency_path.to_virtual_store_name();
-            // NOTE: symlink target in pacquet is absolute yet in pnpm is relative
-            // TODO: change symlink target to relative
-            let symlink_target = self
-                .config
-                .virtual_store_dir
-                .join(virtual_store_name)
-                .join("node_modules")
-                .join(name);
-            let symlink_path = self.config.modules_dir.join(name);
-            if let Some(parent) = symlink_path.parent() {
-                // TODO: proper error propagation
-                fs::create_dir_all(parent).expect("make sure node_modules exist");
-            }
-            if let Err(error) = crate::fs::symlink_dir(&symlink_target, &symlink_path) {
-                match error.kind() {
-                    ErrorKind::AlreadyExists => {},
-                    _ => panic!("Failed to create symlink at {symlink_path:?} to {symlink_target:?}: {error}"), // TODO: proper error propagation
+        project_snapshot
+            .dependencies_by_groups(args.dependency_groups())
+            .collect::<Vec<_>>()
+            .par_iter()
+            .for_each(|(name, spec)| {
+                let custom_registry = None; // assuming all registries are default registries (custom registry is not yet supported)
+                let package_specifier = PkgNameVerPeer::new(name.to_string(), spec.version.clone());
+                let dependency_path = DependencyPath { custom_registry, package_specifier };
+                let virtual_store_name = dependency_path.to_virtual_store_name();
+                // NOTE: symlink target in pacquet is absolute yet in pnpm is relative
+                // TODO: change symlink target to relative
+                let symlink_target = self
+                    .config
+                    .virtual_store_dir
+                    .join(virtual_store_name)
+                    .join("node_modules")
+                    .join(name);
+                let symlink_path = self.config.modules_dir.join(name);
+                if let Some(parent) = symlink_path.parent() {
+                    // TODO: proper error propagation
+                    fs::create_dir_all(parent).expect("make sure node_modules exist");
                 }
-            }
-        }
+                if let Err(error) = crate::fs::symlink_dir(&symlink_target, &symlink_path) {
+                    match error.kind() {
+                        ErrorKind::AlreadyExists => {},
+                        _ => panic!("Failed to create symlink at {symlink_path:?} to {symlink_target:?}: {error}"), // TODO: proper error propagation
+                    }
+                }
+            });
     }
 
     /// Jobs of the `install` command.
