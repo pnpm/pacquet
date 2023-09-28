@@ -75,6 +75,9 @@ pub fn install_virtdir_by_snapshot(
     // node_modules/.pacquet/pkg-name@x.y.z/node_modules
     let virtual_node_modules_dir =
         virtual_store_dir.join(dependency_path.to_virtual_store_name()).join("node_modules");
+    fs::create_dir_all(&virtual_node_modules_dir).unwrap_or_else(|error| {
+        panic!("Failed to create directory at {virtual_node_modules_dir:?}: {error}")
+    }); // TODO: proper error propagation
 
     // 1. Install the files from `cas_paths`
     let save_path = virtual_node_modules_dir.join(&dependency_path.package_specifier.name);

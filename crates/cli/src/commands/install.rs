@@ -10,7 +10,7 @@ use pacquet_lockfile::{
 use pacquet_package_json::DependencyGroup;
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
-use std::{collections::HashMap, io::ErrorKind};
+use std::{collections::HashMap, fs, io::ErrorKind};
 
 #[derive(Parser, Debug)]
 pub struct InstallCommandArgs {
@@ -134,6 +134,7 @@ impl PackageManager {
                 .join("node_modules")
                 .join(name);
             let symlink_path = self.config.modules_dir.join(name);
+            fs::create_dir_all(&self.config.modules_dir).expect("make sure node_modules exist"); // TODO: proper error propagation
             if let Err(error) = crate::fs::symlink_dir(&symlink_target, &symlink_path) {
                 match error.kind() {
                     ErrorKind::AlreadyExists => {},
