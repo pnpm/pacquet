@@ -1,5 +1,6 @@
 use crate::package_import::ImportMethodImpl;
 use crate::package_manager::PackageManagerError;
+use pacquet_lockfile::{DependencyPath, LockfileResolution, PackageSnapshot};
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::{download_tarball_to_store, Cache};
@@ -73,6 +74,31 @@ async fn internal_fetch(
         &save_path,
         &symlink_path.join(&package_version.name),
     )?;
+
+    Ok(())
+}
+
+#[allow(unused)] // for now
+pub async fn install_single_package_to_virtual_store(
+    tarball_cache: &Cache,
+    http_client: &Client,
+    config: &'static Npmrc,
+    dependency_path: &DependencyPath,
+    package_snapshot: &PackageSnapshot,
+    virtual_store_dir: &Path,
+) -> Result<(), PackageManagerError> {
+    let PackageSnapshot { resolution, .. } = package_snapshot;
+    let LockfileResolution::Registry(registry_resolution) = resolution else {
+        panic!("Only TarballResolution is supported at the moment, but {dependency_path} requires {resolution:?}");
+    };
+
+    // // TODO: skip when already exists in store?
+    // let cas_paths = download_tarball_to_store(
+    //     tarball_cache,
+    //     http_client,
+    //     &config.store_dir,
+    //     &registry_resolution.integrity,
+    // );
 
     Ok(())
 }
