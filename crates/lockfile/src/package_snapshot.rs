@@ -40,7 +40,7 @@ pub struct PackageSnapshot {
     pub peer_dependencies_meta: Option<HashMap<String, LockfilePeerDependencyMetaValue>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub dependencies: Option<HashMap<String, PkgVerPeer>>,
+    pub dependencies: Option<HashMap<String, PkgVerPeer>>, // TODO: it's not just PkgVerPeer, add other variants, such as DependencyPath
     #[serde(skip_serializing_if = "Option::is_none")]
     pub optional_dependencies: Option<HashMap<String, String>>,
 
