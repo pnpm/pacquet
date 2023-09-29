@@ -1,4 +1,4 @@
-use crate::{LockfileResolution, PkgVerPeer};
+use crate::{LockfileResolution, PackageSnapshotDependency};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -40,7 +40,7 @@ pub struct PackageSnapshot {
     pub peer_dependencies_meta: Option<HashMap<String, LockfilePeerDependencyMetaValue>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub dependencies: Option<HashMap<String, PkgVerPeer>>, // TODO: it's not just PkgVerPeer, add other variants, such as DependencyPath
+    pub dependencies: Option<HashMap<String, PackageSnapshotDependency>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub optional_dependencies: Option<HashMap<String, String>>,
 

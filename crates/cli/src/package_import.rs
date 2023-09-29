@@ -8,7 +8,9 @@ use std::{
 
 use crate::package_manager::{AutoImportError, PackageManagerError};
 use pacquet_diagnostics::tracing;
-use pacquet_lockfile::{DependencyPath, PackageSnapshot, PkgNameVerPeer};
+use pacquet_lockfile::{
+    DependencyPath, PackageSnapshot, PackageSnapshotDependency, PkgNameVerPeer,
+};
 use pacquet_npmrc::PackageImportMethod;
 use rayon::prelude::*;
 
@@ -89,11 +91,18 @@ pub fn install_virtdir_by_snapshot(
 
     // 2. Create the symlink layout
     if let Some(dependencies) = &package_snapshot.dependencies {
-        dependencies.par_iter().for_each(|(name, ver_peer)| {
+        dependencies.par_iter().for_each(|(name, spec)| {
             let custom_registry = None; // assuming all registries are default registries (custom registry is not yet supported)
-            let package_specifier = PkgNameVerPeer::new(name.to_string(), ver_peer.clone()); // TODO: remove copying here
-            let dependency_path = DependencyPath { custom_registry, package_specifier };
-            let virtual_store_name = dependency_path.to_virtual_store_name();
+            let virtual_store_name = match spec {
+                PackageSnapshotDependency::PkgVerPeer(ver_peer) => {
+                    let package_specifier = PkgNameVerPeer::new(name.to_string(), ver_peer.clone()); // TODO: remove copying here
+                    let dependency_path = DependencyPath { custom_registry, package_specifier };
+                    dependency_path.to_virtual_store_name()
+                }
+                PackageSnapshotDependency::DependencyPath(dependency_path) => {
+                    dependency_path.to_virtual_store_name()
+                }
+            };
             // NOTE: symlink target in pacquet is absolute yet in pnpm is relative
             // TODO: change symlink target to relative
             let symlink_target =
