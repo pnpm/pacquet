@@ -92,34 +92,20 @@ pub async fn install_single_package_to_virtual_store(
 
     let DependencyPath { custom_registry, package_specifier } = dependency_path;
     let registry = custom_registry.as_ref().unwrap_or(&config.registry);
+    let registry = registry.strip_suffix('/').unwrap_or(registry);
     let PkgNameVerPeer { name, suffix: ver_peer } = package_specifier;
     let version = ver_peer.version();
-    let package_version =
-        PackageVersion::fetch_from_registry(name, version, http_client, registry).await?;
-
-    let lockfile_integrity = registry_resolution.integrity.as_str();
-    let remote_integrity = package_version.dist.integrity.as_deref().expect("has integrity field");
-    if lockfile_integrity != remote_integrity {
-        // TODO: convert this to a proper error variant in PackageManagerError
-        panic!("Mismatch integrity for {dependency_path}: Expecting {lockfile_integrity}, but received {remote_integrity}");
-    }
-
-    let lockfile_name = package_specifier.name.as_str();
-    let remote_name = package_version.name.as_str();
-    if lockfile_name != remote_name {
-        // TODO: convert this to a proper error variant in PackageManagerError
-        // TODO: or may be handle this gracefully somehow?
-        panic!("Mismatch name for {dependency_path}: Expecting {lockfile_name}, but received {remote_name}");
-    }
+    let tarball_url = format!("{registry}/{name}/-/{name}-{version}.tgz"); // TODO: construct actual reqwest::Url
+    let integrity = registry_resolution.integrity.as_str();
 
     // TODO: skip when already exists in store?
     let cas_paths = download_tarball_to_store(
         tarball_cache,
         http_client,
         &config.store_dir,
-        lockfile_integrity,
-        package_version.dist.unpacked_size,
-        package_version.as_tarball_url(),
+        integrity,
+        None,
+        &tarball_url,
     )
     .await?;
 
