@@ -135,6 +135,7 @@ mod tests {
                 let input = $input;
                 eprintln!("CASE: {input:?}");
                 let error = input.parse::<PkgVerPeer>().unwrap_err();
+                dbg!(&error);
                 assert_eq!(error.to_string(), $message);
                 assert!(matches!(error, $variant));
             }};
