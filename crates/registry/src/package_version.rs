@@ -25,7 +25,7 @@ impl PartialEq for PackageVersion {
 impl PackageVersion {
     pub async fn fetch_from_registry(
         name: &str,
-        version: impl Display,
+        version: impl Display, // TODO: change to node_semver::Version to increase resistance against programmer errors
         http_client: &reqwest::Client,
         registry: &str,
     ) -> Result<Self, RegistryError> {
