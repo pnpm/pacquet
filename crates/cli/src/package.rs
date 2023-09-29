@@ -92,7 +92,8 @@ pub async fn install_single_package_to_virtual_store(
 
     let DependencyPath { custom_registry, package_specifier } = dependency_path;
     let registry = custom_registry.as_ref().unwrap_or(&config.registry);
-    let PkgNameVerPeer { name, suffix: version } = package_specifier;
+    let PkgNameVerPeer { name, suffix: ver_peer } = package_specifier;
+    let version = ver_peer.version();
     let package_version =
         PackageVersion::fetch_from_registry(name, version, http_client, registry).await?;
 
