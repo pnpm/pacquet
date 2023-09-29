@@ -45,6 +45,6 @@ pub struct PackageSnapshot {
     pub optional_dependencies: Option<HashMap<String, String>>,
 
     pub transitive_peer_dependencies: Option<Vec<String>>,
-    pub dev: bool,
+    pub dev: Option<bool>,
     pub optional: Option<bool>,
 }
