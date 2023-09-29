@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 /// Snapshot of a single project.
 #[derive(Debug, Default, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub specifiers: Option<HashMap<String, String>>,
