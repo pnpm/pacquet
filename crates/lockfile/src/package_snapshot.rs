@@ -26,7 +26,7 @@ pub struct PackageSnapshot {
     pub os: Option<Vec<String>>,
     // TODO: Add `libc`
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub deprecated: Option<bool>,
+    pub deprecated: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_bin: Option<bool>,
     // TODO: Add `prepare`
