@@ -1,5 +1,4 @@
-use crate::{ParsePkgNameSuffixError, PkgNameSuffix, PkgVerPeer};
-use std::convert::Infallible;
+use crate::{ParsePkgNameSuffixError, ParsePkgVerPeerError, PkgNameSuffix, PkgVerPeer};
 
 /// Syntax: `{name}@{version}({peers})`
 ///
@@ -9,7 +8,7 @@ use std::convert::Infallible;
 pub type PkgNameVerPeer = PkgNameSuffix<PkgVerPeer>;
 
 /// Error when parsing [`PkgNameVerPeer`] from a string.
-pub type ParsePkgNameVerPeerError = ParsePkgNameSuffixError<Infallible>;
+pub type ParsePkgNameVerPeerError = ParsePkgNameSuffixError<ParsePkgVerPeerError>;
 
 #[cfg(test)]
 mod tests {

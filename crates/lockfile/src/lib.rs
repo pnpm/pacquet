@@ -22,7 +22,7 @@ pub use package_snapshot::{LockfilePeerDependencyMetaValue, PackageSnapshot};
 pub use pkg_name_suffix::{ParsePkgNameSuffixError, PkgNameSuffix};
 pub use pkg_name_ver::{ParsePkgNameVerError, PkgNameVer};
 pub use pkg_name_ver_peer::{ParsePkgNameVerPeerError, PkgNameVerPeer};
-pub use pkg_ver_peer::PkgVerPeer;
+pub use pkg_ver_peer::{ParsePkgVerPeerError, PkgVerPeer};
 pub use project_snapshot::ProjectSnapshot;
 pub use resolution::{
     DirectoryResolution, GitResolution, LockfileResolution, RegistryResolution, TarballResolution,
