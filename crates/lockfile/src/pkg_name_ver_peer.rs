@@ -14,11 +14,10 @@ pub type ParsePkgNameVerPeerError = ParsePkgNameSuffixError<Infallible>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
 
     fn name_peer_ver(name: &str, peer_ver: &str) -> PkgNameVerPeer {
-        let peer_ver = peer_ver.to_string().pipe(PkgVerPeer::new_unchecked);
+        let peer_ver = peer_ver.to_string().parse().unwrap();
         PkgNameVerPeer::new(name.to_string(), peer_ver)
     }
 

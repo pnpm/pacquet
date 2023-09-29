@@ -18,10 +18,3 @@ impl FromStr for PkgVerPeer {
         s.to_string().pipe(PkgVerPeer).pipe(Ok)
     }
 }
-
-impl PkgVerPeer {
-    /// Construct a new [`PkgVerPeer`] without syntax validation.
-    pub fn new_unchecked(ver_peer: String) -> Self {
-        PkgVerPeer(ver_peer)
-    }
-}
