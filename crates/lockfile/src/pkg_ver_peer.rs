@@ -35,6 +35,7 @@ impl PkgVerPeer {
     }
 }
 
+/// Error when parsing [`PkgVerPeer`] from a string.
 #[derive(Debug, Display, Error)]
 pub enum ParsePkgVerPeerError {
     #[display(fmt = "Failed to parse the version part: {_0}")]
