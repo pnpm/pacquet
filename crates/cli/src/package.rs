@@ -102,7 +102,7 @@ pub async fn install_single_package_to_virtual_store(
     } else {
         name
     };
-    let tarball_url = format!("{registry}/{name}/-/{tarball_name}-{version}.tgz"); // TODO: construct actual reqwest::Url
+    let tarball_url = format!("{registry}/{name}/-/{tarball_name}-{version}.tgz");
     let integrity = registry_resolution.integrity.as_str();
 
     // TODO: skip when already exists in store?
