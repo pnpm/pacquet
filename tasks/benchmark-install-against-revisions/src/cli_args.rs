@@ -28,6 +28,10 @@ pub struct CliArgs {
     #[clap(long, short, default_value = "bench-work-env")]
     pub work_env: PathBuf,
 
+    /// Benchmark against pnpm.
+    #[clap(long)]
+    pub with_pnpm: bool,
+
     /// Branch name, tag name, or commit id of the pacquet repo.
     #[clap(required = true)]
     pub revisions: Vec<String>,

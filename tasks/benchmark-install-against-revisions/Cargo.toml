@@ -21,3 +21,4 @@ os_display = { workspace = true }
 pipe-trait = { workspace = true }
 reqwest    = { workspace = true }
 tokio      = { workspace = true }
+which      = { workspace = true }

@@ -12,6 +12,7 @@ async fn main() {
         package_json,
         hyperfine_options,
         work_env,
+        with_pnpm,
         revisions,
     } = clap::Parser::parse();
     let repository = std::fs::canonicalize(repository).expect("get absolute path to repository");
@@ -21,6 +22,7 @@ async fn main() {
     let work_env = std::fs::canonicalize(work_env).expect("get absolute path to work env");
     verify::ensure_virtual_registry(&registry).await;
     verify::ensure_git_repo(&repository);
+    with_pnpm.then(verify::ensure_pnpm);
     work_env::WorkEnv {
         root: work_env,
         revisions,
