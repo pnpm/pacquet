@@ -22,6 +22,7 @@ async fn main() {
     let work_env = std::fs::canonicalize(work_env).expect("get absolute path to work env");
     verify::ensure_virtual_registry(&registry).await;
     verify::ensure_git_repo(&repository);
+    verify::validate_revision_list(&revisions);
     with_pnpm.then(verify::ensure_pnpm);
     work_env::WorkEnv {
         root: work_env,

@@ -23,3 +23,23 @@ pub fn ensure_pnpm() {
         Err(error) => panic!("{error}"),
     }
 }
+
+pub fn validate_revision_list<List>(list: List)
+where
+    List: IntoIterator,
+    List::Item: AsRef<str>,
+{
+    for revision in list {
+        let revision = revision.as_ref();
+        let throw = |reason: &str| {
+            eprintln!("Revision {revision:?} is invalid");
+            panic!("{reason}");
+        };
+        if revision.starts_with('.') {
+            throw("Revision cannot start with a dot");
+        }
+        if revision == "PNPM" {
+            throw("PNPM is a reserved name");
+        }
+    }
+}
