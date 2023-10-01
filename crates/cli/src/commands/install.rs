@@ -13,8 +13,8 @@ use pipe_trait::Pipe;
 use rayon::prelude::*;
 use std::{collections::HashMap, fs, io::ErrorKind};
 
-#[derive(Parser, Debug)]
-pub struct InstallCommandArgs {
+#[derive(Debug, Parser)]
+pub struct CliDependencyOptions {
     /// pacquet will not install any package listed in devDependencies and will remove those insofar
     /// they were already installed, if the NODE_ENV environment variable is set to production.
     /// Use this flag to instruct pacquet to ignore NODE_ENV and take its production status from this
@@ -30,11 +30,11 @@ pub struct InstallCommandArgs {
     pub no_optional: bool,
 }
 
-impl InstallCommandArgs {
+impl CliDependencyOptions {
     /// Convert the command arguments to an iterator of [`DependencyGroup`]
     /// which filters the types of dependencies to install.
     fn dependency_groups(&self) -> impl Iterator<Item = DependencyGroup> {
-        let &InstallCommandArgs { prod, dev, no_optional } = self;
+        let &CliDependencyOptions { prod, dev, no_optional } = self;
         let has_both = prod == dev;
         let has_prod = has_both || prod;
         let has_dev = has_both || dev;
@@ -44,6 +44,12 @@ impl InstallCommandArgs {
             .chain(has_dev.then_some(DependencyGroup::Dev))
             .chain(has_optional.then_some(DependencyGroup::Optional))
     }
+}
+
+#[derive(Parser, Debug)]
+pub struct InstallCommandArgs {
+    #[clap(flatten)]
+    pub dependency_options: CliDependencyOptions,
 }
 
 impl PackageManager {
@@ -116,12 +122,14 @@ impl PackageManager {
         project_snapshot: &RootProjectSnapshot,
         args: &InstallCommandArgs,
     ) {
+        let InstallCommandArgs { dependency_options } = args;
+
         let RootProjectSnapshot::Single(project_snapshot) = project_snapshot else {
             panic!("Monorepo is not yet supported");
         };
 
         project_snapshot
-            .dependencies_by_groups(args.dependency_groups())
+            .dependencies_by_groups(dependency_options.dependency_groups())
             .collect::<Vec<_>>()
             .par_iter()
             .for_each(|(name, spec)| {
@@ -153,12 +161,13 @@ impl PackageManager {
 
     /// Jobs of the `install` command.
     pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
+        let InstallCommandArgs { dependency_options } = args;
         tracing::info!(target: "pacquet::install", "Start all");
 
         match (self.config.lockfile, &self.lockfile) {
             (false, _) => {
                 self.package_json
-                    .dependencies(args.dependency_groups())
+                    .dependencies(dependency_options.dependency_groups())
                     .map(|(name, version_range)| async move {
                         let dependency = install_package_from_registry(
                             &self.tarball_cache,
@@ -201,7 +210,7 @@ impl PackageManager {
 mod tests {
     use std::env;
 
-    use crate::commands::install::InstallCommandArgs;
+    use crate::commands::install::{CliDependencyOptions, InstallCommandArgs};
     use crate::fs::get_all_folders;
     use crate::package_manager::PackageManager;
     use pacquet_npmrc::Npmrc;
@@ -212,53 +221,53 @@ mod tests {
     #[test]
     fn install_args_to_dependency_groups() {
         use DependencyGroup::{Default, Dev, Optional};
-        let create_list = |args: InstallCommandArgs| args.dependency_groups().collect::<Vec<_>>();
+        let create_list = |opts: CliDependencyOptions| opts.dependency_groups().collect::<Vec<_>>();
 
         // no flags -> prod + dev + optional
         assert_eq!(
-            create_list(InstallCommandArgs { prod: false, dev: false, no_optional: false }),
+            create_list(CliDependencyOptions { prod: false, dev: false, no_optional: false }),
             [Default, Dev, Optional],
         );
 
         // --prod -> prod + optional
         assert_eq!(
-            create_list(InstallCommandArgs { prod: true, dev: false, no_optional: false }),
+            create_list(CliDependencyOptions { prod: true, dev: false, no_optional: false }),
             [Default, Optional],
         );
 
         // --dev -> dev + optional
         assert_eq!(
-            create_list(InstallCommandArgs { prod: false, dev: true, no_optional: false }),
+            create_list(CliDependencyOptions { prod: false, dev: true, no_optional: false }),
             [Dev, Optional],
         );
 
         // --no-optional -> prod + dev
         assert_eq!(
-            create_list(InstallCommandArgs { prod: false, dev: false, no_optional: true }),
+            create_list(CliDependencyOptions { prod: false, dev: false, no_optional: true }),
             [Default, Dev],
         );
 
         // --prod --no-optional -> prod
         assert_eq!(
-            create_list(InstallCommandArgs { prod: true, dev: false, no_optional: true }),
+            create_list(CliDependencyOptions { prod: true, dev: false, no_optional: true }),
             [Default],
         );
 
         // --dev --no-optional -> dev
         assert_eq!(
-            create_list(InstallCommandArgs { prod: false, dev: true, no_optional: true }),
+            create_list(CliDependencyOptions { prod: false, dev: true, no_optional: true }),
             [Dev],
         );
 
         // --prod --dev -> prod + dev + optional
         assert_eq!(
-            create_list(InstallCommandArgs { prod: true, dev: true, no_optional: false }),
+            create_list(CliDependencyOptions { prod: true, dev: true, no_optional: false }),
             [Default, Dev, Optional],
         );
 
         // --prod --dev --no-optional -> prod + dev
         assert_eq!(
-            create_list(InstallCommandArgs { prod: true, dev: true, no_optional: true }),
+            create_list(CliDependencyOptions { prod: true, dev: true, no_optional: true }),
             [Default, Dev],
         );
     }
@@ -281,7 +290,13 @@ mod tests {
 
         let package_manager =
             PackageManager::new(&package_json_path, Npmrc::current().leak()).unwrap();
-        let args = InstallCommandArgs { prod: false, dev: false, no_optional: false };
+        let args = InstallCommandArgs {
+            dependency_options: CliDependencyOptions {
+                prod: false,
+                dev: false,
+                no_optional: false,
+            },
+        };
         package_manager.install(&args).await.unwrap();
 
         // Make sure the package is installed
