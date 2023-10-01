@@ -196,6 +196,8 @@ impl PackageManager {
                 let Lockfile { lockfile_version, project_snapshot, packages, .. } = lockfile;
                 assert_eq!(lockfile_version.major, 6); // compatibility check already happens at serde, but this still helps preventing programmer mistakes.
 
+                // TODO: check if the lockfile is out-of-date
+
                 assert!(
                     self.config.prefer_frozen_lockfile,
                     "Non frozen lockfile is not yet supported",
