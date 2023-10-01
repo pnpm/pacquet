@@ -16,6 +16,7 @@ use std::{
 #[derive(Debug)]
 pub struct WorkEnv {
     pub root: PathBuf,
+    pub with_pnpm: bool,
     pub revisions: Vec<String>,
     pub registry: String,
     pub repository: PathBuf,
@@ -25,6 +26,9 @@ pub struct WorkEnv {
 }
 
 impl WorkEnv {
+    const INIT_PROXY_CACHE: &str = ".init-proxy-cache";
+    const PNPM: &str = "PNPM";
+
     fn root(&self) -> &'_ Path {
         &self.root
     }
@@ -73,25 +77,25 @@ impl WorkEnv {
     }
 
     fn init(&self) {
-        const INIT_PROXY_CACHE: &str = ".init-proxy-cache";
-
         eprintln!("Initializing...");
-        for revision in self.revisions().chain(iter::once(INIT_PROXY_CACHE)) {
+        let entries = self
+            .revisions()
+            .map(|revision| (revision, false))
+            .chain(iter::once((WorkEnv::INIT_PROXY_CACHE, true)))
+            .chain(self.with_pnpm.then_some((WorkEnv::PNPM, true)));
+        for (revision, for_pnpm) in entries {
             eprintln!("Revision: {revision:?}");
             let dir = self.revision_root(revision);
             fs::create_dir_all(&dir).expect("create directory for the revision");
             create_package_json(&dir, self.package_json.as_deref());
-            create_script(
-                &self.revision_install_script(revision),
-                self.task.install_script_content(),
-            );
+            create_install_script(&dir, self.task, for_pnpm);
             create_npmrc(&dir, self.registry(), self.task);
             may_create_lockfile(&dir, self.task);
         }
 
         eprintln!("Populating proxy registry cache...");
         Command::new("pnpm")
-            .current_dir(self.revision_root(INIT_PROXY_CACHE))
+            .current_dir(self.revision_root(WorkEnv::INIT_PROXY_CACHE))
             .arg("install")
             .pipe(executor("pnpm install"));
     }
@@ -157,7 +161,7 @@ impl WorkEnv {
 
         self.hyperfine_options.append_to(&mut command);
 
-        for revision in self.revisions() {
+        for revision in self.revisions().chain(self.with_pnpm.then_some(WorkEnv::PNPM)) {
             command.arg("--command-name").arg(revision).arg(self.revision_install_script(revision));
         }
 
@@ -207,9 +211,23 @@ fn may_create_lockfile(dir: &Path, task: BenchmarkTask) {
     }
 }
 
-fn create_script(path: &Path, content: &str) {
+fn create_install_script(dir: &Path, task: BenchmarkTask, for_pnpm: bool) {
+    let path = dir.join("install.bash");
+
     eprintln!("Creating script {path:?}...");
-    fs::write(path, content).expect("write content to script");
+    let mut file = File::create(&path).expect("create install.bash");
+
+    writeln!(file, "#!/bin/bash").unwrap();
+    writeln!(file, "set -o errexit -o nounset -o pipefail").unwrap();
+    writeln!(file, r#"cd "$(dirname "$0")""#).unwrap();
+
+    let command = if for_pnpm { "pnpm" } else { "./pacquet/target/release/pacquet" };
+    write!(file, "exec {command} install").unwrap();
+    for arg in task.install_args() {
+        write!(file, " {arg}").unwrap();
+    }
+    writeln!(file).unwrap();
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

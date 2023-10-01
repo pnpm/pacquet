@@ -25,6 +25,7 @@ async fn main() {
     with_pnpm.then(verify::ensure_pnpm);
     work_env::WorkEnv {
         root: work_env,
+        with_pnpm,
         revisions,
         registry,
         repository,

@@ -1,4 +1,4 @@
-use crate::fixtures::{CLEAN_INSTALL_SCRIPT, FROZEN_LOCKFILE_SCRIPT, LOCKFILE};
+use crate::fixtures::LOCKFILE;
 use clap::{Args, Parser, ValueEnum};
 use std::{path::PathBuf, process::Command};
 
@@ -46,11 +46,11 @@ pub enum BenchmarkTask {
 }
 
 impl BenchmarkTask {
-    /// Infer content corresponding content of the install script.
-    pub fn install_script_content(self) -> &'static str {
+    /// Infer CLI arguments for the install command.
+    pub fn install_args(self) -> impl IntoIterator<Item = &'static str> {
         match self {
-            BenchmarkTask::CleanInstall => CLEAN_INSTALL_SCRIPT,
-            BenchmarkTask::FrozenLockfile => FROZEN_LOCKFILE_SCRIPT,
+            BenchmarkTask::CleanInstall => Vec::new(),
+            BenchmarkTask::FrozenLockfile => vec!["--frozen-lockfile"],
         }
     }
 
