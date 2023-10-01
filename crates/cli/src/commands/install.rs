@@ -48,6 +48,7 @@ impl CliDependencyOptions {
 
 #[derive(Parser, Debug)]
 pub struct InstallCommandArgs {
+    /// --prod, --dev, and --no-optional
     #[clap(flatten)]
     pub dependency_options: CliDependencyOptions,
 }
