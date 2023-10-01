@@ -35,12 +35,12 @@ Then, you can use the script named `benchmark-install-against-revisions` to run 
 
 ```sh
 # Comparing the branch you're working on against main
-cargo benchmark-install-against-revisions my-branch main
+cargo benchmark-install-against-revisions --task=frozen-lockfile my-branch main
 ```
 
 ```sh
 # Comparing current commit against the previous commit
-cargo benchmark-install-against-revisions HEAD HEAD~
+cargo benchmark-install-against-revisions --task=frozen-lockfile HEAD HEAD~
 ```
 
 ```sh
