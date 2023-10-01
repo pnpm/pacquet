@@ -1,6 +1,6 @@
 use crate::{
-    cli_args::HyperfineOptions,
-    fixtures::{INSTALL_SCRIPT, PACKAGE_JSON},
+    cli_args::{BenchmarkTask, HyperfineOptions},
+    fixtures::PACKAGE_JSON,
 };
 use itertools::Itertools;
 use os_display::Quotable;
@@ -19,6 +19,7 @@ pub struct WorkEnv {
     pub revisions: Vec<String>,
     pub registry: String,
     pub repository: PathBuf,
+    pub task: BenchmarkTask,
     pub hyperfine_options: HyperfineOptions,
     pub package_json: Option<PathBuf>,
 }
@@ -80,8 +81,11 @@ impl WorkEnv {
             let dir = self.revision_root(revision);
             fs::create_dir_all(&dir).expect("create directory for the revision");
             create_package_json(&dir, self.package_json.as_deref());
-            create_script(&self.revision_install_script(revision), INSTALL_SCRIPT);
-            create_npmrc(&dir, self.registry());
+            create_script(
+                &self.revision_install_script(revision),
+                self.task.install_script_content(),
+            );
+            create_npmrc(&dir, self.registry(), self.task);
         }
 
         eprintln!("Populating proxy registry cache...");
@@ -183,7 +187,7 @@ fn create_package_json(dir: &Path, src: Option<&Path>) {
     }
 }
 
-fn create_npmrc(dir: &Path, registry: &str) {
+fn create_npmrc(dir: &Path, registry: &str, task: BenchmarkTask) {
     let path = dir.join(".npmrc");
     let store_dir = dir.join("store-dir");
     let store_dir = store_dir.to_str().expect("path to store-dir is valid UTF-8");
@@ -191,7 +195,7 @@ fn create_npmrc(dir: &Path, registry: &str) {
     writeln!(file, "registry={registry}").unwrap();
     writeln!(file, "store-dir={store_dir}").unwrap();
     writeln!(file, "auto-install-peers=false").unwrap();
-    writeln!(file, "lockfile=false").unwrap();
+    writeln!(file, "{}", task.npmrc_lockfile_setting()).unwrap();
 }
 
 fn create_script(path: &Path, content: &str) {
