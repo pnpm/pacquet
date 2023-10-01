@@ -201,6 +201,7 @@ fn create_npmrc(dir: &Path, registry: &str, task: BenchmarkTask) {
     writeln!(file, "registry={registry}").unwrap();
     writeln!(file, "store-dir={store_dir}").unwrap();
     writeln!(file, "auto-install-peers=false").unwrap();
+    writeln!(file, "ignore-scripts=true").unwrap();
     writeln!(file, "{}", task.npmrc_lockfile_setting()).unwrap();
 }
 
