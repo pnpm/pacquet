@@ -51,6 +51,10 @@ pub struct InstallCommandArgs {
     /// --prod, --dev, and --no-optional
     #[clap(flatten)]
     pub dependency_options: CliDependencyOptions,
+
+    /// Don't generate a lockfile and fail if the lockfile is outdated.
+    #[clap(long)]
+    pub frozen_lockfile: bool,
 }
 
 impl PackageManager {
@@ -123,7 +127,7 @@ impl PackageManager {
         project_snapshot: &RootProjectSnapshot,
         args: &InstallCommandArgs,
     ) {
-        let InstallCommandArgs { dependency_options } = args;
+        let InstallCommandArgs { dependency_options, .. } = args;
 
         let RootProjectSnapshot::Single(project_snapshot) = project_snapshot else {
             panic!("Monorepo is not yet supported");
@@ -162,11 +166,11 @@ impl PackageManager {
 
     /// Jobs of the `install` command.
     pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
-        let InstallCommandArgs { dependency_options } = args;
+        let InstallCommandArgs { dependency_options, frozen_lockfile } = args;
         tracing::info!(target: "pacquet::install", "Start all");
 
-        match (self.config.lockfile, &self.lockfile) {
-            (false, _) => {
+        match (self.config.lockfile, frozen_lockfile, &self.lockfile) {
+            (false, _, _) => {
                 self.package_json
                     .dependencies(dependency_options.dependency_groups())
                     .map(|(name, version_range)| async move {
@@ -185,10 +189,10 @@ impl PackageManager {
                     .pipe(future::join_all)
                     .await;
             }
-            (true, None) => {
+            (true, false, Some(_)) | (true, false, None) | (true, true, None) => {
                 unimplemented!();
             }
-            (true, Some(lockfile)) => {
+            (true, true, Some(lockfile)) => {
                 let Lockfile { lockfile_version, project_snapshot, packages, .. } = lockfile;
                 assert_eq!(lockfile_version.major, 6); // compatibility check already happens at serde, but this still helps preventing programmer mistakes.
 
@@ -297,6 +301,7 @@ mod tests {
                 dev: false,
                 no_optional: false,
             },
+            frozen_lockfile: false,
         };
         package_manager.install(&args).await.unwrap();
 
