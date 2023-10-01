@@ -89,6 +89,10 @@ pub struct HyperfineOptions {
     #[clap(long)]
     pub runs: Option<u8>,
 
+    /// Print stdout and stderr of the benchmarked program instead of suppressing it
+    #[clap(long)]
+    show_output: bool,
+
     /// Ignore non-zero exit codes of the benchmarked program.
     #[clap(long)]
     pub ignore_failure: bool,
@@ -96,7 +100,8 @@ pub struct HyperfineOptions {
 
 impl HyperfineOptions {
     pub fn append_to(&self, hyperfine_command: &mut Command) {
-        let &HyperfineOptions { warmup, min_runs, max_runs, runs, ignore_failure } = self;
+        let &HyperfineOptions { show_output, warmup, min_runs, max_runs, runs, ignore_failure } =
+            self;
         hyperfine_command.arg("--warmup").arg(warmup.to_string());
         if let Some(min_runs) = min_runs {
             hyperfine_command.arg("--min-runs").arg(min_runs.to_string());
@@ -106,6 +111,9 @@ impl HyperfineOptions {
         }
         if let Some(runs) = runs {
             hyperfine_command.arg("--runs").arg(runs.to_string());
+        }
+        if show_output {
+            hyperfine_command.arg("--show-output");
         }
         if ignore_failure {
             hyperfine_command.arg("--ignore-failures");
