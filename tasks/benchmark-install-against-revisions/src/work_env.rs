@@ -192,6 +192,7 @@ fn create_npmrc(dir: &Path, registry: &str, task: BenchmarkTask) {
     let path = dir.join(".npmrc");
     let store_dir = dir.join("store-dir");
     let store_dir = store_dir.to_str().expect("path to store-dir is valid UTF-8");
+    eprintln!("Creating config file {path:?}...");
     let mut file = File::create(path).expect("create .npmrc");
     writeln!(file, "registry={registry}").unwrap();
     writeln!(file, "store-dir={store_dir}").unwrap();
