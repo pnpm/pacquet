@@ -86,6 +86,7 @@ impl WorkEnv {
                 self.task.install_script_content(),
             );
             create_npmrc(&dir, self.registry(), self.task);
+            may_create_lockfile(&dir, self.task);
         }
 
         eprintln!("Populating proxy registry cache...");
@@ -196,6 +197,13 @@ fn create_npmrc(dir: &Path, registry: &str, task: BenchmarkTask) {
     writeln!(file, "store-dir={store_dir}").unwrap();
     writeln!(file, "auto-install-peers=false").unwrap();
     writeln!(file, "{}", task.npmrc_lockfile_setting()).unwrap();
+}
+
+fn may_create_lockfile(dir: &Path, task: BenchmarkTask) {
+    if let Some(lockfile) = task.lockfile() {
+        let path = dir.join("pnpm-lock.yaml");
+        fs::write(path, lockfile).expect("write pnpm-lock.yaml for the revision");
+    }
 }
 
 fn create_script(path: &Path, content: &str) {

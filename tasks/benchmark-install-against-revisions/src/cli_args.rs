@@ -1,4 +1,4 @@
-use crate::fixtures::{CLEAN_INSTALL_SCRIPT, FROZEN_LOCKFILE_SCRIPT};
+use crate::fixtures::{CLEAN_INSTALL_SCRIPT, FROZEN_LOCKFILE_SCRIPT, LOCKFILE};
 use clap::{Args, Parser, ValueEnum};
 use std::{path::PathBuf, process::Command};
 
@@ -55,6 +55,14 @@ impl BenchmarkTask {
         match self {
             BenchmarkTask::CleanInstall => "lockfile=false",
             BenchmarkTask::FrozenLockfile => "lockfile=true",
+        }
+    }
+
+    /// Whether to use a lockfile.
+    pub fn lockfile(self) -> Option<&'static str> {
+        match self {
+            BenchmarkTask::CleanInstall => None,
+            BenchmarkTask::FrozenLockfile => Some(LOCKFILE),
         }
     }
 }
