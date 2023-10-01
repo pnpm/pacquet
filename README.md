@@ -44,6 +44,16 @@ cargo benchmark-install-against-revisions --task=frozen-lockfile HEAD HEAD~
 ```
 
 ```sh
+# Comparing pacquet of current commit against pnpm
+cargo benchmark-install-against-revisions --task=frozen-lockfile --with-pnpm HEAD
+```
+
+```sh
+# Comparing pacquet of current commit, pacquet of main, and pnpm against each other
+cargo benchmark-install-against-revisions --task=frozen-lockfile --with-pnpm HEAD main
+```
+
+```sh
 # See more options
 cargo benchmark-install-against-revisions --help
 ```
