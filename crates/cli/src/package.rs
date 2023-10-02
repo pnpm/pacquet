@@ -95,8 +95,8 @@ pub async fn install_single_package_to_virtual_store(
     let registry = registry.strip_suffix('/').unwrap_or(registry);
     let PkgNameVerPeer { name, suffix: ver_peer } = package_specifier;
     let version = ver_peer.version();
-    let tarball_name = name.name.as_str();
-    let tarball_url = format!("{registry}/{name}/-/{tarball_name}-{version}.tgz");
+    let bare_name = name.bare.as_str();
+    let tarball_url = format!("{registry}/{name}/-/{bare_name}-{version}.tgz");
     let integrity = registry_resolution.integrity.as_str();
 
     // TODO: skip when already exists in store?

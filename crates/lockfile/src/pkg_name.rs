@@ -7,21 +7,21 @@ use std::{fmt, str::FromStr};
 /// Represent the name of an npm package.
 ///
 /// Syntax:
-/// * Without scope: `{name}`
-/// * With scope: `@{scope}/name`
+/// * Without scope: `{bare}`
+/// * With scope: `@{scope}/bare`
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(try_from = "&'de str", into = "String")]
 pub struct PkgName {
     /// Name of the scope (if any) without the `@` prefix.
     pub scope: Option<String>,
     /// Name of the package.
-    pub name: String,
+    pub bare: String,
 }
 
 /// Error when parsing [`PkgName`] from a string input.
 #[derive(Debug, Display, Error)]
 pub enum ParsePkgNameError {
-    #[display(fmt = "Missing name part of the scoped package")]
+    #[display(fmt = "Missing bare name")]
     MissingName,
     #[display(fmt = "Name is empty")]
     EmptyName,
@@ -35,15 +35,15 @@ impl PkgName {
     {
         match input.as_ref().split_first_char() {
             Some(('@', rest)) => {
-                let (scope, name) = rest.split_once('/').ok_or(ParsePkgNameError::MissingName)?;
+                let (scope, bare) = rest.split_once('/').ok_or(ParsePkgNameError::MissingName)?;
                 let scope = scope.to_string().pipe(Some);
-                let name = name.to_string();
-                Ok(PkgName { scope, name })
+                let bare = bare.to_string();
+                Ok(PkgName { scope, bare })
             }
             Some(_) => {
                 let scope = None;
-                let name = input.into();
-                Ok(PkgName { scope, name })
+                let bare = input.into();
+                Ok(PkgName { scope, bare })
             }
             None => Err(ParsePkgNameError::EmptyName),
         }
@@ -73,11 +73,11 @@ impl FromStr for PkgName {
 
 impl fmt::Display for PkgName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let PkgName { scope, name } = self;
+        let PkgName { scope, bare } = self;
         if let Some(scope) = scope {
             write!(f, "@{scope}/")?;
         }
-        write!(f, "{name}")
+        write!(f, "{bare}")
     }
 }
 
@@ -100,8 +100,8 @@ mod tests {
             assert_eq!(&actual, &output);
         }
 
-        case("@foo/bar", PkgName { scope: Some("foo".to_string()), name: "bar".to_string() });
-        case("foo-bar", PkgName { scope: None, name: "foo-bar".to_string() });
+        case("@foo/bar", PkgName { scope: Some("foo".to_string()), bare: "bar".to_string() });
+        case("foo-bar", PkgName { scope: None, bare: "foo-bar".to_string() });
     }
 
     #[test]
@@ -112,8 +112,8 @@ mod tests {
             assert_eq!(&actual, &output);
         }
 
-        case("'@foo/bar'", PkgName { scope: Some("foo".to_string()), name: "bar".to_string() });
-        case("foo-bar", PkgName { scope: None, name: "foo-bar".to_string() });
+        case("'@foo/bar'", PkgName { scope: Some("foo".to_string()), bare: "bar".to_string() });
+        case("foo-bar", PkgName { scope: None, bare: "foo-bar".to_string() });
     }
 
     #[test]
@@ -129,7 +129,7 @@ mod tests {
             }};
         }
 
-        case!("@foo" => "Missing name part of the scoped package", ParsePkgNameError::MissingName);
+        case!("@foo" => "Missing bare name", ParsePkgNameError::MissingName);
         case!("" => "Name is empty", ParsePkgNameError::EmptyName);
     }
 
@@ -140,8 +140,8 @@ mod tests {
             assert_eq!(input.to_string(), output);
         }
 
-        case(PkgName { scope: Some("foo".to_string()), name: "bar".to_string() }, "@foo/bar");
-        case(PkgName { scope: None, name: "foo-bar".to_string() }, "foo-bar");
+        case(PkgName { scope: Some("foo".to_string()), bare: "bar".to_string() }, "@foo/bar");
+        case(PkgName { scope: None, bare: "foo-bar".to_string() }, "foo-bar");
     }
 
     #[test]
@@ -153,7 +153,7 @@ mod tests {
             assert_eq!(&received, &expected);
         }
 
-        case(PkgName { scope: Some("foo".to_string()), name: "bar".to_string() }, "@foo/bar");
-        case(PkgName { scope: None, name: "foo-bar".to_string() }, "foo-bar");
+        case(PkgName { scope: Some("foo".to_string()), bare: "bar".to_string() }, "@foo/bar");
+        case(PkgName { scope: None, bare: "foo-bar".to_string() }, "foo-bar");
     }
 }
