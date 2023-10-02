@@ -21,7 +21,7 @@ use std::str::FromStr;
 #[serde(try_from = "&'de str", into = "String")]
 pub struct DependencyPath {
     pub custom_registry: Option<String>,
-    pub package_specifier: PkgNameVerPeer,
+    pub package_specifier: PkgNameVerPeer, // TODO: add support for `{registry}/{name}/{version}({peers})` syntax
 }
 
 /// Error when parsing [`DependencyPath`] from a string.
