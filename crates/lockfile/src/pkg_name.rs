@@ -14,7 +14,7 @@ use std::{fmt, str::FromStr};
 pub struct PkgName {
     /// The scope (if any) without the `@` prefix.
     pub scope: Option<String>,
-    /// Either the whole package name (if without scope) or the bare name after the seperator (if with scope).
+    /// Either the whole package name (if without scope) or the bare name after the separator (if with scope).
     pub bare: String,
 }
 
