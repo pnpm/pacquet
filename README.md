@@ -23,7 +23,7 @@ TRACE=pacquet_tarball just cli add fastify
 
 ## Benchmarking
 
-### Clean install between multiple revisions
+### Install between multiple revisions
 
 First, you to start a local registry server, such as [verdaccio](https://verdaccio.org/):
 
