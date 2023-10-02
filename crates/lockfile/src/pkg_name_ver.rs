@@ -17,7 +17,7 @@ mod tests {
     use serde_yaml::Value as YamlValue;
 
     fn name_ver(name: &str, ver: impl Into<Version>) -> PkgNameVer {
-        PkgNameVer::new(name.to_string(), ver.into())
+        PkgNameVer::new(name.parse().unwrap(), ver.into())
     }
 
     #[test]

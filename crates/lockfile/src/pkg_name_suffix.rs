@@ -1,3 +1,4 @@
+use crate::{ParsePkgNameError, PkgName};
 use derive_more::{Display, Error};
 use serde::{Deserialize, Serialize};
 use split_first_char::SplitFirstChar;
@@ -17,13 +18,13 @@ use std::{fmt::Display, str::FromStr};
     serialize = "Suffix: Display + Clone",
 ))]
 pub struct PkgNameSuffix<Suffix> {
-    pub name: String,
+    pub name: PkgName,
     pub suffix: Suffix,
 }
 
 impl<Suffix> PkgNameSuffix<Suffix> {
     /// Construct a [`PkgNameSuffix`].
-    pub fn new(name: String, suffix: Suffix) -> Self {
+    pub fn new(name: PkgName, suffix: Suffix) -> Self {
         PkgNameSuffix { name, suffix }
     }
 }
@@ -40,11 +41,15 @@ pub enum ParsePkgNameSuffixError<ParseSuffixError> {
     EmptyName,
     #[display(fmt = "Failed to parse suffix: {_0}")]
     ParseSuffixFailure(#[error(source)] ParseSuffixError),
+    #[display(fmt = "Failed to parse name: {_0}")]
+    ParseNameFailure(#[error(source)] ParsePkgNameError),
 }
 
 impl<Suffix: FromStr> FromStr for PkgNameSuffix<Suffix> {
     type Err = ParsePkgNameSuffixError<Suffix::Err>;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
+        // The parsing code of PkgName is insufficient for this, so the code have to be duplicated for now.
+        // TODO: use parser combinator pattern to enable code reuse
         let (name, suffix) = match value.split_first_char() {
             None => return Err(ParsePkgNameSuffixError::EmptyInput),
             Some(('@', rest)) => {
@@ -64,7 +69,7 @@ impl<Suffix: FromStr> FromStr for PkgNameSuffix<Suffix> {
         }
         let suffix =
             suffix.parse::<Suffix>().map_err(ParsePkgNameSuffixError::ParseSuffixFailure)?;
-        let name = name.to_string();
+        let name = name.parse().map_err(ParsePkgNameSuffixError::ParseNameFailure)?;
         Ok(PkgNameSuffix { name, suffix })
     }
 }

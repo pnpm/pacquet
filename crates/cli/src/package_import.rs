@@ -83,7 +83,8 @@ pub fn create_virtdir_by_snapshot(
     }); // TODO: proper error propagation
 
     // 1. Install the files from `cas_paths`
-    let save_path = virtual_node_modules_dir.join(&dependency_path.package_specifier.name);
+    let save_path =
+        virtual_node_modules_dir.join(dependency_path.package_specifier.name.to_string());
     if !save_path.exists() {
         cas_paths.par_iter().try_for_each(|(cleaned_entry, store_path)| {
             auto_import(store_path, &save_path.join(cleaned_entry))
@@ -96,7 +97,7 @@ pub fn create_virtdir_by_snapshot(
             let custom_registry = None; // assuming all registries are default registries (custom registry is not yet supported)
             let virtual_store_name = match spec {
                 PackageSnapshotDependency::PkgVerPeer(ver_peer) => {
-                    let package_specifier = PkgNameVerPeer::new(name.to_string(), ver_peer.clone()); // TODO: remove copying here
+                    let package_specifier = PkgNameVerPeer::new(name.clone(), ver_peer.clone()); // TODO: remove copying here
                     let dependency_path = DependencyPath { custom_registry, package_specifier };
                     dependency_path.package_specifier.to_virtual_store_name()
                 }
@@ -104,11 +105,12 @@ pub fn create_virtdir_by_snapshot(
                     dependency_path.package_specifier.to_virtual_store_name()
                 }
             };
+            let name_str = name.to_string();
             // NOTE: symlink target in pacquet is absolute yet in pnpm is relative
             // TODO: change symlink target to relative
             let symlink_target =
-                virtual_store_dir.join(virtual_store_name).join("node_modules").join(name);
-            let symlink_path = virtual_node_modules_dir.join(name);
+                virtual_store_dir.join(virtual_store_name).join("node_modules").join(&name_str);
+            let symlink_path = virtual_node_modules_dir.join(&name_str);
             if let Some(parent) = symlink_path.parent() {
                 // TODO: proper error propagation
                 fs::create_dir_all(parent).expect("make sure node_modules exist");

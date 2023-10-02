@@ -26,7 +26,7 @@ mod tests {
 
     fn name_peer_ver(name: &str, peer_ver: &str) -> PkgNameVerPeer {
         let peer_ver = peer_ver.to_string().parse().unwrap();
-        PkgNameVerPeer::new(name.to_string(), peer_ver)
+        PkgNameVerPeer::new(name.parse().unwrap(), peer_ver)
     }
 
     #[test]

@@ -95,13 +95,7 @@ pub async fn install_single_package_to_virtual_store(
     let registry = registry.strip_suffix('/').unwrap_or(registry);
     let PkgNameVerPeer { name, suffix: ver_peer } = package_specifier;
     let version = ver_peer.version();
-    let tarball_name = if name.starts_with('@') {
-        // TODO: parse the package name ahead of time in Lockfile
-        let (_, name) = name.split_once('/').expect("the scope is correct");
-        name
-    } else {
-        name
-    };
+    let tarball_name = name.name.as_str();
     let tarball_url = format!("{registry}/{name}/-/{tarball_name}-{version}.tgz");
     let integrity = registry_resolution.integrity.as_str();
 

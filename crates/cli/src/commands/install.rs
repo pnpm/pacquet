@@ -5,7 +5,7 @@ use clap::Parser;
 use futures_util::future;
 use pacquet_diagnostics::tracing;
 use pacquet_lockfile::{
-    DependencyPath, Lockfile, PackageSnapshot, PkgNameVerPeer, RootProjectSnapshot,
+    DependencyPath, Lockfile, PackageSnapshot, PkgName, PkgNameVerPeer, RootProjectSnapshot,
 };
 use pacquet_package_json::DependencyGroup;
 use pacquet_registry::PackageVersion;
@@ -140,8 +140,10 @@ impl PackageManager {
             .for_each(|(name, spec)| {
                 // TODO: the code below is not optimal
                 let virtual_store_name =
-                    PkgNameVerPeer::new(name.to_string(), spec.version.clone())
+                    PkgNameVerPeer::new(PkgName::clone(name), spec.version.clone())
                         .to_virtual_store_name();
+
+                let name_str = name.to_string();
 
                 // NOTE: symlink target in pacquet is absolute yet in pnpm is relative
                 // TODO: change symlink target to relative
@@ -150,8 +152,8 @@ impl PackageManager {
                     .virtual_store_dir
                     .join(virtual_store_name)
                     .join("node_modules")
-                    .join(name);
-                let symlink_path = self.config.modules_dir.join(name);
+                    .join(&name_str);
+                let symlink_path = self.config.modules_dir.join(&name_str);
                 if let Some(parent) = symlink_path.parent() {
                     // TODO: proper error propagation
                     fs::create_dir_all(parent).expect("make sure node_modules exist");

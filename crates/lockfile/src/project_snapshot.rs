@@ -1,4 +1,4 @@
-use crate::{ResolvedDependencyMap, ResolvedDependencySpec};
+use crate::{PkgName, ResolvedDependencyMap, ResolvedDependencySpec};
 use pacquet_package_json::DependencyGroup;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -36,12 +36,8 @@ impl ProjectSnapshot {
     pub fn dependencies_by_groups(
         &self,
         groups: impl IntoIterator<Item = DependencyGroup>,
-    ) -> impl Iterator<Item = (&'_ str, &'_ ResolvedDependencySpec)> {
-        groups
-            .into_iter()
-            .flat_map(|group| self.get_map_by_group(group))
-            .flat_map(|map| map.iter())
-            .map(|(name, ver_peer)| (name.as_str(), ver_peer))
+    ) -> impl Iterator<Item = (&'_ PkgName, &'_ ResolvedDependencySpec)> {
+        groups.into_iter().flat_map(|group| self.get_map_by_group(group)).flatten()
     }
 }
 
