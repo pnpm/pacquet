@@ -23,6 +23,10 @@ async fn main() {
     verify::ensure_virtual_registry(&registry).await;
     verify::ensure_git_repo(&repository);
     verify::validate_revision_list(&revisions);
+    verify::ensure_program("bash");
+    verify::ensure_program("cargo");
+    verify::ensure_program("git");
+    verify::ensure_program("hyperfine");
     verify::ensure_program("pnpm");
     work_env::WorkEnv {
         root: work_env,
