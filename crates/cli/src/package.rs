@@ -1,4 +1,4 @@
-use crate::package_import::{install_virtdir_by_snapshot, ImportMethodImpl};
+use crate::package_import::{create_virtdir_by_snapshot, ImportMethodImpl};
 use crate::package_manager::PackageManagerError;
 use pacquet_lockfile::{DependencyPath, LockfileResolution, PackageSnapshot, PkgNameVerPeer};
 use pacquet_npmrc::Npmrc;
@@ -116,7 +116,7 @@ pub async fn install_single_package_to_virtual_store(
     )
     .await?;
 
-    install_virtdir_by_snapshot(
+    create_virtdir_by_snapshot(
         dependency_path,
         &config.virtual_store_dir,
         &cas_paths,
