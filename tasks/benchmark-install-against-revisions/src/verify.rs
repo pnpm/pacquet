@@ -16,10 +16,10 @@ pub fn ensure_git_repo(path: &Path) {
     assert!(path.join("Cargo.lock").is_file());
 }
 
-pub fn ensure_pnpm() {
-    match which("pnpm") {
+pub fn ensure_program(program: &str) {
+    match which(program) {
         Ok(_) => (),
-        Err(which::Error::CannotFindBinaryPath) => panic!("Cannot find pnpm in $PATH"),
+        Err(which::Error::CannotFindBinaryPath) => panic!("Cannot find {program} in $PATH"),
         Err(error) => panic!("{error}"),
     }
 }
