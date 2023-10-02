@@ -113,19 +113,26 @@ mod tests {
 
     #[test]
     fn parse_ok() {
-        macro_rules! case {
-            ($input:expr => $expected_version:expr, $expected_peer:expr) => {{
-                let input = $input;
-                eprintln!("CASE: {input:?}");
-                assert_ver_peer(input.parse().unwrap(), $expected_version, $expected_peer);
-            }};
+        fn case<Ver, Peer>(input: &'static str, (expected_version, expected_peer): (Ver, Peer))
+        where
+            Ver: Into<Version>,
+            Peer: Into<String>,
+        {
+            eprintln!("CASE: {input:?}");
+            assert_ver_peer(input.parse().unwrap(), expected_version, expected_peer);
         }
 
-        case!("1.21.3(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)" => (1, 21, 3), "(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)");
-        case!("1.21.3(react@17.0.2)" => (1, 21, 3), "(react@17.0.2)");
-        case!("1.21.3-rc.0(react@17.0.2)" => "1.21.3-rc.0".parse::<Version>().unwrap(), "(react@17.0.2)");
-        case!("1.21.3" => (1, 21, 3), "");
-        case!("1.21.3-rc.0" => "1.21.3-rc.0".parse::<Version>().unwrap(), "");
+        case(
+            "1.21.3(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)",
+            ((1, 21, 3), "(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)"),
+        );
+        case("1.21.3(react@17.0.2)", ((1, 21, 3), "(react@17.0.2)"));
+        case(
+            "1.21.3-rc.0(react@17.0.2)",
+            ("1.21.3-rc.0".parse::<Version>().unwrap(), "(react@17.0.2)"),
+        );
+        case("1.21.3", ((1, 21, 3), ""));
+        case("1.21.3-rc.0", ("1.21.3-rc.0".parse::<Version>().unwrap(), ""));
     }
 
     #[test]
@@ -148,23 +155,26 @@ mod tests {
 
     #[test]
     fn deserialize_ok() {
-        macro_rules! case {
-            ($input:expr => $expected_version:expr, $expected_peer:expr) => {{
-                let input = $input;
-                eprintln!("CASE: {input:?}");
-                assert_ver_peer(
-                    serde_yaml::from_str(input).unwrap(),
-                    $expected_version,
-                    $expected_peer,
-                );
-            }};
+        fn case<Ver, Peer>(input: &'static str, (expected_version, expected_peer): (Ver, Peer))
+        where
+            Ver: Into<Version>,
+            Peer: Into<String>,
+        {
+            eprintln!("CASE: {input:?}");
+            assert_ver_peer(serde_yaml::from_str(input).unwrap(), expected_version, expected_peer);
         }
 
-        case!("1.21.3(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)" => (1, 21, 3), "(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)");
-        case!("1.21.3(react@17.0.2)" => (1, 21, 3), "(react@17.0.2)");
-        case!("1.21.3-rc.0(react@17.0.2)" => "1.21.3-rc.0".parse::<Version>().unwrap(), "(react@17.0.2)");
-        case!("1.21.3" => (1, 21, 3), "");
-        case!("1.21.3-rc.0" => "1.21.3-rc.0".parse::<Version>().unwrap(), "");
+        case(
+            "1.21.3(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)",
+            ((1, 21, 3), "(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)"),
+        );
+        case("1.21.3(react@17.0.2)", ((1, 21, 3), "(react@17.0.2)"));
+        case(
+            "1.21.3-rc.0(react@17.0.2)",
+            ("1.21.3-rc.0".parse::<Version>().unwrap(), "(react@17.0.2)"),
+        );
+        case("1.21.3", ((1, 21, 3), ""));
+        case("1.21.3-rc.0", ("1.21.3-rc.0".parse::<Version>().unwrap(), ""));
     }
 
     #[test]

@@ -67,82 +67,107 @@ mod tests {
 
     #[test]
     fn serialize() {
-        macro_rules! case {
-            ($custom_registry:expr, $package_specifier:expr => $output:expr) => {{
-                let custom_registry = $custom_registry.map(|x: &str| x.to_string());
-                let package_specifier = $package_specifier.parse().unwrap();
-                eprintln!("CASE: {custom_registry:?}, {package_specifier:?}");
-                let yaml =
-                    serde_yaml::to_string(&DependencyPath { custom_registry, package_specifier })
-                        .unwrap();
-                assert_eq!(yaml.trim(), $output);
-            }};
+        fn case(
+            (custom_registry, package_specifier): (Option<&'static str>, &'static str),
+            output: &'static str,
+        ) {
+            eprintln!("CASE: {custom_registry:?}, {package_specifier:?}");
+            let custom_registry = custom_registry.map(ToString::to_string);
+            let package_specifier = package_specifier.parse().unwrap();
+            let yaml =
+                serde_yaml::to_string(&DependencyPath { custom_registry, package_specifier })
+                    .unwrap();
+            assert_eq!(yaml.trim(), output);
         }
 
-        case!(None, "ts-node@10.9.1" => "/ts-node@10.9.1");
-        case!(Some("registry.node-modules.io"), "ts-node@10.9.1" => "registry.node-modules.io/ts-node@10.9.1");
-        case!(
-            None, "ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
-                => "/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
+        case((None, "ts-node@10.9.1"), "/ts-node@10.9.1");
+        case(
+            (Some("registry.node-modules.io"), "ts-node@10.9.1"),
+            "registry.node-modules.io/ts-node@10.9.1",
         );
-        case!(
-            Some("registry.node-modules.io"), "ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
-                => "registry.node-modules.io/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
+        case(
+            (None, "ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"),
+            "/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)",
         );
-        case!(None, "@babel/plugin-proposal-object-rest-spread@7.12.1" => "/@babel/plugin-proposal-object-rest-spread@7.12.1");
-        case!(
-            Some("registry.node-modules.io"), "@babel/plugin-proposal-object-rest-spread@7.12.1"
-                => "registry.node-modules.io/@babel/plugin-proposal-object-rest-spread@7.12.1"
+        case(
+            (
+                Some("registry.node-modules.io"),
+                "ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)",
+            ),
+            "registry.node-modules.io/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)",
         );
-        case!(
-            None, "@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)"
-                => "/@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)"
+        case(
+            (None, "@babel/plugin-proposal-object-rest-spread@7.12.1"),
+            "/@babel/plugin-proposal-object-rest-spread@7.12.1",
         );
-        case!(
-            Some("registry.node-modules.io"), "@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)"
-                => "registry.node-modules.io/@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)"
+        case(
+            (Some("registry.node-modules.io"), "@babel/plugin-proposal-object-rest-spread@7.12.1"),
+            "registry.node-modules.io/@babel/plugin-proposal-object-rest-spread@7.12.1",
+        );
+        case(
+            (None, "@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)"),
+            "/@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)",
+        );
+        case(
+            (
+                Some("registry.node-modules.io"),
+                "@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)",
+            ),
+            "registry.node-modules.io/@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)",
         );
     }
 
     #[test]
     fn deserialize() {
-        macro_rules! case {
-            ($input:expr => $custom_registry:expr, $package_specifier:expr) => {{
-                let input = $input;
-                eprintln!("CASE: {input:?}");
-                let dependency_path: DependencyPath = serde_yaml::from_str(input).unwrap();
-                assert_eq!(
-                    dependency_path,
-                    DependencyPath {
-                        custom_registry: $custom_registry.map(|x: &str| x.to_string()),
-                        package_specifier: $package_specifier.parse().unwrap(),
-                    }
-                );
-            }};
+        fn case(
+            input: &'static str,
+            (custom_registry, package_specifier): (Option<&'static str>, &'static str),
+        ) {
+            eprintln!("CASE: {input:?}");
+            let dependency_path: DependencyPath = serde_yaml::from_str(input).unwrap();
+            assert_eq!(
+                dependency_path,
+                DependencyPath {
+                    custom_registry: custom_registry.map(|x: &str| x.to_string()),
+                    package_specifier: package_specifier.parse().unwrap(),
+                }
+            );
         }
 
-        case!("/ts-node@10.9.1" => None, "ts-node@10.9.1");
-        case!("registry.node-modules.io/ts-node@10.9.1" => Some("registry.node-modules.io"), "ts-node@10.9.1");
-        case!(
-            "/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
-                => None, "ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
+        case("/ts-node@10.9.1", (None, "ts-node@10.9.1"));
+        case(
+            "registry.node-modules.io/ts-node@10.9.1",
+            (Some("registry.node-modules.io"), "ts-node@10.9.1"),
         );
-        case!(
-            "registry.node-modules.io/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
-                => Some("registry.node-modules.io"), "ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"
+        case(
+            "/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)",
+            (None, "ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)"),
         );
-        case!("/@babel/plugin-proposal-object-rest-spread@7.12.1" => None, "@babel/plugin-proposal-object-rest-spread@7.12.1");
-        case!(
-            "registry.node-modules.io/@babel/plugin-proposal-object-rest-spread@7.12.1"
-                => Some("registry.node-modules.io"), "@babel/plugin-proposal-object-rest-spread@7.12.1"
+        case(
+            "registry.node-modules.io/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)",
+            (
+                Some("registry.node-modules.io"),
+                "ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)",
+            ),
         );
-        case!(
-            "/@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)"
-                => None, "@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)"
+        case(
+            "/@babel/plugin-proposal-object-rest-spread@7.12.1",
+            (None, "@babel/plugin-proposal-object-rest-spread@7.12.1"),
         );
-        case!(
-            "registry.node-modules.io/@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)"
-                => Some("registry.node-modules.io"), "@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)"
+        case(
+            "registry.node-modules.io/@babel/plugin-proposal-object-rest-spread@7.12.1",
+            (Some("registry.node-modules.io"), "@babel/plugin-proposal-object-rest-spread@7.12.1"),
+        );
+        case(
+            "/@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)",
+            (None, "@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)"),
+        );
+        case(
+            "registry.node-modules.io/@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)",
+            (
+                Some("registry.node-modules.io"),
+                "@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)",
+            ),
         );
     }
 

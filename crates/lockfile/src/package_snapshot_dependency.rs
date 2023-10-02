@@ -52,37 +52,34 @@ mod tests {
 
     #[test]
     fn string_matches_yaml() {
-        macro_rules! case {
-            ($input:expr) => {{
-                let input = $input;
-                eprintln!("CASE: {input:?}");
-                let snapshot_dependency: PackageSnapshotDependency =
-                    serde_yaml::from_str(input).unwrap();
-                dbg!(&snapshot_dependency);
-                let received = snapshot_dependency.to_string().pipe(serde_yaml::Value::String);
-                let expected: serde_yaml::Value = serde_yaml::from_str(input).unwrap();
-                assert_eq!(&received, &expected);
-            }};
+        fn case(input: &'static str) {
+            eprintln!("CASE: {input:?}");
+            let snapshot_dependency: PackageSnapshotDependency =
+                serde_yaml::from_str(input).unwrap();
+            dbg!(&snapshot_dependency);
+            let received = snapshot_dependency.to_string().pipe(serde_yaml::Value::String);
+            let expected: serde_yaml::Value = serde_yaml::from_str(input).unwrap();
+            assert_eq!(&received, &expected);
         }
 
-        case!("1.21.3(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)");
-        case!("1.21.3(react@17.0.2)");
-        case!("1.21.3-rc.0(react@17.0.2)");
-        case!("1.21.3");
-        case!("1.21.3-rc.0");
-        case!("/react-json-view@1.21.3(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)");
-        case!("/react-json-view@1.21.3(react@17.0.2)");
-        case!("/react-json-view@1.21.3-rc.0(react@17.0.2)");
-        case!("/react-json-view@1.21.3");
-        case!("/react-json-view@1.21.3-rc.0");
-        case!("registry.npmjs.com/react-json-view@1.21.3(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)");
-        case!("registry.npmjs.com/react-json-view@1.21.3(react@17.0.2)");
-        case!("registry.npmjs.com/react-json-view@1.21.3-rc.0(react@17.0.2)");
-        case!("registry.npmjs.com/react-json-view@1.21.3");
-        case!("registry.npmjs.com/react-json-view@1.21.3-rc.0");
-        case!("/@docusaurus/react-loadable@5.5.2(react@17.0.2)");
-        case!("/@docusaurus/react-loadable@5.5.2");
-        case!("registry.npmjs.com/@docusaurus/react-loadable@5.5.2(react@17.0.2)");
-        case!("registry.npmjs.com/@docusaurus/react-loadable@5.5.2");
+        case("1.21.3(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)");
+        case("1.21.3(react@17.0.2)");
+        case("1.21.3-rc.0(react@17.0.2)");
+        case("1.21.3");
+        case("1.21.3-rc.0");
+        case("/react-json-view@1.21.3(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)");
+        case("/react-json-view@1.21.3(react@17.0.2)");
+        case("/react-json-view@1.21.3-rc.0(react@17.0.2)");
+        case("/react-json-view@1.21.3");
+        case("/react-json-view@1.21.3-rc.0");
+        case("registry.npmjs.com/react-json-view@1.21.3(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)");
+        case("registry.npmjs.com/react-json-view@1.21.3(react@17.0.2)");
+        case("registry.npmjs.com/react-json-view@1.21.3-rc.0(react@17.0.2)");
+        case("registry.npmjs.com/react-json-view@1.21.3");
+        case("registry.npmjs.com/react-json-view@1.21.3-rc.0");
+        case("/@docusaurus/react-loadable@5.5.2(react@17.0.2)");
+        case("/@docusaurus/react-loadable@5.5.2");
+        case("registry.npmjs.com/@docusaurus/react-loadable@5.5.2(react@17.0.2)");
+        case("registry.npmjs.com/@docusaurus/react-loadable@5.5.2");
     }
 }
