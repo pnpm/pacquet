@@ -23,7 +23,7 @@ async fn main() {
     verify::ensure_virtual_registry(&registry).await;
     verify::ensure_git_repo(&repository);
     verify::validate_revision_list(&revisions);
-    with_pnpm.then(verify::ensure_pnpm);
+    verify::ensure_pnpm();
     work_env::WorkEnv {
         root: work_env,
         with_pnpm,
