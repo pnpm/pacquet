@@ -10,6 +10,15 @@ pub type PkgNameVerPeer = PkgNameSuffix<PkgVerPeer>;
 /// Error when parsing [`PkgNameVerPeer`] from a string.
 pub type ParsePkgNameVerPeerError = ParsePkgNameSuffixError<ParsePkgVerPeerError>;
 
+impl PkgNameVerPeer {
+    /// Construct the name of the corresponding subdirectory in the virtual store directory.
+    pub fn to_virtual_store_name(&self) -> String {
+        // the code below is far from optimal,
+        // optimization requires parser combinator
+        self.to_string().replace('/', "+").replace(")(", "_").replace('(', "_").replace(')', "")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -46,5 +55,25 @@ mod tests {
             )
         );
         case!("@algolia/autocomplete-core@1.9.3" => name_peer_ver("@algolia/autocomplete-core", "1.9.3"));
+    }
+
+    #[test]
+    fn to_virtual_store_name() {
+        macro_rules! case {
+            ($input:expr => $output:expr) => {
+                let input = $input;
+                eprintln!("CASE: {input:?}");
+                let name_ver_peer: PkgNameVerPeer = input.parse().unwrap();
+                dbg!(&name_ver_peer);
+                let received = name_ver_peer.to_virtual_store_name();
+                let expected = $output;
+                assert_eq!(received, expected);
+            };
+        }
+
+        case!("ts-node@10.9.1" => "ts-node@10.9.1");
+        case!("ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)" => "ts-node@10.9.1_@types+node@18.7.19_typescript@5.1.6");
+        case!("@babel/plugin-proposal-object-rest-spread@7.12.1" => "@babel+plugin-proposal-object-rest-spread@7.12.1");
+        case!("@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)" => "@babel+plugin-proposal-object-rest-spread@7.12.1_@babel+core@7.12.9");
     }
 }

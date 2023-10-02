@@ -75,8 +75,9 @@ pub fn install_virtdir_by_snapshot(
     );
 
     // node_modules/.pacquet/pkg-name@x.y.z/node_modules
-    let virtual_node_modules_dir =
-        virtual_store_dir.join(dependency_path.to_virtual_store_name()).join("node_modules");
+    let virtual_node_modules_dir = virtual_store_dir
+        .join(dependency_path.package_specifier.to_virtual_store_name())
+        .join("node_modules");
     fs::create_dir_all(&virtual_node_modules_dir).unwrap_or_else(|error| {
         panic!("Failed to create directory at {virtual_node_modules_dir:?}: {error}")
     }); // TODO: proper error propagation
@@ -97,10 +98,10 @@ pub fn install_virtdir_by_snapshot(
                 PackageSnapshotDependency::PkgVerPeer(ver_peer) => {
                     let package_specifier = PkgNameVerPeer::new(name.to_string(), ver_peer.clone()); // TODO: remove copying here
                     let dependency_path = DependencyPath { custom_registry, package_specifier };
-                    dependency_path.to_virtual_store_name()
+                    dependency_path.package_specifier.to_virtual_store_name()
                 }
                 PackageSnapshotDependency::DependencyPath(dependency_path) => {
-                    dependency_path.to_virtual_store_name()
+                    dependency_path.package_specifier.to_virtual_store_name()
                 }
             };
             // NOTE: symlink target in pacquet is absolute yet in pnpm is relative

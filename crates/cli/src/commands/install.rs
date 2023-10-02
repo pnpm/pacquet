@@ -138,10 +138,11 @@ impl PackageManager {
             .collect::<Vec<_>>()
             .par_iter()
             .for_each(|(name, spec)| {
-                let custom_registry = None; // assuming all registries are default registries (custom registry is not yet supported)
-                let package_specifier = PkgNameVerPeer::new(name.to_string(), spec.version.clone());
-                let dependency_path = DependencyPath { custom_registry, package_specifier };
-                let virtual_store_name = dependency_path.to_virtual_store_name();
+                // TODO: the code below is not optimal
+                let virtual_store_name =
+                    PkgNameVerPeer::new(name.to_string(), spec.version.clone())
+                        .to_virtual_store_name();
+
                 // NOTE: symlink target in pacquet is absolute yet in pnpm is relative
                 // TODO: change symlink target to relative
                 let symlink_target = self

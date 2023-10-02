@@ -60,23 +60,6 @@ impl From<DependencyPath> for String {
     }
 }
 
-impl DependencyPath {
-    /// Construct the name of the corresponding subdirectory in the virtual store directory.
-    pub fn to_virtual_store_name(&self) -> String {
-        let DependencyPath { custom_registry, package_specifier } = self;
-        assert!(custom_registry.is_none(), "Custom registry is not yet supported ({self})");
-
-        // the code below is far from optimal,
-        // optimization requires parser combinator
-        package_specifier
-            .to_string()
-            .replace('/', "+")
-            .replace(")(", "_")
-            .replace('(', "_")
-            .replace(')', "")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,25 +151,5 @@ mod tests {
         let error = "ts-node@10.9.1".parse::<DependencyPath>().unwrap_err();
         assert_eq!(error.to_string(), "Invalid syntax");
         assert!(matches!(error, ParseDependencyPathError::InvalidSyntax));
-    }
-
-    #[test]
-    fn to_virtual_store_name() {
-        macro_rules! case {
-            ($input:expr => $output:expr) => {
-                let input = $input;
-                eprintln!("CASE: {input:?}");
-                let dependency_path: DependencyPath = input.parse().unwrap();
-                dbg!(&dependency_path);
-                let received = dependency_path.to_virtual_store_name();
-                let expected = $output;
-                assert_eq!(received, expected);
-            };
-        }
-
-        case!("/ts-node@10.9.1" => "ts-node@10.9.1");
-        case!("/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)" => "ts-node@10.9.1_@types+node@18.7.19_typescript@5.1.6");
-        case!("/@babel/plugin-proposal-object-rest-spread@7.12.1" => "@babel+plugin-proposal-object-rest-spread@7.12.1");
-        case!("/@babel/plugin-proposal-object-rest-spread@7.12.1(@babel/core@7.12.9)" => "@babel+plugin-proposal-object-rest-spread@7.12.1_@babel+core@7.12.9");
     }
 }
