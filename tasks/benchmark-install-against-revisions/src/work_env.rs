@@ -94,10 +94,9 @@ impl WorkEnv {
         }
 
         eprintln!("Populating proxy registry cache...");
-        Command::new("pnpm")
-            .current_dir(self.revision_root(WorkEnv::INIT_PROXY_CACHE))
-            .arg("install")
-            .pipe(executor("pnpm install"));
+        self.revision_install_script(WorkEnv::INIT_PROXY_CACHE)
+            .pipe(Command::new)
+            .pipe_mut(executor("install.bash"))
     }
 
     fn build(&self) {
