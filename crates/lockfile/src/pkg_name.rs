@@ -12,9 +12,9 @@ use std::{fmt, str::FromStr};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(try_from = "&'de str", into = "String")]
 pub struct PkgName {
-    /// Name of the scope (if any) without the `@` prefix.
+    /// The scope (if any) without the `@` prefix.
     pub scope: Option<String>,
-    /// Name of the package.
+    /// Either the whole package name (if without scope) or the bare name after the seperator (if with scope).
     pub bare: String,
 }
 
