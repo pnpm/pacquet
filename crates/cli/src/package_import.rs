@@ -94,12 +94,10 @@ pub fn create_virtdir_by_snapshot(
     // 2. Create the symlink layout
     if let Some(dependencies) = &package_snapshot.dependencies {
         dependencies.par_iter().for_each(|(name, spec)| {
-            let custom_registry = None; // assuming all registries are default registries (custom registry is not yet supported)
             let virtual_store_name = match spec {
                 PackageSnapshotDependency::PkgVerPeer(ver_peer) => {
                     let package_specifier = PkgNameVerPeer::new(name.clone(), ver_peer.clone()); // TODO: remove copying here
-                    let dependency_path = DependencyPath { custom_registry, package_specifier };
-                    dependency_path.package_specifier.to_virtual_store_name()
+                    package_specifier.to_virtual_store_name()
                 }
                 PackageSnapshotDependency::DependencyPath(dependency_path) => {
                     dependency_path.package_specifier.to_virtual_store_name()
