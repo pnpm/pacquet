@@ -2,8 +2,6 @@
 
 Experimental package manager for node.js written in rust.
 
-**Disclaimer**: This is mostly a playground for me to learn Rust and understand how package managers work.
-
 ### TODO
 
 - [x] `.npmrc` support (for supported features [readme.md](./crates/npmrc/README.md))
