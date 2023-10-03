@@ -6,7 +6,7 @@ mod work_env;
 #[tokio::main]
 async fn main() {
     let cli_args::CliArgs {
-        task,
+        category,
         registry,
         repository,
         package_json,
@@ -34,7 +34,7 @@ async fn main() {
         revisions,
         registry,
         repository,
-        task,
+        category,
         hyperfine_options,
         package_json,
     }
