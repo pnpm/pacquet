@@ -1,4 +1,5 @@
 use crate::package::{install_package_from_registry, install_single_package_to_virtual_store};
+use crate::package_import::symlink_pkg;
 use crate::package_manager::{PackageManager, PackageManagerError};
 use async_recursion::async_recursion;
 use clap::Parser;
@@ -11,7 +12,7 @@ use pacquet_package_json::DependencyGroup;
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
 use rayon::prelude::*;
-use std::{collections::HashMap, fs, io::ErrorKind};
+use std::collections::HashMap;
 
 #[derive(Debug, Parser)]
 pub struct CliDependencyOptions {
@@ -144,26 +145,15 @@ impl PackageManager {
                         .to_virtual_store_name();
 
                 let name_str = name.to_string();
-
-                // NOTE: symlink target in pacquet is absolute yet in pnpm is relative
-                // TODO: change symlink target to relative
-                let symlink_target = self
-                    .config
-                    .virtual_store_dir
-                    .join(virtual_store_name)
-                    .join("node_modules")
-                    .join(&name_str);
-                let symlink_path = self.config.modules_dir.join(&name_str);
-                if let Some(parent) = symlink_path.parent() {
-                    // TODO: proper error propagation
-                    fs::create_dir_all(parent).expect("make sure node_modules exist");
-                }
-                if let Err(error) = crate::fs::symlink_dir(&symlink_target, &symlink_path) {
-                    match error.kind() {
-                        ErrorKind::AlreadyExists => {},
-                        _ => panic!("Failed to create symlink at {symlink_path:?} to {symlink_target:?}: {error}"), // TODO: proper error propagation
-                    }
-                }
+                symlink_pkg(
+                    &self
+                        .config
+                        .virtual_store_dir
+                        .join(virtual_store_name)
+                        .join("node_modules")
+                        .join(&name_str),
+                    &self.config.modules_dir.join(&name_str),
+                );
             });
     }
 

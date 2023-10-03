@@ -104,21 +104,10 @@ pub fn create_virtdir_by_snapshot(
                 }
             };
             let name_str = name.to_string();
-            // NOTE: symlink target in pacquet is absolute yet in pnpm is relative
-            // TODO: change symlink target to relative
-            let symlink_target =
-                virtual_store_dir.join(virtual_store_name).join("node_modules").join(&name_str);
-            let symlink_path = virtual_node_modules_dir.join(&name_str);
-            if let Some(parent) = symlink_path.parent() {
-                // TODO: proper error propagation
-                fs::create_dir_all(parent).expect("make sure node_modules exist");
-            }
-            if let Err(error) = crate::fs::symlink_dir(&symlink_target, &symlink_path) {
-                match error.kind() {
-                    ErrorKind::AlreadyExists => {},
-                    _ => panic!("Failed to create symlink at {symlink_path:?} to {symlink_target:?}: {error}"), // TODO: proper error propagation
-                }
-            }
+            symlink_pkg(
+                &virtual_store_dir.join(virtual_store_name).join("node_modules").join(&name_str),
+                &virtual_node_modules_dir.join(&name_str),
+            );
         });
     }
 
@@ -146,4 +135,20 @@ fn auto_import(source_file: &Path, target_link: &Path) -> Result<(), AutoImportE
     })?; // TODO: add hardlink
 
     Ok(())
+}
+
+pub fn symlink_pkg(symlink_target: &Path, symlink_path: &Path) {
+    // NOTE: symlink target in pacquet is absolute yet in pnpm is relative
+    // TODO: change symlink target to relative
+    if let Some(parent) = symlink_path.parent() {
+        fs::create_dir_all(parent).expect("make sure node_modules exist"); // TODO: proper error propagation
+    }
+    if let Err(error) = crate::fs::symlink_dir(symlink_target, symlink_path) {
+        match error.kind() {
+            ErrorKind::AlreadyExists => {}
+            _ => panic!(
+                "Failed to create symlink at {symlink_path:?} to {symlink_target:?}: {error}"
+            ), // TODO: proper error propagation
+        }
+    }
 }
