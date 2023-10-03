@@ -8,6 +8,9 @@ Experimental package manager for node.js written in rust.
 - [x] CLI commands (for supported features [readme.md](./crates/cli/README.md))
 - [x] Content addressable file store support
 - [ ] Shrink-file support in sync with `pnpm-lock.yml`
+  - [x] Frozen lockfile
+  - [ ] Update outdated lockfile
+  - [ ] Creating lockfile
 - [ ] Workspace support
 - [ ] Full sync with [pnpm error codes](https://pnpm.io/errors)
 - [ ] Generate a `node_modules/.bin` folder
