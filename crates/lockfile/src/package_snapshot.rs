@@ -26,16 +26,19 @@ pub struct PackageSnapshot {
     pub cpu: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub os: Option<Vec<String>>,
-    // TODO: Add `libc`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub libc: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deprecated: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_bin: Option<bool>,
-    // TODO: Add `prepare`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepare: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requires_build: Option<bool>,
 
-    // TODO: Add `bundleDependencies`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundled_dependencies: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub peer_dependencies: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
