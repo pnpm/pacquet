@@ -1,5 +1,5 @@
 use crate::{
-    cli_args::{BenchmarkCategory, HyperfineOptions},
+    cli_args::{BenchmarkScenario, HyperfineOptions},
     fixtures::PACKAGE_JSON,
 };
 use itertools::Itertools;
@@ -20,7 +20,7 @@ pub struct WorkEnv {
     pub revisions: Vec<String>,
     pub registry: String,
     pub repository: PathBuf,
-    pub category: BenchmarkCategory,
+    pub scenario: BenchmarkScenario,
     pub hyperfine_options: HyperfineOptions,
     pub package_json: Option<PathBuf>,
 }
@@ -88,9 +88,9 @@ impl WorkEnv {
             let dir = self.revision_root(revision);
             fs::create_dir_all(&dir).expect("create directory for the revision");
             create_package_json(&dir, self.package_json.as_deref());
-            create_install_script(&dir, self.category, for_pnpm);
-            create_npmrc(&dir, self.registry(), self.category);
-            may_create_lockfile(&dir, self.category);
+            create_install_script(&dir, self.scenario, for_pnpm);
+            create_npmrc(&dir, self.registry(), self.scenario);
+            may_create_lockfile(&dir, self.scenario);
         }
 
         eprintln!("Populating proxy registry cache...");
@@ -191,7 +191,7 @@ fn create_package_json(dir: &Path, src: Option<&Path>) {
     }
 }
 
-fn create_npmrc(dir: &Path, registry: &str, category: BenchmarkCategory) {
+fn create_npmrc(dir: &Path, registry: &str, scenario: BenchmarkScenario) {
     let path = dir.join(".npmrc");
     let store_dir = dir.join("store-dir");
     let store_dir = store_dir.to_str().expect("path to store-dir is valid UTF-8");
@@ -201,17 +201,17 @@ fn create_npmrc(dir: &Path, registry: &str, category: BenchmarkCategory) {
     writeln!(file, "store-dir={store_dir}").unwrap();
     writeln!(file, "auto-install-peers=false").unwrap();
     writeln!(file, "ignore-scripts=true").unwrap();
-    writeln!(file, "{}", category.npmrc_lockfile_setting()).unwrap();
+    writeln!(file, "{}", scenario.npmrc_lockfile_setting()).unwrap();
 }
 
-fn may_create_lockfile(dir: &Path, category: BenchmarkCategory) {
-    if let Some(lockfile) = category.lockfile() {
+fn may_create_lockfile(dir: &Path, scenario: BenchmarkScenario) {
+    if let Some(lockfile) = scenario.lockfile() {
         let path = dir.join("pnpm-lock.yaml");
         fs::write(path, lockfile).expect("write pnpm-lock.yaml for the revision");
     }
 }
 
-fn create_install_script(dir: &Path, category: BenchmarkCategory, for_pnpm: bool) {
+fn create_install_script(dir: &Path, scenario: BenchmarkScenario, for_pnpm: bool) {
     let path = dir.join("install.bash");
 
     eprintln!("Creating script {path:?}...");
@@ -223,7 +223,7 @@ fn create_install_script(dir: &Path, category: BenchmarkCategory, for_pnpm: bool
 
     let command = if for_pnpm { "pnpm" } else { "./pacquet/target/release/pacquet" };
     write!(file, "exec {command} install").unwrap();
-    for arg in category.install_args() {
+    for arg in scenario.install_args() {
         write!(file, " {arg}").unwrap();
     }
     writeln!(file).unwrap();

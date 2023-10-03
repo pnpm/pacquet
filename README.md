@@ -35,22 +35,22 @@ Then, you can use the script named `benchmark-install-against-revisions` to run 
 
 ```sh
 # Comparing the branch you're working on against main
-cargo benchmark-install-against-revisions --category=frozen-lockfile my-branch main
+cargo benchmark-install-against-revisions --scenario=frozen-lockfile my-branch main
 ```
 
 ```sh
 # Comparing current commit against the previous commit
-cargo benchmark-install-against-revisions --category=frozen-lockfile HEAD HEAD~
+cargo benchmark-install-against-revisions --scenario=frozen-lockfile HEAD HEAD~
 ```
 
 ```sh
 # Comparing pacquet of current commit against pnpm
-cargo benchmark-install-against-revisions --category=frozen-lockfile --with-pnpm HEAD
+cargo benchmark-install-against-revisions --scenario=frozen-lockfile --with-pnpm HEAD
 ```
 
 ```sh
 # Comparing pacquet of current commit, pacquet of main, and pnpm against each other
-cargo benchmark-install-against-revisions --category=frozen-lockfile --with-pnpm HEAD main
+cargo benchmark-install-against-revisions --scenario=frozen-lockfile --with-pnpm HEAD main
 ```
 
 ```sh

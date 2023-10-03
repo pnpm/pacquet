@@ -6,7 +6,7 @@ use std::{path::PathBuf, process::Command};
 pub struct CliArgs {
     /// Task to benchmark.
     #[clap(long, short)]
-    pub category: BenchmarkCategory,
+    pub scenario: BenchmarkScenario,
 
     /// URL to the local virtual registry.
     #[clap(long, short, default_value = "http://localhost:4873")]
@@ -38,35 +38,35 @@ pub struct CliArgs {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum BenchmarkCategory {
+pub enum BenchmarkScenario {
     /// Benchmark clean install without lockfile and without local cache.
     CleanInstall,
     /// Benchmark install with a frozen lockfile and without local cache.
     FrozenLockfile,
 }
 
-impl BenchmarkCategory {
+impl BenchmarkScenario {
     /// Infer CLI arguments for the install command.
     pub fn install_args(self) -> impl IntoIterator<Item = &'static str> {
         match self {
-            BenchmarkCategory::CleanInstall => Vec::new(),
-            BenchmarkCategory::FrozenLockfile => vec!["--frozen-lockfile"],
+            BenchmarkScenario::CleanInstall => Vec::new(),
+            BenchmarkScenario::FrozenLockfile => vec!["--frozen-lockfile"],
         }
     }
 
     /// Return `lockfile=true` or `lockfile=false` for use in generating `.npmrc`.
     pub fn npmrc_lockfile_setting(self) -> &'static str {
         match self {
-            BenchmarkCategory::CleanInstall => "lockfile=false",
-            BenchmarkCategory::FrozenLockfile => "lockfile=true",
+            BenchmarkScenario::CleanInstall => "lockfile=false",
+            BenchmarkScenario::FrozenLockfile => "lockfile=true",
         }
     }
 
     /// Whether to use a lockfile.
     pub fn lockfile(self) -> Option<&'static str> {
         match self {
-            BenchmarkCategory::CleanInstall => None,
-            BenchmarkCategory::FrozenLockfile => Some(LOCKFILE),
+            BenchmarkScenario::CleanInstall => None,
+            BenchmarkScenario::FrozenLockfile => Some(LOCKFILE),
         }
     }
 }
