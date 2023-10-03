@@ -16,9 +16,9 @@ pub struct PackageSnapshot {
     pub id: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
+    pub name: Option<String>, // TODO: name and version are required on non-default registry, create a struct for it
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
+    pub version: Option<String>, // TODO: name and version are required on non-default registry, create a struct for it
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub engines: Option<HashMap<String, String>>,
