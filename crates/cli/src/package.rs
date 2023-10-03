@@ -4,8 +4,9 @@ use pacquet_lockfile::{DependencyPath, LockfileResolution, PackageSnapshot, PkgN
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::{download_tarball_to_store, Cache};
+use pipe_trait::Pipe;
 use reqwest::Client;
-use std::path::Path;
+use std::{borrow::Cow, path::Path};
 
 /// This function execute the following and returns the package
 /// - retrieves the package from the registry
@@ -86,18 +87,30 @@ pub async fn install_single_package_to_virtual_store(
     package_snapshot: &PackageSnapshot,
 ) -> Result<(), PackageManagerError> {
     let PackageSnapshot { resolution, .. } = package_snapshot;
-    let LockfileResolution::Registry(registry_resolution) = resolution else {
-        panic!("Only TarballResolution is supported at the moment, but {dependency_path} requires {resolution:?}");
-    };
-
     let DependencyPath { custom_registry, package_specifier } = dependency_path;
-    let registry = custom_registry.as_ref().unwrap_or(&config.registry);
-    let registry = registry.strip_suffix('/').unwrap_or(registry);
-    let PkgNameVerPeer { name, suffix: ver_peer } = package_specifier;
-    let version = ver_peer.version();
-    let bare_name = name.bare.as_str();
-    let tarball_url = format!("{registry}/{name}/-/{bare_name}-{version}.tgz");
-    let integrity = registry_resolution.integrity.as_str();
+
+    let (tarball_url, integrity) = match resolution {
+        LockfileResolution::Tarball(tarball_resolution) => {
+            let integrity = tarball_resolution.integrity.as_deref().unwrap_or_else(|| {
+                // TODO: how to handle the absent of integrity field?
+                panic!("Current implementation requires integrity, but {dependency_path} doesn't have it");
+            });
+            (tarball_resolution.tarball.as_str().pipe(Cow::Borrowed), integrity)
+        }
+        LockfileResolution::Registry(registry_resolution) => {
+            let registry = custom_registry.as_ref().unwrap_or(&config.registry);
+            let registry = registry.strip_suffix('/').unwrap_or(registry);
+            let PkgNameVerPeer { name, suffix: ver_peer } = package_specifier;
+            let version = ver_peer.version();
+            let bare_name = name.bare.as_str();
+            let tarball_url = format!("{registry}/{name}/-/{bare_name}-{version}.tgz");
+            let integrity = registry_resolution.integrity.as_str();
+            (Cow::Owned(tarball_url), integrity)
+        }
+        LockfileResolution::Directory(_) | LockfileResolution::Git(_) => {
+            panic!("Only TarballResolution and RegistryResolution is supported at the moment, but {dependency_path} requires {resolution:?}");
+        }
+    };
 
     // TODO: skip when already exists in store?
     let cas_paths = download_tarball_to_store(
