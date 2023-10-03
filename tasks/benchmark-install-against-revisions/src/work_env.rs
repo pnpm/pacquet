@@ -1,6 +1,6 @@
 use crate::{
-    cli_args::HyperfineOptions,
-    fixtures::{INSTALL_SCRIPT, PACKAGE_JSON},
+    cli_args::{BenchmarkScenario, HyperfineOptions},
+    fixtures::PACKAGE_JSON,
 };
 use itertools::Itertools;
 use os_display::Quotable;
@@ -16,14 +16,19 @@ use std::{
 #[derive(Debug)]
 pub struct WorkEnv {
     pub root: PathBuf,
+    pub with_pnpm: bool,
     pub revisions: Vec<String>,
     pub registry: String,
     pub repository: PathBuf,
+    pub scenario: BenchmarkScenario,
     pub hyperfine_options: HyperfineOptions,
     pub package_json: Option<PathBuf>,
 }
 
 impl WorkEnv {
+    const INIT_PROXY_CACHE: &str = ".init-proxy-cache";
+    const PNPM: &str = "PNPM";
+
     fn root(&self) -> &'_ Path {
         &self.root
     }
@@ -72,23 +77,26 @@ impl WorkEnv {
     }
 
     fn init(&self) {
-        const INIT_PROXY_CACHE: &str = ".init-proxy-cache";
-
         eprintln!("Initializing...");
-        for revision in self.revisions().chain(iter::once(INIT_PROXY_CACHE)) {
+        let entries = self
+            .revisions()
+            .map(|revision| (revision, false))
+            .chain(iter::once((WorkEnv::INIT_PROXY_CACHE, true)))
+            .chain(self.with_pnpm.then_some((WorkEnv::PNPM, true)));
+        for (revision, for_pnpm) in entries {
             eprintln!("Revision: {revision:?}");
             let dir = self.revision_root(revision);
             fs::create_dir_all(&dir).expect("create directory for the revision");
             create_package_json(&dir, self.package_json.as_deref());
-            create_script(&self.revision_install_script(revision), INSTALL_SCRIPT);
-            create_npmrc(&dir, self.registry());
+            create_install_script(&dir, self.scenario, for_pnpm);
+            create_npmrc(&dir, self.registry(), self.scenario);
+            may_create_lockfile(&dir, self.scenario);
         }
 
         eprintln!("Populating proxy registry cache...");
-        Command::new("pnpm")
-            .current_dir(self.revision_root(INIT_PROXY_CACHE))
-            .arg("install")
-            .pipe(executor("pnpm install"));
+        self.revision_install_script(WorkEnv::INIT_PROXY_CACHE)
+            .pipe(Command::new)
+            .pipe_mut(executor("install.bash"))
     }
 
     fn build(&self) {
@@ -152,7 +160,7 @@ impl WorkEnv {
 
         self.hyperfine_options.append_to(&mut command);
 
-        for revision in self.revisions() {
+        for revision in self.revisions().chain(self.with_pnpm.then_some(WorkEnv::PNPM)) {
             command.arg("--command-name").arg(revision).arg(self.revision_install_script(revision));
         }
 
@@ -183,20 +191,43 @@ fn create_package_json(dir: &Path, src: Option<&Path>) {
     }
 }
 
-fn create_npmrc(dir: &Path, registry: &str) {
+fn create_npmrc(dir: &Path, registry: &str, scenario: BenchmarkScenario) {
     let path = dir.join(".npmrc");
     let store_dir = dir.join("store-dir");
     let store_dir = store_dir.to_str().expect("path to store-dir is valid UTF-8");
+    eprintln!("Creating config file {path:?}...");
     let mut file = File::create(path).expect("create .npmrc");
     writeln!(file, "registry={registry}").unwrap();
     writeln!(file, "store-dir={store_dir}").unwrap();
     writeln!(file, "auto-install-peers=false").unwrap();
-    writeln!(file, "lockfile=false").unwrap();
+    writeln!(file, "ignore-scripts=true").unwrap();
+    writeln!(file, "{}", scenario.npmrc_lockfile_setting()).unwrap();
 }
 
-fn create_script(path: &Path, content: &str) {
+fn may_create_lockfile(dir: &Path, scenario: BenchmarkScenario) {
+    if let Some(lockfile) = scenario.lockfile() {
+        let path = dir.join("pnpm-lock.yaml");
+        fs::write(path, lockfile).expect("write pnpm-lock.yaml for the revision");
+    }
+}
+
+fn create_install_script(dir: &Path, scenario: BenchmarkScenario, for_pnpm: bool) {
+    let path = dir.join("install.bash");
+
     eprintln!("Creating script {path:?}...");
-    fs::write(path, content).expect("write content to script");
+    let mut file = File::create(&path).expect("create install.bash");
+
+    writeln!(file, "#!/bin/bash").unwrap();
+    writeln!(file, "set -o errexit -o nounset -o pipefail").unwrap();
+    writeln!(file, r#"cd "$(dirname "$0")""#).unwrap();
+
+    let command = if for_pnpm { "pnpm" } else { "./pacquet/target/release/pacquet" };
+    write!(file, "exec {command} install").unwrap();
+    for arg in scenario.install_args() {
+        write!(file, " {arg}").unwrap();
+    }
+    writeln!(file).unwrap();
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

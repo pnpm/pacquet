@@ -27,6 +27,7 @@ pacquet_diagnostics  = { path = "crates/diagnostics" }
 async-recursion    = { version = "1.0.5" }
 clap               = { version = "4", features = ["derive", "string"] }
 dashmap            = { version = "5.5.3" }
+derive_more        = { version = "0.99.17" }
 home               = { version = "0.5.5" }
 insta              = { version = "1.32.0", features = ["yaml", "glob", "walkdir"] }
 itertools          = { version = "0.11.0" }
@@ -42,14 +43,17 @@ serde              = { version = "1.0.188", features = ["derive"] }
 serde_ini          = { version = "0.2.0" }
 serde_json         = { version = "1.0.107", features = ["preserve_order"] }
 serde_yaml         = { version = "0.9.1" }
+split-first-char   = { version = "0.0.0" }
 ssri               = { version = "9.0.0" }
 strum              = { version = "0.25.0", features = ["derive"] }
 tar                = { version = "0.4.40" }
+text-block-macros  = { version = "0.1.1" }
 thiserror          = { version = "1.0.48" }
 tracing            = { version = "0.1.37" }
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 tokio              = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 walkdir            = { version = "2.4.0" }
+which              = { version = "4.4.2" }
 zune-inflate       = { version = "0.2.54" }
 
 

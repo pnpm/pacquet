@@ -1,10 +1,14 @@
-use crate::package_import::ImportMethodImpl;
-use crate::package_manager::PackageManagerError;
+use crate::{
+    package_import::{create_virtdir_by_snapshot, ImportMethodImpl},
+    package_manager::PackageManagerError,
+};
+use pacquet_lockfile::{DependencyPath, LockfileResolution, PackageSnapshot, PkgNameVerPeer};
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::{download_tarball_to_store, Cache};
+use pipe_trait::Pipe;
 use reqwest::Client;
-use std::path::Path;
+use std::{borrow::Cow, path::Path};
 
 /// This function execute the following and returns the package
 /// - retrieves the package from the registry
@@ -14,16 +18,16 @@ use std::path::Path;
 /// symlink_path will be appended by the name of the package. Therefore,
 /// it should be resolved into the node_modules folder of a subdependency such as
 /// `node_modules/.pacquet/fastify@1.0.0/node_modules`.
-pub async fn find_package_version_from_registry(
+pub async fn install_package_from_registry(
     tarball_cache: &Cache,
     config: &'static Npmrc,
-    http_client: &reqwest::Client,
+    http_client: &Client,
     name: &str,
-    version: &str,
+    version_range: &str,
     symlink_path: &Path,
 ) -> Result<PackageVersion, PackageManagerError> {
     let package = Package::fetch_from_registry(name, http_client, &config.registry).await?;
-    let package_version = package.pinned_version(version).unwrap();
+    let package_version = package.pinned_version(version_range).unwrap();
     internal_fetch(tarball_cache, http_client, package_version, config, symlink_path).await?;
     Ok(package_version.to_owned())
 }
@@ -31,7 +35,7 @@ pub async fn find_package_version_from_registry(
 pub async fn fetch_package_version_directly(
     tarball_cache: &Cache,
     config: &'static Npmrc,
-    http_client: &reqwest::Client,
+    http_client: &Client,
     name: &str,
     version: &str,
     symlink_path: &Path,
@@ -49,7 +53,7 @@ async fn internal_fetch(
     config: &'static Npmrc,
     symlink_path: &Path,
 ) -> Result<(), PackageManagerError> {
-    let store_folder_name = package_version.to_store_name();
+    let store_folder_name = package_version.to_virtual_store_name();
 
     // TODO: skip when it already exists in store?
     let cas_paths = download_tarball_to_store(
@@ -77,9 +81,64 @@ async fn internal_fetch(
     Ok(())
 }
 
+pub async fn install_single_package_to_virtual_store(
+    tarball_cache: &Cache,
+    http_client: &Client,
+    config: &'static Npmrc,
+    dependency_path: &DependencyPath,
+    package_snapshot: &PackageSnapshot,
+) -> Result<(), PackageManagerError> {
+    let PackageSnapshot { resolution, .. } = package_snapshot;
+    let DependencyPath { custom_registry, package_specifier } = dependency_path;
+
+    let (tarball_url, integrity) = match resolution {
+        LockfileResolution::Tarball(tarball_resolution) => {
+            let integrity = tarball_resolution.integrity.as_deref().unwrap_or_else(|| {
+                // TODO: how to handle the absent of integrity field?
+                panic!("Current implementation requires integrity, but {dependency_path} doesn't have it");
+            });
+            (tarball_resolution.tarball.as_str().pipe(Cow::Borrowed), integrity)
+        }
+        LockfileResolution::Registry(registry_resolution) => {
+            let registry = custom_registry.as_ref().unwrap_or(&config.registry);
+            let registry = registry.strip_suffix('/').unwrap_or(registry);
+            let PkgNameVerPeer { name, suffix: ver_peer } = package_specifier;
+            let version = ver_peer.version();
+            let bare_name = name.bare.as_str();
+            let tarball_url = format!("{registry}/{name}/-/{bare_name}-{version}.tgz");
+            let integrity = registry_resolution.integrity.as_str();
+            (Cow::Owned(tarball_url), integrity)
+        }
+        LockfileResolution::Directory(_) | LockfileResolution::Git(_) => {
+            panic!("Only TarballResolution and RegistryResolution is supported at the moment, but {dependency_path} requires {resolution:?}");
+        }
+    };
+
+    // TODO: skip when already exists in store?
+    let cas_paths = download_tarball_to_store(
+        tarball_cache,
+        http_client,
+        &config.store_dir,
+        integrity,
+        None,
+        &tarball_url,
+    )
+    .await?;
+
+    create_virtdir_by_snapshot(
+        dependency_path,
+        &config.virtual_store_dir,
+        &cas_paths,
+        config.package_import_method,
+        package_snapshot,
+    )?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::package::find_package_version_from_registry;
+    use crate::package::install_package_from_registry;
     use node_semver::Version;
     use pacquet_npmrc::Npmrc;
     use pipe_trait::Pipe;
@@ -123,7 +182,7 @@ mod tests {
                 .pipe(Box::leak);
         let http_client = reqwest::Client::new();
         let symlink_path = tempdir().unwrap();
-        let package = find_package_version_from_registry(
+        let package = install_package_from_registry(
             &Default::default(),
             config,
             &http_client,
@@ -142,7 +201,7 @@ mod tests {
 
         let virtual_store_path = virtual_store_dir
             .path()
-            .join(package.to_store_name())
+            .join(package.to_virtual_store_name())
             .join("node_modules")
             .join(&package.name);
         assert!(virtual_store_path.is_dir());

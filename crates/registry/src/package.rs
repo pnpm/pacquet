@@ -45,8 +45,8 @@ impl Package {
             .pipe(Ok)
     }
 
-    pub fn pinned_version(&self, version_field: &str) -> Option<&PackageVersion> {
-        let range: node_semver::Range = version_field.parse().unwrap();
+    pub fn pinned_version(&self, version_range: &str) -> Option<&PackageVersion> {
+        let range: node_semver::Range = version_range.parse().unwrap(); // TODO: this step should have happened in PackageJson
         let mut satisfied_versions = self
             .versions
             .values()

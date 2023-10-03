@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
@@ -25,7 +25,7 @@ impl PartialEq for PackageVersion {
 impl PackageVersion {
     pub async fn fetch_from_registry(
         name: &str,
-        version: &str,
+        version: impl Display, // TODO: change to node_semver::Version to increase resistance against programmer errors
         http_client: &reqwest::Client,
         registry: &str,
     ) -> Result<Self, RegistryError> {
@@ -44,7 +44,7 @@ impl PackageVersion {
             .pipe(Ok)
     }
 
-    pub fn to_store_name(&self) -> String {
+    pub fn to_virtual_store_name(&self) -> String {
         format!("{0}@{1}", self.name.replace('/', "+"), self.version)
     }
 

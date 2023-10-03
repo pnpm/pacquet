@@ -121,6 +121,9 @@ pub async fn download_tarball_to_store(
     package_unpacked_size: Option<usize>,
     package_url: &str,
 ) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
+    // QUESTION: I see no copying from existing store_dir, is there such mechanism?
+    // TODO: If it's not implemented yet, implement it
+
     if let Some(cache_lock) = cache.get(package_url) {
         let notify = match &*cache_lock.write().await {
             CacheValue::Available(cas_paths) => {

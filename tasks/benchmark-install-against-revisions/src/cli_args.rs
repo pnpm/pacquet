@@ -1,8 +1,13 @@
-use clap::{Args, Parser};
+use crate::fixtures::LOCKFILE;
+use clap::{Args, Parser, ValueEnum};
 use std::{path::PathBuf, process::Command};
 
 #[derive(Debug, Parser)]
 pub struct CliArgs {
+    /// Task to benchmark.
+    #[clap(long, short)]
+    pub scenario: BenchmarkScenario,
+
     /// URL to the local virtual registry.
     #[clap(long, short, default_value = "http://localhost:4873")]
     pub registry: String,
@@ -23,9 +28,47 @@ pub struct CliArgs {
     #[clap(long, short, default_value = "bench-work-env")]
     pub work_env: PathBuf,
 
+    /// Benchmark against pnpm.
+    #[clap(long)]
+    pub with_pnpm: bool,
+
     /// Branch name, tag name, or commit id of the pacquet repo.
     #[clap(required = true)]
     pub revisions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum BenchmarkScenario {
+    /// Benchmark clean install without lockfile and without local cache.
+    CleanInstall,
+    /// Benchmark install with a frozen lockfile and without local cache.
+    FrozenLockfile,
+}
+
+impl BenchmarkScenario {
+    /// Infer CLI arguments for the install command.
+    pub fn install_args(self) -> impl IntoIterator<Item = &'static str> {
+        match self {
+            BenchmarkScenario::CleanInstall => Vec::new(),
+            BenchmarkScenario::FrozenLockfile => vec!["--frozen-lockfile"],
+        }
+    }
+
+    /// Return `lockfile=true` or `lockfile=false` for use in generating `.npmrc`.
+    pub fn npmrc_lockfile_setting(self) -> &'static str {
+        match self {
+            BenchmarkScenario::CleanInstall => "lockfile=false",
+            BenchmarkScenario::FrozenLockfile => "lockfile=true",
+        }
+    }
+
+    /// Whether to use a lockfile.
+    pub fn lockfile(self) -> Option<&'static str> {
+        match self {
+            BenchmarkScenario::CleanInstall => None,
+            BenchmarkScenario::FrozenLockfile => Some(LOCKFILE),
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -46,6 +89,10 @@ pub struct HyperfineOptions {
     #[clap(long)]
     pub runs: Option<u8>,
 
+    /// Print stdout and stderr of the benchmarked program instead of suppressing it
+    #[clap(long)]
+    show_output: bool,
+
     /// Ignore non-zero exit codes of the benchmarked program.
     #[clap(long)]
     pub ignore_failure: bool,
@@ -53,7 +100,8 @@ pub struct HyperfineOptions {
 
 impl HyperfineOptions {
     pub fn append_to(&self, hyperfine_command: &mut Command) {
-        let &HyperfineOptions { warmup, min_runs, max_runs, runs, ignore_failure } = self;
+        let &HyperfineOptions { show_output, warmup, min_runs, max_runs, runs, ignore_failure } =
+            self;
         hyperfine_command.arg("--warmup").arg(warmup.to_string());
         if let Some(min_runs) = min_runs {
             hyperfine_command.arg("--min-runs").arg(min_runs.to_string());
@@ -63,6 +111,9 @@ impl HyperfineOptions {
         }
         if let Some(runs) = runs {
             hyperfine_command.arg("--runs").arg(runs.to_string());
+        }
+        if show_output {
+            hyperfine_command.arg("--show-output");
         }
         if ignore_failure {
             hyperfine_command.arg("--ignore-failures");

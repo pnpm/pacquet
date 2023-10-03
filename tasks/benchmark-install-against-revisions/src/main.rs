@@ -6,11 +6,13 @@ mod work_env;
 #[tokio::main]
 async fn main() {
     let cli_args::CliArgs {
+        scenario,
         registry,
         repository,
         package_json,
         hyperfine_options,
         work_env,
+        with_pnpm,
         revisions,
     } = clap::Parser::parse();
     let repository = std::fs::canonicalize(repository).expect("get absolute path to repository");
@@ -20,11 +22,19 @@ async fn main() {
     let work_env = std::fs::canonicalize(work_env).expect("get absolute path to work env");
     verify::ensure_virtual_registry(&registry).await;
     verify::ensure_git_repo(&repository);
+    verify::validate_revision_list(&revisions);
+    verify::ensure_program("bash");
+    verify::ensure_program("cargo");
+    verify::ensure_program("git");
+    verify::ensure_program("hyperfine");
+    verify::ensure_program("pnpm");
     work_env::WorkEnv {
         root: work_env,
+        with_pnpm,
         revisions,
         registry,
         repository,
+        scenario,
         hyperfine_options,
         package_json,
     }
