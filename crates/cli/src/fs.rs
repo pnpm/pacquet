@@ -15,14 +15,10 @@ pub fn symlink_dir(original: &Path, link: &Path) -> io::Result<()> {
         Err(e) => {
             match e.raw_os_error() {
                 // If we don't have the privilege to create a symlink, we can try to create a junction instead.
-                Some(ERROR_PRIVILEGE_NOT_HELD) => {
-                    junction::create(original, link)
-                },
-                _ => {
-                    Err(e)
-                }
+                Some(ERROR_PRIVILEGE_NOT_HELD) => junction::create(original, link),
+                _ => Err(e),
             }
-        },
+        }
     }
 }
 
