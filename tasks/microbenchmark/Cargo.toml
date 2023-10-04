@@ -1,5 +1,5 @@
 [package]
-name                  = "pacquet_benchmark"
+name                  = "pacquet_microbenchmark"
 version               = "0.0.0"
 publish               = false
 authors.workspace     = true

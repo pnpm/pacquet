@@ -1236,36 +1236,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1b04fb49957986fdce4d6ee7a65027d55d4b6d2265e5848bbb507b58ccfdb6f"
 
 [[package]]
-name = "pacquet_benchmark"
-version = "0.0.0"
-dependencies = [
- "clap",
- "criterion",
- "mockito",
- "node-semver",
- "pacquet_registry",
- "pacquet_tarball",
- "pipe-trait",
- "project-root",
- "reqwest",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "pacquet_benchmark_install_against_revisions"
-version = "0.0.0"
-dependencies = [
- "clap",
- "itertools 0.11.0",
- "os_display",
- "pipe-trait",
- "reqwest",
- "tokio",
- "which",
-]
-
-[[package]]
 name = "pacquet_cafs"
 version = "0.0.1"
 dependencies = [
@@ -1336,6 +1306,36 @@ dependencies = [
  "serde_yaml",
  "split-first-char",
  "text-block-macros",
+]
+
+[[package]]
+name = "pacquet_macrobenchmark"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "itertools 0.11.0",
+ "os_display",
+ "pipe-trait",
+ "reqwest",
+ "tokio",
+ "which",
+]
+
+[[package]]
+name = "pacquet_microbenchmark"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "criterion",
+ "mockito",
+ "node-semver",
+ "pacquet_registry",
+ "pacquet_tarball",
+ "pipe-trait",
+ "project-root",
+ "reqwest",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
