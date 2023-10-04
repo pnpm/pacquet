@@ -1,5 +1,8 @@
 use std::{io, path::Path};
 
+#[cfg(windows)]
+const ERROR_PRIVILEGE_NOT_HELD: i32 = 1314;
+
 #[cfg(unix)]
 pub fn symlink_dir(original: &Path, link: &Path) -> io::Result<()> {
     std::os::unix::fs::symlink(original, link)
@@ -9,12 +12,17 @@ pub fn symlink_dir(original: &Path, link: &Path) -> io::Result<()> {
 pub fn symlink_dir(original: &Path, link: &Path) -> io::Result<()> {
     match std::os::windows::fs::symlink_dir(original, link) {
         Ok(_) => Ok(()),
-        Err(_) => {
-            // If symlink_dir fails, try to create a junction
-            junction::create(original, link).map_err(|e| {
-                io::Error::new(io::ErrorKind::Other, format!("Failed to create junction: {:?}", e))
-            })
-        }
+        Err(e) => {
+            match e.raw_os_error() {
+                // If we don't have the privilege to create a symlink, we can try to create a junction instead.
+                Some(ERROR_PRIVILEGE_NOT_HELD) => {
+                    junction::create(original, link)
+                },
+                _ => {
+                    Err(e)
+                }
+            }
+        },
     }
 }
 
