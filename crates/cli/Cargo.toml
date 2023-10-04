@@ -29,6 +29,7 @@ clap            = { workspace = true }
 futures-util    = { workspace = true }
 rayon           = { workspace = true }
 reflink-copy    = { workspace = true }
+junction        = { workspace = true }
 reqwest         = { workspace = true }
 node-semver     = { workspace = true }
 pipe-trait      = { workspace = true }

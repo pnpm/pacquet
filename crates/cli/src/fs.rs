@@ -1,13 +1,21 @@
-use std::{io, os, path::Path};
+use std::{io, path::Path};
 
 #[cfg(unix)]
 pub fn symlink_dir(original: &Path, link: &Path) -> io::Result<()> {
-    os::unix::fs::symlink(original, link)
+    std::os::unix::fs::symlink(original, link)
 }
 
 #[cfg(windows)]
 pub fn symlink_dir(original: &Path, link: &Path) -> io::Result<()> {
-    os::windows::fs::symlink_dir(original, link)
+    match std::os::windows::fs::symlink_dir(original, link) {
+        Ok(_) => Ok(()),
+        Err(_) => {
+            // If symlink_dir fails, try to create a junction
+            junction::create(original, link).map_err(|e| {
+                io::Error::new(io::ErrorKind::Other, format!("Failed to create junction: {:?}", e))
+            })
+        }
+    }
 }
 
 #[cfg(test)]
