@@ -1,4 +1,4 @@
-use std::{env, path::Component, path::PathBuf, str::FromStr};
+use std::{env, path::Component, path::Path, path::PathBuf, str::FromStr};
 
 use serde::{de, Deserialize, Deserializer};
 
@@ -17,11 +17,11 @@ pub fn default_public_hoist_pattern() -> Vec<String> {
 }
 
 // Get the drive letter from a path on Windows. If it's not a Windows path, return None.
-fn get_drive_letter(current_dir: &PathBuf) -> Option<String> {
+fn get_drive_letter(current_dir: &Path) -> Option<String> {
     for component in current_dir.components() {
         if let Component::Prefix(prefix_component) = component {
             return Some(
-                prefix_component.as_os_str().to_str().unwrap().replace(":", "").to_string(),
+                prefix_component.as_os_str().to_str().unwrap().replace(':', "").to_string(),
             );
         }
     }
