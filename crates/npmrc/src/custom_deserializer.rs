@@ -17,6 +17,7 @@ pub fn default_public_hoist_pattern() -> Vec<String> {
 }
 
 // Get the drive letter from a path on Windows. If it's not a Windows path, return None.
+#[cfg(windows)]
 fn get_drive_letter(current_dir: &Path) -> Option<String> {
     for component in current_dir.components() {
         if let Component::Prefix(prefix_component) = component {
@@ -26,6 +27,20 @@ fn get_drive_letter(current_dir: &Path) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(windows)]
+fn default_store_dir_windows() -> PathBuf {
+    let current_dir = env::current_dir().expect("Current directory is not available");
+    let current_drive = get_drive_letter(&current_dir).unwrap_or_default();
+    let home_dir = home::home_dir().expect("Home directory is not available");
+    let home_drive = get_drive_letter(&home_dir).unwrap_or_default();
+
+    if current_drive == home_drive {
+        return home_dir.join("AppData/Local/pacquet/store");
+    } else {
+        return PathBuf::from(format!("{}:\\.pacquet-store", current_drive));
+    }
 }
 
 /// If the $PACQUET_HOME env variable is set, then $PACQUET_HOME/store
@@ -43,26 +58,20 @@ pub fn default_store_dir() -> PathBuf {
         return PathBuf::from(xdg_data_home).join("pacquet/store");
     }
 
-    let current_dir = env::current_dir().expect("Current directory is not available");
-    let current_drive = get_drive_letter(&current_dir).unwrap_or_default();
+    if cfg!(windows) {
+        return default_store_dir_windows();
+    }
 
     // Using ~ (tilde) for defining home path is not supported in Rust and
     // needs to be resolved into an absolute path.
     let home_dir = home::home_dir().expect("Home directory is not available");
-    // In case of Windows, we need to get the drive letter of the home directory, to use the store folder on the same drive.
-    let home_drive = get_drive_letter(&home_dir).unwrap_or_default();
 
     // Check if we are on the same drive as the home directory
-    if current_drive == home_drive {
-        // https://doc.rust-lang.org/std/env/consts/constant.OS.html
-        match env::consts::OS {
-            "linux" => home_dir.join(".local/share/pacquet/store"),
-            "macos" => home_dir.join("Library/pacquet/store"),
-            "windows" => home_dir.join("AppData/Local/pacquet/store"),
-            _ => panic!("unsupported operating system: {}", env::consts::OS),
-        }
-    } else {
-        PathBuf::from(format!("{}:\\.pacquet-store", current_drive))
+    // https://doc.rust-lang.org/std/env/consts/constant.OS.html
+    match env::consts::OS {
+        "linux" => home_dir.join(".local/share/pacquet/store"),
+        "macos" => home_dir.join("Library/pacquet/store"),
+        _ => panic!("unsupported operating system: {}", env::consts::OS),
     }
 }
 
