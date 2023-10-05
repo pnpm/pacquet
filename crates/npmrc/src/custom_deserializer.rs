@@ -149,4 +149,30 @@ mod tests {
         assert_eq!(store_dir, Path::new("/tmp/xdg_data_home/pacquet/store"));
         env::remove_var("XDG_DATA_HOME");
     }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_should_get_the_correct_drive_letter() {
+        let current_dir = Path::new("C:\\Users\\user\\project");
+        let drive_letter = get_drive_letter(current_dir);
+        assert_eq!(drive_letter, Some("C".to_string()));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_default_store_dir_with_windows() {
+        let current_dir = env::current_dir().expect("Current directory is not available");
+        let home_dir = home::home_dir().expect("Home directory is not available");
+        let store_dir = default_store_dir();
+
+        let current_drive = get_drive_letter(&current_dir).unwrap_or_default();
+        let home_drive = get_drive_letter(&home_dir).unwrap_or_default();
+        let store_drive = get_drive_letter(&store_dir).unwrap_or_default();
+
+        if current_drive == home_drive {
+            assert_eq!(store_drive, home_drive);
+        } else {
+            assert_eq!(store_drive, current_drive);
+        }
+    }
 }
