@@ -14,6 +14,7 @@ repository  = "https://github.com/anonrig/pacquet"
 [workspace.dependencies]
 # Crates
 pacquet_cli          = { path = "crates/cli" }
+pacquet_fs           = { path = "crates/fs" }
 pacquet_registry     = { path = "crates/registry" }
 pacquet_tarball      = { path = "crates/tarball" }
 pacquet_package_json = { path = "crates/package_json" }

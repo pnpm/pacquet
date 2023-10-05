@@ -1288,6 +1288,7 @@ dependencies = [
  "pacquet_cafs",
  "pacquet_diagnostics",
  "pacquet_executor",
+ "pacquet_fs",
  "pacquet_lockfile",
  "pacquet_npmrc",
  "pacquet_package_json",
@@ -1321,6 +1322,10 @@ version = "0.0.1"
 dependencies = [
  "pacquet_diagnostics",
 ]
+
+[[package]]
+name = "pacquet_fs"
+version = "0.0.1"
 
 [[package]]
 name = "pacquet_lockfile"

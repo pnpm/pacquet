@@ -8,6 +8,7 @@ use std::{
 
 use crate::package_manager::{AutoImportError, PackageManagerError};
 use pacquet_diagnostics::tracing;
+use pacquet_fs::symlink_dir;
 use pacquet_lockfile::{
     DependencyPath, PackageSnapshot, PackageSnapshotDependency, PkgNameVerPeer,
 };
@@ -46,7 +47,7 @@ impl ImportMethodImpl for PackageImportMethod {
                     if let Some(parent_dir) = symlink_to.parent() {
                         fs::create_dir_all(parent_dir)?;
                     }
-                    crate::fs::symlink_dir(save_path, symlink_to)?;
+                    symlink_dir(save_path, symlink_to)?;
                 }
             }
             _ => panic!("Not implemented yet"),
@@ -143,7 +144,7 @@ pub fn symlink_pkg(symlink_target: &Path, symlink_path: &Path) {
     if let Some(parent) = symlink_path.parent() {
         fs::create_dir_all(parent).expect("make sure node_modules exist"); // TODO: proper error propagation
     }
-    if let Err(error) = crate::fs::symlink_dir(symlink_target, symlink_path) {
+    if let Err(error) = symlink_dir(symlink_target, symlink_path) {
         match error.kind() {
             ErrorKind::AlreadyExists => {}
             _ => panic!(
