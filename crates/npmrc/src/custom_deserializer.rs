@@ -29,7 +29,6 @@ fn get_drive_letter(current_dir: &Path) -> Option<String> {
     None
 }
 
-#[cfg(windows)]
 fn default_store_dir_windows(home_dir: &Path) -> PathBuf {
     let current_dir = env::current_dir().expect("Current directory is not available");
     let current_drive = get_drive_letter(&current_dir).unwrap_or_default();
