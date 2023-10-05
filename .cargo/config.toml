@@ -3,5 +3,5 @@
 ck = "check --workspace --all-targets --all-features --locked"
 lint = "clippy --workspace --all-targets --all-features"
 codecov = "llvm-cov nextest --workspace --ignore-filename-regex tasks"
-microbenchmark = "run -p pacquet_microbenchmark --release --"
+micro-benchmark = "run -p pacquet_micro_benchmark --release --"
 integrated-benchmark = "run --bin=integrated-benchmark --"

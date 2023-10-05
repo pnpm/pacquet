@@ -1,4 +1,4 @@
-name: MicroBenchmark
+name: Micro-Benchmark
 
 on:
   workflow_dispatch:
@@ -29,17 +29,17 @@ jobs:
       - name: Install Rust Toolchain
         uses: ./.github/actions/rustup
         with:
-          shared-key: microbenchmark
+          shared-key: micro-benchmark
 
       - name: Compile
-        run: cargo build --release -p pacquet_microbenchmark
+        run: cargo build --release -p pacquet_micro_benchmark
 
       - name: Sleep for CPU cooldown
         shell: bash
         run: sleep 15s
 
       - name: Run Bench on Main Branch
-        run: cargo microbenchmark --save-baseline main
+        run: cargo micro-benchmark --save-baseline main
 
       - name: Checkout PR Branch
         uses: actions/checkout@v4
@@ -48,14 +48,14 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Compile
-        run: cargo build --release -p pacquet_microbenchmark
+        run: cargo build --release -p pacquet_micro_benchmark
 
       - name: Sleep for CPU cooldown
         shell: bash
         run: sleep 15s
 
       - name: Run Bench on PR Branch
-        run: cargo microbenchmark --save-baseline pr
+        run: cargo micro-benchmark --save-baseline pr
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v3
@@ -84,7 +84,7 @@ jobs:
       - name: Linux | Compare benchmark results
         shell: bash
         run: |
-          echo "## MicroBenchmark Results" >> summary.md
+          echo "## Micro-Benchmark Results" >> summary.md
           echo "### Linux" >> summary.md
           echo "\`\`\`" >> summary.md
           critcmp main pr >> summary.md
@@ -102,7 +102,7 @@ jobs:
         with:
           issue-number: ${{ github.event.pull_request.number }}
           comment-author: 'github-actions[bot]'
-          body-includes: MicroBenchmark Results
+          body-includes: Micro-Benchmark Results
 
       - name: Create or update comment
         # Check if the event is not triggered by a fork

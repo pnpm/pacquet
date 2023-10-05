@@ -56,8 +56,8 @@ codecov:
   cargo codecov --html
 
 # Run the benchmarks. See `tasks/benchmark`
-microbenchmark:
-  cargo microbenchmark
+micro-benchmark:
+  cargo micro-benchmark
 
 integrated-benchmark +args:
   cargo run --bin=integrated-benchmark -- {{args}}
