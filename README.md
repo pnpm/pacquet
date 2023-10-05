@@ -36,25 +36,25 @@ Then, you can use the script named `integrated-benchmark` to run the various ben
 
 ```sh
 # Comparing the branch you're working on against main
-cargo integrated-benchmark --scenario=frozen-lockfile my-branch main
+just integrated-benchmark --scenario=frozen-lockfile my-branch main
 ```
 
 ```sh
 # Comparing current commit against the previous commit
-cargo integrated-benchmark --scenario=frozen-lockfile HEAD HEAD~
+just integrated-benchmark --scenario=frozen-lockfile HEAD HEAD~
 ```
 
 ```sh
 # Comparing pacquet of current commit against pnpm
-cargo integrated-benchmark --scenario=frozen-lockfile --with-pnpm HEAD
+just integrated-benchmark --scenario=frozen-lockfile --with-pnpm HEAD
 ```
 
 ```sh
 # Comparing pacquet of current commit, pacquet of main, and pnpm against each other
-cargo integrated-benchmark --scenario=frozen-lockfile --with-pnpm HEAD main
+just integrated-benchmark --scenario=frozen-lockfile --with-pnpm HEAD main
 ```
 
 ```sh
 # See more options
-cargo integrated-benchmark --help
+just integrated-benchmark --help
 ```
