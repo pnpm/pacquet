@@ -1293,6 +1293,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pacquet_integrated_benchmark"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "itertools 0.11.0",
+ "os_display",
+ "pipe-trait",
+ "reqwest",
+ "tokio",
+ "which",
+]
+
+[[package]]
 name = "pacquet_lockfile"
 version = "0.0.1"
 dependencies = [
@@ -1306,19 +1319,6 @@ dependencies = [
  "serde_yaml",
  "split-first-char",
  "text-block-macros",
-]
-
-[[package]]
-name = "pacquet_macrobenchmark"
-version = "0.0.0"
-dependencies = [
- "clap",
- "itertools 0.11.0",
- "os_display",
- "pipe-trait",
- "reqwest",
- "tokio",
- "which",
 ]
 
 [[package]]

@@ -32,29 +32,29 @@ First, you to start a local registry server, such as [verdaccio](https://verdacc
 verdaccio
 ```
 
-Then, you can use the script named `macrobenchmark` to run the various benchmark, For example:
+Then, you can use the script named `integrated-benchmark` to run the various benchmark, For example:
 
 ```sh
 # Comparing the branch you're working on against main
-cargo macrobenchmark --scenario=frozen-lockfile my-branch main
+cargo integrated-benchmark --scenario=frozen-lockfile my-branch main
 ```
 
 ```sh
 # Comparing current commit against the previous commit
-cargo macrobenchmark --scenario=frozen-lockfile HEAD HEAD~
+cargo integrated-benchmark --scenario=frozen-lockfile HEAD HEAD~
 ```
 
 ```sh
 # Comparing pacquet of current commit against pnpm
-cargo macrobenchmark --scenario=frozen-lockfile --with-pnpm HEAD
+cargo integrated-benchmark --scenario=frozen-lockfile --with-pnpm HEAD
 ```
 
 ```sh
 # Comparing pacquet of current commit, pacquet of main, and pnpm against each other
-cargo macrobenchmark --scenario=frozen-lockfile --with-pnpm HEAD main
+cargo integrated-benchmark --scenario=frozen-lockfile --with-pnpm HEAD main
 ```
 
 ```sh
 # See more options
-cargo macrobenchmark --help
+cargo integrated-benchmark --help
 ```

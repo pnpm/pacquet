@@ -59,8 +59,8 @@ codecov:
 microbenchmark:
   cargo microbenchmark
 
-macrobenchmark +args:
-  cargo run --bin=macrobenchmark -- {{args}}
+integrated-benchmark +args:
+  cargo run --bin=integrated-benchmark -- {{args}}
 
 cli +args:
   cargo run --bin pacquet -- {{args}}
