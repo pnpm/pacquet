@@ -28,16 +28,16 @@ fn get_drive_letter(current_dir: &Path) -> Option<String> {
     None
 }
 
-fn default_store_dir_windows(home_dir: &Path) -> PathBuf {
+fn default_store_dir_windows(home_dir: PathBuf) -> PathBuf {
     let current_dir = env::current_dir().expect("Current directory is not available");
     let current_drive = get_drive_letter(&current_dir).unwrap_or_default();
     let home_drive = get_drive_letter(&home_dir).unwrap_or_default();
 
     if current_drive == home_drive {
         return home_dir.join("AppData/Local/pacquet/store");
-    } else {
-        return PathBuf::from(format!("{}:\\.pacquet-store", current_drive));
-    }
+    } 
+    
+    PathBuf::from(format!("{}:\\.pacquet-store", current_drive))
 }
 
 /// If the $PACQUET_HOME env variable is set, then $PACQUET_HOME/store
@@ -60,7 +60,7 @@ pub fn default_store_dir() -> PathBuf {
     let home_dir = home::home_dir().expect("Home directory is not available");
 
     if cfg!(windows) {
-        return default_store_dir_windows(&home_dir);
+        return default_store_dir_windows(home_dir);
     }
 
     // https://doc.rust-lang.org/std/env/consts/constant.OS.html
