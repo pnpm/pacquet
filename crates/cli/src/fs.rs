@@ -1,4 +1,4 @@
-use std::{io, path::Path};
+use std::{io, os, path::Path};
 
 #[cfg(unix)]
 pub fn symlink_dir(original: &Path, link: &Path) -> io::Result<()> {
