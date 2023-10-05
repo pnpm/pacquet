@@ -57,7 +57,7 @@ codecov:
 
 # Run the benchmarks. See `tasks/benchmark`
 micro-benchmark:
-  cargo run -p pacquet_micro_benchmark --release
+  cargo run --bin=micro-benchmark --release
 
 integrated-benchmark +args:
   cargo run --bin=integrated-benchmark -- {{args}}
