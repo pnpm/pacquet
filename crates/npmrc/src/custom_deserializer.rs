@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf, str::FromStr};
+use std::{env, path::Component, path::PathBuf, str::FromStr};
 
 use serde::{de, Deserialize, Deserializer};
 
@@ -16,6 +16,18 @@ pub fn default_public_hoist_pattern() -> Vec<String> {
     vec!["*eslint*".to_string(), "*prettier*".to_string()]
 }
 
+// Get the drive letter from a path on Windows. If it's not a Windows path, return None.
+fn get_drive_letter(current_dir: &PathBuf) -> Option<String> {
+    for component in current_dir.components() {
+        if let Component::Prefix(prefix_component) = component {
+            return Some(
+                prefix_component.as_os_str().to_str().unwrap().replace(":", "").to_string(),
+            );
+        }
+    }
+    None
+}
+
 /// If the $PACQUET_HOME env variable is set, then $PACQUET_HOME/store
 /// If the $XDG_DATA_HOME env variable is set, then $XDG_DATA_HOME/pacquet/store
 /// On Windows: ~/AppData/Local/pacquet/store
@@ -31,16 +43,26 @@ pub fn default_store_dir() -> PathBuf {
         return PathBuf::from(xdg_data_home).join("pacquet/store");
     }
 
+    let current_dir = env::current_dir().expect("Current directory is not available");
+    let current_drive = get_drive_letter(&current_dir).unwrap_or_default();
+
     // Using ~ (tilde) for defining home path is not supported in Rust and
     // needs to be resolved into an absolute path.
     let home_dir = home::home_dir().expect("Home directory is not available");
+    // In case of Windows, we need to get the drive letter of the home directory, to use the store folder on the same drive.
+    let home_drive = get_drive_letter(&home_dir).unwrap_or_default();
 
-    // https://doc.rust-lang.org/std/env/consts/constant.OS.html
-    match env::consts::OS {
-        "linux" => home_dir.join(".local/share/pacquet/store"),
-        "macos" => home_dir.join("Library/pacquet/store"),
-        "windows" => home_dir.join("AppData/Local/pacquet/store"),
-        _ => panic!("unsupported operating system: {}", env::consts::OS),
+    // Check if we are on the same drive as the home directory
+    if current_drive == home_drive {
+        // https://doc.rust-lang.org/std/env/consts/constant.OS.html
+        match env::consts::OS {
+            "linux" => home_dir.join(".local/share/pacquet/store"),
+            "macos" => home_dir.join("Library/pacquet/store"),
+            "windows" => home_dir.join("AppData/Local/pacquet/store"),
+            _ => panic!("unsupported operating system: {}", env::consts::OS),
+        }
+    } else {
+        PathBuf::from(format!("{}:\\.pacquet-store", current_drive))
     }
 }
 
