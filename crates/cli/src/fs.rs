@@ -7,6 +7,7 @@ pub fn symlink_dir(original: &Path, link: &Path) -> io::Result<()> {
 
 #[cfg(windows)]
 pub fn symlink_dir(original: &Path, link: &Path) -> io::Result<()> {
+    // In Windows, we use junctions instead of symlinks because symlinks may require elevated privileges.
     junction::create(original, link)
 }
 
