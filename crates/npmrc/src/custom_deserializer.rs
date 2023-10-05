@@ -17,7 +17,6 @@ pub fn default_public_hoist_pattern() -> Vec<String> {
 }
 
 // Get the drive letter from a path on Windows. If it's not a Windows path, return None.
-#[cfg(windows)]
 fn get_drive_letter(current_dir: &Path) -> Option<String> {
     for component in current_dir.components() {
         if let Component::Prefix(prefix_component) = component {
