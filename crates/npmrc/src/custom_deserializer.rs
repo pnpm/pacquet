@@ -61,11 +61,14 @@ pub fn default_store_dir() -> PathBuf {
     // needs to be resolved into an absolute path.
     let home_dir = home::home_dir().expect("Home directory is not available");
 
+    if cfg!(windows) {
+        return default_store_dir_windows(&home_dir);
+    }
+
     // https://doc.rust-lang.org/std/env/consts/constant.OS.html
     match env::consts::OS {
         "linux" => home_dir.join(".local/share/pacquet/store"),
         "macos" => home_dir.join("Library/pacquet/store"),
-        "windows" => default_store_dir_windows(&home_dir),
         _ => panic!("unsupported operating system: {}", env::consts::OS),
     }
 }
