@@ -2,7 +2,6 @@ use std::{
     collections::HashMap,
     ffi::OsString,
     fs,
-    io::ErrorKind,
     path::{Path, PathBuf},
 };
 
@@ -13,6 +12,7 @@ use pacquet_lockfile::{
     DependencyPath, PackageSnapshot, PackageSnapshotDependency, PkgNameVerPeer,
 };
 use pacquet_npmrc::PackageImportMethod;
+use pacquet_package_manager::symlink_pkg;
 use rayon::prelude::*;
 
 pub trait ImportMethodImpl {
@@ -136,20 +136,4 @@ fn auto_import(source_file: &Path, target_link: &Path) -> Result<(), AutoImportE
     })?; // TODO: add hardlink
 
     Ok(())
-}
-
-pub fn symlink_pkg(symlink_target: &Path, symlink_path: &Path) {
-    // NOTE: symlink target in pacquet is absolute yet in pnpm is relative
-    // TODO: change symlink target to relative
-    if let Some(parent) = symlink_path.parent() {
-        fs::create_dir_all(parent).expect("make sure node_modules exist"); // TODO: proper error propagation
-    }
-    if let Err(error) = symlink_dir(symlink_target, symlink_path) {
-        match error.kind() {
-            ErrorKind::AlreadyExists => {}
-            _ => panic!(
-                "Failed to create symlink at {symlink_path:?} to {symlink_target:?}: {error}"
-            ), // TODO: proper error propagation
-        }
-    }
 }

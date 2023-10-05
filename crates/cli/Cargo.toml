@@ -15,15 +15,16 @@ name = "pacquet"
 path = "src/bin/main.rs"
 
 [dependencies]
-pacquet_cafs         = { workspace = true }
-pacquet_executor     = { workspace = true }
-pacquet_fs           = { workspace = true }
-pacquet_lockfile     = { workspace = true }
-pacquet_npmrc        = { workspace = true }
-pacquet_package_json = { workspace = true }
-pacquet_registry     = { workspace = true }
-pacquet_tarball      = { workspace = true }
-pacquet_diagnostics  = { workspace = true }
+pacquet_cafs            = { workspace = true }
+pacquet_executor        = { workspace = true }
+pacquet_fs              = { workspace = true }
+pacquet_lockfile        = { workspace = true }
+pacquet_npmrc           = { workspace = true }
+pacquet_package_json    = { workspace = true }
+pacquet_package_manager = { workspace = true }
+pacquet_registry        = { workspace = true }
+pacquet_tarball         = { workspace = true }
+pacquet_diagnostics     = { workspace = true }
 
 async-recursion = { workspace = true }
 clap            = { workspace = true }

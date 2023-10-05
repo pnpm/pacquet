@@ -1292,6 +1292,7 @@ dependencies = [
  "pacquet_lockfile",
  "pacquet_npmrc",
  "pacquet_package_json",
+ "pacquet_package_manager",
  "pacquet_registry",
  "pacquet_tarball",
  "pipe-trait",
@@ -1367,6 +1368,13 @@ dependencies = [
  "serde_json",
  "strum",
  "tempfile",
+]
+
+[[package]]
+name = "pacquet_package_manager"
+version = "0.0.1"
+dependencies = [
+ "pacquet_fs",
 ]
 
 [[package]]
