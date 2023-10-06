@@ -11,7 +11,8 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-derive_more   = { workspace = true }
 pacquet_fs    = { workspace = true }
+
+derive_more   = { workspace = true }
 reflink-copy  = { workspace = true }
 miette        = { workspace = true }
