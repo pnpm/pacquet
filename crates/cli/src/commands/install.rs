@@ -222,14 +222,9 @@ mod tests {
     // Helper function to check if a path is a symlink or junction
     fn is_symlink_or_junction(path: std::path::PathBuf) -> Result<bool> {
         #[cfg(windows)]
-        {
-            junction::exists(&path)
-        }
-
+        junction::exists(&path);
         #[cfg(not(windows))]
-        {
-            Ok(path.is_symlink())
-        }
+        return Ok(path.is_symlink());
     }
 
     #[test]
