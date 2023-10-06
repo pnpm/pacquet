@@ -1,5 +1,4 @@
 use serde::{de, Deserialize, Deserializer};
-use std::borrow::Cow;
 use std::{env, path::Component, path::Path, path::PathBuf, str::FromStr};
 
 // This needs to be implemented because serde doesn't support default = "true" as
@@ -17,12 +16,12 @@ pub fn default_public_hoist_pattern() -> Vec<String> {
 }
 
 // Get the drive letter from a path on Windows. If it's not a Windows path, return None.
-fn get_drive_letter(current_dir: &Path) -> Option<Cow<'_, str>> {
+fn get_drive_letter(current_dir: &Path) -> Option<char> {
     if let Some(Component::Prefix(prefix_component)) = current_dir.components().next() {
         if let std::path::Prefix::Disk(disk_byte) | std::path::Prefix::VerbatimDisk(disk_byte) =
             prefix_component.kind()
         {
-            return Some(Cow::Owned((disk_byte as char).to_string()));
+            return Some(disk_byte as char);
         }
     }
     None
@@ -160,7 +159,7 @@ mod tests {
     fn test_should_get_the_correct_drive_letter() {
         let current_dir = Path::new("C:\\Users\\user\\project");
         let drive_letter = get_drive_letter(current_dir);
-        assert_eq!(drive_letter, Some(Cow::Borrowed("C")));
+        assert_eq!(drive_letter.as_deref(), Some("C"));
     }
 
     #[cfg(windows)]
