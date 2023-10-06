@@ -159,7 +159,7 @@ mod tests {
     fn test_should_get_the_correct_drive_letter() {
         let current_dir = Path::new("C:\\Users\\user\\project");
         let drive_letter = get_drive_letter(current_dir);
-        assert_eq!(drive_letter.as_deref(), Some("C"));
+        assert_eq!(drive_letter, Some('C'));
     }
 
     #[cfg(windows)]
