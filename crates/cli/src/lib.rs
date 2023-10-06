@@ -1,7 +1,6 @@
 mod commands;
 mod fs;
 mod package;
-mod package_import;
 mod package_manager;
 
 use crate::package_manager::PackageManager;

@@ -1381,6 +1381,7 @@ dependencies = [
  "pacquet_npmrc",
  "rayon",
  "reflink-copy",
+ "tracing",
 ]
 
 [[package]]

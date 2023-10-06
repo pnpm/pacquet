@@ -1,7 +1,8 @@
-use crate::{package_import::ImportMethodImpl, package_manager::PackageManagerError};
+use crate::package_manager::PackageManagerError;
 use pacquet_lockfile::{DependencyPath, LockfileResolution, PackageSnapshot, PkgNameVerPeer};
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manager::create_virtdir_by_snapshot;
+use pacquet_package_manager::ImportPackage;
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::{download_tarball_to_store, Cache};
 use pipe_trait::Pipe;
@@ -70,11 +71,13 @@ async fn internal_fetch(
         .join("node_modules")
         .join(&package_version.name);
 
-    config.package_import_method.import(
-        &cas_paths,
-        &save_path,
-        &symlink_path.join(&package_version.name),
-    )?;
+    ImportPackage {
+        method: config.package_import_method,
+        cas_paths: &cas_paths,
+        save_path: &save_path,
+        symlink_path: &symlink_path.join(&package_version.name),
+    }
+    .import_pkg()?;
 
     Ok(())
 }

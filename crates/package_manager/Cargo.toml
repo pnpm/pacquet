@@ -18,4 +18,5 @@ pacquet_npmrc    = { workspace = true }
 derive_more   = { workspace = true }
 rayon         = { workspace = true }
 reflink-copy  = { workspace = true }
+tracing       = { workspace = true }
 miette        = { workspace = true }
