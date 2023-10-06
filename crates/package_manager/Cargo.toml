@@ -11,8 +11,11 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-pacquet_fs    = { workspace = true }
+pacquet_fs       = { workspace = true }
+pacquet_lockfile = { workspace = true }
+pacquet_npmrc    = { workspace = true }
 
 derive_more   = { workspace = true }
+rayon         = { workspace = true }
 reflink-copy  = { workspace = true }
 miette        = { workspace = true }

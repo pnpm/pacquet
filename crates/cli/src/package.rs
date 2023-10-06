@@ -1,9 +1,7 @@
-use crate::{
-    package_import::{create_virtdir_by_snapshot, ImportMethodImpl},
-    package_manager::PackageManagerError,
-};
+use crate::{package_import::ImportMethodImpl, package_manager::PackageManagerError};
 use pacquet_lockfile::{DependencyPath, LockfileResolution, PackageSnapshot, PkgNameVerPeer};
 use pacquet_npmrc::Npmrc;
+use pacquet_package_manager::create_virtdir_by_snapshot;
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::{download_tarball_to_store, Cache};
 use pipe_trait::Pipe;
