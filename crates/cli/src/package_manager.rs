@@ -7,7 +7,7 @@ use pacquet_diagnostics::{
 use pacquet_lockfile::Lockfile;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_json::PackageJson;
-use pacquet_package_manager::{AutoImportError, CreateVirtdirError, ImportPackageError};
+use pacquet_package_manager::{CreateVirtdirError, ImportPackageError};
 use pacquet_tarball::Cache;
 
 #[derive(Error, Debug, Diagnostic)]
@@ -32,10 +32,6 @@ pub enum PackageManagerError {
     #[error(transparent)]
     #[diagnostic(code(pacquet_package_manager::io_error))]
     Io(#[from] io::Error),
-
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    AutoImport(#[from] AutoImportError),
 
     #[error(transparent)]
     #[diagnostic(transparent)]
