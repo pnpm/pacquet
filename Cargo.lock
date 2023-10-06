@@ -1374,7 +1374,10 @@ dependencies = [
 name = "pacquet_package_manager"
 version = "0.0.1"
 dependencies = [
+ "derive_more",
+ "miette",
  "pacquet_fs",
+ "reflink-copy",
 ]
 
 [[package]]

@@ -5,14 +5,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::package_manager::{AutoImportError, PackageManagerError};
+use crate::package_manager::PackageManagerError;
 use pacquet_diagnostics::tracing;
 use pacquet_fs::symlink_dir;
 use pacquet_lockfile::{
     DependencyPath, PackageSnapshot, PackageSnapshotDependency, PkgNameVerPeer,
 };
 use pacquet_npmrc::PackageImportMethod;
-use pacquet_package_manager::symlink_pkg;
+use pacquet_package_manager::{auto_import, symlink_pkg};
 use rayon::prelude::*;
 
 pub trait ImportMethodImpl {
@@ -111,29 +111,6 @@ pub fn create_virtdir_by_snapshot(
             );
         });
     }
-
-    Ok(())
-}
-
-fn auto_import(source_file: &Path, target_link: &Path) -> Result<(), AutoImportError> {
-    if target_link.exists() {
-        return Ok(());
-    }
-
-    if let Some(parent_dir) = target_link.parent() {
-        fs::create_dir_all(parent_dir).map_err(|error| AutoImportError::CreateDir {
-            dirname: parent_dir.to_path_buf(),
-            error,
-        })?;
-    }
-
-    reflink_copy::reflink_or_copy(source_file, target_link).map_err(|error| {
-        AutoImportError::CreateLink {
-            from: source_file.to_path_buf(),
-            to: target_link.to_path_buf(),
-            error,
-        }
-    })?; // TODO: add hardlink
 
     Ok(())
 }

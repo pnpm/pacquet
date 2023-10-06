@@ -7,24 +7,8 @@ use pacquet_diagnostics::{
 use pacquet_lockfile::Lockfile;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_json::PackageJson;
+use pacquet_package_manager::AutoImportError;
 use pacquet_tarball::Cache;
-
-#[derive(Error, Debug, Diagnostic)]
-pub enum AutoImportError {
-    #[error("cannot create directory at {dirname:?}: {error}")]
-    CreateDir {
-        dirname: PathBuf,
-        #[source]
-        error: io::Error,
-    },
-    #[error("fail to create a link from {from:?} to {to:?}: {error}")]
-    CreateLink {
-        from: PathBuf,
-        to: PathBuf,
-        #[source]
-        error: io::Error,
-    },
-}
 
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
