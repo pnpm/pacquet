@@ -73,6 +73,7 @@ impl<'a> ImportPackage<'a> {
     }
 }
 
+/// Error type for [`link_file`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum LinkFileError {
     #[display(fmt = "cannot create directory at {dirname:?}: {error}")]
@@ -90,6 +91,9 @@ pub enum LinkFileError {
     },
 }
 
+/// Reflink or copy a single file.
+///
+/// If parent dir of `target_link` doesn't exist, it will be created.
 pub fn link_file(source_file: &Path, target_link: &Path) -> Result<(), LinkFileError> {
     if target_link.exists() {
         return Ok(());
