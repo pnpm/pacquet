@@ -25,7 +25,8 @@ pub enum LinkFileError {
 
 /// Reflink or copy a single file.
 ///
-/// If parent dir of `target_link` doesn't exist, it will be created.
+/// * If `target_link` already exists, do nothing.
+/// * If parent dir of `target_link` doesn't exist, it will be created.
 pub fn link_file(source_file: &Path, target_link: &Path) -> Result<(), LinkFileError> {
     if target_link.exists() {
         return Ok(());
