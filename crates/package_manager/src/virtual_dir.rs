@@ -1,4 +1,4 @@
-use crate::{auto_import, symlink_pkg, AutoImportError};
+use crate::{link_file, symlink_pkg, LinkFileError};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::{
@@ -16,7 +16,7 @@ use std::{
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum CreateVirtdirError {
     #[diagnostic(transparent)]
-    AutoImport(#[error(source)] AutoImportError),
+    LinkFile(#[error(source)] LinkFileError),
 }
 
 /// This function does 2 things:
@@ -50,8 +50,8 @@ pub fn create_virtdir_by_snapshot(
         virtual_node_modules_dir.join(dependency_path.package_specifier.name.to_string());
     if !save_path.exists() {
         cas_paths.par_iter().try_for_each(|(cleaned_entry, store_path)| {
-            auto_import(store_path, &save_path.join(cleaned_entry))
-                .map_err(CreateVirtdirError::AutoImport)
+            link_file(store_path, &save_path.join(cleaned_entry))
+                .map_err(CreateVirtdirError::LinkFile)
         })?;
     }
 

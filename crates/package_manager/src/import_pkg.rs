@@ -44,7 +44,7 @@ impl<'a> ImportPackage<'a> {
                     cas_paths
                         .into_par_iter()
                         .try_for_each(|(cleaned_entry, store_path)| {
-                            auto_import(store_path, &save_path.join(cleaned_entry))
+                            link_file(store_path, &save_path.join(cleaned_entry))
                         })
                         .expect("expected no write errors");
                 }
@@ -74,7 +74,7 @@ impl<'a> ImportPackage<'a> {
 }
 
 #[derive(Debug, Display, Error, Diagnostic)]
-pub enum AutoImportError {
+pub enum LinkFileError {
     #[display(fmt = "cannot create directory at {dirname:?}: {error}")]
     CreateDir {
         dirname: PathBuf,
@@ -90,20 +90,20 @@ pub enum AutoImportError {
     },
 }
 
-pub fn auto_import(source_file: &Path, target_link: &Path) -> Result<(), AutoImportError> {
+pub fn link_file(source_file: &Path, target_link: &Path) -> Result<(), LinkFileError> {
     if target_link.exists() {
         return Ok(());
     }
 
     if let Some(parent_dir) = target_link.parent() {
-        fs::create_dir_all(parent_dir).map_err(|error| AutoImportError::CreateDir {
+        fs::create_dir_all(parent_dir).map_err(|error| LinkFileError::CreateDir {
             dirname: parent_dir.to_path_buf(),
             error,
         })?;
     }
 
     reflink_copy::reflink_or_copy(source_file, target_link).map_err(|error| {
-        AutoImportError::CreateLink {
+        LinkFileError::CreateLink {
             from: source_file.to_path_buf(),
             to: target_link.to_path_buf(),
             error,
