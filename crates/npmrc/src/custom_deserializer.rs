@@ -163,7 +163,7 @@ mod tests {
         assert_eq!(drive_letter, Some("C".to_string()));
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(windows)]
     #[test]
     fn test_default_store_dir_with_windows() {
         let current_dir = env::current_dir().expect("Current directory is not available");
