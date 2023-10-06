@@ -1,6 +1,6 @@
-use std::{env, path::Component, path::Path, path::PathBuf, str::FromStr};
-
 use serde::{de, Deserialize, Deserializer};
+use std::borrow::Cow;
+use std::{env, path::Component, path::Path, path::PathBuf, str::FromStr};
 
 // This needs to be implemented because serde doesn't support default = "true" as
 // a valid option, and throws  "failed to parse" error.
@@ -17,12 +17,12 @@ pub fn default_public_hoist_pattern() -> Vec<String> {
 }
 
 // Get the drive letter from a path on Windows. If it's not a Windows path, return None.
-fn get_drive_letter(current_dir: &Path) -> Option<String> {
-    for component in current_dir.components() {
-        if let Component::Prefix(prefix_component) = component {
-            return Some(
-                prefix_component.as_os_str().to_str().unwrap().replace(':', "").to_string(),
-            );
+fn get_drive_letter(current_dir: &Path) -> Option<Cow<'_, str>> {
+    if let Some(Component::Prefix(prefix_component)) = current_dir.components().next() {
+        if let std::path::Prefix::Disk(disk_byte) | std::path::Prefix::VerbatimDisk(disk_byte) =
+            prefix_component.kind()
+        {
+            return Some(Cow::Owned((disk_byte as char).to_string()));
         }
     }
     None
@@ -155,12 +155,12 @@ mod tests {
         env::remove_var("XDG_DATA_HOME");
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(windows)]
     #[test]
     fn test_should_get_the_correct_drive_letter() {
         let current_dir = Path::new("C:\\Users\\user\\project");
         let drive_letter = get_drive_letter(current_dir);
-        assert_eq!(drive_letter, Some("C".to_string()));
+        assert_eq!(drive_letter, Some(Cow::Borrowed("C")));
     }
 
     #[cfg(windows)]
