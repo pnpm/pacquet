@@ -16,6 +16,7 @@ pub fn default_public_hoist_pattern() -> Vec<String> {
 }
 
 // Get the drive letter from a path on Windows. If it's not a Windows path, return None.
+#[cfg(windows)]
 fn get_drive_letter(current_dir: &Path) -> Option<char> {
     if let Some(Component::Prefix(prefix_component)) = current_dir.components().next() {
         if let std::path::Prefix::Disk(disk_byte) | std::path::Prefix::VerbatimDisk(disk_byte) =
@@ -27,6 +28,7 @@ fn get_drive_letter(current_dir: &Path) -> Option<char> {
     None
 }
 
+#[cfg(windows)]
 fn default_store_dir_windows(home_dir: PathBuf) -> PathBuf {
     let current_dir = env::current_dir().expect("Current directory is not available");
     let current_drive =
@@ -60,6 +62,7 @@ pub fn default_store_dir() -> PathBuf {
     // needs to be resolved into an absolute path.
     let home_dir = home::home_dir().expect("Home directory is not available");
 
+    #[cfg(windows)]
     if cfg!(windows) {
         return default_store_dir_windows(home_dir);
     }
