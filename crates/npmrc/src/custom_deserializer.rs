@@ -29,8 +29,10 @@ fn get_drive_letter(current_dir: &Path) -> Option<char> {
 
 fn default_store_dir_windows(home_dir: PathBuf) -> PathBuf {
     let current_dir = env::current_dir().expect("Current directory is not available");
-    let current_drive = get_drive_letter(&current_dir).expect("current dir is an absolute path with drive letter");
-    let home_drive = get_drive_letter(&home_dir).expect("home dir is an absolute path with drive letter");
+    let current_drive =
+        get_drive_letter(&current_dir).expect("current dir is an absolute path with drive letter");
+    let home_drive =
+        get_drive_letter(&home_dir).expect("home dir is an absolute path with drive letter");
 
     if current_drive == home_drive {
         return home_dir.join("AppData/Local/pacquet/store");
