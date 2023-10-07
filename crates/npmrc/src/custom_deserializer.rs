@@ -1,5 +1,8 @@
 use serde::{de, Deserialize, Deserializer};
-use std::{env, path::Component, path::Path, path::PathBuf, str::FromStr};
+use std::{env, path::PathBuf, str::FromStr};
+
+#[cfg(windows)]
+use std::{path::Component, path::Path};
 
 // This needs to be implemented because serde doesn't support default = "true" as
 // a valid option, and throws  "failed to parse" error.
