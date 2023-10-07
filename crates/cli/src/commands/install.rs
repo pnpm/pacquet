@@ -223,7 +223,7 @@ mod tests {
     fn is_symlink_or_junction(path: std::path::PathBuf) -> Result<bool> {
         #[cfg(windows)]
         return junction::exists(&path);
-    
+
         #[cfg(not(windows))]
         return Ok(path.is_symlink());
     }
