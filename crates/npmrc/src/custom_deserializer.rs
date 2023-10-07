@@ -32,7 +32,7 @@ fn get_drive_letter(current_dir: &Path) -> Option<char> {
 }
 
 #[cfg(windows)]
-fn default_store_dir_windows(home_dir: PathBuf, current_dir: PathBuf) -> PathBuf {
+fn default_store_dir_windows(home_dir: &Path, current_dir: &Path) -> PathBuf {
     let current_drive =
         get_drive_letter(&current_dir).expect("current dir is an absolute path with drive letter");
     let home_drive =
