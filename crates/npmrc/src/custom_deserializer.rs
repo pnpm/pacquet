@@ -176,7 +176,7 @@ mod tests {
         let current_dir = Path::new("D:\\Users\\user\\project");
         let home_dir = Path::new("C:\\Users\\user");
 
-        let store_dir = default_store_dir_windows(home_dir, current_dir);
+        let store_dir = default_store_dir_windows(&home_dir, &current_dir);
         assert_eq!(store_dir, Path::new("D:\\.pacquet-store"));
     }
 }
