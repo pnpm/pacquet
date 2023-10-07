@@ -32,8 +32,7 @@ fn get_drive_letter(current_dir: &Path) -> Option<char> {
 }
 
 #[cfg(windows)]
-fn default_store_dir_windows(home_dir: PathBuf) -> PathBuf {
-    let current_dir = env::current_dir().expect("Current directory is not available");
+fn default_store_dir_windows(home_dir: PathBuf, current_dir: PathBuf) -> PathBuf {
     let current_drive =
         get_drive_letter(&current_dir).expect("current dir is an absolute path with drive letter");
     let home_drive =
@@ -67,7 +66,8 @@ pub fn default_store_dir() -> PathBuf {
 
     #[cfg(windows)]
     if cfg!(windows) {
-        return default_store_dir_windows(home_dir);
+        let current_dir = env::current_dir().expect("current directory is unavailable");
+        return default_store_dir_windows(home_dir, current_dir);
     }
 
     // https://doc.rust-lang.org/std/env/consts/constant.OS.html
@@ -173,18 +173,14 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn test_default_store_dir_with_windows() {
-        let current_dir = env::current_dir().expect("Current directory is not available");
-        let home_dir = home::home_dir().expect("Home directory is not available");
-        let store_dir = default_store_dir();
+        let mocked_current_dir = Path::new("D:\\Users\\user\\project");
+        let mocked_home_dir = Path::new("C:\\Users\\user");
 
-        let current_drive = get_drive_letter(&current_dir).unwrap_or_default();
-        let home_drive = get_drive_letter(&home_dir).unwrap_or_default();
-        let store_drive = get_drive_letter(&store_dir).unwrap_or_default();
+        let store_dir = default_store_dir_windows(mocked_home_dir.to_path_buf(), mocked_current_dir.to_path_buf());
 
-        if current_drive == home_drive {
-            assert_eq!(store_drive, home_drive);
-        } else {
-            assert_eq!(store_drive, current_drive);
-        }
+        let current_drive = get_drive_letter(mocked_current_dir);
+        let store_drive = get_drive_letter(&store_dir);
+
+        assert_eq!(current_drive, Some(store_drive.unwrap()));
     }
 }
