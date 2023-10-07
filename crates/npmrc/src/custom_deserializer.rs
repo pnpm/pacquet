@@ -67,7 +67,7 @@ pub fn default_store_dir() -> PathBuf {
     #[cfg(windows)]
     if cfg!(windows) {
         let current_dir = env::current_dir().expect("current directory is unavailable");
-        return default_store_dir_windows(home_dir, current_dir);
+        return default_store_dir_windows(&home_dir, &current_dir);
     }
 
     // https://doc.rust-lang.org/std/env/consts/constant.OS.html
