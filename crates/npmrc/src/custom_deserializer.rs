@@ -42,7 +42,7 @@ fn default_store_dir_windows(home_dir: &Path, current_dir: &Path) -> PathBuf {
         return home_dir.join("AppData/Local/pacquet/store");
     }
 
-    PathBuf::from(format!("{}:\\.pacquet-store", current_drive))
+    PathBuf::from(format!("{current_drive}:\\.pacquet-store"))
 }
 
 /// If the $PACQUET_HOME env variable is set, then $PACQUET_HOME/store
