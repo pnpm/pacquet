@@ -172,11 +172,21 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn test_default_store_dir_with_windows() {
+    fn test_default_store_dir_with_windows_diff_drive() {
         let current_dir = Path::new("D:\\Users\\user\\project");
         let home_dir = Path::new("C:\\Users\\user");
 
         let store_dir = default_store_dir_windows(&home_dir, &current_dir);
         assert_eq!(store_dir, Path::new("D:\\.pacquet-store"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_dynamic_default_store_dir_with_windows_same_drive() {
+        let current_dir = Path::new("C:\\Users\\user\\project");
+        let home_dir = Path::new("C:\\Users\\user");
+
+        let store_dir = default_store_dir_windows(&home_dir, &current_dir);
+        assert_eq!(store_dir, Path::new("C:\\Users\\user\\AppData\\Local\\pacquet\\store"));
     }
 }
