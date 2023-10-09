@@ -6,12 +6,20 @@ use pacquet_npmrc::PackageImportMethod;
 use std::{
     collections::HashMap,
     ffi::OsString,
-    fs,
+    fs, io,
     path::{Path, PathBuf},
 };
 
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum CreateVirtualDirError {
+    #[display(fmt = "Failed to recursively create node_modules directory at {dir:?}: {error}")]
+    #[diagnostic(code(pacquet_package_manager::create_node_modules_dir))]
+    CreateNodeModulesDir {
+        dir: PathBuf,
+        #[error(source)]
+        error: io::Error,
+    },
+
     #[diagnostic(transparent)]
     CreateCasFiles(#[error(source)] CreateCasFilesError),
 }
@@ -36,9 +44,12 @@ pub fn create_virtual_dir_by_snapshot(
     let virtual_node_modules_dir = virtual_store_dir
         .join(dependency_path.package_specifier.to_virtual_store_name())
         .join("node_modules");
-    fs::create_dir_all(&virtual_node_modules_dir).unwrap_or_else(|error| {
-        panic!("Failed to create directory at {virtual_node_modules_dir:?}: {error}")
-    }); // TODO: proper error propagation
+    fs::create_dir_all(&virtual_node_modules_dir).map_err(|error| {
+        CreateVirtualDirError::CreateNodeModulesDir {
+            dir: virtual_node_modules_dir.to_path_buf(),
+            error,
+        }
+    })?;
 
     // 1. Install the files from `cas_paths`
     let save_path =
