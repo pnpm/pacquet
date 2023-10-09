@@ -72,7 +72,7 @@ async fn internal_fetch(
         .join(&package_version.name);
 
     ImportPackage {
-        method: config.package_import_method,
+        import_method: config.package_import_method,
         cas_paths: &cas_paths,
         save_path: &save_path,
         symlink_path: &symlink_path.join(&package_version.name),
