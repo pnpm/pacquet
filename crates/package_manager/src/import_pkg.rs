@@ -34,11 +34,10 @@ impl<'a> ImportPackage<'a> {
             PackageImportMethod::Auto => {
                 create_cas_files(save_path, cas_paths)
                     .map_err(ImportPackageError::CreateCasFiles)?;
-                symlink_pkg(save_path, symlink_path).map_err(ImportPackageError::SymlinkPackage)?;
             }
             _ => panic!("Not implemented yet"),
         }
 
-        Ok(())
+        symlink_pkg(save_path, symlink_path).map_err(ImportPackageError::SymlinkPackage)
     }
 }
