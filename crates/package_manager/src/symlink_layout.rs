@@ -25,6 +25,7 @@ pub fn create_symlink_layout(
         symlink_pkg(
             &virtual_root.join(virtual_store_name).join("node_modules").join(&name_str),
             &virtual_node_modules_dir.join(&name_str),
-        );
+        )
+        .expect("symlink pkg successful"); // TODO: properly propagate this error
     });
 }
