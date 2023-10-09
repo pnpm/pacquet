@@ -26,6 +26,9 @@ pub enum ImportPackageError {
     },
 }
 
+/// This subroutine does 2 things:
+/// 1. Populate files into [`save_path`](Self::save_path) according to [`cas_paths`](Self::cas_paths) and [`method`](Self::method).
+/// 2. Create at [`symlink_path`](Self::symlink_path) which points to [`save_path`](Self::save_path).
 #[must_use]
 pub struct ImportPackage<'a> {
     pub method: PackageImportMethod,
