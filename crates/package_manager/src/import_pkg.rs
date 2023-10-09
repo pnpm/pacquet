@@ -8,6 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Error type for [`ImportPackage`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum ImportPackageError {
     CreateCasFiles(CreateCasFilesError),
