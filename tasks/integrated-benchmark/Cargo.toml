@@ -1,5 +1,5 @@
 [package]
-name                  = "pacquet_benchmark_install_against_revisions"
+name                  = "pacquet_integrated_benchmark"
 version               = "0.0.0"
 publish               = false
 authors.workspace     = true
@@ -11,7 +11,7 @@ license.workspace     = true
 repository.workspace  = true
 
 [[bin]]
-name = "benchmark-install-against-revisions"
+name = "integrated-benchmark"
 path = "src/main.rs"
 
 [dependencies]
