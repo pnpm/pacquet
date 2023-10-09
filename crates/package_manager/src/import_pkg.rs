@@ -27,6 +27,7 @@ pub struct ImportPackage<'a> {
 }
 
 impl<'a> ImportPackage<'a> {
+    /// Execute the subroutine.
     pub fn import_pkg(self) -> Result<(), ImportPackageError> {
         let ImportPackage { method, cas_paths, save_path, symlink_path } = self;
 
