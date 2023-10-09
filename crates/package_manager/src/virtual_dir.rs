@@ -28,6 +28,7 @@ pub enum CreateVirtualDirError {
 /// This subroutine does 2 things:
 /// 1. Install the files from `cas_paths`
 /// 2. Create the symlink layout
+#[must_use]
 pub struct CreateVirtualDirBySnapshot<'a> {
     pub dependency_path: &'a DependencyPath,
     pub virtual_store_dir: &'a Path,

@@ -27,6 +27,7 @@ pub enum ImportPackageError {
     },
 }
 
+#[must_use]
 pub struct ImportPackage<'a> {
     pub method: PackageImportMethod,
     pub cas_paths: &'a HashMap<OsString, PathBuf>,
