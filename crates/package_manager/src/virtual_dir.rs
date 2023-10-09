@@ -10,6 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Error type of [`CreateVirtualDirBySnapshot`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum CreateVirtualDirError {
     #[display(fmt = "Failed to recursively create node_modules directory at {dir:?}: {error}")]
