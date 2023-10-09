@@ -1,6 +1,8 @@
+use serde::{de, Deserialize, Deserializer};
 use std::{env, path::PathBuf, str::FromStr};
 
-use serde::{de, Deserialize, Deserializer};
+#[cfg(windows)]
+use std::{path::Component, path::Path};
 
 // This needs to be implemented because serde doesn't support default = "true" as
 // a valid option, and throws  "failed to parse" error.
@@ -14,6 +16,33 @@ pub fn default_hoist_pattern() -> Vec<String> {
 
 pub fn default_public_hoist_pattern() -> Vec<String> {
     vec!["*eslint*".to_string(), "*prettier*".to_string()]
+}
+
+// Get the drive letter from a path on Windows. If it's not a Windows path, return None.
+#[cfg(windows)]
+fn get_drive_letter(current_dir: &Path) -> Option<char> {
+    if let Some(Component::Prefix(prefix_component)) = current_dir.components().next() {
+        if let std::path::Prefix::Disk(disk_byte) | std::path::Prefix::VerbatimDisk(disk_byte) =
+            prefix_component.kind()
+        {
+            return Some(disk_byte as char);
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn default_store_dir_windows(home_dir: &Path, current_dir: &Path) -> PathBuf {
+    let current_drive =
+        get_drive_letter(&current_dir).expect("current dir is an absolute path with drive letter");
+    let home_drive =
+        get_drive_letter(&home_dir).expect("home dir is an absolute path with drive letter");
+
+    if current_drive == home_drive {
+        return home_dir.join("AppData/Local/pacquet/store");
+    }
+
+    PathBuf::from(format!("{current_drive}:\\.pacquet-store"))
 }
 
 /// If the $PACQUET_HOME env variable is set, then $PACQUET_HOME/store
@@ -35,11 +64,16 @@ pub fn default_store_dir() -> PathBuf {
     // needs to be resolved into an absolute path.
     let home_dir = home::home_dir().expect("Home directory is not available");
 
+    #[cfg(windows)]
+    if cfg!(windows) {
+        let current_dir = env::current_dir().expect("current directory is unavailable");
+        return default_store_dir_windows(&home_dir, &current_dir);
+    }
+
     // https://doc.rust-lang.org/std/env/consts/constant.OS.html
     match env::consts::OS {
         "linux" => home_dir.join(".local/share/pacquet/store"),
         "macos" => home_dir.join("Library/pacquet/store"),
-        "windows" => home_dir.join("AppData/Local/pacquet/store"),
         _ => panic!("unsupported operating system: {}", env::consts::OS),
     }
 }
@@ -126,5 +160,33 @@ mod tests {
         let store_dir = default_store_dir();
         assert_eq!(store_dir, Path::new("/tmp/xdg_data_home/pacquet/store"));
         env::remove_var("XDG_DATA_HOME");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_should_get_the_correct_drive_letter() {
+        let current_dir = Path::new("C:\\Users\\user\\project");
+        let drive_letter = get_drive_letter(current_dir);
+        assert_eq!(drive_letter, Some('C'));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_default_store_dir_with_windows_diff_drive() {
+        let current_dir = Path::new("D:\\Users\\user\\project");
+        let home_dir = Path::new("C:\\Users\\user");
+
+        let store_dir = default_store_dir_windows(&home_dir, &current_dir);
+        assert_eq!(store_dir, Path::new("D:\\.pacquet-store"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_dynamic_default_store_dir_with_windows_same_drive() {
+        let current_dir = Path::new("C:\\Users\\user\\project");
+        let home_dir = Path::new("C:\\Users\\user");
+
+        let store_dir = default_store_dir_windows(&home_dir, &current_dir);
+        assert_eq!(store_dir, Path::new("C:\\Users\\user\\AppData\\Local\\pacquet\\store"));
     }
 }

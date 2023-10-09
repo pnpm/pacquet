@@ -923,6 +923,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "junction"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca39ef0d69b18e6a2fd14c2f0a1d593200f4a4ed949b240b5917ab51fac754cb"
+dependencies = [
+ "scopeguard",
+ "winapi",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1284,6 +1294,7 @@ dependencies = [
  "clap",
  "futures-util",
  "insta",
+ "junction",
  "node-semver",
  "pacquet_cafs",
  "pacquet_diagnostics",
@@ -1327,6 +1338,9 @@ dependencies = [
 [[package]]
 name = "pacquet_fs"
 version = "0.0.1"
+dependencies = [
+ "junction",
+]
 
 [[package]]
 name = "pacquet_lockfile"
@@ -1607,13 +1621,12 @@ dependencies = [
 
 [[package]]
 name = "reflink-copy"
-version = "0.1.7"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e062faffd49af27131ed7fa8fcb8a777dec096932c4f1751bc1c0e61c797907"
+checksum = "d7e3e017e993f86feeddf8a7fb609ca49f89082309e328e27aefd4a25bb317a4"
 dependencies = [
  "cfg-if",
  "ioctl-sys",
- "libc",
  "windows",
 ]
 

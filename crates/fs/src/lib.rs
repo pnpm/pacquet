@@ -7,5 +7,5 @@ pub fn symlink_dir(original: &Path, link: &Path) -> io::Result<()> {
     #[cfg(unix)]
     return os::unix::fs::symlink(original, link);
     #[cfg(windows)]
-    return os::windows::fs::symlink_dir(original, link);
+    return junction::create(original, link); // junctions instead of symlinks because symlinks may require elevated privileges.
 }

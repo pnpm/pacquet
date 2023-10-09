@@ -209,6 +209,7 @@ impl PackageManager {
 #[cfg(test)]
 mod tests {
     use std::env;
+    use std::io::Result;
 
     use crate::commands::install::{CliDependencyOptions, InstallCommandArgs};
     use crate::fs::get_all_folders;
@@ -217,6 +218,15 @@ mod tests {
     use pacquet_package_json::{DependencyGroup, PackageJson};
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
+
+    // Helper function to check if a path is a symlink or junction
+    fn is_symlink_or_junction(path: std::path::PathBuf) -> Result<bool> {
+        #[cfg(windows)]
+        return junction::exists(&path);
+
+        #[cfg(not(windows))]
+        return Ok(path.is_symlink());
+    }
 
     #[test]
     fn install_args_to_dependency_groups() {
@@ -301,13 +311,14 @@ mod tests {
         package_manager.install(&args).await.unwrap();
 
         // Make sure the package is installed
-        assert!(dir.path().join("node_modules/is-odd").is_symlink());
+        assert!(is_symlink_or_junction(dir.path().join("node_modules/is-odd")).unwrap());
         assert!(dir.path().join("node_modules/.pacquet/is-odd@3.0.1").exists());
         // Make sure it installs direct dependencies
         assert!(!dir.path().join("node_modules/is-number").exists());
         assert!(dir.path().join("node_modules/.pacquet/is-number@6.0.0").exists());
         // Make sure we install dev-dependencies as well
-        assert!(dir.path().join("node_modules/fast-decode-uri-component").is_symlink());
+        assert!(is_symlink_or_junction(dir.path().join("node_modules/fast-decode-uri-component"))
+            .unwrap());
         assert!(dir.path().join("node_modules/.pacquet/fast-decode-uri-component@1.0.1").is_dir());
 
         insta::assert_debug_snapshot!(get_all_folders(dir.path()));
