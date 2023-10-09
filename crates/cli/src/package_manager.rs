@@ -7,7 +7,7 @@ use pacquet_diagnostics::{
 use pacquet_lockfile::Lockfile;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_json::PackageJson;
-use pacquet_package_manager::{CreateVirtdirError, ImportPackageError};
+use pacquet_package_manager::{CreateVirtualDirError, ImportPackageError};
 use pacquet_tarball::Cache;
 
 #[derive(Error, Debug, Diagnostic)]
@@ -35,7 +35,7 @@ pub enum PackageManagerError {
 
     #[error(transparent)]
     #[diagnostic(transparent)]
-    CreateVirtdir(#[from] CreateVirtdirError),
+    CreateVirtdir(#[from] CreateVirtualDirError),
 
     #[error(transparent)]
     #[diagnostic(transparent)]

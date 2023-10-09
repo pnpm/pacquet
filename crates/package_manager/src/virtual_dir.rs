@@ -14,7 +14,7 @@ use std::{
 };
 
 #[derive(Debug, Display, Error, Diagnostic)]
-pub enum CreateVirtdirError {
+pub enum CreateVirtualDirError {
     #[diagnostic(transparent)]
     LinkFile(#[error(source)] LinkFileError),
 }
@@ -24,13 +24,13 @@ pub enum CreateVirtdirError {
 /// 2. Create the symlink layout
 ///
 /// **TODO:** may break this function into 2 later
-pub fn create_virtdir_by_snapshot(
+pub fn create_virtual_dir_by_snapshot(
     dependency_path: &DependencyPath,
     virtual_store_dir: &Path,
     cas_paths: &HashMap<OsString, PathBuf>,
     import_method: PackageImportMethod,
     package_snapshot: &PackageSnapshot,
-) -> Result<(), CreateVirtdirError> {
+) -> Result<(), CreateVirtualDirError> {
     assert_eq!(
         import_method,
         PackageImportMethod::Auto,
@@ -51,7 +51,7 @@ pub fn create_virtdir_by_snapshot(
     if !save_path.exists() {
         cas_paths.par_iter().try_for_each(|(cleaned_entry, store_path)| {
             link_file(store_path, &save_path.join(cleaned_entry))
-                .map_err(CreateVirtdirError::LinkFile)
+                .map_err(CreateVirtualDirError::LinkFile)
         })?;
     }
 

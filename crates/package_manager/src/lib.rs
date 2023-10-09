@@ -6,4 +6,4 @@ mod virtual_dir;
 pub use import_pkg::{ImportPackage, ImportPackageError};
 pub use link_file::{link_file, LinkFileError};
 pub use symlink_pkg::symlink_pkg;
-pub use virtual_dir::{create_virtdir_by_snapshot, CreateVirtdirError};
+pub use virtual_dir::{create_virtual_dir_by_snapshot, CreateVirtualDirError};
