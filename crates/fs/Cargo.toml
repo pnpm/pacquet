@@ -10,5 +10,5 @@ keywords.workspace    = true
 license.workspace     = true
 repository.workspace  = true
 
-[dependencies]
+[target.'cfg(windows)'.dependencies]
 junction = { workspace = true }

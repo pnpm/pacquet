@@ -40,7 +40,9 @@ tokio           = { workspace = true }
 
 [dev-dependencies]
 insta             = { workspace = true }
-junction          = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile          = { workspace = true }
 walkdir           = { workspace = true }
+
+[target.'cfg(windows)'.dev-dependencies]
+junction = { workspace = true }
