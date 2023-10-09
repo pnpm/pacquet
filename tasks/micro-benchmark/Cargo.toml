@@ -1,5 +1,5 @@
 [package]
-name                  = "pacquet_benchmark"
+name                  = "pacquet_micro_benchmark"
 version               = "0.0.0"
 publish               = false
 authors.workspace     = true
@@ -9,6 +9,10 @@ homepage.workspace    = true
 keywords.workspace    = true
 license.workspace     = true
 repository.workspace  = true
+
+[[bin]]
+name = "micro-benchmark"
+path = "src/main.rs"
 
 [dependencies]
 pacquet_registry = { workspace = true }

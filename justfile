@@ -56,11 +56,11 @@ codecov:
   cargo codecov --html
 
 # Run the benchmarks. See `tasks/benchmark`
-bench:
-  cargo benchmark
+micro-benchmark:
+  cargo run --bin=micro-benchmark --release
 
-benchmark-install-against-revisions +args:
-  cargo run --bin=benchmark-install-against-revisions -- {{args}}
+integrated-benchmark +args:
+  cargo run --bin=integrated-benchmark -- {{args}}
 
 cli +args:
   cargo run --bin pacquet -- {{args}}
