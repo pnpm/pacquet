@@ -7,7 +7,8 @@ pub fn symlink_dir(original: &Path, link: &Path) -> io::Result<()> {
 
 #[cfg(windows)]
 pub fn symlink_dir(original: &Path, link: &Path) -> io::Result<()> {
-    os::windows::fs::symlink_dir(original, link)
+    // In Windows, we use junctions instead of symlinks because symlinks may require elevated privileges.
+    junction::create(original, link)
 }
 
 #[cfg(test)]
