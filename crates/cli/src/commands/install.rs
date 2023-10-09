@@ -153,7 +153,8 @@ impl PackageManager {
                         .join("node_modules")
                         .join(&name_str),
                     &self.config.modules_dir.join(&name_str),
-                );
+                )
+                .expect("symlink pkg"); // TODO: properly propagate this error
             });
     }
 
