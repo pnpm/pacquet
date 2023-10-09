@@ -1,7 +1,7 @@
 use crate::package_manager::PackageManagerError;
 use pacquet_lockfile::{DependencyPath, LockfileResolution, PackageSnapshot, PkgNameVerPeer};
 use pacquet_npmrc::Npmrc;
-use pacquet_package_manager::create_virtual_dir_by_snapshot;
+use pacquet_package_manager::CreateVirtualDirBySnapshot;
 use pacquet_package_manager::ImportPackage;
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::{download_tarball_to_store, Cache};
@@ -126,13 +126,14 @@ pub async fn install_single_package_to_virtual_store(
     )
     .await?;
 
-    create_virtual_dir_by_snapshot(
+    CreateVirtualDirBySnapshot {
         dependency_path,
-        &config.virtual_store_dir,
-        &cas_paths,
-        config.package_import_method,
+        virtual_store_dir: &config.virtual_store_dir,
+        cas_paths: &cas_paths,
+        import_method: config.package_import_method,
         package_snapshot,
-    )?;
+    }
+    .create_virtual_dir_by_snapshot()?;
 
     Ok(())
 }

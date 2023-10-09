@@ -10,4 +10,4 @@ pub use import_pkg::{ImportPackage, ImportPackageError};
 pub use link_file::{link_file, LinkFileError};
 pub use symlink_layout::create_symlink_layout;
 pub use symlink_pkg::symlink_pkg;
-pub use virtual_dir::{create_virtual_dir_by_snapshot, CreateVirtualDirError};
+pub use virtual_dir::{CreateVirtualDirBySnapshot, CreateVirtualDirError};
