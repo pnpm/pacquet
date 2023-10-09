@@ -1,11 +1,8 @@
-use crate::{link_file, symlink_pkg, LinkFileError};
+use crate::{create_cas_files, create_symlink_layout, CreateCasFilesError};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_lockfile::{
-    DependencyPath, PackageSnapshot, PackageSnapshotDependency, PkgNameVerPeer,
-};
+use pacquet_lockfile::{DependencyPath, PackageSnapshot};
 use pacquet_npmrc::PackageImportMethod;
-use rayon::prelude::*;
 use std::{
     collections::HashMap,
     ffi::OsString,
@@ -16,14 +13,12 @@ use std::{
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum CreateVirtualDirError {
     #[diagnostic(transparent)]
-    LinkFile(#[error(source)] LinkFileError),
+    CreateCasFiles(#[error(source)] CreateCasFilesError),
 }
 
 /// This function does 2 things:
 /// 1. Install the files from `cas_paths`
 /// 2. Create the symlink layout
-///
-/// **TODO:** may break this function into 2 later
 pub fn create_virtual_dir_by_snapshot(
     dependency_path: &DependencyPath,
     virtual_store_dir: &Path,
@@ -48,31 +43,11 @@ pub fn create_virtual_dir_by_snapshot(
     // 1. Install the files from `cas_paths`
     let save_path =
         virtual_node_modules_dir.join(dependency_path.package_specifier.name.to_string());
-    if !save_path.exists() {
-        cas_paths.par_iter().try_for_each(|(cleaned_entry, store_path)| {
-            link_file(store_path, &save_path.join(cleaned_entry))
-                .map_err(CreateVirtualDirError::LinkFile)
-        })?;
-    }
+    create_cas_files(&save_path, cas_paths).map_err(CreateVirtualDirError::CreateCasFiles)?;
 
     // 2. Create the symlink layout
     if let Some(dependencies) = &package_snapshot.dependencies {
-        dependencies.par_iter().for_each(|(name, spec)| {
-            let virtual_store_name = match spec {
-                PackageSnapshotDependency::PkgVerPeer(ver_peer) => {
-                    let package_specifier = PkgNameVerPeer::new(name.clone(), ver_peer.clone()); // TODO: remove copying here
-                    package_specifier.to_virtual_store_name()
-                }
-                PackageSnapshotDependency::DependencyPath(dependency_path) => {
-                    dependency_path.package_specifier.to_virtual_store_name()
-                }
-            };
-            let name_str = name.to_string();
-            symlink_pkg(
-                &virtual_store_dir.join(virtual_store_name).join("node_modules").join(&name_str),
-                &virtual_node_modules_dir.join(&name_str),
-            );
-        });
+        create_symlink_layout(dependencies, virtual_store_dir, &virtual_node_modules_dir)
     }
 
     Ok(())
