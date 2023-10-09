@@ -48,12 +48,6 @@ impl<'a> CreateVirtualDirBySnapshot<'a> {
             package_snapshot,
         } = self;
 
-        assert_eq!(
-            import_method,
-            PackageImportMethod::Auto,
-            "Only auto import method is supported, but {dependency_path} requires {import_method:?}",
-        );
-
         // node_modules/.pacquet/pkg-name@x.y.z/node_modules
         let virtual_node_modules_dir = virtual_store_dir
             .join(dependency_path.package_specifier.to_virtual_store_name())
@@ -68,7 +62,8 @@ impl<'a> CreateVirtualDirBySnapshot<'a> {
         // 1. Install the files from `cas_paths`
         let save_path =
             virtual_node_modules_dir.join(dependency_path.package_specifier.name.to_string());
-        create_cas_files(&save_path, cas_paths).map_err(CreateVirtualDirError::CreateCasFiles)?;
+        create_cas_files(import_method, &save_path, cas_paths)
+            .map_err(CreateVirtualDirError::CreateCasFiles)?;
 
         // 2. Create the symlink layout
         if let Some(dependencies) = &package_snapshot.dependencies {

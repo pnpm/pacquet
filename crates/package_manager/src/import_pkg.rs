@@ -32,13 +32,9 @@ impl<'a> ImportPackage<'a> {
         let ImportPackage { method, cas_paths, save_path, symlink_path } = self;
 
         tracing::info!(target: "pacquet::import", ?save_path, ?symlink_path, "Import package");
-        match method {
-            PackageImportMethod::Auto => {
-                create_cas_files(save_path, cas_paths)
-                    .map_err(ImportPackageError::CreateCasFiles)?;
-            }
-            _ => panic!("Not implemented yet"),
-        }
+
+        create_cas_files(method, save_path, cas_paths)
+            .map_err(ImportPackageError::CreateCasFiles)?;
 
         symlink_pkg(save_path, symlink_path).map_err(ImportPackageError::SymlinkPackage)
     }
