@@ -1,9 +1,8 @@
-use crate::link_file;
+use crate::create_cas_files;
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_fs::symlink_dir;
 use pacquet_npmrc::PackageImportMethod;
-use rayon::prelude::*;
 use std::{
     collections::HashMap,
     ffi::OsString,
@@ -42,14 +41,7 @@ impl<'a> ImportPackage<'a> {
         tracing::info!(target: "pacquet::import", ?save_path, ?symlink_path, "Import package");
         match method {
             PackageImportMethod::Auto => {
-                if !save_path.exists() {
-                    cas_paths
-                        .into_par_iter()
-                        .try_for_each(|(cleaned_entry, store_path)| {
-                            link_file(store_path, &save_path.join(cleaned_entry))
-                        })
-                        .expect("expected no write errors");
-                }
+                create_cas_files(save_path, cas_paths).expect("no write errors"); // TODO: properly propagate the error
 
                 if !symlink_path.is_symlink() {
                     if let Some(parent_dir) = symlink_path.parent() {
