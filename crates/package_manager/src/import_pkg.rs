@@ -1,12 +1,11 @@
-use crate::create_cas_files;
+use crate::{create_cas_files, symlink_pkg, SymlinkPackageError};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_fs::symlink_dir;
 use pacquet_npmrc::PackageImportMethod;
 use std::{
     collections::HashMap,
     ffi::OsString,
-    fs, io,
+    io,
     path::{Path, PathBuf},
 };
 
@@ -18,12 +17,8 @@ pub enum ImportPackageError {
         #[error(source)]
         error: io::Error,
     },
-    #[display(fmt = "cannot create symlink at {symlink_path:?}: {error}")]
-    SymlinkDir {
-        symlink_path: PathBuf,
-        #[error(source)]
-        error: io::Error,
-    },
+
+    SymlinkPackage(SymlinkPackageError),
 }
 
 /// This subroutine does 2 things:
@@ -45,23 +40,7 @@ impl<'a> ImportPackage<'a> {
         match method {
             PackageImportMethod::Auto => {
                 create_cas_files(save_path, cas_paths).expect("no write errors"); // TODO: properly propagate the error
-
-                if !symlink_path.is_symlink() {
-                    if let Some(parent_dir) = symlink_path.parent() {
-                        fs::create_dir_all(parent_dir).map_err(|error| {
-                            ImportPackageError::CreateParentDir {
-                                symlink_path: symlink_path.to_path_buf(),
-                                error,
-                            }
-                        })?;
-                    }
-                    symlink_dir(save_path, symlink_path).map_err(|error| {
-                        ImportPackageError::SymlinkDir {
-                            symlink_path: symlink_path.to_path_buf(),
-                            error,
-                        }
-                    })?;
-                }
+                symlink_pkg(save_path, symlink_path).map_err(ImportPackageError::SymlinkPackage)?;
             }
             _ => panic!("Not implemented yet"),
         }
