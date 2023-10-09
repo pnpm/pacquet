@@ -1,23 +1,16 @@
-use crate::{create_cas_files, symlink_pkg, SymlinkPackageError};
+use crate::{create_cas_files, symlink_pkg, CreateCasFilesError, SymlinkPackageError};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_npmrc::PackageImportMethod;
 use std::{
     collections::HashMap,
     ffi::OsString,
-    io,
     path::{Path, PathBuf},
 };
 
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum ImportPackageError {
-    #[display(fmt = "cannot create parent dir for {symlink_path:?}: {error}")]
-    CreateParentDir {
-        symlink_path: PathBuf,
-        #[error(source)]
-        error: io::Error,
-    },
-
+    CreateCasFiles(CreateCasFilesError),
     SymlinkPackage(SymlinkPackageError),
 }
 
@@ -39,7 +32,8 @@ impl<'a> ImportPackage<'a> {
         tracing::info!(target: "pacquet::import", ?save_path, ?symlink_path, "Import package");
         match method {
             PackageImportMethod::Auto => {
-                create_cas_files(save_path, cas_paths).expect("no write errors"); // TODO: properly propagate the error
+                create_cas_files(save_path, cas_paths)
+                    .map_err(ImportPackageError::CreateCasFiles)?;
                 symlink_pkg(save_path, symlink_path).map_err(ImportPackageError::SymlinkPackage)?;
             }
             _ => panic!("Not implemented yet"),
