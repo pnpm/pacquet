@@ -112,7 +112,7 @@ impl PackageManager {
                     package_snapshot,
                 )
                 .await
-                .unwrap();
+                .unwrap(); // TODO: properly propagate this error
             })
             .pipe(future::join_all)
             .await;
