@@ -26,7 +26,7 @@ pub async fn install_package_from_registry(
     let package = Package::fetch_from_registry(name, http_client, &config.registry)
         .await
         .map_err(PackageManagerError::Registry)?;
-    let package_version = package.pinned_version(version_range).unwrap();
+    let package_version = package.pinned_version(version_range).unwrap(); // TODO: propagate error for when no version satisfies range
     internal_fetch(tarball_cache, http_client, package_version, config, symlink_path).await?;
     Ok(package_version.to_owned())
 }
