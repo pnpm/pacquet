@@ -1,8 +1,9 @@
 use crate::package_manager::PackageManagerError;
+use pacquet_diagnostics::tracing;
 use pacquet_lockfile::{DependencyPath, LockfileResolution, PackageSnapshot, PkgNameVerPeer};
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manager::CreateVirtualDirBySnapshot;
-use pacquet_package_manager::ImportPackage;
+use pacquet_package_manager::{create_cas_files, symlink_pkg};
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::{download_tarball_to_store, Cache};
 use pipe_trait::Pipe;
@@ -71,13 +72,14 @@ async fn internal_fetch(
         .join("node_modules")
         .join(&package_version.name);
 
-    ImportPackage {
-        import_method: config.package_import_method,
-        cas_paths: &cas_paths,
-        save_path: &save_path,
-        symlink_path: &symlink_path.join(&package_version.name),
-    }
-    .import_pkg()?;
+    let symlink_path = symlink_path.join(&package_version.name);
+
+    tracing::info!(target: "pacquet::import", ?save_path, ?symlink_path, "Import package");
+
+    create_cas_files(config.package_import_method, &save_path, &cas_paths)
+        .map_err(PackageManagerError::CreateCasFiles)?;
+
+    symlink_pkg(&save_path, &symlink_path).map_err(PackageManagerError::SymlinkPackage)?;
 
     Ok(())
 }

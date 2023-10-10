@@ -7,7 +7,7 @@ use pacquet_diagnostics::{
 use pacquet_lockfile::Lockfile;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_json::PackageJson;
-use pacquet_package_manager::{CreateVirtualDirError, ImportPackageError};
+use pacquet_package_manager::{CreateCasFilesError, CreateVirtualDirError, SymlinkPackageError};
 use pacquet_tarball::Cache;
 
 #[derive(Error, Debug, Diagnostic)]
@@ -39,7 +39,11 @@ pub enum PackageManagerError {
 
     #[error(transparent)]
     #[diagnostic(transparent)]
-    ImportPackage(#[from] ImportPackageError),
+    CreateCasFiles(CreateCasFilesError),
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    SymlinkPackage(SymlinkPackageError),
 }
 
 pub struct PackageManager {
