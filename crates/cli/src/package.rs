@@ -23,6 +23,7 @@ pub async fn install_package_from_registry(
     version_range: &str,
     symlink_path: &Path,
 ) -> Result<PackageVersion, PackageManagerError> {
+    // TODO: if version_range is actually a version, fetch that version directly
     let package = Package::fetch_from_registry(name, http_client, &config.registry)
         .await
         .map_err(PackageManagerError::Registry)?;
@@ -31,6 +32,7 @@ pub async fn install_package_from_registry(
     Ok(package_version.to_owned())
 }
 
+// TODO: this function should be removed once `pacquet add` support version ranges
 pub async fn fetch_package_version_directly(
     tarball_cache: &Cache,
     config: &'static Npmrc,
