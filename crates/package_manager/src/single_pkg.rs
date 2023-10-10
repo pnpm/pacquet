@@ -14,6 +14,8 @@ pub enum SinglePackageError {
     CreateVirtualDir(CreateVirtualDirError),
 }
 
+/// This subroutine downloads a package tarball, extracts it, installs it to a virtual dir,
+/// then creates the symlink layout for the package.
 #[must_use]
 pub struct InstallSinglePkgToVirtualDir<'a> {
     pub tarball_cache: &'a Cache,
@@ -24,6 +26,7 @@ pub struct InstallSinglePkgToVirtualDir<'a> {
 }
 
 impl<'a> InstallSinglePkgToVirtualDir<'a> {
+    /// Execute the subroutine.
     pub async fn install(self) -> Result<(), SinglePackageError> {
         let InstallSinglePkgToVirtualDir {
             tarball_cache,
