@@ -7,7 +7,7 @@ use pacquet_diagnostics::{
 use pacquet_lockfile::Lockfile;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_json::PackageJson;
-use pacquet_package_manager::{CreateCasFilesError, CreateVirtualDirError, SymlinkPackageError};
+use pacquet_package_manager::{CreateCasFilesError, SymlinkPackageError};
 use pacquet_tarball::Cache;
 use pipe_trait::Pipe;
 
@@ -29,10 +29,6 @@ pub enum PackageManagerError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Registry(pacquet_registry::RegistryError),
-
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    CreateVirtualDir(CreateVirtualDirError),
 
     #[error(transparent)]
     #[diagnostic(transparent)]

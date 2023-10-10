@@ -1,4 +1,4 @@
-use crate::package::{install_package_from_registry, install_single_package_to_virtual_store};
+use crate::package::install_package_from_registry;
 use crate::package_manager::{PackageManager, PackageManagerError};
 use async_recursion::async_recursion;
 use clap::Parser;
@@ -8,7 +8,7 @@ use pacquet_lockfile::{
     DependencyPath, Lockfile, PackageSnapshot, PkgName, PkgNameVerPeer, RootProjectSnapshot,
 };
 use pacquet_package_json::DependencyGroup;
-use pacquet_package_manager::symlink_pkg;
+use pacquet_package_manager::{install_single_package_to_virtual_store, symlink_pkg};
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
 use rayon::prelude::*;

@@ -1,14 +1,11 @@
 use crate::package_manager::PackageManagerError;
 use pacquet_diagnostics::tracing;
-use pacquet_lockfile::{DependencyPath, LockfileResolution, PackageSnapshot, PkgNameVerPeer};
 use pacquet_npmrc::Npmrc;
-use pacquet_package_manager::CreateVirtualDirBySnapshot;
 use pacquet_package_manager::{create_cas_files, symlink_pkg};
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::{download_tarball_to_store, Cache};
-use pipe_trait::Pipe;
 use reqwest::Client;
-use std::{borrow::Cow, path::Path};
+use std::path::Path;
 
 /// This function execute the following and returns the package
 /// - retrieves the package from the registry
@@ -85,64 +82,6 @@ async fn internal_fetch(
         .map_err(PackageManagerError::CreateCasFiles)?;
 
     symlink_pkg(&save_path, &symlink_path).map_err(PackageManagerError::SymlinkPackage)?;
-
-    Ok(())
-}
-
-pub async fn install_single_package_to_virtual_store(
-    tarball_cache: &Cache,
-    http_client: &Client,
-    config: &'static Npmrc,
-    dependency_path: &DependencyPath,
-    package_snapshot: &PackageSnapshot,
-) -> Result<(), PackageManagerError> {
-    let PackageSnapshot { resolution, .. } = package_snapshot;
-    let DependencyPath { custom_registry, package_specifier } = dependency_path;
-
-    let (tarball_url, integrity) = match resolution {
-        LockfileResolution::Tarball(tarball_resolution) => {
-            let integrity = tarball_resolution.integrity.as_deref().unwrap_or_else(|| {
-                // TODO: how to handle the absent of integrity field?
-                panic!("Current implementation requires integrity, but {dependency_path} doesn't have it");
-            });
-            (tarball_resolution.tarball.as_str().pipe(Cow::Borrowed), integrity)
-        }
-        LockfileResolution::Registry(registry_resolution) => {
-            let registry = custom_registry.as_ref().unwrap_or(&config.registry);
-            let registry = registry.strip_suffix('/').unwrap_or(registry);
-            let PkgNameVerPeer { name, suffix: ver_peer } = package_specifier;
-            let version = ver_peer.version();
-            let bare_name = name.bare.as_str();
-            let tarball_url = format!("{registry}/{name}/-/{bare_name}-{version}.tgz");
-            let integrity = registry_resolution.integrity.as_str();
-            (Cow::Owned(tarball_url), integrity)
-        }
-        LockfileResolution::Directory(_) | LockfileResolution::Git(_) => {
-            panic!("Only TarballResolution and RegistryResolution is supported at the moment, but {dependency_path} requires {resolution:?}");
-        }
-    };
-
-    // TODO: skip when already exists in store?
-    let cas_paths = download_tarball_to_store(
-        tarball_cache,
-        http_client,
-        &config.store_dir,
-        integrity,
-        None,
-        &tarball_url,
-    )
-    .await
-    .map_err(PackageManagerError::Tarball)?;
-
-    CreateVirtualDirBySnapshot {
-        dependency_path,
-        virtual_store_dir: &config.virtual_store_dir,
-        cas_paths: &cas_paths,
-        import_method: config.package_import_method,
-        package_snapshot,
-    }
-    .create_virtual_dir_by_snapshot()
-    .map_err(PackageManagerError::CreateVirtualDir)?;
 
     Ok(())
 }

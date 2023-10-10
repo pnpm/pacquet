@@ -1393,8 +1393,11 @@ dependencies = [
  "pacquet_fs",
  "pacquet_lockfile",
  "pacquet_npmrc",
+ "pacquet_tarball",
+ "pipe-trait",
  "rayon",
  "reflink-copy",
+ "reqwest",
  "tracing",
 ]
 
