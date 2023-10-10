@@ -8,7 +8,7 @@ use pacquet_lockfile::{
     DependencyPath, Lockfile, PackageSnapshot, PkgName, PkgNameVerPeer, RootProjectSnapshot,
 };
 use pacquet_package_json::DependencyGroup;
-use pacquet_package_manager::{install_single_package_to_virtual_store, symlink_pkg};
+use pacquet_package_manager::{symlink_pkg, InstallSinglePkgToVirtualDir};
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
 use rayon::prelude::*;
@@ -104,13 +104,14 @@ impl PackageManager {
         packages
             .iter()
             .map(|(dependency_path, package_snapshot)| async move {
-                install_single_package_to_virtual_store(
-                    &self.tarball_cache,
-                    &self.http_client,
-                    self.config,
+                InstallSinglePkgToVirtualDir {
+                    tarball_cache: &self.tarball_cache,
+                    http_client: &self.http_client,
+                    config: self.config,
                     dependency_path,
                     package_snapshot,
-                )
+                }
+                .install()
                 .await
                 .unwrap(); // TODO: properly propagate this error
             })
