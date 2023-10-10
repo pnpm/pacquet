@@ -9,33 +9,34 @@ use pacquet_npmrc::Npmrc;
 use pacquet_package_json::PackageJson;
 use pacquet_package_manager::{CreateCasFilesError, CreateVirtualDirError, SymlinkPackageError};
 use pacquet_tarball::Cache;
+use pipe_trait::Pipe;
 
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
 pub enum PackageManagerError {
     #[error(transparent)]
     #[diagnostic(transparent)]
-    Tarball(#[from] pacquet_tarball::TarballError),
+    Tarball(pacquet_tarball::TarballError),
 
     #[error(transparent)]
     #[diagnostic(transparent)]
-    PackageJson(#[from] pacquet_package_json::PackageJsonError),
+    PackageJson(pacquet_package_json::PackageJsonError),
 
     #[error(transparent)]
     #[diagnostic(transparent)]
-    LoadLockfileError(#[from] pacquet_lockfile::LoadLockfileError),
+    LoadLockfileError(pacquet_lockfile::LoadLockfileError),
 
     #[error(transparent)]
     #[diagnostic(transparent)]
-    Registry(#[from] pacquet_registry::RegistryError),
+    Registry(pacquet_registry::RegistryError),
 
     #[error(transparent)]
     #[diagnostic(code(pacquet_package_manager::io_error))]
-    Io(#[from] io::Error),
+    Io(io::Error),
 
     #[error(transparent)]
     #[diagnostic(transparent)]
-    CreateVirtualDir(#[from] CreateVirtualDirError),
+    CreateVirtualDir(CreateVirtualDirError),
 
     #[error(transparent)]
     #[diagnostic(transparent)]
@@ -61,8 +62,12 @@ impl PackageManager {
     ) -> Result<Self, PackageManagerError> {
         Ok(PackageManager {
             config,
-            package_json: PackageJson::create_if_needed(package_json_path.into())?,
-            lockfile: call_load_lockfile(config.lockfile, Lockfile::load_from_current_dir)?,
+            package_json: package_json_path
+                .into()
+                .pipe(PackageJson::create_if_needed)
+                .map_err(PackageManagerError::PackageJson)?,
+            lockfile: call_load_lockfile(config.lockfile, Lockfile::load_from_current_dir)
+                .map_err(PackageManagerError::LoadLockfileError)?,
             http_client: reqwest::Client::new(),
             tarball_cache: Cache::new(),
         })

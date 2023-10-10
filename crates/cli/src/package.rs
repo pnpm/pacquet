@@ -26,7 +26,9 @@ pub async fn install_package_from_registry(
     version_range: &str,
     symlink_path: &Path,
 ) -> Result<PackageVersion, PackageManagerError> {
-    let package = Package::fetch_from_registry(name, http_client, &config.registry).await?;
+    let package = Package::fetch_from_registry(name, http_client, &config.registry)
+        .await
+        .map_err(PackageManagerError::Registry)?;
     let package_version = package.pinned_version(version_range).unwrap();
     internal_fetch(tarball_cache, http_client, package_version, config, symlink_path).await?;
     Ok(package_version.to_owned())
@@ -41,7 +43,9 @@ pub async fn fetch_package_version_directly(
     symlink_path: &Path,
 ) -> Result<PackageVersion, PackageManagerError> {
     let package_version =
-        PackageVersion::fetch_from_registry(name, version, http_client, &config.registry).await?;
+        PackageVersion::fetch_from_registry(name, version, http_client, &config.registry)
+            .await
+            .map_err(PackageManagerError::Registry)?;
     internal_fetch(tarball_cache, http_client, &package_version, config, symlink_path).await?;
     Ok(package_version.to_owned())
 }
@@ -64,7 +68,8 @@ async fn internal_fetch(
         package_version.dist.unpacked_size,
         package_version.as_tarball_url(),
     )
-    .await?;
+    .await
+    .map_err(PackageManagerError::Tarball)?;
 
     let save_path = config
         .virtual_store_dir
@@ -126,7 +131,8 @@ pub async fn install_single_package_to_virtual_store(
         None,
         &tarball_url,
     )
-    .await?;
+    .await
+    .map_err(PackageManagerError::Tarball)?;
 
     CreateVirtualDirBySnapshot {
         dependency_path,
@@ -135,7 +141,8 @@ pub async fn install_single_package_to_virtual_store(
         import_method: config.package_import_method,
         package_snapshot,
     }
-    .create_virtual_dir_by_snapshot()?;
+    .create_virtual_dir_by_snapshot()
+    .map_err(PackageManagerError::CreateVirtualDir)?;
 
     Ok(())
 }

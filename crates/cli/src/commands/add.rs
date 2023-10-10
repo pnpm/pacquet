@@ -120,21 +120,25 @@ impl PackageManager {
             }
         }
 
-        self.package_json.add_dependency(
-            &args.package,
-            &latest_version.serialize(args.save_exact),
-            args.dependency_group(),
-        )?;
+        self.package_json
+            .add_dependency(
+                &args.package,
+                &latest_version.serialize(args.save_exact),
+                args.dependency_group(),
+            )
+            .map_err(PackageManagerError::PackageJson)?;
         // Using --save-peer will add one or more packages to peerDependencies and
         // install them as dev dependencies
         if args.dependency_group() == DependencyGroup::Peer {
-            self.package_json.add_dependency(
-                &args.package,
-                &latest_version.serialize(args.save_exact),
-                DependencyGroup::Dev,
-            )?;
+            self.package_json
+                .add_dependency(
+                    &args.package,
+                    &latest_version.serialize(args.save_exact),
+                    DependencyGroup::Dev,
+                )
+                .map_err(PackageManagerError::PackageJson)?;
         }
-        self.package_json.save()?;
+        self.package_json.save().map_err(PackageManagerError::PackageJson)?;
 
         Ok(())
     }
