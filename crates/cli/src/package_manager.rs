@@ -1,4 +1,4 @@
-use std::{io, path::PathBuf};
+use std::path::PathBuf;
 
 use pacquet_diagnostics::{
     miette::{self, Diagnostic},
@@ -29,10 +29,6 @@ pub enum PackageManagerError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Registry(pacquet_registry::RegistryError),
-
-    #[error(transparent)]
-    #[diagnostic(code(pacquet_package_manager::io_error))]
-    Io(io::Error),
 
     #[error(transparent)]
     #[diagnostic(transparent)]
