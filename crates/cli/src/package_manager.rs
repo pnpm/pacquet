@@ -35,7 +35,7 @@ pub enum PackageManagerError {
 
     #[error(transparent)]
     #[diagnostic(transparent)]
-    CreateVirtdir(#[from] CreateVirtualDirError),
+    CreateVirtualDir(#[from] CreateVirtualDirError),
 
     #[error(transparent)]
     #[diagnostic(transparent)]
