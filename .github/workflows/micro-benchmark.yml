@@ -39,7 +39,7 @@ jobs:
         run: sleep 15s
 
       - name: Run Bench on Main Branch
-        run: cargo run --bin=micro-benchmark --release --save-baseline main
+        run: cargo run --bin=micro-benchmark --release -- --save-baseline main
 
       - name: Checkout PR Branch
         uses: actions/checkout@v4
@@ -55,7 +55,7 @@ jobs:
         run: sleep 15s
 
       - name: Run Bench on PR Branch
-        run: cargo run --bin=micro-benchmark --release --save-baseline pr
+        run: cargo run --bin=micro-benchmark --release -- --save-baseline pr
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v3
