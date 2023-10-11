@@ -49,6 +49,7 @@ pub async fn fetch_package_version_directly(
     Ok(package_version.to_owned())
 }
 
+// TODO: this function should cease to be necessary once `fetch_package_version_directly` is deleted.
 async fn internal_fetch(
     tarball_cache: &Cache,
     http_client: &Client,
