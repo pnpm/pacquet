@@ -1,4 +1,5 @@
 use crate::package_manager::PackageManagerError;
+use node_semver::Version;
 use pacquet_diagnostics::tracing;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manager::{create_cas_files, symlink_pkg};
@@ -23,13 +24,26 @@ pub async fn install_package_from_registry(
     version_range: &str,
     symlink_path: &Path,
 ) -> Result<PackageVersion, PackageManagerError> {
-    // TODO: if version_range is actually a version, fetch that version directly
-    let package = Package::fetch_from_registry(name, http_client, &config.registry)
-        .await
-        .map_err(PackageManagerError::Registry)?;
-    let package_version = package.pinned_version(version_range).unwrap(); // TODO: propagate error for when no version satisfies range
-    internal_fetch(tarball_cache, http_client, package_version, config, symlink_path).await?;
-    Ok(package_version.to_owned())
+    Ok(match Version::parse(version_range) {
+        Ok(version) => {
+            let package_version =
+                PackageVersion::fetch_from_registry(name, version, http_client, &config.registry)
+                    .await
+                    .map_err(PackageManagerError::Registry)?;
+            internal_fetch(tarball_cache, http_client, &package_version, config, symlink_path)
+                .await?;
+            package_version
+        }
+        Err(_) => {
+            let package = Package::fetch_from_registry(name, http_client, &config.registry)
+                .await
+                .map_err(PackageManagerError::Registry)?;
+            let package_version = package.pinned_version(version_range).unwrap(); // TODO: propagate error for when no version satisfies range
+            internal_fetch(tarball_cache, http_client, package_version, config, symlink_path)
+                .await?;
+            package_version.clone()
+        }
+    })
 }
 
 // TODO: this function should be removed once `pacquet add` support version ranges
