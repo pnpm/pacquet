@@ -41,7 +41,6 @@ pub async fn install_package_from_registry(
     })
 }
 
-// TODO: this function should cease to be necessary once `fetch_package_version_directly` is deleted.
 async fn internal_fetch(
     tarball_cache: &Cache,
     http_client: &Client,
