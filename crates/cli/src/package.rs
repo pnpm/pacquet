@@ -24,6 +24,7 @@ pub async fn install_package_from_registry(
     version_range: &str,
     symlink_path: &Path,
 ) -> Result<PackageVersion, PackageManagerError> {
+    // TODO: create a trait named FetchFromRegistry and implement it for Package, PackageVersion, and (would-be) LatestPackage
     Ok(if let Ok(version) = Version::parse(version_range) {
         let package_version =
             PackageVersion::fetch_from_registry(name, version, http_client, &config.registry)
