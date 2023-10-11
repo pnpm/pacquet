@@ -41,23 +41,6 @@ pub async fn install_package_from_registry(
     })
 }
 
-// TODO: this function should be removed once `pacquet add` support version ranges
-pub async fn fetch_package_version_directly(
-    tarball_cache: &Cache,
-    config: &'static Npmrc,
-    http_client: &Client,
-    name: &str,
-    version: &str,
-    symlink_path: &Path,
-) -> Result<PackageVersion, PackageManagerError> {
-    let package_version =
-        PackageVersion::fetch_from_registry(name, version, http_client, &config.registry)
-            .await
-            .map_err(PackageManagerError::Registry)?;
-    internal_fetch(tarball_cache, http_client, &package_version, config, symlink_path).await?;
-    Ok(package_version.to_owned())
-}
-
 // TODO: this function should cease to be necessary once `fetch_package_version_directly` is deleted.
 async fn internal_fetch(
     tarball_cache: &Cache,

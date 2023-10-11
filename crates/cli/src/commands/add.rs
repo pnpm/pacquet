@@ -2,7 +2,7 @@ use clap::Parser;
 use std::collections::VecDeque;
 
 use crate::{
-    package::{fetch_package_version_directly, install_package_from_registry},
+    package::install_package_from_registry,
     package_manager::{PackageManager, PackageManagerError},
 };
 use futures_util::future;
@@ -59,12 +59,12 @@ impl PackageManager {
     /// 5. Symlink all dependencies to node_modules/.pacquet/pkg@version/node_modules
     /// 6. Update package.json
     pub async fn add(&mut self, args: &AddCommandArgs) -> Result<(), PackageManagerError> {
-        let latest_version = fetch_package_version_directly(
+        let latest_version = install_package_from_registry(
             &self.tarball_cache,
             self.config,
             &self.http_client,
             &args.package,
-            "latest",
+            "*",
             &self.config.modules_dir,
         )
         .await?;
