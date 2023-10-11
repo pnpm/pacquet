@@ -24,25 +24,20 @@ pub async fn install_package_from_registry(
     version_range: &str,
     symlink_path: &Path,
 ) -> Result<PackageVersion, PackageManagerError> {
-    Ok(match Version::parse(version_range) {
-        Ok(version) => {
-            let package_version =
-                PackageVersion::fetch_from_registry(name, version, http_client, &config.registry)
-                    .await
-                    .map_err(PackageManagerError::Registry)?;
-            internal_fetch(tarball_cache, http_client, &package_version, config, symlink_path)
-                .await?;
-            package_version
-        }
-        Err(_) => {
-            let package = Package::fetch_from_registry(name, http_client, &config.registry)
+    Ok(if let Ok(version) = Version::parse(version_range) {
+        let package_version =
+            PackageVersion::fetch_from_registry(name, version, http_client, &config.registry)
                 .await
                 .map_err(PackageManagerError::Registry)?;
-            let package_version = package.pinned_version(version_range).unwrap(); // TODO: propagate error for when no version satisfies range
-            internal_fetch(tarball_cache, http_client, package_version, config, symlink_path)
-                .await?;
-            package_version.clone()
-        }
+        internal_fetch(tarball_cache, http_client, &package_version, config, symlink_path).await?;
+        package_version
+    } else {
+        let package = Package::fetch_from_registry(name, http_client, &config.registry)
+            .await
+            .map_err(PackageManagerError::Registry)?;
+        let package_version = package.pinned_version(version_range).unwrap(); // TODO: propagate error for when no version satisfies range
+        internal_fetch(tarball_cache, http_client, package_version, config, symlink_path).await?;
+        package_version.clone()
     })
 }
 
