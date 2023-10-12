@@ -7,6 +7,7 @@ use pacquet_tarball::{download_tarball_to_store, Cache, TarballError};
 use reqwest::Client;
 use std::{path::Path, str::FromStr};
 
+/// Error type of [`InstallPackageFromRegistry`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum InstallPackageFromRegistryError {
     FetchFromRegistry(#[error(source)] RegistryError),
