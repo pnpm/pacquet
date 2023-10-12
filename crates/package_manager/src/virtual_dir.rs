@@ -25,7 +25,7 @@ pub enum CreateVirtualDirError {
     CreateCasFiles(#[error(source)] CreateCasFilesError),
 }
 
-/// This subroutine installs the files from `cas_paths` then creates the symlink layout.
+/// This subroutine installs the files from [`cas_paths`](Self::cas_paths) then creates the symlink layout.
 #[must_use]
 pub struct CreateVirtualDirBySnapshot<'a> {
     /// Key of the package map from the lockfile.
