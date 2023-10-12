@@ -42,7 +42,7 @@ pub struct InstallPackageFromRegistry<'a> {
 
 impl<'a> InstallPackageFromRegistry<'a> {
     /// Execute the subroutine.
-    pub async fn install<Tag>(self) -> Result<PackageVersion, InstallPackageFromRegistryError>
+    pub async fn run<Tag>(self) -> Result<PackageVersion, InstallPackageFromRegistryError>
     where
         Tag: FromStr + Into<PackageTag>,
     {
@@ -165,7 +165,7 @@ mod tests {
             version_range: "1.0.0",
             node_modules_dir: node_modules_dir.path(),
         }
-        .install::<Version>()
+        .run::<Version>()
         .await
         .unwrap();
 

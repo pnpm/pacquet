@@ -42,7 +42,7 @@ pub struct CreateVirtualDirBySnapshot<'a> {
 
 impl<'a> CreateVirtualDirBySnapshot<'a> {
     /// Execute the subroutine.
-    pub fn create_virtual_dir_by_snapshot(self) -> Result<(), CreateVirtualDirError> {
+    pub fn run(self) -> Result<(), CreateVirtualDirError> {
         let CreateVirtualDirBySnapshot {
             virtual_store_dir,
             cas_paths,

@@ -33,7 +33,7 @@ pub struct InstallPackageBySnapshot<'a> {
 
 impl<'a> InstallPackageBySnapshot<'a> {
     /// Execute the subroutine.
-    pub async fn install(self) -> Result<(), InstallPackageBySnapshotError> {
+    pub async fn run(self) -> Result<(), InstallPackageBySnapshotError> {
         let InstallPackageBySnapshot {
             tarball_cache,
             http_client,
@@ -86,7 +86,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             dependency_path,
             package_snapshot,
         }
-        .create_virtual_dir_by_snapshot()
+        .run()
         .map_err(InstallPackageBySnapshotError::CreateVirtualDir)?;
 
         Ok(())

@@ -66,7 +66,7 @@ impl PackageManager {
             version_range: "latest", // TODO: add support for specifying tags
             node_modules_dir: &self.config.modules_dir,
         }
-        .install::<PackageTag>()
+        .run::<PackageTag>()
         .await
         .map_err(PackageManagerError::InstallPackageFromRegistry)?;
         let package_node_modules_path = self
@@ -89,7 +89,7 @@ impl PackageManager {
                     name,
                     version_range: version,
                 }
-                .install::<Version>()
+                .run::<Version>()
                 .map_err(PackageManagerError::InstallPackageFromRegistry)
             });
 
@@ -115,7 +115,7 @@ impl PackageManager {
                             name,
                             version_range: version,
                         }
-                        .install::<Version>()
+                        .run::<Version>()
                         .map_err(PackageManagerError::InstallPackageFromRegistry)
                     },
                 );

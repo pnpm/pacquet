@@ -24,7 +24,7 @@ pub struct CreateVirtualStore<'a> {
 
 impl<'a> CreateVirtualStore<'a> {
     /// Execute the subroutine.
-    pub async fn create(self) {
+    pub async fn run(self) {
         let CreateVirtualStore { tarball_cache, http_client, config, packages, project_snapshot } =
             self;
 
@@ -43,7 +43,7 @@ impl<'a> CreateVirtualStore<'a> {
                     dependency_path,
                     package_snapshot,
                 }
-                .install()
+                .run()
                 .await
                 .unwrap(); // TODO: properly propagate this error
             })

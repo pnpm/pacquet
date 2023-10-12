@@ -81,7 +81,7 @@ impl PackageManager {
                     name,
                     version_range,
                 }
-                .install::<Version>()
+                .run::<Version>()
                 .await
                 .unwrap(); // TODO: proper error propagation
                 self.install_dependencies_from_registry(&dependency).await;
@@ -110,7 +110,7 @@ impl PackageManager {
                             name,
                             version_range,
                         }
-                        .install::<Version>()
+                        .run::<Version>()
                         .await
                         .unwrap();
                         self.install_dependencies_from_registry(&dependency).await;
@@ -139,7 +139,7 @@ impl PackageManager {
                     packages: packages.as_ref(),
                     project_snapshot,
                 }
-                .create()
+                .run()
                 .await;
 
                 SymlinkDirectDependencies {
@@ -147,7 +147,7 @@ impl PackageManager {
                     project_snapshot: &lockfile.project_snapshot,
                     dependency_groups: args.dependency_options.dependency_groups(),
                 }
-                .create();
+                .run();
             }
         }
 

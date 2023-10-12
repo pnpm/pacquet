@@ -28,7 +28,7 @@ where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
     /// Execute the subroutine.
-    pub fn create(self) {
+    pub fn run(self) {
         let SymlinkDirectDependencies { config, project_snapshot, dependency_groups } = self;
 
         let RootProjectSnapshot::Single(project_snapshot) = project_snapshot else {
