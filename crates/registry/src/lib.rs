@@ -1,9 +1,11 @@
 mod package;
 mod package_distribution;
+mod package_tag;
 mod package_version;
 
 pub use package::Package;
 pub use package_distribution::PackageDistribution;
+pub use package_tag::PackageTag;
 pub use package_version::PackageVersion;
 
 use pacquet_diagnostics::{

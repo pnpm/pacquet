@@ -1,12 +1,11 @@
 use crate::package_manager::PackageManagerError;
-use node_semver::Version;
 use pacquet_diagnostics::tracing;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manager::{create_cas_files, symlink_pkg};
 use pacquet_registry::{Package, PackageVersion};
 use pacquet_tarball::{download_tarball_to_store, Cache};
 use reqwest::Client;
-use std::path::Path;
+use std::{fmt::Display, path::Path, str::FromStr};
 
 /// This function execute the following and returns the package
 /// - retrieves the package from the registry
@@ -16,16 +15,19 @@ use std::path::Path;
 /// symlink_path will be appended by the name of the package. Therefore,
 /// it should be resolved into the node_modules folder of a subdependency such as
 /// `node_modules/.pacquet/fastify@1.0.0/node_modules`.
-pub async fn install_package_from_registry(
+pub async fn install_package_from_registry<Tag>(
     tarball_cache: &Cache,
     config: &'static Npmrc,
     http_client: &Client,
     name: &str,
     version_range: &str,
     symlink_path: &Path,
-) -> Result<PackageVersion, PackageManagerError> {
+) -> Result<PackageVersion, PackageManagerError>
+where
+    Tag: FromStr + Display,
+{
     // TODO: create a PackageTag enum with a parse function
-    Ok(if let Ok(version) = Version::parse(version_range) {
+    Ok(if let Ok(version) = version_range.parse::<Tag>() {
         let package_version =
             PackageVersion::fetch_from_registry(name, version, http_client, &config.registry)
                 .await
@@ -127,7 +129,7 @@ mod tests {
                 .pipe(Box::leak);
         let http_client = reqwest::Client::new();
         let symlink_path = tempdir().unwrap();
-        let package = install_package_from_registry(
+        let package = install_package_from_registry::<Version>(
             &Default::default(),
             config,
             &http_client,

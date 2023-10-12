@@ -3,6 +3,7 @@ use crate::package_manager::{PackageManager, PackageManagerError};
 use async_recursion::async_recursion;
 use clap::Parser;
 use futures_util::future;
+use node_semver::Version;
 use pacquet_diagnostics::tracing;
 use pacquet_lockfile::{
     DependencyPath, Lockfile, PackageSnapshot, PkgName, PkgNameVerPeer, RootProjectSnapshot,
@@ -75,7 +76,7 @@ impl PackageManager {
         package
             .dependencies(self.config.auto_install_peers)
             .map(|(name, version_range)| async {
-                let dependency = install_package_from_registry(
+                let dependency = install_package_from_registry::<Version>(
                     &self.tarball_cache,
                     self.config,
                     &self.http_client,
@@ -169,7 +170,7 @@ impl PackageManager {
                 self.package_json
                     .dependencies(dependency_options.dependency_groups())
                     .map(|(name, version_range)| async move {
-                        let dependency = install_package_from_registry(
+                        let dependency = install_package_from_registry::<Version>(
                             &self.tarball_cache,
                             self.config,
                             &self.http_client,

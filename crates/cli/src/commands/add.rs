@@ -1,4 +1,5 @@
 use clap::Parser;
+use node_semver::Version;
 use std::collections::VecDeque;
 
 use crate::{
@@ -8,7 +9,7 @@ use crate::{
 use futures_util::future;
 use pacquet_diagnostics::miette::WrapErr;
 use pacquet_package_json::DependencyGroup;
-use pacquet_registry::PackageVersion;
+use pacquet_registry::{PackageTag, PackageVersion};
 
 #[derive(Parser, Debug)]
 pub struct AddCommandArgs {
@@ -59,12 +60,12 @@ impl PackageManager {
     /// 5. Symlink all dependencies to node_modules/.pacquet/pkg@version/node_modules
     /// 6. Update package.json
     pub async fn add(&mut self, args: &AddCommandArgs) -> Result<(), PackageManagerError> {
-        let latest_version = install_package_from_registry(
+        let latest_version = install_package_from_registry::<PackageTag>(
             &self.tarball_cache,
             self.config,
             &self.http_client,
             &args.package,
-            "*",
+            "latest",
             &self.config.modules_dir,
         )
         .await?;
@@ -81,7 +82,7 @@ impl PackageManager {
 
         let direct_dependency_handles =
             latest_version.dependencies(self.config.auto_install_peers).map(|(name, version)| {
-                install_package_from_registry(
+                install_package_from_registry::<Version>(
                     &self.tarball_cache,
                     config,
                     http_client,
@@ -105,7 +106,7 @@ impl PackageManager {
 
                 let handles = dependency.dependencies(self.config.auto_install_peers).map(
                     |(name, version)| {
-                        install_package_from_registry(
+                        install_package_from_registry::<Version>(
                             &self.tarball_cache,
                             config,
                             http_client,
