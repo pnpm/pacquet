@@ -9,7 +9,7 @@ use pacquet_lockfile::{
 };
 use pacquet_package_json::DependencyGroup;
 use pacquet_package_manager::{
-    install_package_from_registry, symlink_package, InstallPackageBySnapshot,
+    symlink_package, InstallPackageBySnapshot, InstallPackageFromRegistry,
 };
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
@@ -77,16 +77,17 @@ impl PackageManager {
         package
             .dependencies(self.config.auto_install_peers)
             .map(|(name, version_range)| async {
-                let dependency = install_package_from_registry::<Version>(
-                    &self.tarball_cache,
-                    self.config,
-                    &self.http_client,
+                let dependency = InstallPackageFromRegistry {
+                    tarball_cache: &self.tarball_cache,
+                    config: self.config,
+                    http_client: &self.http_client,
                     name,
                     version_range,
-                    &node_modules_path,
-                )
+                    symlink_path: &node_modules_path,
+                }
+                .install::<Version>()
                 .await
-                .unwrap();
+                .unwrap(); // TODO: proper error propagation
                 self.install_dependencies_from_registry(&dependency).await;
             })
             .pipe(future::join_all)
@@ -171,14 +172,15 @@ impl PackageManager {
                 self.package_json
                     .dependencies(dependency_options.dependency_groups())
                     .map(|(name, version_range)| async move {
-                        let dependency = install_package_from_registry::<Version>(
-                            &self.tarball_cache,
-                            self.config,
-                            &self.http_client,
+                        let dependency = InstallPackageFromRegistry {
+                            tarball_cache: &self.tarball_cache,
+                            config: self.config,
+                            http_client: &self.http_client,
                             name,
                             version_range,
-                            &self.config.modules_dir,
-                        )
+                            symlink_path: &self.config.modules_dir,
+                        }
+                        .install::<Version>()
                         .await
                         .unwrap();
                         self.install_dependencies_from_registry(&dependency).await;

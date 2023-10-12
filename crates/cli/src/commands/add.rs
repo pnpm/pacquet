@@ -6,7 +6,7 @@ use crate::package_manager::{PackageManager, PackageManagerError};
 use futures_util::{future, TryFutureExt};
 use pacquet_diagnostics::miette::WrapErr;
 use pacquet_package_json::DependencyGroup;
-use pacquet_package_manager::install_package_from_registry;
+use pacquet_package_manager::InstallPackageFromRegistry;
 use pacquet_registry::{PackageTag, PackageVersion};
 
 #[derive(Parser, Debug)]
@@ -58,14 +58,15 @@ impl PackageManager {
     /// 5. Symlink all dependencies to node_modules/.pacquet/pkg@version/node_modules
     /// 6. Update package.json
     pub async fn add(&mut self, args: &AddCommandArgs) -> Result<(), PackageManagerError> {
-        let latest_version = install_package_from_registry::<PackageTag>(
-            &self.tarball_cache,
-            self.config,
-            &self.http_client,
-            &args.package,
-            "latest", // TODO: add support for specifying tags
-            &self.config.modules_dir,
-        )
+        let latest_version = InstallPackageFromRegistry {
+            tarball_cache: &self.tarball_cache,
+            config: self.config,
+            http_client: &self.http_client,
+            name: &args.package,
+            version_range: "latest", // TODO: add support for specifying tags
+            symlink_path: &self.config.modules_dir,
+        }
+        .install::<PackageTag>()
         .await
         .map_err(PackageManagerError::InstallPackageFromRegistry)?;
         let package_node_modules_path = self
@@ -77,18 +78,18 @@ impl PackageManager {
         let mut queue: VecDeque<Vec<Result<PackageVersion, PackageManagerError>>> = VecDeque::new();
         let config = &self.config;
         let http_client = &self.http_client;
-        let path = &package_node_modules_path;
 
         let direct_dependency_handles =
             latest_version.dependencies(self.config.auto_install_peers).map(|(name, version)| {
-                install_package_from_registry::<Version>(
-                    &self.tarball_cache,
+                InstallPackageFromRegistry {
+                    tarball_cache: &self.tarball_cache,
                     config,
                     http_client,
                     name,
-                    version,
-                    path,
-                )
+                    version_range: version,
+                    symlink_path: &package_node_modules_path,
+                }
+                .install::<Version>()
                 .map_err(PackageManagerError::InstallPackageFromRegistry)
             });
 
@@ -106,14 +107,15 @@ impl PackageManager {
 
                 let handles = dependency.dependencies(self.config.auto_install_peers).map(
                     |(name, version)| {
-                        install_package_from_registry::<Version>(
-                            &self.tarball_cache,
+                        InstallPackageFromRegistry {
+                            tarball_cache: &self.tarball_cache,
                             config,
                             http_client,
                             name,
-                            version,
-                            &node_modules_path,
-                        )
+                            version_range: version,
+                            symlink_path: &node_modules_path,
+                        }
+                        .install::<Version>()
                         .map_err(PackageManagerError::InstallPackageFromRegistry)
                     },
                 );

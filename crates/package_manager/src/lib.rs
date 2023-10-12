@@ -9,7 +9,7 @@ mod virtual_dir;
 pub use cas::{create_cas_files, CreateCasFilesError};
 pub use install_package_by_snapshot::{InstallPackageBySnapshot, InstallPackageBySnapshotError};
 pub use install_package_from_registry::{
-    install_package_from_registry, InstallPackageFromRegistryError,
+    InstallPackageFromRegistry, InstallPackageFromRegistryError,
 };
 pub use link_file::{link_file, LinkFileError};
 pub use symlink_layout::create_symlink_layout;

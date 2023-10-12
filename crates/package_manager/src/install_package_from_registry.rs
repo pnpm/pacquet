@@ -15,40 +15,61 @@ pub enum InstallPackageFromRegistryError {
     SymlinkPackage(#[error(source)] SymlinkPackageError),
 }
 
-/// This function execute the following and returns the package
-/// - retrieves the package from the registry
-/// - extracts the tarball to global store directory (~/Library/../pacquet)
-/// - links global store directory to virtual dir (node_modules/.pacquet/..)
+/// This subroutine executes the following and returns the package
+/// * Retrieves the package from the registry
+/// * Extracts the tarball to global store directory (~/Library/../pacquet)
+/// * Links global store directory to virtual dir (node_modules/.pacquet/..)
 ///
-/// symlink_path will be appended by the name of the package. Therefore,
+/// `symlink_path` will be appended by the name of the package. Therefore,
 /// it should be resolved into the node_modules folder of a subdependency such as
 /// `node_modules/.pacquet/fastify@1.0.0/node_modules`.
-pub async fn install_package_from_registry<Tag>(
-    tarball_cache: &Cache,
-    config: &'static Npmrc,
-    http_client: &Client,
-    name: &str,
-    version_range: &str,
-    symlink_path: &Path,
-) -> Result<PackageVersion, InstallPackageFromRegistryError>
-where
-    Tag: FromStr + Into<PackageTag>,
-{
-    Ok(if let Ok(tag) = version_range.parse::<Tag>() {
-        let package_version =
-            PackageVersion::fetch_from_registry(name, tag.into(), http_client, &config.registry)
-                .await
-                .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
-        internal_fetch(tarball_cache, http_client, &package_version, config, symlink_path).await?;
-        package_version
-    } else {
-        let package = Package::fetch_from_registry(name, http_client, &config.registry)
+#[must_use]
+pub struct InstallPackageFromRegistry<'a> {
+    pub tarball_cache: &'a Cache,
+    pub config: &'static Npmrc,
+    pub http_client: &'a Client,
+    pub name: &'a str,
+    pub version_range: &'a str,
+    pub symlink_path: &'a Path,
+}
+
+impl<'a> InstallPackageFromRegistry<'a> {
+    /// Execute the subroutine.
+    pub async fn install<Tag>(self) -> Result<PackageVersion, InstallPackageFromRegistryError>
+    where
+        Tag: FromStr + Into<PackageTag>,
+    {
+        let &InstallPackageFromRegistry {
+            tarball_cache,
+            config,
+            http_client,
+            name,
+            version_range,
+            symlink_path,
+        } = &self;
+
+        Ok(if let Ok(tag) = version_range.parse::<Tag>() {
+            let package_version = PackageVersion::fetch_from_registry(
+                name,
+                tag.into(),
+                http_client,
+                &config.registry,
+            )
             .await
             .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
-        let package_version = package.pinned_version(version_range).unwrap(); // TODO: propagate error for when no version satisfies range
-        internal_fetch(tarball_cache, http_client, package_version, config, symlink_path).await?;
-        package_version.clone()
-    })
+            internal_fetch(tarball_cache, http_client, &package_version, config, symlink_path)
+                .await?;
+            package_version
+        } else {
+            let package = Package::fetch_from_registry(name, http_client, &config.registry)
+                .await
+                .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
+            let package_version = package.pinned_version(version_range).unwrap(); // TODO: propagate error for when no version satisfies range
+            internal_fetch(tarball_cache, http_client, package_version, config, symlink_path)
+                .await?;
+            package_version.clone()
+        })
+    }
 }
 
 async fn internal_fetch(
@@ -137,14 +158,15 @@ mod tests {
                 .pipe(Box::leak);
         let http_client = reqwest::Client::new();
         let symlink_path = tempdir().unwrap();
-        let package = install_package_from_registry::<Version>(
-            &Default::default(),
+        let package = InstallPackageFromRegistry {
+            tarball_cache: &Default::default(),
             config,
-            &http_client,
-            "fast-querystring",
-            "1.0.0",
-            symlink_path.path(),
-        )
+            http_client: &http_client,
+            name: "fast-querystring",
+            version_range: "1.0.0",
+            symlink_path: symlink_path.path(),
+        }
+        .install::<Version>()
         .await
         .unwrap();
 
