@@ -4,17 +4,12 @@ use clap::Parser;
 use futures_util::future;
 use node_semver::Version;
 use pacquet_diagnostics::tracing;
-use pacquet_lockfile::{
-    DependencyPath, Lockfile, PackageSnapshot, PkgName, PkgNameVerPeer, RootProjectSnapshot,
-};
+use pacquet_lockfile::{Lockfile, PkgName, PkgNameVerPeer, RootProjectSnapshot};
 use pacquet_package_json::DependencyGroup;
-use pacquet_package_manager::{
-    symlink_package, InstallPackageBySnapshot, InstallPackageFromRegistry,
-};
+use pacquet_package_manager::{symlink_package, CreateVirtualStore, InstallPackageFromRegistry};
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
 use rayon::prelude::*;
-use std::collections::HashMap;
 
 #[derive(Debug, Parser)]
 pub struct CliDependencyOptions {
@@ -94,32 +89,6 @@ impl PackageManager {
             .await;
 
         tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Complete subset");
-    }
-
-    /// Generate filesystem layout for the virtual store at `node_modules/.pacquet`.
-    async fn create_virtual_store(
-        &self,
-        packages: &Option<HashMap<DependencyPath, PackageSnapshot>>,
-    ) {
-        let Some(packages) = packages else {
-            todo!("check project_snapshot, error if it's not empty, do nothing if empty");
-        };
-        packages
-            .iter()
-            .map(|(dependency_path, package_snapshot)| async move {
-                InstallPackageBySnapshot {
-                    tarball_cache: &self.tarball_cache,
-                    http_client: &self.http_client,
-                    config: self.config,
-                    dependency_path,
-                    package_snapshot,
-                }
-                .install()
-                .await
-                .unwrap(); // TODO: properly propagate this error
-            })
-            .pipe(future::join_all)
-            .await;
     }
 
     /// Create symlinks for the direct dependencies.
@@ -202,7 +171,16 @@ impl PackageManager {
                     "Non frozen lockfile is not yet supported",
                 );
 
-                self.create_virtual_store(packages).await;
+                CreateVirtualStore {
+                    tarball_cache: &self.tarball_cache,
+                    http_client: &self.http_client,
+                    config: self.config,
+                    packages: packages.as_ref(),
+                    project_snapshot,
+                }
+                .create()
+                .await;
+
                 self.link_direct_dependencies(project_snapshot, args);
             }
         }

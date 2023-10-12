@@ -1389,6 +1389,7 @@ name = "pacquet_package_manager"
 version = "0.0.1"
 dependencies = [
  "derive_more",
+ "futures-util",
  "miette",
  "node-semver",
  "pacquet_fs",

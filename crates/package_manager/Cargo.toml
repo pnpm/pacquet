@@ -18,6 +18,7 @@ pacquet_registry    = { workspace = true }
 pacquet_tarball     = { workspace = true }
 
 derive_more   = { workspace = true }
+futures-util  = { workspace = true }
 pipe-trait    = { workspace = true }
 rayon         = { workspace = true }
 reflink-copy  = { workspace = true }
