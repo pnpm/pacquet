@@ -50,19 +50,19 @@ impl<'a> InstallPackageFromRegistry<'a> {
             )
             .await
             .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
-            self.internal_fetch(&package_version).await?;
+            self.install_package_version(&package_version).await?;
             package_version
         } else {
             let package = Package::fetch_from_registry(name, http_client, &config.registry)
                 .await
                 .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
             let package_version = package.pinned_version(version_range).unwrap(); // TODO: propagate error for when no version satisfies range
-            self.internal_fetch(package_version).await?;
+            self.install_package_version(package_version).await?;
             package_version.clone()
         })
     }
 
-    async fn internal_fetch(
+    async fn install_package_version(
         self,
         package_version: &PackageVersion,
     ) -> Result<(), InstallPackageFromRegistryError> {
