@@ -39,14 +39,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
     where
         Tag: FromStr + Into<PackageTag>,
     {
-        let &InstallPackageFromRegistry {
-            tarball_cache,
-            config,
-            http_client,
-            name,
-            version_range,
-            symlink_path,
-        } = &self;
+        let &InstallPackageFromRegistry { config, http_client, name, version_range, .. } = &self;
 
         Ok(if let Ok(tag) = version_range.parse::<Tag>() {
             let package_version = PackageVersion::fetch_from_registry(
@@ -57,59 +50,57 @@ impl<'a> InstallPackageFromRegistry<'a> {
             )
             .await
             .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
-            internal_fetch(tarball_cache, http_client, &package_version, config, symlink_path)
-                .await?;
+            self.internal_fetch(&package_version).await?;
             package_version
         } else {
             let package = Package::fetch_from_registry(name, http_client, &config.registry)
                 .await
                 .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
             let package_version = package.pinned_version(version_range).unwrap(); // TODO: propagate error for when no version satisfies range
-            internal_fetch(tarball_cache, http_client, package_version, config, symlink_path)
-                .await?;
+            self.internal_fetch(package_version).await?;
             package_version.clone()
         })
     }
-}
 
-async fn internal_fetch(
-    tarball_cache: &Cache,
-    http_client: &Client,
-    package_version: &PackageVersion,
-    config: &'static Npmrc,
-    symlink_path: &Path,
-) -> Result<(), InstallPackageFromRegistryError> {
-    let store_folder_name = package_version.to_virtual_store_name();
+    async fn internal_fetch(
+        self,
+        package_version: &PackageVersion,
+    ) -> Result<(), InstallPackageFromRegistryError> {
+        let InstallPackageFromRegistry { tarball_cache, config, http_client, symlink_path, .. } =
+            self;
 
-    // TODO: skip when it already exists in store?
-    let cas_paths = download_tarball_to_store(
-        tarball_cache,
-        http_client,
-        &config.store_dir,
-        package_version.dist.integrity.as_ref().expect("has integrity field"),
-        package_version.dist.unpacked_size,
-        package_version.as_tarball_url(),
-    )
-    .await
-    .map_err(InstallPackageFromRegistryError::DownloadTarballToStore)?;
+        let store_folder_name = package_version.to_virtual_store_name();
 
-    let save_path = config
-        .virtual_store_dir
-        .join(store_folder_name)
-        .join("node_modules")
-        .join(&package_version.name);
+        // TODO: skip when it already exists in store?
+        let cas_paths = download_tarball_to_store(
+            tarball_cache,
+            http_client,
+            &config.store_dir,
+            package_version.dist.integrity.as_ref().expect("has integrity field"),
+            package_version.dist.unpacked_size,
+            package_version.as_tarball_url(),
+        )
+        .await
+        .map_err(InstallPackageFromRegistryError::DownloadTarballToStore)?;
 
-    let symlink_path = symlink_path.join(&package_version.name);
+        let save_path = config
+            .virtual_store_dir
+            .join(store_folder_name)
+            .join("node_modules")
+            .join(&package_version.name);
 
-    tracing::info!(target: "pacquet::import", ?save_path, ?symlink_path, "Import package");
+        let symlink_path = symlink_path.join(&package_version.name);
 
-    create_cas_files(config.package_import_method, &save_path, &cas_paths)
-        .map_err(InstallPackageFromRegistryError::CreateCasFiles)?;
+        tracing::info!(target: "pacquet::import", ?save_path, ?symlink_path, "Import package");
 
-    symlink_package(&save_path, &symlink_path)
-        .map_err(InstallPackageFromRegistryError::SymlinkPackage)?;
+        create_cas_files(config.package_import_method, &save_path, &cas_paths)
+            .map_err(InstallPackageFromRegistryError::CreateCasFiles)?;
 
-    Ok(())
+        symlink_package(&save_path, &symlink_path)
+            .map_err(InstallPackageFromRegistryError::SymlinkPackage)?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
