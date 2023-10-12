@@ -2,10 +2,10 @@ use crate::package_manager::PackageManagerError;
 use pacquet_diagnostics::tracing;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manager::{create_cas_files, symlink_pkg};
-use pacquet_registry::{Package, PackageVersion};
+use pacquet_registry::{Package, PackageTag, PackageVersion};
 use pacquet_tarball::{download_tarball_to_store, Cache};
 use reqwest::Client;
-use std::{fmt::Display, path::Path, str::FromStr};
+use std::{path::Path, str::FromStr};
 
 /// This function execute the following and returns the package
 /// - retrieves the package from the registry
@@ -24,12 +24,12 @@ pub async fn install_package_from_registry<Tag>(
     symlink_path: &Path,
 ) -> Result<PackageVersion, PackageManagerError>
 where
-    Tag: FromStr + Display,
+    Tag: FromStr + Into<PackageTag>,
 {
     // TODO: create a PackageTag enum with a parse function
     Ok(if let Ok(tag) = version_range.parse::<Tag>() {
         let package_version =
-            PackageVersion::fetch_from_registry(name, tag, http_client, &config.registry)
+            PackageVersion::fetch_from_registry(name, tag.into(), http_client, &config.registry)
                 .await
                 .map_err(PackageManagerError::Registry)?;
         internal_fetch(tarball_cache, http_client, &package_version, config, symlink_path).await?;
