@@ -79,11 +79,11 @@ impl PackageManager {
             .map(|(name, version_range)| async {
                 let dependency = InstallPackageFromRegistry {
                     tarball_cache: &self.tarball_cache,
-                    config: self.config,
                     http_client: &self.http_client,
+                    config: self.config,
+                    node_modules_dir: &node_modules_path,
                     name,
                     version_range,
-                    node_modules_dir: &node_modules_path,
                 }
                 .install::<Version>()
                 .await
@@ -174,11 +174,11 @@ impl PackageManager {
                     .map(|(name, version_range)| async move {
                         let dependency = InstallPackageFromRegistry {
                             tarball_cache: &self.tarball_cache,
-                            config: self.config,
                             http_client: &self.http_client,
+                            config: self.config,
+                            node_modules_dir: &self.config.modules_dir,
                             name,
                             version_range,
-                            node_modules_dir: &self.config.modules_dir,
                         }
                         .install::<Version>()
                         .await

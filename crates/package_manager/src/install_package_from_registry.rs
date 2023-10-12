@@ -28,16 +28,16 @@ pub enum InstallPackageFromRegistryError {
 pub struct InstallPackageFromRegistry<'a> {
     /// Shared cache that store downloaded tarballs.
     pub tarball_cache: &'a Cache,
-    /// Configuration read from `.npmrc`.
-    pub config: &'static Npmrc,
     /// HTTP client to make HTTP requests.
     pub http_client: &'a Client,
+    /// Configuration read from `.npmrc`.
+    pub config: &'static Npmrc,
+    /// Path to a `node_modules` directory.
+    pub node_modules_dir: &'a Path,
     /// Name of the package to be installed.
     pub name: &'a str,
     /// Version range of the package to be installed.
     pub version_range: &'a str,
-    /// Path to a `node_modules` directory.
-    pub node_modules_dir: &'a Path,
 }
 
 impl<'a> InstallPackageFromRegistry<'a> {
@@ -46,7 +46,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
     where
         Tag: FromStr + Into<PackageTag>,
     {
-        let &InstallPackageFromRegistry { config, http_client, name, version_range, .. } = &self;
+        let &InstallPackageFromRegistry { http_client, config, name, version_range, .. } = &self;
 
         Ok(if let Ok(tag) = version_range.parse::<Tag>() {
             let package_version = PackageVersion::fetch_from_registry(
@@ -74,7 +74,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
         package_version: &PackageVersion,
     ) -> Result<(), InstallPackageFromRegistryError> {
         let InstallPackageFromRegistry {
-            tarball_cache, config, http_client, node_modules_dir, ..
+            tarball_cache, http_client, config, node_modules_dir, ..
         } = self;
 
         let store_folder_name = package_version.to_virtual_store_name();

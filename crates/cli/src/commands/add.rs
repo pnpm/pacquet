@@ -83,11 +83,11 @@ impl PackageManager {
             latest_version.dependencies(self.config.auto_install_peers).map(|(name, version)| {
                 InstallPackageFromRegistry {
                     tarball_cache: &self.tarball_cache,
-                    config,
                     http_client,
+                    config,
+                    node_modules_dir: &package_node_modules_path,
                     name,
                     version_range: version,
-                    node_modules_dir: &package_node_modules_path,
                 }
                 .install::<Version>()
                 .map_err(PackageManagerError::InstallPackageFromRegistry)
@@ -109,11 +109,11 @@ impl PackageManager {
                     |(name, version)| {
                         InstallPackageFromRegistry {
                             tarball_cache: &self.tarball_cache,
-                            config,
                             http_client,
+                            config,
+                            node_modules_dir: &node_modules_path,
                             name,
                             version_range: version,
-                            node_modules_dir: &node_modules_path,
                         }
                         .install::<Version>()
                         .map_err(PackageManagerError::InstallPackageFromRegistry)

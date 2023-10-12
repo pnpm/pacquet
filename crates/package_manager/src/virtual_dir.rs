@@ -28,14 +28,14 @@ pub enum CreateVirtualDirError {
 /// This subroutine installs the files from [`cas_paths`](Self::cas_paths) then creates the symlink layout.
 #[must_use]
 pub struct CreateVirtualDirBySnapshot<'a> {
-    /// Key of the package map from the lockfile.
-    pub dependency_path: &'a DependencyPath,
     /// Path to the virtual store dir (usually canonical paths of `node_modules/.pacquet`).
     pub virtual_store_dir: &'a Path,
     /// CAS files map.
     pub cas_paths: &'a HashMap<OsString, PathBuf>,
     /// Import method.
     pub import_method: PackageImportMethod,
+    /// Key of the package map from the lockfile.
+    pub dependency_path: &'a DependencyPath,
     /// Value of the package map from the lockfile.
     pub package_snapshot: &'a PackageSnapshot,
 }
@@ -44,10 +44,10 @@ impl<'a> CreateVirtualDirBySnapshot<'a> {
     /// Execute the subroutine.
     pub fn create_virtual_dir_by_snapshot(self) -> Result<(), CreateVirtualDirError> {
         let CreateVirtualDirBySnapshot {
-            dependency_path,
             virtual_store_dir,
             cas_paths,
             import_method,
+            dependency_path,
             package_snapshot,
         } = self;
 

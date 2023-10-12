@@ -80,10 +80,10 @@ impl<'a> InstallPackageBySnapshot<'a> {
         .map_err(InstallPackageBySnapshotError::DownloadTarball)?;
 
         CreateVirtualDirBySnapshot {
-            dependency_path,
             virtual_store_dir: &config.virtual_store_dir,
             cas_paths: &cas_paths,
             import_method: config.package_import_method,
+            dependency_path,
             package_snapshot,
         }
         .create_virtual_dir_by_snapshot()
