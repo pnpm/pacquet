@@ -26,7 +26,6 @@ pub async fn install_package_from_registry<Tag>(
 where
     Tag: FromStr + Into<PackageTag>,
 {
-    // TODO: create a PackageTag enum with a parse function
     Ok(if let Ok(tag) = version_range.parse::<Tag>() {
         let package_version =
             PackageVersion::fetch_from_registry(name, tag.into(), http_client, &config.registry)
