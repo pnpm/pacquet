@@ -65,7 +65,7 @@ impl PackageManager {
             self.config,
             &self.http_client,
             &args.package,
-            "latest",
+            "latest", // TODO: add support for specifying tags
             &self.config.modules_dir,
         )
         .await?;
