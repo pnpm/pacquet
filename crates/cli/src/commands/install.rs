@@ -4,12 +4,13 @@ use clap::Parser;
 use futures_util::future;
 use node_semver::Version;
 use pacquet_diagnostics::tracing;
-use pacquet_lockfile::{Lockfile, PkgName, PkgNameVerPeer, RootProjectSnapshot};
+use pacquet_lockfile::Lockfile;
 use pacquet_package_json::DependencyGroup;
-use pacquet_package_manager::{symlink_package, CreateVirtualStore, InstallPackageFromRegistry};
+use pacquet_package_manager::{
+    CreateVirtualStore, InstallPackageFromRegistry, SymlinkDirectDependencies,
+};
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
-use rayon::prelude::*;
 
 #[derive(Debug, Parser)]
 pub struct CliDependencyOptions {
@@ -91,46 +92,6 @@ impl PackageManager {
         tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Complete subset");
     }
 
-    /// Create symlinks for the direct dependencies.
-    ///
-    /// If package `foo@x.y.z` is declared as a dependency in `package.json`,
-    /// symlink `foo -> .pacquet/foo@x.y.z/node_modules/foo` shall be created
-    /// in the `node_modules` directory.
-    fn link_direct_dependencies(
-        &self,
-        project_snapshot: &RootProjectSnapshot,
-        args: &InstallCommandArgs,
-    ) {
-        let InstallCommandArgs { dependency_options, .. } = args;
-
-        let RootProjectSnapshot::Single(project_snapshot) = project_snapshot else {
-            panic!("Monorepo is not yet supported");
-        };
-
-        project_snapshot
-            .dependencies_by_groups(dependency_options.dependency_groups())
-            .collect::<Vec<_>>()
-            .par_iter()
-            .for_each(|(name, spec)| {
-                // TODO: the code below is not optimal
-                let virtual_store_name =
-                    PkgNameVerPeer::new(PkgName::clone(name), spec.version.clone())
-                        .to_virtual_store_name();
-
-                let name_str = name.to_string();
-                symlink_package(
-                    &self
-                        .config
-                        .virtual_store_dir
-                        .join(virtual_store_name)
-                        .join("node_modules")
-                        .join(&name_str),
-                    &self.config.modules_dir.join(&name_str),
-                )
-                .expect("symlink pkg"); // TODO: properly propagate this error
-            });
-    }
-
     /// Jobs of the `install` command.
     pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
         let InstallCommandArgs { dependency_options, frozen_lockfile } = args;
@@ -181,7 +142,12 @@ impl PackageManager {
                 .create()
                 .await;
 
-                self.link_direct_dependencies(project_snapshot, args);
+                SymlinkDirectDependencies {
+                    config: self.config,
+                    project_snapshot: &lockfile.project_snapshot,
+                    dependency_groups: args.dependency_options.dependency_groups(),
+                }
+                .create();
             }
         }
 

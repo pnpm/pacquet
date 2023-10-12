@@ -11,11 +11,12 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-pacquet_fs          = { workspace = true }
-pacquet_lockfile    = { workspace = true }
-pacquet_npmrc       = { workspace = true }
-pacquet_registry    = { workspace = true }
-pacquet_tarball     = { workspace = true }
+pacquet_fs           = { workspace = true }
+pacquet_lockfile     = { workspace = true }
+pacquet_npmrc        = { workspace = true }
+pacquet_package_json = { workspace = true }
+pacquet_registry     = { workspace = true }
+pacquet_tarball      = { workspace = true }
 
 derive_more   = { workspace = true }
 futures-util  = { workspace = true }

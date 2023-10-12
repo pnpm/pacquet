@@ -1395,6 +1395,7 @@ dependencies = [
  "pacquet_fs",
  "pacquet_lockfile",
  "pacquet_npmrc",
+ "pacquet_package_json",
  "pacquet_registry",
  "pacquet_tarball",
  "pipe-trait",
