@@ -9,7 +9,7 @@ use reqwest::Client;
 use std::borrow::Cow;
 
 #[derive(Debug, Display, Error, Diagnostic)]
-pub enum SinglePackageError {
+pub enum InstallPackageBySnapshotError {
     DownloadTarball(TarballError),
     CreateVirtualDir(CreateVirtualDirError),
 }
@@ -17,7 +17,7 @@ pub enum SinglePackageError {
 /// This subroutine downloads a package tarball, extracts it, installs it to a virtual dir,
 /// then creates the symlink layout for the package.
 #[must_use]
-pub struct InstallSinglePkgToVirtualDir<'a> {
+pub struct InstallPackageBySnapshot<'a> {
     pub tarball_cache: &'a Cache,
     pub http_client: &'a Client,
     pub config: &'static Npmrc,
@@ -25,10 +25,10 @@ pub struct InstallSinglePkgToVirtualDir<'a> {
     pub package_snapshot: &'a PackageSnapshot,
 }
 
-impl<'a> InstallSinglePkgToVirtualDir<'a> {
+impl<'a> InstallPackageBySnapshot<'a> {
     /// Execute the subroutine.
-    pub async fn install(self) -> Result<(), SinglePackageError> {
-        let InstallSinglePkgToVirtualDir {
+    pub async fn install(self) -> Result<(), InstallPackageBySnapshotError> {
+        let InstallPackageBySnapshot {
             tarball_cache,
             http_client,
             config,
@@ -71,7 +71,7 @@ impl<'a> InstallSinglePkgToVirtualDir<'a> {
             &tarball_url,
         )
         .await
-        .map_err(SinglePackageError::DownloadTarball)?;
+        .map_err(InstallPackageBySnapshotError::DownloadTarball)?;
 
         CreateVirtualDirBySnapshot {
             dependency_path,
@@ -81,7 +81,7 @@ impl<'a> InstallSinglePkgToVirtualDir<'a> {
             package_snapshot,
         }
         .create_virtual_dir_by_snapshot()
-        .map_err(SinglePackageError::CreateVirtualDir)?;
+        .map_err(InstallPackageBySnapshotError::CreateVirtualDir)?;
 
         Ok(())
     }

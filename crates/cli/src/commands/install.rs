@@ -9,7 +9,7 @@ use pacquet_lockfile::{
     DependencyPath, Lockfile, PackageSnapshot, PkgName, PkgNameVerPeer, RootProjectSnapshot,
 };
 use pacquet_package_json::DependencyGroup;
-use pacquet_package_manager::{symlink_pkg, InstallSinglePkgToVirtualDir};
+use pacquet_package_manager::{symlink_pkg, InstallPackageBySnapshot};
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
 use rayon::prelude::*;
@@ -105,7 +105,7 @@ impl PackageManager {
         packages
             .iter()
             .map(|(dependency_path, package_snapshot)| async move {
-                InstallSinglePkgToVirtualDir {
+                InstallPackageBySnapshot {
                     tarball_cache: &self.tarball_cache,
                     http_client: &self.http_client,
                     config: self.config,
