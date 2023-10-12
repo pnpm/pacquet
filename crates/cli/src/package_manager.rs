@@ -7,17 +7,13 @@ use pacquet_diagnostics::{
 use pacquet_lockfile::Lockfile;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_json::PackageJson;
-use pacquet_package_manager::{CreateCasFilesError, SymlinkPackageError};
+use pacquet_package_manager::InstallPackageFromRegistryError;
 use pacquet_tarball::Cache;
 use pipe_trait::Pipe;
 
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
 pub enum PackageManagerError {
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    Tarball(pacquet_tarball::TarballError),
-
     #[error(transparent)]
     #[diagnostic(transparent)]
     PackageJson(pacquet_package_json::PackageJsonError),
@@ -28,15 +24,7 @@ pub enum PackageManagerError {
 
     #[error(transparent)]
     #[diagnostic(transparent)]
-    Registry(pacquet_registry::RegistryError),
-
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    CreateCasFiles(CreateCasFilesError),
-
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    SymlinkPackage(SymlinkPackageError),
+    InstallPackageFromRegistry(InstallPackageFromRegistryError),
 }
 
 pub struct PackageManager {

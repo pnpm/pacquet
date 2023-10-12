@@ -1,11 +1,19 @@
-use crate::package_manager::PackageManagerError;
-use pacquet_diagnostics::tracing;
+use crate::{create_cas_files, symlink_package, CreateCasFilesError, SymlinkPackageError};
+use derive_more::{Display, Error};
+use miette::Diagnostic;
 use pacquet_npmrc::Npmrc;
-use pacquet_package_manager::{create_cas_files, symlink_package};
-use pacquet_registry::{Package, PackageTag, PackageVersion};
-use pacquet_tarball::{download_tarball_to_store, Cache};
+use pacquet_registry::{Package, PackageTag, PackageVersion, RegistryError};
+use pacquet_tarball::{download_tarball_to_store, Cache, TarballError};
 use reqwest::Client;
 use std::{path::Path, str::FromStr};
+
+#[derive(Debug, Display, Error, Diagnostic)]
+pub enum InstallPackageFromRegistryError {
+    FetchFromRegistry(#[error(source)] RegistryError),
+    DownloadTarballToStore(#[error(source)] TarballError),
+    CreateCasFiles(#[error(source)] CreateCasFilesError),
+    SymlinkPackage(#[error(source)] SymlinkPackageError),
+}
 
 /// This function execute the following and returns the package
 /// - retrieves the package from the registry
@@ -22,7 +30,7 @@ pub async fn install_package_from_registry<Tag>(
     name: &str,
     version_range: &str,
     symlink_path: &Path,
-) -> Result<PackageVersion, PackageManagerError>
+) -> Result<PackageVersion, InstallPackageFromRegistryError>
 where
     Tag: FromStr + Into<PackageTag>,
 {
@@ -30,13 +38,13 @@ where
         let package_version =
             PackageVersion::fetch_from_registry(name, tag.into(), http_client, &config.registry)
                 .await
-                .map_err(PackageManagerError::Registry)?;
+                .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
         internal_fetch(tarball_cache, http_client, &package_version, config, symlink_path).await?;
         package_version
     } else {
         let package = Package::fetch_from_registry(name, http_client, &config.registry)
             .await
-            .map_err(PackageManagerError::Registry)?;
+            .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
         let package_version = package.pinned_version(version_range).unwrap(); // TODO: propagate error for when no version satisfies range
         internal_fetch(tarball_cache, http_client, package_version, config, symlink_path).await?;
         package_version.clone()
@@ -49,7 +57,7 @@ async fn internal_fetch(
     package_version: &PackageVersion,
     config: &'static Npmrc,
     symlink_path: &Path,
-) -> Result<(), PackageManagerError> {
+) -> Result<(), InstallPackageFromRegistryError> {
     let store_folder_name = package_version.to_virtual_store_name();
 
     // TODO: skip when it already exists in store?
@@ -62,7 +70,7 @@ async fn internal_fetch(
         package_version.as_tarball_url(),
     )
     .await
-    .map_err(PackageManagerError::Tarball)?;
+    .map_err(InstallPackageFromRegistryError::DownloadTarballToStore)?;
 
     let save_path = config
         .virtual_store_dir
@@ -75,16 +83,17 @@ async fn internal_fetch(
     tracing::info!(target: "pacquet::import", ?save_path, ?symlink_path, "Import package");
 
     create_cas_files(config.package_import_method, &save_path, &cas_paths)
-        .map_err(PackageManagerError::CreateCasFiles)?;
+        .map_err(InstallPackageFromRegistryError::CreateCasFiles)?;
 
-    symlink_package(&save_path, &symlink_path).map_err(PackageManagerError::SymlinkPackage)?;
+    symlink_package(&save_path, &symlink_path)
+        .map_err(InstallPackageFromRegistryError::SymlinkPackage)?;
 
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::package::install_package_from_registry;
+    use super::*;
     use node_semver::Version;
     use pacquet_npmrc::Npmrc;
     use pipe_trait::Pipe;

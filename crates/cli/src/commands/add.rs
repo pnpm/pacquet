@@ -2,13 +2,11 @@ use clap::Parser;
 use node_semver::Version;
 use std::collections::VecDeque;
 
-use crate::{
-    package::install_package_from_registry,
-    package_manager::{PackageManager, PackageManagerError},
-};
-use futures_util::future;
+use crate::package_manager::{PackageManager, PackageManagerError};
+use futures_util::{future, TryFutureExt};
 use pacquet_diagnostics::miette::WrapErr;
 use pacquet_package_json::DependencyGroup;
+use pacquet_package_manager::install_package_from_registry;
 use pacquet_registry::{PackageTag, PackageVersion};
 
 #[derive(Parser, Debug)]
@@ -68,7 +66,8 @@ impl PackageManager {
             "latest", // TODO: add support for specifying tags
             &self.config.modules_dir,
         )
-        .await?;
+        .await
+        .map_err(PackageManagerError::InstallPackageFromRegistry)?;
         let package_node_modules_path = self
             .config
             .virtual_store_dir
@@ -90,6 +89,7 @@ impl PackageManager {
                     version,
                     path,
                 )
+                .map_err(PackageManagerError::InstallPackageFromRegistry)
             });
 
         queue.push_front(future::join_all(direct_dependency_handles).await);
@@ -114,6 +114,7 @@ impl PackageManager {
                             version,
                             &node_modules_path,
                         )
+                        .map_err(PackageManagerError::InstallPackageFromRegistry)
                     },
                 );
 

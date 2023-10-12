@@ -1390,14 +1390,19 @@ version = "0.0.1"
 dependencies = [
  "derive_more",
  "miette",
+ "node-semver",
  "pacquet_fs",
  "pacquet_lockfile",
  "pacquet_npmrc",
+ "pacquet_registry",
  "pacquet_tarball",
  "pipe-trait",
+ "pretty_assertions",
  "rayon",
  "reflink-copy",
  "reqwest",
+ "tempfile",
+ "tokio",
  "tracing",
 ]
 

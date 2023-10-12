@@ -11,10 +11,11 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-pacquet_fs       = { workspace = true }
-pacquet_lockfile = { workspace = true }
-pacquet_npmrc    = { workspace = true }
-pacquet_tarball  = { workspace = true }
+pacquet_fs          = { workspace = true }
+pacquet_lockfile    = { workspace = true }
+pacquet_npmrc       = { workspace = true }
+pacquet_registry    = { workspace = true }
+pacquet_tarball     = { workspace = true }
 
 derive_more   = { workspace = true }
 pipe-trait    = { workspace = true }
@@ -23,3 +24,9 @@ reflink-copy  = { workspace = true }
 reqwest       = { workspace = true }
 tracing       = { workspace = true }
 miette        = { workspace = true }
+
+[dev-dependencies]
+node-semver       = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile          = { workspace = true }
+tokio             = { workspace = true }
