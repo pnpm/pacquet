@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Error type for [`symlink_pkg`].
+/// Error type for [`symlink_package`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum SymlinkPackageError {
     #[display(fmt = "Failed to create directory at {dir:?}: {error}")]
@@ -31,7 +31,10 @@ pub enum SymlinkPackageError {
 /// * If ancestors of `symlink_path` don't exist, they will be created recursively.
 /// * If `symlink_path` already exists, skip.
 /// * If `symlink_path` doesn't exist, a symlink pointing to `symlink_target` will be created.
-pub fn symlink_pkg(symlink_target: &Path, symlink_path: &Path) -> Result<(), SymlinkPackageError> {
+pub fn symlink_package(
+    symlink_target: &Path,
+    symlink_path: &Path,
+) -> Result<(), SymlinkPackageError> {
     // NOTE: symlink target in pacquet is absolute yet in pnpm is relative
     // TODO: change symlink target to relative
     if let Some(parent) = symlink_path.parent() {

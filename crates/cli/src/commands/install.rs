@@ -9,7 +9,7 @@ use pacquet_lockfile::{
     DependencyPath, Lockfile, PackageSnapshot, PkgName, PkgNameVerPeer, RootProjectSnapshot,
 };
 use pacquet_package_json::DependencyGroup;
-use pacquet_package_manager::{symlink_pkg, InstallPackageBySnapshot};
+use pacquet_package_manager::{symlink_package, InstallPackageBySnapshot};
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
 use rayon::prelude::*;
@@ -147,7 +147,7 @@ impl PackageManager {
                         .to_virtual_store_name();
 
                 let name_str = name.to_string();
-                symlink_pkg(
+                symlink_package(
                     &self
                         .config
                         .virtual_store_dir

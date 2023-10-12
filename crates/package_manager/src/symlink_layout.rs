@@ -1,4 +1,4 @@
-use crate::symlink_pkg;
+use crate::symlink_package;
 use pacquet_lockfile::{PackageSnapshotDependency, PkgName, PkgNameVerPeer};
 use rayon::prelude::*;
 use std::{collections::HashMap, path::Path};
@@ -22,7 +22,7 @@ pub fn create_symlink_layout(
             }
         };
         let name_str = name.to_string();
-        symlink_pkg(
+        symlink_package(
             &virtual_root.join(virtual_store_name).join("node_modules").join(&name_str),
             &virtual_node_modules_dir.join(&name_str),
         )

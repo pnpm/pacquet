@@ -1,7 +1,7 @@
 use crate::package_manager::PackageManagerError;
 use pacquet_diagnostics::tracing;
 use pacquet_npmrc::Npmrc;
-use pacquet_package_manager::{create_cas_files, symlink_pkg};
+use pacquet_package_manager::{create_cas_files, symlink_package};
 use pacquet_registry::{Package, PackageTag, PackageVersion};
 use pacquet_tarball::{download_tarball_to_store, Cache};
 use reqwest::Client;
@@ -77,7 +77,7 @@ async fn internal_fetch(
     create_cas_files(config.package_import_method, &save_path, &cas_paths)
         .map_err(PackageManagerError::CreateCasFiles)?;
 
-    symlink_pkg(&save_path, &symlink_path).map_err(PackageManagerError::SymlinkPackage)?;
+    symlink_package(&save_path, &symlink_path).map_err(PackageManagerError::SymlinkPackage)?;
 
     Ok(())
 }
