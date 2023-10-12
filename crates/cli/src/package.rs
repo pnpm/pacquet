@@ -27,9 +27,9 @@ where
     Tag: FromStr + Display,
 {
     // TODO: create a PackageTag enum with a parse function
-    Ok(if let Ok(version) = version_range.parse::<Tag>() {
+    Ok(if let Ok(tag) = version_range.parse::<Tag>() {
         let package_version =
-            PackageVersion::fetch_from_registry(name, version, http_client, &config.registry)
+            PackageVersion::fetch_from_registry(name, tag, http_client, &config.registry)
                 .await
                 .map_err(PackageManagerError::Registry)?;
         internal_fetch(tarball_cache, http_client, &package_version, config, symlink_path).await?;

@@ -25,11 +25,11 @@ impl PartialEq for PackageVersion {
 impl PackageVersion {
     pub async fn fetch_from_registry(
         name: &str,
-        version: impl Display, // TODO: change to node_semver::Version to increase resistance against programmer errors
+        tag: impl Display, // TODO: change to PackageTag to increase resistance against programmer errors
         http_client: &reqwest::Client,
         registry: &str,
     ) -> Result<Self, RegistryError> {
-        let url = || format!("{registry}{name}/{version}");
+        let url = || format!("{registry}{name}/{tag}");
         let network_error = |error| NetworkError { error, url: url() };
 
         http_client
