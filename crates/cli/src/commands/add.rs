@@ -64,7 +64,7 @@ impl PackageManager {
             http_client: &self.http_client,
             name: &args.package,
             version_range: "latest", // TODO: add support for specifying tags
-            symlink_path: &self.config.modules_dir,
+            node_modules_dir: &self.config.modules_dir,
         }
         .install::<PackageTag>()
         .await
@@ -87,7 +87,7 @@ impl PackageManager {
                     http_client,
                     name,
                     version_range: version,
-                    symlink_path: &package_node_modules_path,
+                    node_modules_dir: &package_node_modules_path,
                 }
                 .install::<Version>()
                 .map_err(PackageManagerError::InstallPackageFromRegistry)
@@ -113,7 +113,7 @@ impl PackageManager {
                             http_client,
                             name,
                             version_range: version,
-                            symlink_path: &node_modules_path,
+                            node_modules_dir: &node_modules_path,
                         }
                         .install::<Version>()
                         .map_err(PackageManagerError::InstallPackageFromRegistry)

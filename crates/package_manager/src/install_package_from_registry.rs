@@ -30,7 +30,7 @@ pub struct InstallPackageFromRegistry<'a> {
     pub http_client: &'a Client,
     pub name: &'a str,
     pub version_range: &'a str,
-    pub symlink_path: &'a Path,
+    pub node_modules_dir: &'a Path,
 }
 
 impl<'a> InstallPackageFromRegistry<'a> {
@@ -66,8 +66,9 @@ impl<'a> InstallPackageFromRegistry<'a> {
         self,
         package_version: &PackageVersion,
     ) -> Result<(), InstallPackageFromRegistryError> {
-        let InstallPackageFromRegistry { tarball_cache, config, http_client, symlink_path, .. } =
-            self;
+        let InstallPackageFromRegistry {
+            tarball_cache, config, http_client, node_modules_dir, ..
+        } = self;
 
         let store_folder_name = package_version.to_virtual_store_name();
 
@@ -89,7 +90,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
             .join("node_modules")
             .join(&package_version.name);
 
-        let symlink_path = symlink_path.join(&package_version.name);
+        let symlink_path = node_modules_dir.join(&package_version.name);
 
         tracing::info!(target: "pacquet::import", ?save_path, ?symlink_path, "Import package");
 
@@ -148,14 +149,14 @@ mod tests {
                 .pipe(Box::new)
                 .pipe(Box::leak);
         let http_client = reqwest::Client::new();
-        let symlink_path = tempdir().unwrap();
+        let node_modules_dir = tempdir().unwrap();
         let package = InstallPackageFromRegistry {
             tarball_cache: &Default::default(),
             config,
             http_client: &http_client,
             name: "fast-querystring",
             version_range: "1.0.0",
-            symlink_path: symlink_path.path(),
+            node_modules_dir: node_modules_dir.path(),
         }
         .install::<Version>()
         .await
@@ -176,7 +177,7 @@ mod tests {
 
         // Make sure the symlink is resolving to the correct path
         assert_eq!(
-            fs::read_link(symlink_path.path().join(&package.name)).unwrap(),
+            fs::read_link(node_modules_dir.path().join(&package.name)).unwrap(),
             virtual_store_path
         );
     }

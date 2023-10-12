@@ -83,7 +83,7 @@ impl PackageManager {
                     http_client: &self.http_client,
                     name,
                     version_range,
-                    symlink_path: &node_modules_path,
+                    node_modules_dir: &node_modules_path,
                 }
                 .install::<Version>()
                 .await
@@ -178,7 +178,7 @@ impl PackageManager {
                             http_client: &self.http_client,
                             name,
                             version_range,
-                            symlink_path: &self.config.modules_dir,
+                            node_modules_dir: &self.config.modules_dir,
                         }
                         .install::<Version>()
                         .await
