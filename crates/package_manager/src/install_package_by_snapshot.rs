@@ -19,10 +19,15 @@ pub enum InstallPackageBySnapshotError {
 /// then creates the symlink layout for the package.
 #[must_use]
 pub struct InstallPackageBySnapshot<'a> {
+    /// Shared cache that store downloaded tarballs.
     pub tarball_cache: &'a Cache,
+    /// HTTP client to make HTTP requests.
     pub http_client: &'a Client,
+    /// Configuration read from `.npmrc`.
     pub config: &'static Npmrc,
+    /// Key of the package map from the lockfile.
     pub dependency_path: &'a DependencyPath,
+    /// Value of the package map from the lockfile.
     pub package_snapshot: &'a PackageSnapshot,
 }
 

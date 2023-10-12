@@ -26,11 +26,17 @@ pub enum InstallPackageFromRegistryError {
 /// `node_modules/.pacquet/fastify@1.0.0/node_modules`.
 #[must_use]
 pub struct InstallPackageFromRegistry<'a> {
+    /// Shared cache that store downloaded tarballs.
     pub tarball_cache: &'a Cache,
+    /// Configuration read from `.npmrc`.
     pub config: &'static Npmrc,
+    /// HTTP client to make HTTP requests.
     pub http_client: &'a Client,
+    /// Name of the package to be installed.
     pub name: &'a str,
+    /// Version range of the package to be installed.
     pub version_range: &'a str,
+    /// Path to a `node_modules` directory.
     pub node_modules_dir: &'a Path,
 }
 
