@@ -8,6 +8,7 @@ use pipe_trait::Pipe;
 use reqwest::Client;
 use std::borrow::Cow;
 
+/// Error type of [`InstallPackageBySnapshot`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum InstallPackageBySnapshotError {
     DownloadTarball(TarballError),
