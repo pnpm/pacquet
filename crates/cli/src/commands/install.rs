@@ -81,7 +81,7 @@ impl PackageManager {
                     config,
                     project_snapshot,
                     packages: packages.as_ref(),
-                    dependency_groups: args.dependency_options.dependency_groups(),
+                    dependency_groups: dependency_options.dependency_groups(),
                 }
                 .run()
                 .await;
