@@ -7,7 +7,6 @@ use pacquet_diagnostics::{
 use pacquet_lockfile::Lockfile;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_json::PackageJson;
-use pacquet_package_manager::InstallPackageFromRegistryError;
 use pacquet_tarball::Cache;
 use pipe_trait::Pipe;
 
@@ -21,10 +20,6 @@ pub enum PackageManagerError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     LoadLockfileError(pacquet_lockfile::LoadLockfileError),
-
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    InstallPackageFromRegistry(InstallPackageFromRegistryError),
 }
 
 pub struct PackageManager {

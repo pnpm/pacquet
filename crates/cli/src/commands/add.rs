@@ -1,12 +1,7 @@
-use clap::Parser;
-use node_semver::Version;
-use std::collections::VecDeque;
-
 use crate::package_manager::{PackageManager, PackageManagerError};
-use futures_util::{future, TryFutureExt};
-use pacquet_diagnostics::miette::WrapErr;
+use clap::Parser;
 use pacquet_package_json::DependencyGroup;
-use pacquet_package_manager::InstallPackageFromRegistry;
+use pacquet_package_manager::Install;
 use pacquet_registry::{PackageTag, PackageVersion};
 
 #[derive(Parser, Debug)]
@@ -58,91 +53,45 @@ impl PackageManager {
     /// 5. Symlink all dependencies to node_modules/.pacquet/pkg@version/node_modules
     /// 6. Update package.json
     pub async fn add(&mut self, args: &AddCommandArgs) -> Result<(), PackageManagerError> {
-        let latest_version = InstallPackageFromRegistry {
-            tarball_cache: &self.tarball_cache,
-            config: self.config,
-            http_client: &self.http_client,
-            name: &args.package,
-            version_range: "latest", // TODO: add support for specifying tags
-            node_modules_dir: &self.config.modules_dir,
-        }
-        .run::<PackageTag>()
+        let PackageManager { config, package_json, lockfile, http_client, tarball_cache } = self;
+
+        let latest_version = PackageVersion::fetch_from_registry(
+            &args.package,
+            PackageTag::Latest, // TODO: add support for specifying tags
+            http_client,
+            &config.registry,
+        )
         .await
-        .map_err(PackageManagerError::InstallPackageFromRegistry)?;
-        let package_node_modules_path = self
-            .config
-            .virtual_store_dir
-            .join(latest_version.to_virtual_store_name())
-            .join("node_modules");
+        .expect("resolve latest tag"); // TODO: properly propagate this error
 
-        let mut queue: VecDeque<Vec<Result<PackageVersion, PackageManagerError>>> = VecDeque::new();
-        let config = &self.config;
-        let http_client = &self.http_client;
+        let version_range = latest_version.serialize(args.save_exact);
+        let dependency_group = args.dependency_group();
 
-        let direct_dependency_handles =
-            latest_version.dependencies(self.config.auto_install_peers).map(|(name, version)| {
-                InstallPackageFromRegistry {
-                    tarball_cache: &self.tarball_cache,
-                    http_client,
-                    config,
-                    node_modules_dir: &package_node_modules_path,
-                    name,
-                    version_range: version,
-                }
-                .run::<Version>()
-                .map_err(PackageManagerError::InstallPackageFromRegistry)
-            });
-
-        queue.push_front(future::join_all(direct_dependency_handles).await);
-
-        while let Some(dependencies) = queue.pop_front() {
-            for dependency in dependencies {
-                let dependency =
-                    dependency.wrap_err("failed to install one of the dependencies.").unwrap();
-                let node_modules_path = self
-                    .config
-                    .virtual_store_dir
-                    .join(dependency.to_virtual_store_name())
-                    .join("node_modules");
-
-                let handles = dependency.dependencies(self.config.auto_install_peers).map(
-                    |(name, version)| {
-                        InstallPackageFromRegistry {
-                            tarball_cache: &self.tarball_cache,
-                            http_client,
-                            config,
-                            node_modules_dir: &node_modules_path,
-                            name,
-                            version_range: version,
-                        }
-                        .run::<Version>()
-                        .map_err(PackageManagerError::InstallPackageFromRegistry)
-                    },
-                );
-
-                queue.push_back(future::join_all(handles).await);
-            }
-        }
-
-        self.package_json
-            .add_dependency(
-                &args.package,
-                &latest_version.serialize(args.save_exact),
-                args.dependency_group(),
-            )
+        package_json
+            .add_dependency(&args.package, &version_range, dependency_group)
             .map_err(PackageManagerError::PackageJson)?;
+
         // Using --save-peer will add one or more packages to peerDependencies and
         // install them as dev dependencies
-        if args.dependency_group() == DependencyGroup::Peer {
-            self.package_json
-                .add_dependency(
-                    &args.package,
-                    &latest_version.serialize(args.save_exact),
-                    DependencyGroup::Dev,
-                )
+        if dependency_group == DependencyGroup::Peer {
+            package_json
+                .add_dependency(&args.package, &version_range, DependencyGroup::Dev)
                 .map_err(PackageManagerError::PackageJson)?;
         }
-        self.package_json.save().map_err(PackageManagerError::PackageJson)?;
+
+        Install {
+            tarball_cache,
+            http_client,
+            config,
+            package_json,
+            lockfile: lockfile.as_ref(),
+            dependency_groups: [dependency_group],
+            frozen_lockfile: false,
+        }
+        .run()
+        .await;
+
+        package_json.save().map_err(PackageManagerError::PackageJson)?;
 
         Ok(())
     }
