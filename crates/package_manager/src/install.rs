@@ -131,9 +131,6 @@ mod tests {
         let modules_dir = project_root.join("node_modules"); // TODO: we shouldn't have to define this
         let virtual_store_dir = modules_dir.join(".pacquet"); // TODO: we shouldn't have to define this
 
-        // let current_directory = env::current_dir().unwrap();
-        // env::set_current_dir(dir.path()).unwrap();
-
         let package_json_path = dir.path().join("package.json");
         let mut package_json = PackageJson::create_if_needed(package_json_path.clone()).unwrap();
 
@@ -182,7 +179,5 @@ mod tests {
             .is_dir());
 
         insta::assert_debug_snapshot!(get_all_folders(&project_root));
-
-        // env::set_current_dir(&current_directory).unwrap();
     }
 }
