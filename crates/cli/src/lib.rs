@@ -12,15 +12,15 @@ use pacquet_executor::execute_shell;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_json::PackageJson;
 
-pub async fn run_cli() -> Result<()> {
+pub async fn main() -> Result<()> {
     enable_tracing_by_env();
     set_panic_hook();
     let cli = CliArgs::parse();
     let config = Npmrc::current().leak();
-    run_commands(cli, config).await
+    run(cli, config).await
 }
 
-async fn run_commands(cli: CliArgs, config: &'static Npmrc) -> Result<()> {
+async fn run(cli: CliArgs, config: &'static Npmrc) -> Result<()> {
     let package_json_path = cli.dir.join("package.json");
 
     match &cli.command {
@@ -108,7 +108,7 @@ mod tests {
     async fn init_command_should_create_package_json() {
         let parent_folder = tempdir().unwrap();
         let cli = CliArgs::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "init"]);
-        run_commands(cli, Npmrc::current().leak()).await.unwrap();
+        run(cli, Npmrc::current().leak()).await.unwrap();
         assert!(parent_folder.path().join("package.json").exists());
     }
 
@@ -119,7 +119,7 @@ mod tests {
         file.write_all("{}".as_bytes()).unwrap();
         assert!(parent_folder.path().join("package.json").exists());
         let cli = CliArgs::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "init"]);
-        run_commands(cli, Npmrc::current().leak()).await.expect_err("should have thrown");
+        run(cli, Npmrc::current().leak()).await.expect_err("should have thrown");
     }
 
     #[tokio::test]
@@ -132,6 +132,6 @@ mod tests {
             "store",
             "path",
         ]);
-        run_commands(cli, Npmrc::current().leak()).await.unwrap();
+        run(cli, Npmrc::current().leak()).await.unwrap();
     }
 }
