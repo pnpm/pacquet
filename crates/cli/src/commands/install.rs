@@ -1,14 +1,9 @@
 use crate::package_manager::{PackageManager, PackageManagerError};
-use async_recursion::async_recursion;
 use clap::Parser;
-use futures_util::future;
-use node_semver::Version;
 use pacquet_diagnostics::tracing;
 use pacquet_lockfile::Lockfile;
 use pacquet_package_json::DependencyGroup;
-use pacquet_package_manager::{InstallFrozenLockfile, InstallPackageFromRegistry};
-use pacquet_registry::PackageVersion;
-use pipe_trait::Pipe;
+use pacquet_package_manager::{InstallFrozenLockfile, InstallWithoutLockfile};
 
 #[derive(Debug, Parser)]
 pub struct CliDependencyOptions {
@@ -55,41 +50,6 @@ pub struct InstallCommandArgs {
 }
 
 impl PackageManager {
-    /// Install dependencies of a dependency.
-    ///
-    /// This function is used by [`PackageManager::install`] without a lockfile.
-    #[async_recursion]
-    async fn install_dependencies_from_registry(&self, package: &PackageVersion) {
-        let node_modules_path = self
-            .config
-            .virtual_store_dir
-            .join(package.to_virtual_store_name())
-            .join("node_modules");
-
-        tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Start subset");
-
-        package
-            .dependencies(self.config.auto_install_peers)
-            .map(|(name, version_range)| async {
-                let dependency = InstallPackageFromRegistry {
-                    tarball_cache: &self.tarball_cache,
-                    http_client: &self.http_client,
-                    config: self.config,
-                    node_modules_dir: &node_modules_path,
-                    name,
-                    version_range,
-                }
-                .run::<Version>()
-                .await
-                .unwrap(); // TODO: proper error propagation
-                self.install_dependencies_from_registry(&dependency).await;
-            })
-            .pipe(future::join_all)
-            .await;
-
-        tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Complete subset");
-    }
-
     /// Jobs of the `install` command.
     pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
         let PackageManager { config, http_client, tarball_cache, lockfile, package_json } = self;
@@ -98,24 +58,15 @@ impl PackageManager {
 
         match (config.lockfile, frozen_lockfile, lockfile) {
             (false, _, _) => {
-                package_json
-                    .dependencies(dependency_options.dependency_groups())
-                    .map(|(name, version_range)| async move {
-                        let dependency = InstallPackageFromRegistry {
-                            tarball_cache,
-                            http_client,
-                            config,
-                            node_modules_dir: &config.modules_dir,
-                            name,
-                            version_range,
-                        }
-                        .run::<Version>()
-                        .await
-                        .unwrap();
-                        self.install_dependencies_from_registry(&dependency).await;
-                    })
-                    .pipe(future::join_all)
-                    .await;
+                InstallWithoutLockfile {
+                    tarball_cache,
+                    http_client,
+                    config,
+                    package_json,
+                    dependency_groups: dependency_options.dependency_groups(),
+                }
+                .run()
+                .await;
             }
             (true, false, Some(_)) | (true, false, None) | (true, true, None) => {
                 unimplemented!();

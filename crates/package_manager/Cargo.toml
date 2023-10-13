@@ -18,14 +18,16 @@ pacquet_package_json = { workspace = true }
 pacquet_registry     = { workspace = true }
 pacquet_tarball      = { workspace = true }
 
-derive_more   = { workspace = true }
-futures-util  = { workspace = true }
-pipe-trait    = { workspace = true }
-rayon         = { workspace = true }
-reflink-copy  = { workspace = true }
-reqwest       = { workspace = true }
-tracing       = { workspace = true }
-miette        = { workspace = true }
+async-recursion = { workspace = true }
+derive_more     = { workspace = true }
+futures-util    = { workspace = true }
+node-semver     = { workspace = true }
+pipe-trait      = { workspace = true }
+rayon           = { workspace = true }
+reflink-copy    = { workspace = true }
+reqwest         = { workspace = true }
+tracing         = { workspace = true }
+miette          = { workspace = true }
 
 [dev-dependencies]
 node-semver       = { workspace = true }

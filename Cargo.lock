@@ -1388,6 +1388,7 @@ dependencies = [
 name = "pacquet_package_manager"
 version = "0.0.1"
 dependencies = [
+ "async-recursion",
  "derive_more",
  "futures-util",
  "miette",
