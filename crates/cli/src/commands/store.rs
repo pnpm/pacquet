@@ -1,7 +1,7 @@
 use clap::Subcommand;
 
 #[derive(Subcommand, Debug)]
-pub enum StoreSubcommands {
+pub enum StoreCommand {
     /// Checks for modified packages in the store.
     Store,
     /// Functionally equivalent to pnpm add, except this adds new packages to the store directly

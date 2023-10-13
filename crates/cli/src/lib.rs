@@ -2,7 +2,7 @@ mod commands;
 mod package_manager;
 
 use clap::Parser;
-use commands::{store::StoreSubcommands, Cli, Subcommands};
+use commands::{store::StoreCommand, CliArgs, CliCommand};
 use package_manager::PackageManager;
 use pacquet_diagnostics::{
     enable_tracing_by_env,
@@ -15,27 +15,27 @@ use pacquet_package_json::PackageJson;
 pub async fn run_cli() -> Result<()> {
     enable_tracing_by_env();
     set_panic_hook();
-    let cli = Cli::parse();
+    let cli = CliArgs::parse();
     let config = Npmrc::current().leak();
     run_commands(cli, config).await
 }
 
-async fn run_commands(cli: Cli, config: &'static Npmrc) -> Result<()> {
-    let package_json_path = cli.current_dir.join("package.json");
+async fn run_commands(cli: CliArgs, config: &'static Npmrc) -> Result<()> {
+    let package_json_path = cli.dir.join("package.json");
 
-    match &cli.subcommand {
-        Subcommands::Init => {
+    match &cli.command {
+        CliCommand::Init => {
             // init command throws an error if package.json file exist.
             PackageJson::init(&package_json_path).wrap_err("initialize package.json")?;
         }
-        Subcommands::Add(args) => {
+        CliCommand::Add(args) => {
             let mut package_manager = PackageManager::new(&package_json_path, config)
                 .wrap_err("initializing the package manager")?;
             // TODO if a package already exists in another dependency group, we don't remove
             // the existing entry.
             package_manager.add(args).await.wrap_err("adding a new package")?;
         }
-        Subcommands::Install(args) => {
+        CliCommand::Install(args) => {
             let package_manager = PackageManager::new(&package_json_path, config)
                 .wrap_err("initializing the package manager")?;
             package_manager
@@ -44,14 +44,14 @@ async fn run_commands(cli: Cli, config: &'static Npmrc) -> Result<()> {
                 .into_diagnostic()
                 .wrap_err("installing dependencies")?;
         }
-        Subcommands::Test => {
+        CliCommand::Test => {
             let package_json = PackageJson::from_path(package_json_path)
                 .wrap_err("getting the package.json in current directory")?;
             if let Some(script) = package_json.script("test", false)? {
                 execute_shell(script).wrap_err(format!("executing command: \"{0}\"", script))?;
             }
         }
-        Subcommands::Run(args) => {
+        CliCommand::Run(args) => {
             let package_json = PackageJson::from_path(package_json_path)
                 .wrap_err("getting the package.json in current directory")?;
             if let Some(script) = package_json.script(&args.command, args.if_present)? {
@@ -63,7 +63,7 @@ async fn run_commands(cli: Cli, config: &'static Npmrc) -> Result<()> {
                 execute_shell(command.trim())?;
             }
         }
-        Subcommands::Start => {
+        CliCommand::Start => {
             // Runs an arbitrary command specified in the package's start property of its scripts
             // object. If no start property is specified on the scripts object, it will attempt to
             // run node server.js as a default, failing if neither are present.
@@ -77,17 +77,17 @@ async fn run_commands(cli: Cli, config: &'static Npmrc) -> Result<()> {
             };
             execute_shell(command).wrap_err(format!("executing command: \"{0}\"", command))?;
         }
-        Subcommands::Store(subcommand) => match subcommand {
-            StoreSubcommands::Store => {
+        CliCommand::Store(command) => match command {
+            StoreCommand::Store => {
                 panic!("Not implemented")
             }
-            StoreSubcommands::Add => {
+            StoreCommand::Add => {
                 panic!("Not implemented")
             }
-            StoreSubcommands::Prune => {
+            StoreCommand::Prune => {
                 pacquet_cafs::prune_sync(&config.store_dir).wrap_err("pruning store")?;
             }
-            StoreSubcommands::Path => {
+            StoreCommand::Path => {
                 println!("{}", config.store_dir.display());
             }
         },
@@ -107,7 +107,7 @@ mod tests {
     #[tokio::test]
     async fn init_command_should_create_package_json() {
         let parent_folder = tempdir().unwrap();
-        let cli = Cli::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "init"]);
+        let cli = CliArgs::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "init"]);
         run_commands(cli, Npmrc::current().leak()).await.unwrap();
         assert!(parent_folder.path().join("package.json").exists());
     }
@@ -118,15 +118,20 @@ mod tests {
         let mut file = fs::File::create(parent_folder.path().join("package.json")).unwrap();
         file.write_all("{}".as_bytes()).unwrap();
         assert!(parent_folder.path().join("package.json").exists());
-        let cli = Cli::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "init"]);
+        let cli = CliArgs::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "init"]);
         run_commands(cli, Npmrc::current().leak()).await.expect_err("should have thrown");
     }
 
     #[tokio::test]
     async fn should_get_store_path() {
         let parent_folder = tempdir().unwrap();
-        let cli =
-            Cli::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "store", "path"]);
+        let cli = CliArgs::parse_from([
+            "",
+            "-C",
+            parent_folder.path().to_str().unwrap(),
+            "store",
+            "path",
+        ]);
         run_commands(cli, Npmrc::current().leak()).await.unwrap();
     }
 }

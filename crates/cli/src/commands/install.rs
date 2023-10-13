@@ -37,7 +37,7 @@ impl CliDependencyOptions {
 }
 
 #[derive(Parser, Debug)]
-pub struct InstallCommandArgs {
+pub struct InstallArgs {
     /// --prod, --dev, and --no-optional
     #[clap(flatten)]
     pub dependency_options: CliDependencyOptions,
@@ -49,9 +49,9 @@ pub struct InstallCommandArgs {
 
 impl PackageManager {
     /// Jobs of the `install` command.
-    pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
+    pub async fn install(&self, args: &InstallArgs) -> Result<(), PackageManagerError> {
         let PackageManager { config, http_client, tarball_cache, lockfile, package_json } = self;
-        let InstallCommandArgs { dependency_options, frozen_lockfile } = args;
+        let InstallArgs { dependency_options, frozen_lockfile } = args;
 
         Install {
             tarball_cache,

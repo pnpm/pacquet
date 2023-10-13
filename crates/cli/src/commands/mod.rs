@@ -5,9 +5,7 @@ pub mod store;
 
 use std::{env, ffi::OsString, path::PathBuf};
 
-use crate::commands::{
-    add::AddCommandArgs, install::InstallCommandArgs, run::RunCommandArgs, store::StoreSubcommands,
-};
+use crate::commands::{add::AddArgs, install::InstallArgs, run::RunArgs, store::StoreCommand};
 use clap::{Parser, Subcommand};
 
 fn default_current_dir() -> OsString {
@@ -20,30 +18,30 @@ fn default_current_dir() -> OsString {
 #[command(bin_name = "pacquet")]
 #[command(version = "0.2.1")]
 #[command(about = "Experimental package manager for node.js")]
-pub struct Cli {
+pub struct CliArgs {
     #[command(subcommand)]
-    pub subcommand: Subcommands,
+    pub command: CliCommand,
 
-    /// Run as if pacquet was started in <path> instead of the current working directory.
+    /// Set working directory.
     #[arg(short = 'C', long = "dir", default_value = default_current_dir())]
-    pub current_dir: PathBuf,
+    pub dir: PathBuf,
 }
 
 #[derive(Subcommand, Debug)]
-pub enum Subcommands {
+pub enum CliCommand {
     /// Initialize a package.json
     Init,
     /// Add a package
-    Add(AddCommandArgs),
+    Add(AddArgs),
     /// Install packages
-    Install(InstallCommandArgs),
+    Install(InstallArgs),
     /// Runs a package's "test" script, if one was provided.
     Test,
     /// Runs a defined package script.
-    Run(RunCommandArgs),
+    Run(RunArgs),
     /// Runs an arbitrary command specified in the package's start property of its scripts object.
     Start,
     /// Managing the package store.
     #[clap(subcommand)]
-    Store(StoreSubcommands),
+    Store(StoreCommand),
 }

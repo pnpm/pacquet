@@ -1,7 +1,7 @@
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-pub struct RunCommandArgs {
+pub struct RunArgs {
     /// A pre-defined package script.
     pub command: String,
 

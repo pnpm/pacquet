@@ -5,7 +5,7 @@ use pacquet_package_manager::Install;
 use pacquet_registry::{PackageTag, PackageVersion};
 
 #[derive(Parser, Debug)]
-pub struct AddCommandArgs {
+pub struct AddArgs {
     /// Name of the package
     pub package: String,
     /// Install the specified packages as regular dependencies.
@@ -30,7 +30,7 @@ pub struct AddCommandArgs {
     pub virtual_store_dir: String,
 }
 
-impl AddCommandArgs {
+impl AddArgs {
     pub fn dependency_group(&self) -> DependencyGroup {
         if self.save_dev {
             DependencyGroup::Dev
@@ -45,7 +45,7 @@ impl AddCommandArgs {
 }
 
 impl PackageManager {
-    pub async fn add(&mut self, args: &AddCommandArgs) -> Result<(), PackageManagerError> {
+    pub async fn add(&mut self, args: &AddArgs) -> Result<(), PackageManagerError> {
         let PackageManager { config, package_json, lockfile, http_client, tarball_cache } = self;
 
         let latest_version = PackageVersion::fetch_from_registry(
@@ -112,7 +112,7 @@ mod tests {
         // It should create a package_json if not exist
         assert!(package_json.exists());
 
-        let args = AddCommandArgs {
+        let args = AddArgs {
             package: "is-even".to_string(),
             save_prod: false,
             save_dev: false,
@@ -150,7 +150,7 @@ mod tests {
         let package_json = dir.path().join("package.json");
         let mut manager = PackageManager::new(&package_json, Npmrc::current().leak()).unwrap();
 
-        let args = AddCommandArgs {
+        let args = AddArgs {
             package: "is-odd".to_string(),
             save_prod: false,
             save_dev: false,
@@ -181,7 +181,7 @@ mod tests {
         let package_json = dir.path().join("package.json");
         let mut manager = PackageManager::new(&package_json, Npmrc::current().leak()).unwrap();
 
-        let args = AddCommandArgs {
+        let args = AddArgs {
             package: "is-odd".to_string(),
             save_prod: false,
             save_dev: false,
@@ -205,7 +205,7 @@ mod tests {
         let package_json = dir.path().join("package.json");
         let mut manager = PackageManager::new(&package_json, Npmrc::current().leak()).unwrap();
 
-        let args = AddCommandArgs {
+        let args = AddArgs {
             package: "is-odd".to_string(),
             save_prod: false,
             save_dev: true,
@@ -229,7 +229,7 @@ mod tests {
         let package_json = dir.path().join("package.json");
         let mut manager = PackageManager::new(&package_json, Npmrc::current().leak()).unwrap();
 
-        let args = AddCommandArgs {
+        let args = AddArgs {
             package: "is-odd".to_string(),
             save_prod: false,
             save_dev: false,
