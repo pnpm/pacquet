@@ -45,13 +45,6 @@ impl AddCommandArgs {
 }
 
 impl PackageManager {
-    /// Here is a brief overview of what this package does.
-    /// 1. Get a dependency
-    /// 2. Save the dependency to node_modules/.pacquet/pkg@version/node_modules/pkg
-    /// 3. Create a symlink to node_modules/pkg
-    /// 4. Download all dependencies to node_modules/.pacquet
-    /// 5. Symlink all dependencies to node_modules/.pacquet/pkg@version/node_modules
-    /// 6. Update package.json
     pub async fn add(&mut self, args: &AddCommandArgs) -> Result<(), PackageManagerError> {
         let PackageManager { config, package_json, lockfile, http_client, tarball_cache } = self;
 

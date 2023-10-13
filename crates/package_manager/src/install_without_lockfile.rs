@@ -10,6 +10,14 @@ use pipe_trait::Pipe;
 use reqwest::Client;
 
 /// This subroutine install packages from a `package.json` without reading or writing a lockfile.
+///
+/// **Brief overview for each package:**
+/// * Fetch a tarball of the package.
+/// * Extract the tarball into the store directory.
+/// * Import (by reflink, hardlink, or copy) the files from the store dir to `node_modules/.pacquet/{name}@{version}/node_modules/{name}/`.
+/// * Create dependency symbolic links in `node_modules/.pacquet/{name}@{version}/node_modules/`.
+/// * Create a symbolic link at `node_modules/{name}`.
+/// * Repeat the process for the dependencies of the package.
 #[must_use]
 pub struct InstallWithoutLockfile<'a, DependencyGroupList> {
     /// Shared cache that store downloaded tarballs.
