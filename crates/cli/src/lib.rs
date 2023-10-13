@@ -1,8 +1,8 @@
-mod commands;
+mod cli_command;
 mod package_manager;
 
 use clap::Parser;
-use commands::{store::StoreCommand, CliArgs, CliCommand};
+use cli_command::{store::StoreCommand, CliArgs, CliCommand};
 use package_manager::PackageManager;
 use pacquet_diagnostics::{
     enable_tracing_by_env,

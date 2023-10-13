@@ -1,6 +1,7 @@
 ---
-source: crates/cli/src/commands/add.rs
-expression: get_all_folders(&dir.path().to_path_buf())
+source: crates/cli/src/cli_command/add.rs
+assertion_line: 164
+expression: get_all_folders(dir.path())
 ---
 [
     "node_modules",
