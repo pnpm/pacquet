@@ -99,15 +99,13 @@ impl PackageManager {
 
 #[cfg(test)]
 mod tests {
-    use std::{env, fs};
-
+    use super::*;
     use pacquet_npmrc::Npmrc;
     use pacquet_package_json::{DependencyGroup, PackageJson};
     use pacquet_testing_utils::fs::{get_all_folders, get_filenames_in_folder};
     use pretty_assertions::assert_eq;
+    use std::{env, fs};
     use tempfile::tempdir;
-
-    use super::*;
 
     #[tokio::test]
     pub async fn should_install_all_dependencies() {
