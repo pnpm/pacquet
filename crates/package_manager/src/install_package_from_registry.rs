@@ -156,14 +156,13 @@ mod tests {
                 .pipe(Box::new)
                 .pipe(Box::leak);
         let http_client = reqwest::Client::new();
-        let node_modules_dir = tempdir().unwrap();
         let package = InstallPackageFromRegistry {
             tarball_cache: &Default::default(),
             config,
             http_client: &http_client,
             name: "fast-querystring",
             version_range: "1.0.0",
-            node_modules_dir: node_modules_dir.path(),
+            node_modules_dir: modules_dir.path(),
         }
         .run::<Version>()
         .await
@@ -184,7 +183,7 @@ mod tests {
 
         // Make sure the symlink is resolving to the correct path
         assert_eq!(
-            fs::read_link(node_modules_dir.path().join(&package.name)).unwrap(),
+            fs::read_link(modules_dir.path().join(&package.name)).unwrap(),
             virtual_store_path
         );
     }
