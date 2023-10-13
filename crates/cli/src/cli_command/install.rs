@@ -71,7 +71,7 @@ impl PackageManager {
 
 #[cfg(test)]
 mod tests {
-    use crate::cli_command::install::CliInstallDependencyOptions;
+    use super::*;
     use pacquet_package_json::DependencyGroup;
     use pretty_assertions::assert_eq;
 
