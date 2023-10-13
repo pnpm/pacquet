@@ -71,25 +71,9 @@ impl PackageManager {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
-    use std::io::Result;
-
-    use crate::commands::install::{CliDependencyOptions, InstallCommandArgs};
-    use crate::fs::get_all_folders;
-    use crate::package_manager::PackageManager;
-    use pacquet_npmrc::Npmrc;
-    use pacquet_package_json::{DependencyGroup, PackageJson};
+    use crate::commands::install::CliDependencyOptions;
+    use pacquet_package_json::DependencyGroup;
     use pretty_assertions::assert_eq;
-    use tempfile::tempdir;
-
-    // Helper function to check if a path is a symlink or junction
-    fn is_symlink_or_junction(path: std::path::PathBuf) -> Result<bool> {
-        #[cfg(windows)]
-        return junction::exists(&path);
-
-        #[cfg(not(windows))]
-        return Ok(path.is_symlink());
-    }
 
     #[test]
     fn install_args_to_dependency_groups() {
@@ -143,49 +127,5 @@ mod tests {
             create_list(CliDependencyOptions { prod: true, dev: true, no_optional: true }),
             [Default, Dev],
         );
-    }
-
-    #[tokio::test]
-    pub async fn should_install_dependencies() {
-        let dir = tempdir().unwrap();
-        let current_directory = env::current_dir().unwrap();
-        env::set_current_dir(dir.path()).unwrap();
-
-        let package_json_path = dir.path().join("package.json");
-        let mut package_json = PackageJson::create_if_needed(package_json_path.clone()).unwrap();
-
-        package_json.add_dependency("is-odd", "3.0.1", DependencyGroup::Default).unwrap();
-        package_json
-            .add_dependency("fast-decode-uri-component", "1.0.1", DependencyGroup::Dev)
-            .unwrap();
-
-        package_json.save().unwrap();
-
-        let package_manager =
-            PackageManager::new(&package_json_path, Npmrc::current().leak()).unwrap();
-        let args = InstallCommandArgs {
-            dependency_options: CliDependencyOptions {
-                prod: false,
-                dev: false,
-                no_optional: false,
-            },
-            frozen_lockfile: false,
-        };
-        package_manager.install(&args).await.unwrap();
-
-        // Make sure the package is installed
-        assert!(is_symlink_or_junction(dir.path().join("node_modules/is-odd")).unwrap());
-        assert!(dir.path().join("node_modules/.pacquet/is-odd@3.0.1").exists());
-        // Make sure it installs direct dependencies
-        assert!(!dir.path().join("node_modules/is-number").exists());
-        assert!(dir.path().join("node_modules/.pacquet/is-number@6.0.0").exists());
-        // Make sure we install dev-dependencies as well
-        assert!(is_symlink_or_junction(dir.path().join("node_modules/fast-decode-uri-component"))
-            .unwrap());
-        assert!(dir.path().join("node_modules/.pacquet/fast-decode-uri-component@1.0.1").is_dir());
-
-        insta::assert_debug_snapshot!(get_all_folders(dir.path()));
-
-        env::set_current_dir(&current_directory).unwrap();
     }
 }

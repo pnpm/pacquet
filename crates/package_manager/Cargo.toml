@@ -31,6 +31,8 @@ miette          = { workspace = true }
 
 [dev-dependencies]
 node-semver       = { workspace = true }
+insta             = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile          = { workspace = true }
 tokio             = { workspace = true }
+walkdir           = { workspace = true }
