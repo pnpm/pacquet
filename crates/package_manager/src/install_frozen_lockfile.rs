@@ -7,6 +7,14 @@ use reqwest::Client;
 use std::collections::HashMap;
 
 /// This subroutine installs dependencies from a frozen lockfile.
+///
+/// **Brief overview:**
+/// * Iterate over each package in [`Self::packages`].
+/// * Fetch a tarball of each package.
+/// * Extract each tarball into the store directory.
+/// * Import (by reflink, hardlink, or copy) the files from the store dir to each `node_modules/.pacquet/{name}@{version}/node_modules/{name}/`.
+/// * Create dependency symbolic links in each `node_modules/.pacquet/{name}@{version}/node_modules/`.
+/// * Create a symbolic link at each `node_modules/{name}`.
 #[must_use]
 pub struct InstallFrozenLockfile<'a, DependencyGroupList>
 where
