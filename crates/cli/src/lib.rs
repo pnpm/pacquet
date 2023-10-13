@@ -1,11 +1,9 @@
 mod commands;
 mod package_manager;
 
-use crate::package_manager::PackageManager;
-
-use crate::commands::store::StoreSubcommands;
-use crate::commands::{Cli, Subcommands};
 use clap::Parser;
+use commands::{store::StoreSubcommands, Cli, Subcommands};
+use package_manager::PackageManager;
 use pacquet_diagnostics::{
     enable_tracing_by_env,
     miette::{set_panic_hook, IntoDiagnostic, Result, WrapErr},
