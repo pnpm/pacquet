@@ -92,19 +92,20 @@ impl PackageManager {
 
     /// Jobs of the `install` command.
     pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
+        let PackageManager { config, http_client, tarball_cache, lockfile, package_json } = self;
         let InstallCommandArgs { dependency_options, frozen_lockfile } = args;
         tracing::info!(target: "pacquet::install", "Start all");
 
-        match (self.config.lockfile, frozen_lockfile, &self.lockfile) {
+        match (config.lockfile, frozen_lockfile, lockfile) {
             (false, _, _) => {
-                self.package_json
+                package_json
                     .dependencies(dependency_options.dependency_groups())
                     .map(|(name, version_range)| async move {
                         let dependency = InstallPackageFromRegistry {
-                            tarball_cache: &self.tarball_cache,
-                            http_client: &self.http_client,
-                            config: self.config,
-                            node_modules_dir: &self.config.modules_dir,
+                            tarball_cache,
+                            http_client,
+                            config,
+                            node_modules_dir: &config.modules_dir,
                             name,
                             version_range,
                         }
@@ -123,7 +124,6 @@ impl PackageManager {
                 let Lockfile { lockfile_version, project_snapshot, packages, .. } = lockfile;
                 assert_eq!(lockfile_version.major, 6); // compatibility check already happens at serde, but this still helps preventing programmer mistakes.
 
-                let PackageManager { config, http_client, tarball_cache, .. } = self;
                 InstallFrozenLockfile {
                     tarball_cache,
                     http_client,
