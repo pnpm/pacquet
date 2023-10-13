@@ -98,11 +98,9 @@ async fn run(cli: CliArgs, config: &'static Npmrc) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, io::Write};
-
-    use tempfile::tempdir;
-
     use super::*;
+    use std::{fs, io::Write};
+    use tempfile::tempdir;
 
     #[tokio::test]
     async fn init_command_should_create_package_json() {
