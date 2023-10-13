@@ -86,18 +86,9 @@ mod tests {
     use super::*;
     use pacquet_npmrc::Npmrc;
     use pacquet_package_json::{DependencyGroup, PackageJson};
-    use pacquet_testing_utils::fs::get_all_folders;
-    use std::{env, io};
+    use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
+    use std::env;
     use tempfile::tempdir;
-
-    // Helper function to check if a path is a symlink or junction
-    fn is_symlink_or_junction(path: std::path::PathBuf) -> io::Result<bool> {
-        #[cfg(windows)]
-        return junction::exists(&path);
-
-        #[cfg(not(windows))]
-        return Ok(path.is_symlink());
-    }
 
     #[tokio::test]
     pub async fn should_install_dependencies() {
@@ -140,14 +131,14 @@ mod tests {
         .await;
 
         // Make sure the package is installed
-        assert!(is_symlink_or_junction(project_root.join("node_modules/is-odd")).unwrap());
+        assert!(is_symlink_or_junction(&project_root.join("node_modules/is-odd")).unwrap());
         assert!(project_root.join("node_modules/.pacquet/is-odd@3.0.1").exists());
         // Make sure it installs direct dependencies
         assert!(!project_root.join("node_modules/is-number").exists());
         assert!(project_root.join("node_modules/.pacquet/is-number@6.0.0").exists());
         // Make sure we install dev-dependencies as well
         assert!(is_symlink_or_junction(
-            project_root.join("node_modules/fast-decode-uri-component")
+            &project_root.join("node_modules/fast-decode-uri-component")
         )
         .unwrap());
         assert!(project_root

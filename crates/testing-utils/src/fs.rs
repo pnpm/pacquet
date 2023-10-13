@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{io, path::Path};
 
 pub fn get_filenames_in_folder(path: &Path) -> Vec<String> {
     let mut files = std::fs::read_dir(path)
@@ -33,4 +33,13 @@ pub fn get_all_folders(root: &std::path::Path) -> Vec<String> {
     }
     files.sort();
     files
+}
+
+// Helper function to check if a path is a symlink or junction
+pub fn is_symlink_or_junction(path: &Path) -> io::Result<bool> {
+    #[cfg(windows)]
+    return junction::exists(&path);
+
+    #[cfg(not(windows))]
+    return Ok(path.is_symlink());
 }

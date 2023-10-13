@@ -12,3 +12,6 @@ repository.workspace  = true
 
 [dependencies]
 walkdir = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+junction = { workspace = true }
