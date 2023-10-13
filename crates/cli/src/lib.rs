@@ -1,5 +1,4 @@
 mod commands;
-mod fs;
 mod package_manager;
 
 use crate::package_manager::PackageManager;

@@ -1276,6 +1276,7 @@ dependencies = [
  "pacquet_package_manager",
  "pacquet_registry",
  "pacquet_tarball",
+ "pacquet_testing_utils",
  "pipe-trait",
  "pretty_assertions",
  "rayon",
@@ -1401,6 +1402,7 @@ dependencies = [
  "pacquet_package_json",
  "pacquet_registry",
  "pacquet_tarball",
+ "pacquet_testing_utils",
  "pipe-trait",
  "pretty_assertions",
  "rayon",
@@ -1443,6 +1445,13 @@ dependencies = [
  "tempfile",
  "tokio",
  "zune-inflate",
+]
+
+[[package]]
+name = "pacquet_testing_utils"
+version = "0.0.0"
+dependencies = [
+ "walkdir",
 ]
 
 [[package]]

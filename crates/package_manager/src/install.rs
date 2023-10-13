@@ -86,6 +86,7 @@ mod tests {
     use super::*;
     use pacquet_npmrc::Npmrc;
     use pacquet_package_json::{DependencyGroup, PackageJson};
+    use pacquet_testing_utils::fs::get_all_folders;
     use std::{env, io};
     use tempfile::tempdir;
 
@@ -96,31 +97,6 @@ mod tests {
 
         #[cfg(not(windows))]
         return Ok(path.is_symlink());
-    }
-
-    pub fn get_all_folders(root: &std::path::Path) -> Vec<String> {
-        let mut files = Vec::new();
-        for entry in walkdir::WalkDir::new(root) {
-            let entry = entry.unwrap();
-            let entry_path = entry.path();
-            if entry.file_type().is_dir() || entry.file_type().is_symlink() {
-                // We need this mutation to ensure that both Unix and Windows paths resolves the same.
-                // TODO: Find a better way to do this?
-                let simple_path = entry_path
-                    .strip_prefix(root)
-                    .unwrap()
-                    .components()
-                    .map(|c| c.as_os_str().to_str().expect("invalid UTF-8"))
-                    .collect::<Vec<_>>()
-                    .join("/");
-
-                if !simple_path.is_empty() {
-                    files.push(simple_path);
-                }
-            }
-        }
-        files.sort();
-        files
     }
 
     #[tokio::test]

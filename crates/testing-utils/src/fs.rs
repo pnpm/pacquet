@@ -1,7 +1,5 @@
-#[cfg(test)]
 use std::path::Path;
 
-#[cfg(test)]
 pub fn get_filenames_in_folder(path: &Path) -> Vec<String> {
     let mut files = std::fs::read_dir(path)
         .unwrap()
@@ -12,7 +10,6 @@ pub fn get_filenames_in_folder(path: &Path) -> Vec<String> {
     files
 }
 
-#[cfg(test)]
 pub fn get_all_folders(root: &std::path::Path) -> Vec<String> {
     let mut files = Vec::new();
     for entry in walkdir::WalkDir::new(root) {

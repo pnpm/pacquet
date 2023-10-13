@@ -99,12 +99,11 @@ impl PackageManager {
 
 #[cfg(test)]
 mod tests {
-    use crate::fs::get_all_folders;
     use std::{env, fs};
 
-    use crate::fs::get_filenames_in_folder;
     use pacquet_npmrc::Npmrc;
     use pacquet_package_json::{DependencyGroup, PackageJson};
+    use pacquet_testing_utils::fs::{get_all_folders, get_filenames_in_folder};
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
 

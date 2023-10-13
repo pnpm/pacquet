@@ -1,0 +1,14 @@
+[package]
+name                  = "pacquet_testing_utils"
+version               = "0.0.0"
+description           = "Common utilities to test pacquet code"
+publish               = false
+authors.workspace     = true
+edition.workspace     = true
+homepage.workspace    = true
+keywords.workspace    = true
+license.workspace     = true
+repository.workspace  = true
+
+[dependencies]
+walkdir = { workspace = true }

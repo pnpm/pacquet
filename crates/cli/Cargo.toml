@@ -39,6 +39,8 @@ serde_json      = { workspace = true }
 tokio           = { workspace = true }
 
 [dev-dependencies]
+pacquet_testing_utils = { workspace = true }
+
 insta             = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile          = { workspace = true }

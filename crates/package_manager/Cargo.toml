@@ -30,6 +30,8 @@ tracing         = { workspace = true }
 miette          = { workspace = true }
 
 [dev-dependencies]
+pacquet_testing_utils = { workspace = true }
+
 node-semver       = { workspace = true }
 insta             = { workspace = true }
 pretty_assertions = { workspace = true }
