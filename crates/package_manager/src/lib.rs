@@ -2,6 +2,7 @@ mod create_cas_files;
 mod create_symlink_layout;
 mod create_virtual_dir_by_snapshot;
 mod create_virtual_store;
+mod install_frozen_lockfile;
 mod install_package_by_snapshot;
 mod install_package_from_registry;
 mod link_file;
@@ -12,6 +13,7 @@ pub use create_cas_files::{create_cas_files, CreateCasFilesError};
 pub use create_symlink_layout::create_symlink_layout;
 pub use create_virtual_dir_by_snapshot::{CreateVirtualDirBySnapshot, CreateVirtualDirError};
 pub use create_virtual_store::CreateVirtualStore;
+pub use install_frozen_lockfile::InstallFrozenLockfile;
 pub use install_package_by_snapshot::{InstallPackageBySnapshot, InstallPackageBySnapshotError};
 pub use install_package_from_registry::{
     InstallPackageFromRegistry, InstallPackageFromRegistryError,

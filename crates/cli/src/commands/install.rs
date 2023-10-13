@@ -6,9 +6,7 @@ use node_semver::Version;
 use pacquet_diagnostics::tracing;
 use pacquet_lockfile::Lockfile;
 use pacquet_package_json::DependencyGroup;
-use pacquet_package_manager::{
-    CreateVirtualStore, InstallPackageFromRegistry, SymlinkDirectDependencies,
-};
+use pacquet_package_manager::{InstallFrozenLockfile, InstallPackageFromRegistry};
 use pacquet_registry::PackageVersion;
 use pipe_trait::Pipe;
 
@@ -125,29 +123,17 @@ impl PackageManager {
                 let Lockfile { lockfile_version, project_snapshot, packages, .. } = lockfile;
                 assert_eq!(lockfile_version.major, 6); // compatibility check already happens at serde, but this still helps preventing programmer mistakes.
 
-                // TODO: check if the lockfile is out-of-date
-
-                assert!(
-                    self.config.prefer_frozen_lockfile,
-                    "Non frozen lockfile is not yet supported",
-                );
-
-                CreateVirtualStore {
-                    tarball_cache: &self.tarball_cache,
-                    http_client: &self.http_client,
-                    config: self.config,
-                    packages: packages.as_ref(),
+                let PackageManager { config, http_client, tarball_cache, .. } = self;
+                InstallFrozenLockfile {
+                    tarball_cache,
+                    http_client,
+                    config,
                     project_snapshot,
+                    packages: packages.as_ref(),
+                    dependency_groups: args.dependency_options.dependency_groups(),
                 }
                 .run()
                 .await;
-
-                SymlinkDirectDependencies {
-                    config: self.config,
-                    project_snapshot: &lockfile.project_snapshot,
-                    dependency_groups: args.dependency_options.dependency_groups(),
-                }
-                .run();
             }
         }
 
