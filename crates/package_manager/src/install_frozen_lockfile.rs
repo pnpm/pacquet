@@ -6,16 +6,23 @@ use pacquet_tarball::Cache;
 use reqwest::Client;
 use std::collections::HashMap;
 
+/// This subroutine installs dependencies from a frozen lockfile.
 #[must_use]
 pub struct InstallFrozenLockfile<'a, DependencyGroupList>
 where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
+    /// Shared cache that store downloaded tarballs.
     pub tarball_cache: &'a Cache,
+    /// HTTP client to make HTTP requests.
     pub http_client: &'a Client,
+    /// Configuration read from `.npmrc`.
     pub config: &'static Npmrc,
+    /// The part of the lockfile that snapshots `package.json`.
     pub project_snapshot: &'a RootProjectSnapshot,
+    /// The `packages` object from the lockfile.
     pub packages: Option<&'a HashMap<DependencyPath, PackageSnapshot>>,
+    /// List of [`DependencyGroup`]s.
     pub dependency_groups: DependencyGroupList,
 }
 
@@ -23,6 +30,7 @@ impl<'a, DependencyGroupList> InstallFrozenLockfile<'a, DependencyGroupList>
 where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
+    /// Execute the subroutine.
     pub async fn run(self) {
         let InstallFrozenLockfile {
             tarball_cache,
