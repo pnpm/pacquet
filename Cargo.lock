@@ -1392,6 +1392,7 @@ dependencies = [
  "derive_more",
  "futures-util",
  "insta",
+ "junction",
  "miette",
  "node-semver",
  "pacquet_fs",
