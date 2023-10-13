@@ -1,9 +1,7 @@
 use crate::package_manager::{PackageManager, PackageManagerError};
 use clap::Parser;
-use pacquet_diagnostics::tracing;
-use pacquet_lockfile::Lockfile;
 use pacquet_package_json::DependencyGroup;
-use pacquet_package_manager::{InstallFrozenLockfile, InstallWithoutLockfile};
+use pacquet_package_manager::Install;
 
 #[derive(Debug, Parser)]
 pub struct CliDependencyOptions {
@@ -54,41 +52,19 @@ impl PackageManager {
     pub async fn install(&self, args: &InstallCommandArgs) -> Result<(), PackageManagerError> {
         let PackageManager { config, http_client, tarball_cache, lockfile, package_json } = self;
         let InstallCommandArgs { dependency_options, frozen_lockfile } = args;
-        tracing::info!(target: "pacquet::install", "Start all");
 
-        match (config.lockfile, frozen_lockfile, lockfile) {
-            (false, _, _) => {
-                InstallWithoutLockfile {
-                    tarball_cache,
-                    http_client,
-                    config,
-                    package_json,
-                    dependency_groups: dependency_options.dependency_groups(),
-                }
-                .run()
-                .await;
-            }
-            (true, false, Some(_)) | (true, false, None) | (true, true, None) => {
-                unimplemented!();
-            }
-            (true, true, Some(lockfile)) => {
-                let Lockfile { lockfile_version, project_snapshot, packages, .. } = lockfile;
-                assert_eq!(lockfile_version.major, 6); // compatibility check already happens at serde, but this still helps preventing programmer mistakes.
-
-                InstallFrozenLockfile {
-                    tarball_cache,
-                    http_client,
-                    config,
-                    project_snapshot,
-                    packages: packages.as_ref(),
-                    dependency_groups: dependency_options.dependency_groups(),
-                }
-                .run()
-                .await;
-            }
+        Install {
+            tarball_cache,
+            http_client,
+            config,
+            package_json,
+            lockfile: lockfile.as_ref(),
+            dependency_groups: dependency_options.dependency_groups(),
+            frozen_lockfile: *frozen_lockfile,
         }
+        .run()
+        .await;
 
-        tracing::info!(target: "pacquet::install", "Complete all");
         Ok(())
     }
 }
