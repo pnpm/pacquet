@@ -1,8 +1,8 @@
-mod cli_command;
+mod cli_args;
 mod package_manager;
 
 use clap::Parser;
-use cli_command::{store::StoreCommand, CliArgs, CliCommand};
+use cli_args::{store::StoreCommand, CliArgs, CliCommand};
 use miette::{set_panic_hook, Context, IntoDiagnostic};
 use package_manager::PackageManager;
 use pacquet_diagnostics::enable_tracing_by_env;
