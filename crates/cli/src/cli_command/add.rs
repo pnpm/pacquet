@@ -23,7 +23,7 @@ pub struct AddDependencyOptions {
 impl AddDependencyOptions {
     /// Convert the `--save-*` flags to an iterator of [`DependencyGroup`]
     /// which selects which target group to save to.
-    pub fn dependency_groups(&self) -> impl Iterator<Item = DependencyGroup> {
+    fn dependency_groups(&self) -> impl Iterator<Item = DependencyGroup> {
         let &AddDependencyOptions { save_prod, save_dev, save_optional, save_peer } = self;
         let has_prod = save_prod || (!save_dev && !save_optional && !save_peer); // no --save-* flags implies --save-prod
         let has_dev = save_dev || (!save_prod && !save_optional && save_peer); // --save-peer with nothing else implies --save-dev
