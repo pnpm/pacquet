@@ -66,7 +66,7 @@ pub fn should_symlink_correctly() {
     eprintln!("Ensure virtual store dir ({virtual_store_dir:?}) exists");
     assert!(virtual_store_dir.exists());
 
-    // Make sure the symlinks are correct
+    eprintln!("Make sure the symlinks are correct");
     assert_eq!(
         fs::read_link(virtual_store_dir.join("is-odd@3.0.1/node_modules/is-number")).unwrap(),
         fs::canonicalize(virtual_store_dir.join("is-number@6.0.0/node_modules/is-number")).unwrap(),
