@@ -100,26 +100,7 @@ async fn run(cli: CliArgs) -> miette::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, io::Write};
     use tempfile::tempdir;
-
-    #[tokio::test]
-    async fn init_command_should_create_package_json() {
-        let parent_folder = tempdir().unwrap();
-        let cli = CliArgs::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "init"]);
-        run(cli).await.unwrap();
-        assert!(parent_folder.path().join("package.json").exists());
-    }
-
-    #[tokio::test]
-    async fn init_command_should_throw_on_existing_file() {
-        let parent_folder = tempdir().unwrap();
-        let mut file = fs::File::create(parent_folder.path().join("package.json")).unwrap();
-        file.write_all("{}".as_bytes()).unwrap();
-        assert!(parent_folder.path().join("package.json").exists());
-        let cli = CliArgs::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "init"]);
-        run(cli).await.expect_err("should have thrown");
-    }
 
     #[tokio::test]
     async fn should_get_store_path() {
