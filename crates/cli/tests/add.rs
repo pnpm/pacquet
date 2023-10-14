@@ -88,3 +88,13 @@ fn should_add_dev_dependency() {
     eprintln!("Ensure is-odd is added to package.json#devDependencies");
     assert!(file.dependencies([DependencyGroup::Dev]).any(|(k, _)| k == "is-odd"));
 }
+
+#[test]
+fn should_add_peer_dependency() {
+    let dir = exec_pacquet_in_temp_cwd(["add", "is-odd", "--save-peer"]);
+    let file = PackageJson::from_path(dir.path().join("package.json")).unwrap();
+    eprintln!("Ensure is-odd is added to package.json#devDependencies");
+    assert!(file.dependencies([DependencyGroup::Dev]).any(|(k, _)| k == "is-odd"));
+    eprintln!("Ensure is-odd is added to package.json#peerDependencies");
+    assert!(file.dependencies([DependencyGroup::Peer]).any(|(k, _)| k == "is-odd"));
+}

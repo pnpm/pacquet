@@ -76,11 +76,8 @@ impl PackageManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pacquet_npmrc::Npmrc;
-    use pacquet_package_json::{DependencyGroup, PackageJson};
+    use pacquet_package_json::DependencyGroup;
     use pretty_assertions::assert_eq;
-    use std::env;
-    use tempfile::tempdir;
 
     #[test]
     fn dependency_options_to_dependency_groups() {
@@ -174,32 +171,5 @@ mod tests {
             }),
             [Optional, Peer]
         );
-    }
-
-    #[tokio::test]
-    async fn should_add_peer_dependency() {
-        let dir = tempdir().unwrap();
-        let virtual_store_dir = dir.path().join("node_modules/.pacquet");
-        let current_directory = env::current_dir().unwrap();
-        env::set_current_dir(&dir).unwrap();
-        let package_json = dir.path().join("package.json");
-        let mut manager = PackageManager::new(&package_json, Npmrc::current().leak()).unwrap();
-
-        let args = AddArgs {
-            package: "is-odd".to_string(),
-            dependency_options: AddDependencyOptions {
-                save_prod: false,
-                save_dev: false,
-                save_peer: true,
-                save_optional: false,
-            },
-            save_exact: false,
-            virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
-        };
-        manager.add(&args).await.unwrap();
-        let file = PackageJson::from_path(dir.path().join("package.json")).unwrap();
-        assert!(file.dependencies([DependencyGroup::Dev]).any(|(k, _)| k == "is-odd"));
-        assert!(file.dependencies([DependencyGroup::Peer]).any(|(k, _)| k == "is-odd"));
-        env::set_current_dir(&current_directory).unwrap();
     }
 }
