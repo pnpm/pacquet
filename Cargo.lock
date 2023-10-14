@@ -1306,6 +1306,7 @@ dependencies = [
  "pipe-trait",
  "pretty_assertions",
  "reqwest",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
