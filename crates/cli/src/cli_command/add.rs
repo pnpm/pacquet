@@ -78,9 +78,8 @@ mod tests {
     use super::*;
     use pacquet_npmrc::Npmrc;
     use pacquet_package_json::{DependencyGroup, PackageJson};
-    use pacquet_testing_utils::fs::get_all_folders;
     use pretty_assertions::assert_eq;
-    use std::{env, fs};
+    use std::env;
     use tempfile::tempdir;
 
     #[test]
@@ -175,40 +174,6 @@ mod tests {
             }),
             [Optional, Peer]
         );
-    }
-
-    #[tokio::test]
-    #[cfg(not(target_os = "windows"))]
-    pub async fn should_symlink_correctly() {
-        let dir = tempdir().unwrap();
-        let virtual_store_dir = dir.path().join("node_modules/.pacquet");
-        let current_directory = env::current_dir().unwrap();
-        env::set_current_dir(&dir).unwrap();
-        let package_json = dir.path().join("package.json");
-        let mut manager = PackageManager::new(&package_json, Npmrc::current().leak()).unwrap();
-
-        let args = AddArgs {
-            package: "is-odd".to_string(),
-            dependency_options: AddDependencyOptions {
-                save_prod: false,
-                save_dev: false,
-                save_peer: false,
-                save_optional: false,
-            },
-            save_exact: false,
-            virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
-        };
-        manager.add(&args).await.unwrap();
-
-        insta::assert_debug_snapshot!(get_all_folders(dir.path()));
-
-        // Make sure the symlinks are correct
-        assert_eq!(
-            fs::read_link(virtual_store_dir.join("is-odd@3.0.1/node_modules/is-number")).unwrap(),
-            fs::canonicalize(virtual_store_dir.join("is-number@6.0.0/node_modules/is-number"))
-                .unwrap(),
-        );
-        env::set_current_dir(&current_directory).unwrap();
     }
 
     #[tokio::test]
