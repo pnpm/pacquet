@@ -126,6 +126,10 @@ impl PackageJson {
         Ok(PackageJson { path, value })
     }
 
+    pub fn value(&self) -> &Value {
+        &self.value
+    }
+
     pub fn save(&self) -> Result<(), PackageJsonError> {
         let mut file = fs::File::create(&self.path)?;
         let contents = serde_json::to_string_pretty(&self.value)?;

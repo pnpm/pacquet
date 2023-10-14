@@ -77,5 +77,6 @@ pub fn should_symlink_correctly() {
 fn should_add_to_package_json() {
     let dir = exec_pacquet_in_temp_cwd(["add", "is-odd"]);
     let file = PackageJson::from_path(dir.path().join("package.json")).unwrap();
+    eprintln!("Ensure is-odd is added to package.json");
     assert!(file.dependencies([DependencyGroup::Default]).any(|(k, _)| k == "is-odd"));
 }
