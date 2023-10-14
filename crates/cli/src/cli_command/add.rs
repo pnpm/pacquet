@@ -21,16 +21,17 @@ pub struct AddDependencyOptions {
 }
 
 impl AddDependencyOptions {
-    pub fn dependency_group(&self) -> DependencyGroup {
-        if self.save_dev {
-            DependencyGroup::Dev
-        } else if self.save_optional {
-            DependencyGroup::Optional
-        } else if self.save_peer {
-            DependencyGroup::Peer
-        } else {
-            DependencyGroup::Default
-        }
+    pub fn dependency_groups(&self) -> impl Iterator<Item = DependencyGroup> {
+        let &AddDependencyOptions { save_prod, save_dev, save_optional, save_peer } = self;
+        let has_prod = save_prod || (!save_dev && !save_optional && !save_peer); // no --save-* flags implies --save-prod
+        let has_dev = save_dev || (!save_prod && !save_optional && save_peer); // --save-peer with nothing else implies --save-dev
+        let has_optional = save_optional;
+        let has_peer = save_peer;
+        std::iter::empty()
+            .chain(has_prod.then_some(DependencyGroup::Default))
+            .chain(has_dev.then_some(DependencyGroup::Dev))
+            .chain(has_optional.then_some(DependencyGroup::Optional))
+            .chain(has_peer.then_some(DependencyGroup::Peer))
     }
 }
 
@@ -65,17 +66,9 @@ impl PackageManager {
         .expect("resolve latest tag"); // TODO: properly propagate this error
 
         let version_range = latest_version.serialize(args.save_exact);
-        let dependency_group = args.dependency_options.dependency_group();
-
-        package_json
-            .add_dependency(&args.package, &version_range, dependency_group)
-            .map_err(PackageManagerError::PackageJson)?;
-
-        // Using --save-peer will add one or more packages to peerDependencies and
-        // install them as dev dependencies
-        if dependency_group == DependencyGroup::Peer {
+        for dependency_group in args.dependency_options.dependency_groups() {
             package_json
-                .add_dependency(&args.package, &version_range, DependencyGroup::Dev)
+                .add_dependency(&args.package, &version_range, dependency_group)
                 .map_err(PackageManagerError::PackageJson)?;
         }
 
@@ -85,7 +78,7 @@ impl PackageManager {
             config,
             package_json,
             lockfile: lockfile.as_ref(),
-            dependency_groups: [dependency_group],
+            dependency_groups: args.dependency_options.dependency_groups(),
             frozen_lockfile: false,
         }
         .run()
