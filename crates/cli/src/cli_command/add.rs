@@ -273,7 +273,7 @@ mod tests {
     }
 
     #[tokio::test]
-    pub async fn should_add_to_package_json() {
+    async fn should_add_to_package_json() {
         let dir = tempdir().unwrap();
         let virtual_store_dir = dir.path().join("node_modules/.pacquet");
         let current_directory = env::current_dir().unwrap();
@@ -299,7 +299,7 @@ mod tests {
     }
 
     #[tokio::test]
-    pub async fn should_add_dev_dependency() {
+    async fn should_add_dev_dependency() {
         let dir = tempdir().unwrap();
         let virtual_store_dir = dir.path().join("node_modules/.pacquet");
         let current_directory = env::current_dir().unwrap();
@@ -325,7 +325,7 @@ mod tests {
     }
 
     #[tokio::test]
-    pub async fn should_add_peer_dependency() {
+    async fn should_add_peer_dependency() {
         let dir = tempdir().unwrap();
         let virtual_store_dir = dir.path().join("node_modules/.pacquet");
         let current_directory = env::current_dir().unwrap();

@@ -91,7 +91,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[tokio::test]
-    pub async fn should_install_dependencies() {
+    async fn should_install_dependencies() {
         let dir = tempdir().unwrap();
         let store_dir = dir.path().join("pacquet-store");
         let project_root = dir.path().join("project");
