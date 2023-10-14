@@ -8,13 +8,6 @@ use pipe_trait::Pipe;
 use reqwest::Client;
 use std::borrow::Cow;
 
-/// Error type of [`InstallPackageBySnapshot`].
-#[derive(Debug, Display, Error, Diagnostic)]
-pub enum InstallPackageBySnapshotError {
-    DownloadTarball(TarballError),
-    CreateVirtualDir(CreateVirtualDirError),
-}
-
 /// This subroutine downloads a package tarball, extracts it, installs it to a virtual dir,
 /// then creates the symlink layout for the package.
 #[must_use]
@@ -29,6 +22,13 @@ pub struct InstallPackageBySnapshot<'a> {
     pub dependency_path: &'a DependencyPath,
     /// Value of the package map from the lockfile.
     pub package_snapshot: &'a PackageSnapshot,
+}
+
+/// Error type of [`InstallPackageBySnapshot`].
+#[derive(Debug, Display, Error, Diagnostic)]
+pub enum InstallPackageBySnapshotError {
+    DownloadTarball(TarballError),
+    CreateVirtualDir(CreateVirtualDirError),
 }
 
 impl<'a> InstallPackageBySnapshot<'a> {

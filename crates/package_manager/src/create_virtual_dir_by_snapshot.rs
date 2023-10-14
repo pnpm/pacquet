@@ -10,21 +10,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Error type of [`CreateVirtualDirBySnapshot`].
-#[derive(Debug, Display, Error, Diagnostic)]
-pub enum CreateVirtualDirError {
-    #[display(fmt = "Failed to recursively create node_modules directory at {dir:?}: {error}")]
-    #[diagnostic(code(pacquet_package_manager::create_node_modules_dir))]
-    CreateNodeModulesDir {
-        dir: PathBuf,
-        #[error(source)]
-        error: io::Error,
-    },
-
-    #[diagnostic(transparent)]
-    CreateCasFiles(#[error(source)] CreateCasFilesError),
-}
-
 /// This subroutine installs the files from [`cas_paths`](Self::cas_paths) then creates the symlink layout.
 #[must_use]
 pub struct CreateVirtualDirBySnapshot<'a> {
@@ -38,6 +23,21 @@ pub struct CreateVirtualDirBySnapshot<'a> {
     pub dependency_path: &'a DependencyPath,
     /// Value of the package map from the lockfile.
     pub package_snapshot: &'a PackageSnapshot,
+}
+
+/// Error type of [`CreateVirtualDirBySnapshot`].
+#[derive(Debug, Display, Error, Diagnostic)]
+pub enum CreateVirtualDirError {
+    #[display(fmt = "Failed to recursively create node_modules directory at {dir:?}: {error}")]
+    #[diagnostic(code(pacquet_package_manager::create_node_modules_dir))]
+    CreateNodeModulesDir {
+        dir: PathBuf,
+        #[error(source)]
+        error: io::Error,
+    },
+
+    #[diagnostic(transparent)]
+    CreateCasFiles(#[error(source)] CreateCasFilesError),
 }
 
 impl<'a> CreateVirtualDirBySnapshot<'a> {

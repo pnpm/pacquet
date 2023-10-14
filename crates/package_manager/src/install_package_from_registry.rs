@@ -7,15 +7,6 @@ use pacquet_tarball::{download_tarball_to_store, Cache, TarballError};
 use reqwest::Client;
 use std::{path::Path, str::FromStr};
 
-/// Error type of [`InstallPackageFromRegistry`].
-#[derive(Debug, Display, Error, Diagnostic)]
-pub enum InstallPackageFromRegistryError {
-    FetchFromRegistry(#[error(source)] RegistryError),
-    DownloadTarballToStore(#[error(source)] TarballError),
-    CreateCasFiles(#[error(source)] CreateCasFilesError),
-    SymlinkPackage(#[error(source)] SymlinkPackageError),
-}
-
 /// This subroutine executes the following and returns the package
 /// * Retrieves the package from the registry
 /// * Extracts the tarball to global store directory (~/Library/../pacquet)
@@ -38,6 +29,15 @@ pub struct InstallPackageFromRegistry<'a> {
     pub name: &'a str,
     /// Version range of the package to be installed.
     pub version_range: &'a str,
+}
+
+/// Error type of [`InstallPackageFromRegistry`].
+#[derive(Debug, Display, Error, Diagnostic)]
+pub enum InstallPackageFromRegistryError {
+    FetchFromRegistry(#[error(source)] RegistryError),
+    DownloadTarballToStore(#[error(source)] TarballError),
+    CreateCasFiles(#[error(source)] CreateCasFilesError),
+    SymlinkPackage(#[error(source)] SymlinkPackageError),
 }
 
 impl<'a> InstallPackageFromRegistry<'a> {

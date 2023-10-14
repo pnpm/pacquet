@@ -9,15 +9,6 @@ use pacquet_registry::{PackageTag, PackageVersion};
 use pacquet_tarball::Cache;
 use reqwest::Client;
 
-/// Error type of [`Add`].
-#[derive(Debug, Display, Error, Diagnostic)]
-pub enum AddError {
-    #[display(fmt = "Failed to add package to manifest: {_0}")]
-    AddDependencyToPackageJson(#[error(source)] PackageJsonError),
-    #[display(fmt = "Failed save the manifest file: {_0}")]
-    SavePackageJson(#[error(source)] PackageJsonError),
-}
-
 /// This subroutine does everything `pacquet add` is supposed to do.
 #[must_use]
 pub struct Add<'a, ListDependencyGroups, DependencyGroupList>
@@ -41,6 +32,15 @@ where
     pub package: &'a str,
     /// Whether `--save-exact` is provided.
     pub save_exact: bool,
+}
+
+/// Error type of [`Add`].
+#[derive(Debug, Display, Error, Diagnostic)]
+pub enum AddError {
+    #[display(fmt = "Failed to add package to manifest: {_0}")]
+    AddDependencyToPackageJson(#[error(source)] PackageJsonError),
+    #[display(fmt = "Failed save the manifest file: {_0}")]
+    SavePackageJson(#[error(source)] PackageJsonError),
 }
 
 impl<'a, ListDependencyGroups, DependencyGroupList>
