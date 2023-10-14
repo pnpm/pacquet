@@ -4,6 +4,7 @@ use pacquet_npmrc::Npmrc;
 use pacquet_package_json::{PackageJson, PackageJsonError};
 use pacquet_tarball::Cache;
 use pipe_trait::Pipe;
+use reqwest::Client;
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -23,7 +24,7 @@ pub struct State {
     pub config: &'static Npmrc,
     pub package_json: PackageJson,
     pub lockfile: Option<Lockfile>,
-    pub http_client: reqwest::Client,
+    pub http_client: Client,
     pub tarball_cache: Cache,
 }
 
@@ -40,7 +41,7 @@ impl State {
                 .map_err(InitStateError::LoadPackageJson)?,
             lockfile: call_load_lockfile(config.lockfile, Lockfile::load_from_current_dir)
                 .map_err(InitStateError::LoadLockfile)?,
-            http_client: reqwest::Client::new(),
+            http_client: Client::new(),
             tarball_cache: Cache::new(),
         })
     }
