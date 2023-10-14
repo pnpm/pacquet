@@ -7,12 +7,8 @@ use add::AddArgs;
 use clap::{Parser, Subcommand};
 use install::InstallArgs;
 use run::RunArgs;
-use std::{env, ffi::OsString, path::PathBuf};
+use std::path::PathBuf;
 use store::StoreCommand;
-
-fn default_current_dir() -> OsString {
-    env::current_dir().expect("failed to get current directory").into_os_string()
-}
 
 /// Experimental package manager for node.js written in rust.
 #[derive(Debug, Parser)]
@@ -25,7 +21,7 @@ pub struct CliArgs {
     pub command: CliCommand,
 
     /// Set working directory.
-    #[clap(short = 'C', long, default_value = default_current_dir())]
+    #[clap(short = 'C', long, default_value = ".")]
     pub dir: PathBuf,
 }
 
