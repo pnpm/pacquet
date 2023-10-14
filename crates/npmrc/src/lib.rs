@@ -170,6 +170,9 @@ impl Npmrc {
         HomeDir: FnOnce() -> Option<PathBuf>,
         Default: FnOnce() -> Npmrc,
     {
+        // TODO: this code makes no sense.
+        // TODO: it should have merged the settings.
+
         let path = match current_dir() {
             Ok(dir) => Some(dir.join(".npmrc")),
             _ => home_dir().map(|dir| dir.join(".npmrc")),
