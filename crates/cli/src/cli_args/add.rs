@@ -1,4 +1,4 @@
-use crate::package_manager::{PackageManager, PackageManagerError};
+use crate::state::State;
 use clap::Args;
 use miette::Context;
 use pacquet_npmrc::Npmrc;
@@ -60,12 +60,12 @@ impl AddArgs {
     /// Execute the subcommand.
     pub async fn run(&self, package_json_path: &Path) -> miette::Result<()> {
         let config = Npmrc::current().leak();
-        let mut package_manager = PackageManager::new(package_json_path, config)
-            .wrap_err("initializing the package manager")?;
+        let mut package_manager =
+            State::init(package_json_path, config).wrap_err("initializing the package manager")?;
 
         // TODO: if a package already exists in another dependency group, don't remove the existing entry.
 
-        let PackageManager { config, package_json, lockfile, http_client, tarball_cache } =
+        let State { config, package_json, lockfile, http_client, tarball_cache } =
             &mut package_manager;
 
         Add {
@@ -80,7 +80,6 @@ impl AddArgs {
         }
         .run()
         .await
-        .map_err(PackageManagerError::AddCommand)
         .wrap_err("adding a new package")
     }
 }

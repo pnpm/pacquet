@@ -2,7 +2,6 @@ use miette::Diagnostic;
 use pacquet_lockfile::{LoadLockfileError, Lockfile};
 use pacquet_npmrc::Npmrc;
 use pacquet_package_json::{PackageJson, PackageJsonError};
-use pacquet_package_manager::AddError;
 use pacquet_tarball::Cache;
 use pipe_trait::Pipe;
 use std::path::PathBuf;
@@ -10,7 +9,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
-pub enum PackageManagerError {
+pub enum InitStateError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     LoadPackageJson(PackageJsonError),
@@ -18,33 +17,29 @@ pub enum PackageManagerError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     LoadLockfile(LoadLockfileError),
-
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    AddCommand(AddError),
 }
 
-pub struct PackageManager {
+pub struct State {
     pub config: &'static Npmrc,
     pub package_json: PackageJson,
     pub lockfile: Option<Lockfile>,
     pub http_client: reqwest::Client,
-    pub(crate) tarball_cache: Cache,
+    pub tarball_cache: Cache,
 }
 
-impl PackageManager {
-    pub fn new<P: Into<PathBuf>>(
+impl State {
+    pub fn init<P: Into<PathBuf>>(
         package_json_path: P,
         config: &'static Npmrc,
-    ) -> Result<Self, PackageManagerError> {
-        Ok(PackageManager {
+    ) -> Result<Self, InitStateError> {
+        Ok(State {
             config,
             package_json: package_json_path
                 .into()
                 .pipe(PackageJson::create_if_needed)
-                .map_err(PackageManagerError::LoadPackageJson)?,
+                .map_err(InitStateError::LoadPackageJson)?,
             lockfile: call_load_lockfile(config.lockfile, Lockfile::load_from_current_dir)
-                .map_err(PackageManagerError::LoadLockfile)?,
+                .map_err(InitStateError::LoadLockfile)?,
             http_client: reqwest::Client::new(),
             tarball_cache: Cache::new(),
         })

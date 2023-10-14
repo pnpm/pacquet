@@ -1,5 +1,5 @@
 mod cli_args;
-mod package_manager;
+mod state;
 
 use clap::Parser;
 use cli_args::CliArgs;
