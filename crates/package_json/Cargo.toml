@@ -11,11 +11,11 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-pacquet_diagnostics = { workspace = true }
-
+miette     = { workspace = true }
 serde      = { workspace = true }
 serde_json = { workspace = true }
 strum      = { workspace = true }
+thiserror  = { workspace = true }
 
 [dev-dependencies]
 pipe-trait        = { workspace = true }

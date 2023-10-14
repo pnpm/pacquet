@@ -7,16 +7,14 @@ use std::{
 };
 
 use dashmap::DashMap;
-use pacquet_diagnostics::{
-    miette::{self, Diagnostic},
-    thiserror::{self, Error},
-    tracing::{self, instrument},
-};
+use miette::Diagnostic;
 use pipe_trait::Pipe;
 use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
+use thiserror::Error;
 use tokio::sync::{Notify, RwLock};
+use tracing::instrument;
 use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
 
 #[derive(Error, Debug, Diagnostic)]

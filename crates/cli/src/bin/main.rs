@@ -1,6 +1,4 @@
-use pacquet_diagnostics::Result;
-
 #[tokio::main(flavor = "multi_thread")]
-pub async fn main() -> Result<()> {
+pub async fn main() -> miette::Result<()> {
     pacquet_cli::main().await
 }

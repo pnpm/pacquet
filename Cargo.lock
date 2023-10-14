@@ -1371,13 +1371,14 @@ name = "pacquet_package_json"
 version = "0.0.1"
 dependencies = [
  "insta",
- "pacquet_diagnostics",
+ "miette",
  "pipe-trait",
  "pretty_assertions",
  "serde",
  "serde_json",
  "strum",
  "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -1413,6 +1414,7 @@ name = "pacquet_registry"
 version = "0.0.1"
 dependencies = [
  "derive_more",
+ "miette",
  "node-semver",
  "pacquet_diagnostics",
  "pipe-trait",
@@ -1421,6 +1423,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror",
  "tokio",
 ]
 
@@ -1429,6 +1432,7 @@ name = "pacquet_tarball"
 version = "0.0.1"
 dependencies = [
  "dashmap",
+ "miette",
  "pacquet_cafs",
  "pacquet_diagnostics",
  "pipe-trait",
@@ -1437,7 +1441,9 @@ dependencies = [
  "ssri",
  "tar",
  "tempfile",
+ "thiserror",
  "tokio",
+ "tracing",
  "zune-inflate",
 ]
 

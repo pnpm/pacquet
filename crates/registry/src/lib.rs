@@ -8,10 +8,8 @@ pub use package_distribution::PackageDistribution;
 pub use package_tag::PackageTag;
 pub use package_version::PackageVersion;
 
-use pacquet_diagnostics::{
-    miette::{self, Diagnostic},
-    thiserror::{self, Error},
-};
+use miette::Diagnostic;
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 #[error("failed to request {url}: {error}")]

@@ -20,6 +20,8 @@ pipe-trait  = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
 tokio       = { workspace = true }
+miette      = { workspace = true }
+thiserror   = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

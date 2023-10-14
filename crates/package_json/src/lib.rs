@@ -4,13 +4,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use pacquet_diagnostics::{
-    miette::{self, Diagnostic},
-    thiserror::{self, Error},
-};
+use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use strum::IntoStaticStr;
+use thiserror::Error;
 
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
