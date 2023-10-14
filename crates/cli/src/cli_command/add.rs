@@ -102,6 +102,100 @@ mod tests {
     use std::{env, fs};
     use tempfile::tempdir;
 
+    #[test]
+    fn dependency_options_to_dependency_groups() {
+        use DependencyGroup::{Default, Dev, Optional, Peer};
+        let create_list = |opts: AddDependencyOptions| opts.dependency_groups().collect::<Vec<_>>();
+
+        // no flags -> prod
+        assert_eq!(
+            create_list(AddDependencyOptions {
+                save_prod: false,
+                save_dev: false,
+                save_optional: false,
+                save_peer: false
+            }),
+            [Default]
+        );
+
+        // --save-prod -> prod
+        assert_eq!(
+            create_list(AddDependencyOptions {
+                save_prod: true,
+                save_dev: false,
+                save_optional: false,
+                save_peer: false
+            }),
+            [Default]
+        );
+
+        // --save-dev -> dev
+        assert_eq!(
+            create_list(AddDependencyOptions {
+                save_prod: false,
+                save_dev: true,
+                save_optional: false,
+                save_peer: false
+            }),
+            [Dev]
+        );
+
+        // --save-optional -> optional
+        assert_eq!(
+            create_list(AddDependencyOptions {
+                save_prod: false,
+                save_dev: false,
+                save_optional: true,
+                save_peer: false
+            }),
+            [Optional]
+        );
+
+        // --save-peer -> dev + peer
+        assert_eq!(
+            create_list(AddDependencyOptions {
+                save_prod: false,
+                save_dev: false,
+                save_optional: false,
+                save_peer: true
+            }),
+            [Dev, Peer]
+        );
+
+        // --save-prod --save-peer -> prod + peer
+        assert_eq!(
+            create_list(AddDependencyOptions {
+                save_prod: true,
+                save_dev: false,
+                save_optional: false,
+                save_peer: true
+            }),
+            [Default, Peer]
+        );
+
+        // --save-dev --save-peer -> dev + peer
+        assert_eq!(
+            create_list(AddDependencyOptions {
+                save_prod: false,
+                save_dev: true,
+                save_optional: false,
+                save_peer: true
+            }),
+            [Dev, Peer]
+        );
+
+        // --save-optional --save-peer -> optional + peer
+        assert_eq!(
+            create_list(AddDependencyOptions {
+                save_prod: false,
+                save_dev: false,
+                save_optional: true,
+                save_peer: true
+            }),
+            [Optional, Peer]
+        );
+    }
+
     #[tokio::test]
     pub async fn should_install_all_dependencies() {
         let dir = tempdir().unwrap();
