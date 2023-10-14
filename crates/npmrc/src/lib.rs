@@ -2,7 +2,7 @@ mod custom_deserializer;
 
 use pipe_trait::Pipe;
 use serde::Deserialize;
-use std::{env, fs, path::PathBuf};
+use std::{fs, path::PathBuf};
 
 use crate::custom_deserializer::{
     bool_true, default_hoist_pattern, default_modules_cache_max_age, default_modules_dir,
@@ -160,13 +160,23 @@ impl Npmrc {
     /// Try loading `.npmrc` in the current directory.
     /// If fails, try in the home directory.
     /// If fails again, return the default.
-    pub fn current() -> Self {
-        let path = match env::current_dir() {
+    pub fn current<Error, CurrentDir, HomeDir, Default>(
+        current_dir: CurrentDir,
+        home_dir: HomeDir,
+        default: Default,
+    ) -> Self
+    where
+        CurrentDir: FnOnce() -> Result<PathBuf, Error>,
+        HomeDir: FnOnce() -> Option<PathBuf>,
+        Default: FnOnce() -> Npmrc,
+    {
+        let path = match current_dir() {
             Ok(dir) => Some(dir.join(".npmrc")),
-            _ => home::home_dir().map(|dir| dir.join(".npmrc")),
+            _ => home_dir().map(|dir| dir.join(".npmrc")),
         };
 
         if let Some(file) = path {
+            // TODO: should it throw error instead?
             if let Ok(content) = fs::read_to_string(file) {
                 if let Ok(npmrc) = serde_ini::from_str(&content) {
                     return npmrc;
@@ -174,7 +184,7 @@ impl Npmrc {
             }
         }
 
-        Npmrc::default()
+        default()
     }
 
     /// Persist the config data until the program terminates.
@@ -191,7 +201,7 @@ impl Default for Npmrc {
 
 #[cfg(test)]
 mod tests {
-    use std::{env, io::Write, str::FromStr};
+    use std::{env, str::FromStr};
 
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
@@ -251,12 +261,6 @@ mod tests {
     }
 
     #[test]
-    pub fn should_return_npmrc() {
-        let value = Npmrc::current();
-        assert!(value.symlink);
-    }
-
-    #[test]
     pub fn should_use_relative_virtual_store_dir() {
         let value: Npmrc = serde_ini::from_str("virtual-store-dir=node_modules/.pacquet").unwrap();
         assert_eq!(
@@ -284,25 +288,48 @@ mod tests {
     #[test]
     pub fn test_current_folder_for_npmrc() {
         let tmp = tempdir().unwrap();
-        let current_directory = env::current_dir().unwrap();
-        let mut f = fs::File::create(tmp.path().join(".npmrc")).expect("Unable to create file");
-        f.write_all(b"symlink=false").unwrap();
-        env::set_current_dir(tmp.path()).unwrap();
-        let config = Npmrc::current();
+        fs::write(tmp.path().join(".npmrc"), "symlink=false").expect("write to .npmrc");
+        let config = Npmrc::current(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || unreachable!("shouldn't reach home dir"),
+            || unreachable!("shouldn't reach default"),
+        );
         assert!(!config.symlink);
-        env::set_current_dir(current_directory).unwrap();
     }
 
     #[test]
     pub fn test_current_folder_for_invalid_npmrc() {
         let tmp = tempdir().unwrap();
-        let current_directory = env::current_dir().unwrap();
-        let mut f = fs::File::create(tmp.path().join(".npmrc")).expect("Unable to create file");
         // write invalid utf-8 value to npmrc
-        f.write_all(b"Hello \xff World").unwrap();
-        env::set_current_dir(tmp.path()).unwrap();
-        let config = Npmrc::current();
-        assert!(config.symlink);
-        env::set_current_dir(current_directory).unwrap();
+        fs::write(tmp.path().join(".npmrc"), b"Hello \xff World").expect("write to .npmrc");
+        let config =
+            Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new);
+        assert!(config.symlink); // TODO: what the hell? why succeed?
+    }
+
+    #[test]
+    pub fn test_current_folder_fallback_to_home() {
+        let current_dir = tempdir().unwrap();
+        let home_dir = tempdir().unwrap();
+        dbg!(&current_dir, &home_dir);
+        fs::write(home_dir.path().join(".npmrc"), "symlink=false").expect("write to .npmrc");
+        let config = Npmrc::current(
+            || current_dir.path().to_path_buf().pipe(Ok::<_, ()>),
+            || home_dir.path().to_path_buf().pipe(Some),
+            || unreachable!("shouldn't reach home dir"),
+        );
+        assert!(!config.symlink);
+    }
+
+    #[test]
+    pub fn test_current_folder_fallback_to_default() {
+        let current_dir = tempdir().unwrap();
+        let home_dir = tempdir().unwrap();
+        let config = Npmrc::current(
+            || current_dir.path().to_path_buf().pipe(Ok::<_, ()>),
+            || home_dir.path().to_path_buf().pipe(Some),
+            || serde_ini::from_str("symlink=false").unwrap(),
+        );
+        assert!(!config.symlink);
     }
 }

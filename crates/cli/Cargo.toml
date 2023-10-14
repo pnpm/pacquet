@@ -27,6 +27,7 @@ pacquet_tarball         = { workspace = true }
 pacquet_diagnostics     = { workspace = true }
 
 clap       = { workspace = true }
+home       = { workspace = true }
 miette     = { workspace = true }
 reqwest    = { workspace = true }
 pipe-trait = { workspace = true }

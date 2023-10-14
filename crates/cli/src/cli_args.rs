@@ -12,7 +12,7 @@ use pacquet_executor::execute_shell;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_json::PackageJson;
 use run::RunArgs;
-use std::path::PathBuf;
+use std::{env, path::PathBuf};
 use store::StoreCommand;
 
 /// Experimental package manager for node.js written in rust.
@@ -53,10 +53,8 @@ impl CliArgs {
     /// Execute the command
     pub async fn run(&self) -> miette::Result<()> {
         let package_json_path = self.dir.join("package.json");
-        let state = || {
-            State::init(&package_json_path, Npmrc::current().leak())
-                .wrap_err("initialize the state")
-        };
+        let npmrc = || Npmrc::current(env::current_dir, home::home_dir, Default::default).leak();
+        let state = || State::init(&package_json_path, npmrc()).wrap_err("initialize the state");
 
         match &self.command {
             CliCommand::Init => {
@@ -107,11 +105,11 @@ impl CliArgs {
                     panic!("Not implemented")
                 }
                 StoreCommand::Prune => {
-                    let config = Npmrc::current().leak();
+                    let config = npmrc();
                     pacquet_cafs::prune_sync(&config.store_dir).wrap_err("pruning store")?;
                 }
                 StoreCommand::Path => {
-                    let config = Npmrc::current().leak();
+                    let config = npmrc();
                     println!("{}", config.store_dir.display());
                 }
             },

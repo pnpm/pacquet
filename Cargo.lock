@@ -1297,6 +1297,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "command-extra",
+ "home",
  "insta",
  "miette",
  "pacquet_cafs",
