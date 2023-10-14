@@ -1,22 +1,10 @@
-use assert_cmd::prelude::*;
-use pacquet_package_json::{DependencyGroup, PackageJson};
-use pacquet_testing_utils::{
-    bin::pacquet_with_temp_cwd,
-    fs::{get_all_folders, get_filenames_in_folder},
-};
-use pretty_assertions::assert_eq;
-use std::{env, ffi::OsStr, fs};
-use tempfile::TempDir;
+pub mod _utils;
+pub use _utils::*;
 
-pub fn exec_pacquet_in_temp_cwd<Args>(args: Args) -> TempDir
-where
-    Args: IntoIterator,
-    Args::Item: AsRef<OsStr>,
-{
-    let (mut command, current_dir) = pacquet_with_temp_cwd();
-    command.args(args).assert().success();
-    current_dir
-}
+use pacquet_package_json::{DependencyGroup, PackageJson};
+use pacquet_testing_utils::fs::{get_all_folders, get_filenames_in_folder};
+use pretty_assertions::assert_eq;
+use std::{env, fs};
 
 #[test]
 fn should_install_all_dependencies() {
