@@ -18,6 +18,11 @@ fn should_install_all_dependencies() {
     eprintln!("Snapshot");
     insta::assert_debug_snapshot!(get_all_folders(dir.path()));
 
+    let package_json_path = dir.path().join("package.json");
+
+    eprintln!("Ensure the manifest file ({package_json_path:?}) exists");
+    assert!(package_json_path.exists());
+
     let virtual_store_dir = dir.path().join("node_modules").join(".pacquet");
 
     eprintln!("Ensure virtual store dir ({virtual_store_dir:?}) exists");
