@@ -6,6 +6,10 @@ pub mod store;
 use add::AddArgs;
 use clap::{Parser, Subcommand};
 use install::InstallArgs;
+use miette::Context;
+use pacquet_executor::execute_shell;
+use pacquet_npmrc::Npmrc;
+use pacquet_package_json::PackageJson;
 use run::RunArgs;
 use std::path::PathBuf;
 use store::StoreCommand;
@@ -42,4 +46,72 @@ pub enum CliCommand {
     /// Managing the package store.
     #[clap(subcommand)]
     Store(StoreCommand),
+}
+
+impl CliArgs {
+    /// Execute the command
+    pub async fn run(&self) -> miette::Result<()> {
+        let package_json_path = self.dir.join("package.json");
+
+        match &self.command {
+            CliCommand::Init => {
+                // init command throws an error if package.json file exist.
+                PackageJson::init(&package_json_path).wrap_err("initialize package.json")?;
+            }
+            CliCommand::Add(args) => return args.run(&package_json_path).await,
+            CliCommand::Install(args) => return args.run(&package_json_path).await,
+            CliCommand::Test => {
+                let package_json = PackageJson::from_path(package_json_path)
+                    .wrap_err("getting the package.json in current directory")?;
+                if let Some(script) = package_json.script("test", false)? {
+                    execute_shell(script)
+                        .wrap_err(format!("executing command: \"{0}\"", script))?;
+                }
+            }
+            CliCommand::Run(args) => {
+                let package_json = PackageJson::from_path(package_json_path)
+                    .wrap_err("getting the package.json in current directory")?;
+                if let Some(script) = package_json.script(&args.command, args.if_present)? {
+                    let mut command = script.to_string();
+                    // append an empty space between script and additional args
+                    command.push(' ');
+                    // then append the additional args
+                    command.push_str(&args.args.join(" "));
+                    execute_shell(command.trim())?;
+                }
+            }
+            CliCommand::Start => {
+                // Runs an arbitrary command specified in the package's start property of its scripts
+                // object. If no start property is specified on the scripts object, it will attempt to
+                // run node server.js as a default, failing if neither are present.
+                // The intended usage of the property is to specify a command that starts your program.
+                let package_json = PackageJson::from_path(package_json_path)
+                    .wrap_err("getting the package.json in current directory")?;
+                let command = if let Some(script) = package_json.script("start", true)? {
+                    script
+                } else {
+                    "node server.js"
+                };
+                execute_shell(command).wrap_err(format!("executing command: \"{0}\"", command))?;
+            }
+            CliCommand::Store(command) => match command {
+                StoreCommand::Store => {
+                    panic!("Not implemented")
+                }
+                StoreCommand::Add => {
+                    panic!("Not implemented")
+                }
+                StoreCommand::Prune => {
+                    let config = Npmrc::current().leak();
+                    pacquet_cafs::prune_sync(&config.store_dir).wrap_err("pruning store")?;
+                }
+                StoreCommand::Path => {
+                    let config = Npmrc::current().leak();
+                    println!("{}", config.store_dir.display());
+                }
+            },
+        }
+
+        Ok(())
+    }
 }

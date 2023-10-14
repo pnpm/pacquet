@@ -1,7 +1,10 @@
 use crate::package_manager::{PackageManager, PackageManagerError};
 use clap::Args;
+use miette::{Context, IntoDiagnostic};
+use pacquet_npmrc::Npmrc;
 use pacquet_package_json::DependencyGroup;
 use pacquet_package_manager::Install;
+use std::path::Path;
 
 #[derive(Debug, Args)]
 pub struct InstallDependencyOptions {
@@ -45,6 +48,15 @@ pub struct InstallArgs {
     /// Don't generate a lockfile and fail if the lockfile is outdated.
     #[clap(long)]
     pub frozen_lockfile: bool,
+}
+
+impl InstallArgs {
+    pub async fn run(&self, package_json_path: &Path) -> miette::Result<()> {
+        let config = Npmrc::current().leak();
+        let package_manager = PackageManager::new(package_json_path, config)
+            .wrap_err("initializing the package manager")?;
+        package_manager.install(self).await.into_diagnostic().wrap_err("installing dependencies")
+    }
 }
 
 impl PackageManager {
