@@ -80,3 +80,11 @@ fn should_add_to_package_json() {
     eprintln!("Ensure is-odd is added to package.json#dependencies");
     assert!(file.dependencies([DependencyGroup::Default]).any(|(k, _)| k == "is-odd"));
 }
+
+#[test]
+fn should_add_dev_dependency() {
+    let dir = exec_pacquet_in_temp_cwd(["add", "is-odd", "--save-dev"]);
+    let file = PackageJson::from_path(dir.path().join("package.json")).unwrap();
+    eprintln!("Ensure is-odd is added to package.json#devDependencies");
+    assert!(file.dependencies([DependencyGroup::Dev]).any(|(k, _)| k == "is-odd"));
+}
