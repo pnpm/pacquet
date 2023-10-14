@@ -1,13 +1,12 @@
+use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use std::process::Command;
-use thiserror::Error;
 
-#[derive(Error, Debug, Diagnostic)]
+#[derive(Debug, Display, Error, Diagnostic, From)]
 #[non_exhaustive]
 pub enum ExecutorError {
-    #[error(transparent)]
     #[diagnostic(code(pacquet_executor::io_error))]
-    Io(#[from] std::io::Error),
+    Io(#[error(source)] std::io::Error),
 }
 
 pub fn execute_shell(command: &str) -> Result<(), ExecutorError> {

@@ -1297,8 +1297,8 @@ dependencies = [
 name = "pacquet_executor"
 version = "0.0.1"
 dependencies = [
+ "derive_more",
  "miette",
- "thiserror",
 ]
 
 [[package]]
