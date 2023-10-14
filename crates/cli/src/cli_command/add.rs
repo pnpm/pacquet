@@ -34,7 +34,7 @@ impl AddDependencyOptions {
     }
 }
 
-#[derive(Parser, Debug)]
+#[derive(Debug, Parser)]
 pub struct AddArgs {
     /// Name of the package
     pub package: String,
