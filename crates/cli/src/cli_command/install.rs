@@ -1,9 +1,9 @@
 use crate::package_manager::{PackageManager, PackageManagerError};
-use clap::Parser;
+use clap::Args;
 use pacquet_package_json::DependencyGroup;
 use pacquet_package_manager::Install;
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct InstallDependencyOptions {
     /// pacquet will not install any package listed in devDependencies and will remove those insofar
     /// they were already installed, if the NODE_ENV environment variable is set to production.
@@ -36,7 +36,7 @@ impl InstallDependencyOptions {
     }
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct InstallArgs {
     /// --prod, --dev, and --no-optional
     #[clap(flatten)]

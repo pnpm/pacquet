@@ -1,10 +1,10 @@
 use crate::package_manager::{PackageManager, PackageManagerError};
-use clap::Parser;
+use clap::Args;
 use pacquet_package_json::DependencyGroup;
 use pacquet_package_manager::Install;
 use pacquet_registry::{PackageTag, PackageVersion};
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct AddDependencyOptions {
     /// Install the specified packages as regular dependencies.
     #[clap(short = 'P', long = "save-prod", group = "dependency_group")]
@@ -37,7 +37,7 @@ impl AddDependencyOptions {
     }
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct AddArgs {
     /// Name of the package
     pub package: String,

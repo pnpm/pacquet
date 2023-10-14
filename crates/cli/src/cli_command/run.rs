@@ -1,6 +1,6 @@
-use clap::Parser;
+use clap::Args;
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct RunArgs {
     /// A pre-defined package script.
     pub command: String,
