@@ -1,4 +1,5 @@
 use assert_cmd::prelude::*;
+use pacquet_package_json::{DependencyGroup, PackageJson};
 use pacquet_testing_utils::{
     bin::pacquet_with_temp_cwd,
     fs::{get_all_folders, get_filenames_in_folder},
@@ -70,4 +71,11 @@ pub fn should_symlink_correctly() {
         fs::read_link(virtual_store_dir.join("is-odd@3.0.1/node_modules/is-number")).unwrap(),
         fs::canonicalize(virtual_store_dir.join("is-number@6.0.0/node_modules/is-number")).unwrap(),
     );
+}
+
+#[test]
+fn should_add_to_package_json() {
+    let dir = exec_pacquet_in_temp_cwd(["add", "is-odd"]);
+    let file = PackageJson::from_path(dir.path().join("package.json")).unwrap();
+    assert!(file.dependencies([DependencyGroup::Default]).any(|(k, _)| k == "is-odd"));
 }
