@@ -62,6 +62,7 @@ zune-inflate       = { version = "0.2.54" }
 
 
 # Dev dependencies
+assert_cmd        = { version = "2.0.12" }
 criterion         = { version = "0.5.1", features = ["async_tokio"] }
 pretty_assertions = { version = "1.4.0" }
 project-root      = { version = "0.2.2" }

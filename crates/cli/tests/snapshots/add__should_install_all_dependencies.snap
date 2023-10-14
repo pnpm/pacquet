@@ -1,6 +1,6 @@
 ---
-source: crates/cli/src/cli_command/add.rs
-assertion_line: 126
+source: crates/cli/tests/add.rs
+assertion_line: 19
 expression: get_all_folders(dir.path())
 ---
 [

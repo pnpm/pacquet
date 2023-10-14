@@ -78,7 +78,7 @@ mod tests {
     use super::*;
     use pacquet_npmrc::Npmrc;
     use pacquet_package_json::{DependencyGroup, PackageJson};
-    use pacquet_testing_utils::fs::{get_all_folders, get_filenames_in_folder};
+    use pacquet_testing_utils::fs::get_all_folders;
     use pretty_assertions::assert_eq;
     use std::{env, fs};
     use tempfile::tempdir;
@@ -175,48 +175,6 @@ mod tests {
             }),
             [Optional, Peer]
         );
-    }
-
-    #[tokio::test]
-    pub async fn should_install_all_dependencies() {
-        let dir = tempdir().unwrap();
-        let virtual_store_dir = dir.path().join("node_modules/.pacquet");
-        let current_directory = env::current_dir().unwrap();
-        env::set_current_dir(&dir).unwrap();
-        let package_json = dir.path().join("package.json");
-        let mut manager = PackageManager::new(&package_json, Npmrc::current().leak()).unwrap();
-
-        // It should create a package_json if not exist
-        assert!(package_json.exists());
-
-        let args = AddArgs {
-            package: "is-even".to_string(),
-            dependency_options: AddDependencyOptions {
-                save_prod: false,
-                save_dev: false,
-                save_peer: false,
-                save_optional: false,
-            },
-            save_exact: false,
-            virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
-        };
-        manager.add(&args).await.unwrap();
-
-        insta::assert_debug_snapshot!(get_all_folders(dir.path()));
-
-        // Ensure that is-buffer does not have any dependencies
-        let is_buffer_path = virtual_store_dir.join("is-buffer@1.1.6/node_modules");
-        assert_eq!(get_filenames_in_folder(&is_buffer_path), vec!["is-buffer"]);
-
-        // Ensure that is-even have correct dependencies
-        let is_even_path = virtual_store_dir.join("is-even@1.0.0/node_modules");
-        assert_eq!(get_filenames_in_folder(&is_even_path), vec!["is-even", "is-odd"]);
-
-        // Ensure that is-number does not have any dependencies
-        let is_number_path = virtual_store_dir.join("is-number@3.0.0/node_modules");
-        assert_eq!(get_filenames_in_folder(&is_number_path), vec!["is-number", "kind-of"]);
-
-        env::set_current_dir(&current_directory).unwrap();
     }
 
     #[tokio::test]
