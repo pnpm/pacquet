@@ -1,7 +1,4 @@
-use pacquet_diagnostics::{
-    miette::{self, Diagnostic},
-    thiserror::{self, Error},
-};
+use miette::Diagnostic;
 use pacquet_lockfile::{LoadLockfileError, Lockfile};
 use pacquet_npmrc::Npmrc;
 use pacquet_package_json::{PackageJson, PackageJsonError};
@@ -9,6 +6,7 @@ use pacquet_package_manager::AddError;
 use pacquet_tarball::Cache;
 use pipe_trait::Pipe;
 use std::path::PathBuf;
+use thiserror::Error;
 
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]

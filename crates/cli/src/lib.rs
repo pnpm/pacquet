@@ -3,16 +3,14 @@ mod package_manager;
 
 use clap::Parser;
 use cli_command::{store::StoreCommand, CliArgs, CliCommand};
+use miette::{set_panic_hook, Context, IntoDiagnostic};
 use package_manager::PackageManager;
-use pacquet_diagnostics::{
-    enable_tracing_by_env,
-    miette::{set_panic_hook, IntoDiagnostic, Result, WrapErr},
-};
+use pacquet_diagnostics::enable_tracing_by_env;
 use pacquet_executor::execute_shell;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_json::PackageJson;
 
-pub async fn main() -> Result<()> {
+pub async fn main() -> miette::Result<()> {
     enable_tracing_by_env();
     set_panic_hook();
     let cli = CliArgs::parse();
@@ -20,7 +18,7 @@ pub async fn main() -> Result<()> {
     run(cli, config).await
 }
 
-async fn run(cli: CliArgs, config: &'static Npmrc) -> Result<()> {
+async fn run(cli: CliArgs, config: &'static Npmrc) -> miette::Result<()> {
     let package_json_path = cli.dir.join("package.json");
 
     match &cli.command {

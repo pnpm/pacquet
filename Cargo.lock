@@ -1262,6 +1262,7 @@ version = "0.0.1"
 dependencies = [
  "clap",
  "insta",
+ "miette",
  "pacquet_cafs",
  "pacquet_diagnostics",
  "pacquet_executor",
@@ -1277,7 +1278,9 @@ dependencies = [
  "pretty_assertions",
  "reqwest",
  "tempfile",
+ "thiserror",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
