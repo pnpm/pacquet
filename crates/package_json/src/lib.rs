@@ -126,11 +126,11 @@ impl PackageJson {
         Ok(PackageJson { path, value })
     }
 
-    pub fn path(&self) -> &Path {
+    pub fn path(&self) -> &'_ Path {
         &self.path
     }
 
-    pub fn value(&self) -> &Value {
+    pub fn value(&self) -> &'_ Value {
         &self.value
     }
 
