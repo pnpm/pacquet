@@ -15,7 +15,7 @@ fn default_current_dir() -> OsString {
 }
 
 /// Experimental package manager for node.js written in rust.
-#[derive(Parser, Debug)]
+#[derive(Debug, Parser)]
 #[command(name = "pacquet")]
 #[command(bin_name = "pacquet")]
 #[command(version = "0.2.1")]

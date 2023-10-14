@@ -1,6 +1,6 @@
 use clap::Subcommand;
 
-#[derive(Subcommand, Debug)]
+#[derive(Debug, Subcommand)]
 pub enum StoreCommand {
     /// Checks for modified packages in the store.
     Store,
