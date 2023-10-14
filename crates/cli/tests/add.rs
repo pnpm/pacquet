@@ -15,7 +15,7 @@ fn should_install_all_dependencies() {
         .assert()
         .success();
 
-    eprintln!("Snapshot");
+    eprintln!("Directory list");
     insta::assert_debug_snapshot!(get_all_folders(dir.path()));
 
     let package_json_path = dir.path().join("package.json");
@@ -53,7 +53,7 @@ pub fn should_symlink_correctly() {
         .assert()
         .success();
 
-    eprintln!("Snapshot");
+    eprintln!("Directory list");
     insta::assert_debug_snapshot!(get_all_folders(dir.path()));
 
     let package_json_path = dir.path().join("package.json");
