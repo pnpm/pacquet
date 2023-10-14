@@ -1,8 +1,7 @@
 use crate::package_manager::{PackageManager, PackageManagerError};
 use clap::Args;
 use pacquet_package_json::DependencyGroup;
-use pacquet_package_manager::Install;
-use pacquet_registry::{PackageTag, PackageVersion};
+use pacquet_package_manager::Add;
 
 #[derive(Debug, Args)]
 pub struct AddDependencyOptions {
@@ -58,35 +57,19 @@ impl PackageManager {
     pub async fn add(&mut self, args: &AddArgs) -> Result<(), PackageManagerError> {
         let PackageManager { config, package_json, lockfile, http_client, tarball_cache } = self;
 
-        let latest_version = PackageVersion::fetch_from_registry(
-            &args.package,
-            PackageTag::Latest, // TODO: add support for specifying tags
-            http_client,
-            &config.registry,
-        )
-        .await
-        .expect("resolve latest tag"); // TODO: properly propagate this error
-
-        let version_range = latest_version.serialize(args.save_exact);
-        for dependency_group in args.dependency_options.dependency_groups() {
-            package_json
-                .add_dependency(&args.package, &version_range, dependency_group)
-                .map_err(PackageManagerError::PackageJson)?;
-        }
-
-        Install {
+        Add {
             tarball_cache,
             http_client,
             config,
             package_json,
             lockfile: lockfile.as_ref(),
-            dependency_groups: args.dependency_options.dependency_groups(),
-            frozen_lockfile: false,
+            list_dependency_groups: || args.dependency_options.dependency_groups(),
+            package: &args.package,
+            save_exact: args.save_exact,
         }
         .run()
-        .await;
-
-        package_json.save().map_err(PackageManagerError::PackageJson)?;
+        .await
+        .unwrap();
 
         Ok(())
     }
