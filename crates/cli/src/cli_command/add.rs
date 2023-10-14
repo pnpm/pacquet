@@ -7,16 +7,16 @@ use pacquet_registry::{PackageTag, PackageVersion};
 #[derive(Debug, Args)]
 pub struct AddDependencyOptions {
     /// Install the specified packages as regular dependencies.
-    #[clap(short = 'P', long = "save-prod", group = "dependency_group")]
+    #[clap(short = 'P', long, group = "dependency_group")]
     save_prod: bool,
     /// Install the specified packages as devDependencies.
-    #[clap(short = 'D', long = "save-dev", group = "dependency_group")]
+    #[clap(short = 'D', long, group = "dependency_group")]
     save_dev: bool,
     /// Install the specified packages as optionalDependencies.
-    #[clap(short = 'O', long = "save-optional", group = "dependency_group")]
+    #[clap(short = 'O', long, group = "dependency_group")]
     save_optional: bool,
     /// Using --save-peer will add one or more packages to peerDependencies and install them as dev dependencies
-    #[clap(long = "save-peer", group = "dependency_group")]
+    #[clap(long, group = "dependency_group")]
     save_peer: bool,
 }
 

@@ -25,7 +25,7 @@ pub struct CliArgs {
     pub command: CliCommand,
 
     /// Set working directory.
-    #[clap(short = 'C', long = "dir", default_value = default_current_dir())]
+    #[clap(short = 'C', long, default_value = default_current_dir())]
     pub dir: PathBuf,
 }
 
