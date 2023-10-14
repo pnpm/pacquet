@@ -1,6 +1,7 @@
 pub mod _utils;
 pub use _utils::*;
 
+use command_extra::CommandExtra;
 use pacquet_testing_utils::{bin::pacquet_with_temp_cwd, fs::get_filenames_in_folder};
 use pretty_assertions::assert_eq;
 use std::{env, fs};
@@ -23,7 +24,7 @@ fn should_create_package_json() {
 
 #[test]
 fn should_throw_on_existing_file() {
-    let (mut command, dir) = pacquet_with_temp_cwd();
+    let (command, dir) = pacquet_with_temp_cwd();
 
     let package_json_path = dir.path().join("package.json");
     dbg!(&package_json_path);
@@ -32,7 +33,7 @@ fn should_throw_on_existing_file() {
     fs::write(&package_json_path, "{}").expect("write to package.json");
 
     eprintln!("Executing pacquet init...");
-    let output = command.arg("init").output().expect("execute pacquet init");
+    let output = command.with_arg("init").output().expect("execute pacquet init");
     dbg!(&output);
 
     eprintln!("Exit status code");

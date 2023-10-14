@@ -1,4 +1,5 @@
 use assert_cmd::prelude::*;
+use command_extra::CommandExtra;
 use pacquet_testing_utils::{
     bin::pacquet_with_temp_cwd,
     fs::{get_all_folders, is_symlink_or_junction},
@@ -7,7 +8,7 @@ use std::fs;
 
 #[test]
 fn should_install_dependencies() {
-    let (mut command, dir) = pacquet_with_temp_cwd();
+    let (command, dir) = pacquet_with_temp_cwd();
 
     eprintln!("Creating package.json...");
     let package_json_path = dir.path().join("package.json");
@@ -22,7 +23,7 @@ fn should_install_dependencies() {
     fs::write(&package_json_path, package_json_content.to_string()).expect("write to package.json");
 
     eprintln!("Executing command...");
-    command.current_dir(dir.path()).arg("install").assert().success();
+    command.with_current_dir(dir.path()).with_arg("install").assert().success();
 
     eprintln!("Make sure the package is installed");
     assert!(is_symlink_or_junction(&dir.path().join("node_modules/is-odd")).unwrap());

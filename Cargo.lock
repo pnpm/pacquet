@@ -305,6 +305,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "command-extra"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1b4fe32ea3f2a8d975b6c5cdd3f02ac358f471ca24dbb18d7a4ca58b3193d2d"
+
+[[package]]
 name = "console"
 version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1290,6 +1296,7 @@ version = "0.0.1"
 dependencies = [
  "assert_cmd",
  "clap",
+ "command-extra",
  "insta",
  "miette",
  "pacquet_cafs",
@@ -1482,6 +1489,7 @@ name = "pacquet_testing_utils"
 version = "0.0.0"
 dependencies = [
  "assert_cmd",
+ "command-extra",
  "junction",
  "tempfile",
  "walkdir",

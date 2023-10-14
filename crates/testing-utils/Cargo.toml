@@ -11,9 +11,10 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-assert_cmd = { workspace = true }
-tempfile   = { workspace = true }
-walkdir    = { workspace = true }
+assert_cmd    = { workspace = true }
+command-extra = { workspace = true }
+tempfile      = { workspace = true }
+walkdir       = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 junction = { workspace = true }
