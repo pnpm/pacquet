@@ -6,16 +6,16 @@ use pacquet_package_manager::Add;
 #[derive(Debug, Args)]
 pub struct AddDependencyOptions {
     /// Install the specified packages as regular dependencies.
-    #[clap(short = 'P', long, group = "dependency_group")]
+    #[clap(short = 'P', long)]
     save_prod: bool,
     /// Install the specified packages as devDependencies.
-    #[clap(short = 'D', long, group = "dependency_group")]
+    #[clap(short = 'D', long)]
     save_dev: bool,
     /// Install the specified packages as optionalDependencies.
-    #[clap(short = 'O', long, group = "dependency_group")]
+    #[clap(short = 'O', long)]
     save_optional: bool,
     /// Using --save-peer will add one or more packages to peerDependencies and install them as dev dependencies
-    #[clap(long, group = "dependency_group")]
+    #[clap(long)]
     save_peer: bool,
 }
 
