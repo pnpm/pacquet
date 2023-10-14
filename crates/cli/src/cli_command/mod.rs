@@ -16,16 +16,16 @@ fn default_current_dir() -> OsString {
 
 /// Experimental package manager for node.js written in rust.
 #[derive(Debug, Parser)]
-#[command(name = "pacquet")]
-#[command(bin_name = "pacquet")]
-#[command(version = "0.2.1")]
-#[command(about = "Experimental package manager for node.js")]
+#[clap(name = "pacquet")]
+#[clap(bin_name = "pacquet")]
+#[clap(version = "0.2.1")]
+#[clap(about = "Experimental package manager for node.js")]
 pub struct CliArgs {
-    #[command(subcommand)]
+    #[clap(subcommand)]
     pub command: CliCommand,
 
     /// Set working directory.
-    #[arg(short = 'C', long = "dir", default_value = default_current_dir())]
+    #[clap(short = 'C', long = "dir", default_value = default_current_dir())]
     pub dir: PathBuf,
 }
 

@@ -7,16 +7,16 @@ use pacquet_registry::{PackageTag, PackageVersion};
 #[derive(Debug, Parser)]
 pub struct AddDependencyOptions {
     /// Install the specified packages as regular dependencies.
-    #[arg(short = 'P', long = "save-prod", group = "dependency_group")]
+    #[clap(short = 'P', long = "save-prod", group = "dependency_group")]
     save_prod: bool,
     /// Install the specified packages as devDependencies.
-    #[arg(short = 'D', long = "save-dev", group = "dependency_group")]
+    #[clap(short = 'D', long = "save-dev", group = "dependency_group")]
     save_dev: bool,
     /// Install the specified packages as optionalDependencies.
-    #[arg(short = 'O', long = "save-optional", group = "dependency_group")]
+    #[clap(short = 'O', long = "save-optional", group = "dependency_group")]
     save_optional: bool,
     /// Using --save-peer will add one or more packages to peerDependencies and install them as dev dependencies
-    #[arg(long = "save-peer", group = "dependency_group")]
+    #[clap(long = "save-peer", group = "dependency_group")]
     save_peer: bool,
 }
 
@@ -43,11 +43,11 @@ pub struct AddArgs {
     pub dependency_options: AddDependencyOptions,
     /// Saved dependencies will be configured with an exact version rather than using
     /// pacquet's default semver range operator.
-    #[arg(short = 'E', long = "save-exact")]
+    #[clap(short = 'E', long = "save-exact")]
     pub save_exact: bool,
     /// The directory with links to the store (default is node_modules/.pacquet).
     /// All direct and indirect dependencies of the project are linked into this directory
-    #[arg(long = "virtual-store-dir", default_value = "node_modules/.pacquet")]
+    #[clap(long = "virtual-store-dir", default_value = "node_modules/.pacquet")]
     pub virtual_store_dir: String,
 }
 
