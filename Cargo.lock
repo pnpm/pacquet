@@ -1480,7 +1480,9 @@ dependencies = [
 name = "pacquet_testing_utils"
 version = "0.0.0"
 dependencies = [
+ "assert_cmd",
  "junction",
+ "tempfile",
  "walkdir",
 ]
 

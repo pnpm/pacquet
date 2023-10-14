@@ -1,19 +1,25 @@
 use assert_cmd::prelude::*;
-use pacquet_testing_utils::fs::{get_all_folders, get_filenames_in_folder};
+use pacquet_testing_utils::{
+    bin::pacquet_with_temp_cwd,
+    fs::{get_all_folders, get_filenames_in_folder},
+};
 use pretty_assertions::assert_eq;
-use std::{env, fs, process::Command};
-use tempfile::tempdir;
+use std::{env, ffi::OsStr, fs};
+use tempfile::TempDir;
+
+pub fn exec_pacquet_in_temp_cwd<Args>(args: Args) -> TempDir
+where
+    Args: IntoIterator,
+    Args::Item: AsRef<OsStr>,
+{
+    let (mut command, current_dir) = pacquet_with_temp_cwd();
+    command.current_dir(current_dir.path()).args(args).assert().success();
+    current_dir
+}
 
 #[test]
 fn should_install_all_dependencies() {
-    let dir = tempdir().unwrap();
-    Command::cargo_bin("pacquet")
-        .expect("find pacquet binary")
-        .current_dir(dir.path())
-        .arg("add")
-        .arg("is-even")
-        .assert()
-        .success();
+    let dir = exec_pacquet_in_temp_cwd(["add", "is-even"]);
 
     eprintln!("Directory list");
     insta::assert_debug_snapshot!(get_all_folders(dir.path()));
@@ -44,14 +50,7 @@ fn should_install_all_dependencies() {
 #[test]
 #[cfg(unix)]
 pub fn should_symlink_correctly() {
-    let dir = tempdir().unwrap();
-    Command::cargo_bin("pacquet")
-        .expect("find pacquet binary")
-        .current_dir(dir.path())
-        .arg("add")
-        .arg("is-odd")
-        .assert()
-        .success();
+    let dir = exec_pacquet_in_temp_cwd(["add", "is-odd"]);
 
     eprintln!("Directory list");
     insta::assert_debug_snapshot!(get_all_folders(dir.path()));
