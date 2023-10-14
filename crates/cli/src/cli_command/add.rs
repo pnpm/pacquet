@@ -4,10 +4,8 @@ use pacquet_package_json::DependencyGroup;
 use pacquet_package_manager::Install;
 use pacquet_registry::{PackageTag, PackageVersion};
 
-#[derive(Parser, Debug)]
-pub struct AddArgs {
-    /// Name of the package
-    pub package: String,
+#[derive(Debug, Parser)]
+pub struct AddDependencyOptions {
     /// Install the specified packages as regular dependencies.
     #[arg(short = 'P', long = "save-prod", group = "dependency_group")]
     save_prod: bool,
@@ -20,17 +18,9 @@ pub struct AddArgs {
     /// Using --save-peer will add one or more packages to peerDependencies and install them as dev dependencies
     #[arg(long = "save-peer", group = "dependency_group")]
     save_peer: bool,
-    /// Saved dependencies will be configured with an exact version rather than using
-    /// pacquet's default semver range operator.
-    #[arg(short = 'E', long = "save-exact")]
-    pub save_exact: bool,
-    /// The directory with links to the store (default is node_modules/.pacquet).
-    /// All direct and indirect dependencies of the project are linked into this directory
-    #[arg(long = "virtual-store-dir", default_value = "node_modules/.pacquet")]
-    pub virtual_store_dir: String,
 }
 
-impl AddArgs {
+impl AddDependencyOptions {
     pub fn dependency_group(&self) -> DependencyGroup {
         if self.save_dev {
             DependencyGroup::Dev
@@ -42,6 +32,23 @@ impl AddArgs {
             DependencyGroup::Default
         }
     }
+}
+
+#[derive(Parser, Debug)]
+pub struct AddArgs {
+    /// Name of the package
+    pub package: String,
+    /// --save-prod, --save-dev, --save-optional, --save-peer
+    #[clap(flatten)]
+    pub dependency_options: AddDependencyOptions,
+    /// Saved dependencies will be configured with an exact version rather than using
+    /// pacquet's default semver range operator.
+    #[arg(short = 'E', long = "save-exact")]
+    pub save_exact: bool,
+    /// The directory with links to the store (default is node_modules/.pacquet).
+    /// All direct and indirect dependencies of the project are linked into this directory
+    #[arg(long = "virtual-store-dir", default_value = "node_modules/.pacquet")]
+    pub virtual_store_dir: String,
 }
 
 impl PackageManager {
@@ -58,7 +65,7 @@ impl PackageManager {
         .expect("resolve latest tag"); // TODO: properly propagate this error
 
         let version_range = latest_version.serialize(args.save_exact);
-        let dependency_group = args.dependency_group();
+        let dependency_group = args.dependency_options.dependency_group();
 
         package_json
             .add_dependency(&args.package, &version_range, dependency_group)
@@ -114,10 +121,12 @@ mod tests {
 
         let args = AddArgs {
             package: "is-even".to_string(),
-            save_prod: false,
-            save_dev: false,
-            save_peer: false,
-            save_optional: false,
+            dependency_options: AddDependencyOptions {
+                save_prod: false,
+                save_dev: false,
+                save_peer: false,
+                save_optional: false,
+            },
             save_exact: false,
             virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
         };
@@ -152,10 +161,12 @@ mod tests {
 
         let args = AddArgs {
             package: "is-odd".to_string(),
-            save_prod: false,
-            save_dev: false,
-            save_peer: false,
-            save_optional: false,
+            dependency_options: AddDependencyOptions {
+                save_prod: false,
+                save_dev: false,
+                save_peer: false,
+                save_optional: false,
+            },
             save_exact: false,
             virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
         };
@@ -183,10 +194,12 @@ mod tests {
 
         let args = AddArgs {
             package: "is-odd".to_string(),
-            save_prod: false,
-            save_dev: false,
-            save_peer: false,
-            save_optional: false,
+            dependency_options: AddDependencyOptions {
+                save_prod: false,
+                save_dev: false,
+                save_peer: false,
+                save_optional: false,
+            },
             save_exact: false,
             virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
         };
@@ -207,10 +220,12 @@ mod tests {
 
         let args = AddArgs {
             package: "is-odd".to_string(),
-            save_prod: false,
-            save_dev: true,
-            save_peer: false,
-            save_optional: false,
+            dependency_options: AddDependencyOptions {
+                save_prod: false,
+                save_dev: true,
+                save_peer: false,
+                save_optional: false,
+            },
             save_exact: false,
             virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
         };
@@ -231,10 +246,12 @@ mod tests {
 
         let args = AddArgs {
             package: "is-odd".to_string(),
-            save_prod: false,
-            save_dev: false,
-            save_peer: true,
-            save_optional: false,
+            dependency_options: AddDependencyOptions {
+                save_prod: false,
+                save_dev: false,
+                save_peer: true,
+                save_optional: false,
+            },
             save_exact: false,
             virtual_store_dir: virtual_store_dir.to_string_lossy().to_string(),
         };
