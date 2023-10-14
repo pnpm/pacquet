@@ -1,10 +1,7 @@
-use crate::state::State;
+use crate::State;
 use clap::Args;
-use miette::Context;
-use pacquet_npmrc::Npmrc;
 use pacquet_package_json::DependencyGroup;
 use pacquet_package_manager::Install;
-use std::path::Path;
 
 #[derive(Debug, Args)]
 pub struct InstallDependencyOptions {
@@ -51,12 +48,8 @@ pub struct InstallArgs {
 }
 
 impl InstallArgs {
-    pub async fn run(&self, package_json_path: &Path) -> miette::Result<()> {
-        let config = Npmrc::current().leak();
-        let package_manager =
-            State::init(package_json_path, config).wrap_err("initializing the package manager")?;
-
-        let State { config, http_client, tarball_cache, lockfile, package_json } = &package_manager;
+    pub async fn run(&self, state: State) -> miette::Result<()> {
+        let State { config, http_client, tarball_cache, lockfile, package_json } = &state;
         let InstallArgs { dependency_options, frozen_lockfile } = self;
 
         Install {

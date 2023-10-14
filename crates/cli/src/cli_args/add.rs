@@ -1,10 +1,9 @@
-use crate::state::State;
+use crate::State;
 use clap::Args;
 use miette::Context;
-use pacquet_npmrc::Npmrc;
 use pacquet_package_json::DependencyGroup;
 use pacquet_package_manager::Add;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug, Args)]
 pub struct AddDependencyOptions {
@@ -58,15 +57,10 @@ pub struct AddArgs {
 
 impl AddArgs {
     /// Execute the subcommand.
-    pub async fn run(&self, package_json_path: &Path) -> miette::Result<()> {
-        let config = Npmrc::current().leak();
-        let mut package_manager =
-            State::init(package_json_path, config).wrap_err("initializing the package manager")?;
-
+    pub async fn run(&self, mut state: State) -> miette::Result<()> {
         // TODO: if a package already exists in another dependency group, don't remove the existing entry.
 
-        let State { config, package_json, lockfile, http_client, tarball_cache } =
-            &mut package_manager;
+        let State { config, package_json, lockfile, http_client, tarball_cache } = &mut state;
 
         Add {
             tarball_cache,

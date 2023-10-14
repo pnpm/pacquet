@@ -3,6 +3,7 @@ pub mod install;
 pub mod run;
 pub mod store;
 
+use crate::State;
 use add::AddArgs;
 use clap::{Parser, Subcommand};
 use install::InstallArgs;
@@ -52,14 +53,18 @@ impl CliArgs {
     /// Execute the command
     pub async fn run(&self) -> miette::Result<()> {
         let package_json_path = self.dir.join("package.json");
+        let state = || {
+            State::init(&package_json_path, Npmrc::current().leak())
+                .wrap_err("initialize the state")
+        };
 
         match &self.command {
             CliCommand::Init => {
                 // init command throws an error if package.json file exist.
                 PackageJson::init(&package_json_path).wrap_err("initialize package.json")?;
             }
-            CliCommand::Add(args) => return args.run(&package_json_path).await,
-            CliCommand::Install(args) => return args.run(&package_json_path).await,
+            CliCommand::Add(args) => return args.run(state()?).await,
+            CliCommand::Install(args) => return args.run(state()?).await,
             CliCommand::Test => {
                 let package_json = PackageJson::from_path(package_json_path)
                     .wrap_err("getting the package.json in current directory")?;
