@@ -14,11 +14,10 @@ pub async fn main() -> miette::Result<()> {
     enable_tracing_by_env();
     set_panic_hook();
     let cli = CliArgs::parse();
-    let config = Npmrc::current().leak();
-    run(cli, config).await
+    run(cli).await
 }
 
-async fn run(cli: CliArgs, config: &'static Npmrc) -> miette::Result<()> {
+async fn run(cli: CliArgs) -> miette::Result<()> {
     let package_json_path = cli.dir.join("package.json");
 
     match &cli.command {
@@ -27,6 +26,7 @@ async fn run(cli: CliArgs, config: &'static Npmrc) -> miette::Result<()> {
             PackageJson::init(&package_json_path).wrap_err("initialize package.json")?;
         }
         CliCommand::Add(args) => {
+            let config = Npmrc::current().leak();
             let mut package_manager = PackageManager::new(&package_json_path, config)
                 .wrap_err("initializing the package manager")?;
             // TODO if a package already exists in another dependency group, we don't remove
@@ -34,6 +34,7 @@ async fn run(cli: CliArgs, config: &'static Npmrc) -> miette::Result<()> {
             package_manager.add(args).await.wrap_err("adding a new package")?;
         }
         CliCommand::Install(args) => {
+            let config = Npmrc::current().leak();
             let package_manager = PackageManager::new(&package_json_path, config)
                 .wrap_err("initializing the package manager")?;
             package_manager
@@ -83,9 +84,11 @@ async fn run(cli: CliArgs, config: &'static Npmrc) -> miette::Result<()> {
                 panic!("Not implemented")
             }
             StoreCommand::Prune => {
+                let config = Npmrc::current().leak();
                 pacquet_cafs::prune_sync(&config.store_dir).wrap_err("pruning store")?;
             }
             StoreCommand::Path => {
+                let config = Npmrc::current().leak();
                 println!("{}", config.store_dir.display());
             }
         },
@@ -104,7 +107,7 @@ mod tests {
     async fn init_command_should_create_package_json() {
         let parent_folder = tempdir().unwrap();
         let cli = CliArgs::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "init"]);
-        run(cli, Npmrc::current().leak()).await.unwrap();
+        run(cli).await.unwrap();
         assert!(parent_folder.path().join("package.json").exists());
     }
 
@@ -115,7 +118,7 @@ mod tests {
         file.write_all("{}".as_bytes()).unwrap();
         assert!(parent_folder.path().join("package.json").exists());
         let cli = CliArgs::parse_from(["", "-C", parent_folder.path().to_str().unwrap(), "init"]);
-        run(cli, Npmrc::current().leak()).await.expect_err("should have thrown");
+        run(cli).await.expect_err("should have thrown");
     }
 
     #[tokio::test]
@@ -128,6 +131,6 @@ mod tests {
             "store",
             "path",
         ]);
-        run(cli, Npmrc::current().leak()).await.unwrap();
+        run(cli).await.unwrap();
     }
 }
