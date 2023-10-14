@@ -173,21 +173,19 @@ impl Npmrc {
         // TODO: this code makes no sense.
         // TODO: it should have merged the settings.
 
-        let path = match current_dir() {
-            Ok(dir) => Some(dir.join(".npmrc")),
-            _ => home_dir().map(|dir| dir.join(".npmrc")),
+        let load = |dir: PathBuf| -> Option<Npmrc> {
+            dir.join(".npmrc")
+                .pipe(fs::read_to_string)
+                .ok()? // TODO: should it throw error instead?
+                .pipe_as_ref(serde_ini::from_str)
+                .ok() // TODO: should it throw error instead?
         };
 
-        if let Some(file) = path {
-            // TODO: should it throw error instead?
-            if let Ok(content) = fs::read_to_string(file) {
-                if let Ok(npmrc) = serde_ini::from_str(&content) {
-                    return npmrc;
-                }
-            }
-        }
-
-        default()
+        current_dir()
+            .ok()
+            .and_then(load)
+            .or_else(|| home_dir().and_then(load))
+            .unwrap_or_else(default)
     }
 
     /// Persist the config data until the program terminates.
