@@ -15,11 +15,11 @@ use pipe_trait::Pipe;
 pub enum PackageManagerError {
     #[error(transparent)]
     #[diagnostic(transparent)]
-    PackageJson(pacquet_package_json::PackageJsonError),
+    LoadPackageJson(pacquet_package_json::PackageJsonError),
 
     #[error(transparent)]
     #[diagnostic(transparent)]
-    LoadLockfileError(pacquet_lockfile::LoadLockfileError),
+    LoadLockfile(pacquet_lockfile::LoadLockfileError),
 }
 
 pub struct PackageManager {
@@ -40,9 +40,9 @@ impl PackageManager {
             package_json: package_json_path
                 .into()
                 .pipe(PackageJson::create_if_needed)
-                .map_err(PackageManagerError::PackageJson)?,
+                .map_err(PackageManagerError::LoadPackageJson)?,
             lockfile: call_load_lockfile(config.lockfile, Lockfile::load_from_current_dir)
-                .map_err(PackageManagerError::LoadLockfileError)?,
+                .map_err(PackageManagerError::LoadLockfile)?,
             http_client: reqwest::Client::new(),
             tarball_cache: Cache::new(),
         })
