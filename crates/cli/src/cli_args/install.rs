@@ -1,6 +1,6 @@
-use crate::package_manager::{PackageManager, PackageManagerError};
+use crate::package_manager::PackageManager;
 use clap::Args;
-use miette::{Context, IntoDiagnostic};
+use miette::Context;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_json::DependencyGroup;
 use pacquet_package_manager::Install;
@@ -55,15 +55,10 @@ impl InstallArgs {
         let config = Npmrc::current().leak();
         let package_manager = PackageManager::new(package_json_path, config)
             .wrap_err("initializing the package manager")?;
-        package_manager.install(self).await.into_diagnostic().wrap_err("installing dependencies")
-    }
-}
 
-impl PackageManager {
-    /// Jobs of the `install` command.
-    pub async fn install(&self, args: &InstallArgs) -> Result<(), PackageManagerError> {
-        let PackageManager { config, http_client, tarball_cache, lockfile, package_json } = self;
-        let InstallArgs { dependency_options, frozen_lockfile } = args;
+        let PackageManager { config, http_client, tarball_cache, lockfile, package_json } =
+            &package_manager;
+        let InstallArgs { dependency_options, frozen_lockfile } = self;
 
         Install {
             tarball_cache,

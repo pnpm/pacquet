@@ -4,7 +4,7 @@ use miette::Context;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_json::DependencyGroup;
 use pacquet_package_manager::Add;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Args)]
 pub struct AddDependencyOptions {
@@ -53,7 +53,7 @@ pub struct AddArgs {
     /// The directory with links to the store (default is node_modules/.pacquet).
     /// All direct and indirect dependencies of the project are linked into this directory
     #[clap(long = "virtual-store-dir", default_value = "node_modules/.pacquet")]
-    pub virtual_store_dir: String,
+    pub virtual_store_dir: Option<PathBuf>, // TODO: make use of this
 }
 
 impl AddArgs {
@@ -62,15 +62,11 @@ impl AddArgs {
         let config = Npmrc::current().leak();
         let mut package_manager = PackageManager::new(package_json_path, config)
             .wrap_err("initializing the package manager")?;
-        // TODO if a package already exists in another dependency group, we don't remove
-        // the existing entry.
-        package_manager.add(self).await.wrap_err("adding a new package")
-    }
-}
 
-impl PackageManager {
-    pub async fn add(&mut self, args: &AddArgs) -> Result<(), PackageManagerError> {
-        let PackageManager { config, package_json, lockfile, http_client, tarball_cache } = self;
+        // TODO: if a package already exists in another dependency group, don't remove the existing entry.
+
+        let PackageManager { config, package_json, lockfile, http_client, tarball_cache } =
+            &mut package_manager;
 
         Add {
             tarball_cache,
@@ -78,13 +74,14 @@ impl PackageManager {
             config,
             package_json,
             lockfile: lockfile.as_ref(),
-            list_dependency_groups: || args.dependency_options.dependency_groups(),
-            package: &args.package,
-            save_exact: args.save_exact,
+            list_dependency_groups: || self.dependency_options.dependency_groups(),
+            package: &self.package,
+            save_exact: self.save_exact,
         }
         .run()
         .await
         .map_err(PackageManagerError::AddCommand)
+        .wrap_err("adding a new package")
     }
 }
 
