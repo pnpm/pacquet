@@ -23,7 +23,7 @@ fn should_install_dependencies() {
     fs::write(&package_json_path, package_json_content.to_string()).expect("write to package.json");
 
     eprintln!("Executing command...");
-    command.with_current_dir(dir.path()).with_arg("install").assert().success();
+    command.with_arg("install").assert().success();
 
     eprintln!("Make sure the package is installed");
     assert!(is_symlink_or_junction(&dir.path().join("node_modules/is-odd")).unwrap());
