@@ -11,4 +11,5 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-pacquet_diagnostics = { workspace = true }
+miette    = { workspace = true }
+thiserror = { workspace = true }

@@ -1297,7 +1297,8 @@ dependencies = [
 name = "pacquet_executor"
 version = "0.0.1"
 dependencies = [
- "pacquet_diagnostics",
+ "miette",
+ "thiserror",
 ]
 
 [[package]]
