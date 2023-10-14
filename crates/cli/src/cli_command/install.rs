@@ -76,7 +76,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn install_args_to_dependency_groups() {
+    fn dependency_options_to_dependency_groups() {
         use DependencyGroup::{Default, Dev, Optional};
         let create_list =
             |opts: InstallDependencyOptions| opts.dependency_groups().collect::<Vec<_>>();
