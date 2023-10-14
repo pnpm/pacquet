@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use pacquet_diagnostics::{
     miette::{self, Diagnostic},
     thiserror::{self, Error},
@@ -10,6 +8,7 @@ use pacquet_package_json::{PackageJson, PackageJsonError};
 use pacquet_package_manager::AddError;
 use pacquet_tarball::Cache;
 use pipe_trait::Pipe;
+use std::path::PathBuf;
 
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
