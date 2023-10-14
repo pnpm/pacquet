@@ -1260,11 +1260,8 @@ dependencies = [
 name = "pacquet_cli"
 version = "0.0.1"
 dependencies = [
- "async-recursion",
  "clap",
- "futures-util",
  "insta",
- "node-semver",
  "pacquet_cafs",
  "pacquet_diagnostics",
  "pacquet_executor",
@@ -1278,14 +1275,9 @@ dependencies = [
  "pacquet_testing_utils",
  "pipe-trait",
  "pretty_assertions",
- "rayon",
- "reflink-copy",
  "reqwest",
- "serde",
- "serde_json",
  "tempfile",
  "tokio",
- "walkdir",
 ]
 
 [[package]]
