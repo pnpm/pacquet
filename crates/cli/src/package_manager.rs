@@ -4,9 +4,10 @@ use pacquet_diagnostics::{
     miette::{self, Diagnostic},
     thiserror::{self, Error},
 };
-use pacquet_lockfile::Lockfile;
+use pacquet_lockfile::{LoadLockfileError, Lockfile};
 use pacquet_npmrc::Npmrc;
-use pacquet_package_json::PackageJson;
+use pacquet_package_json::{PackageJson, PackageJsonError};
+use pacquet_package_manager::AddError;
 use pacquet_tarball::Cache;
 use pipe_trait::Pipe;
 
@@ -15,15 +16,15 @@ use pipe_trait::Pipe;
 pub enum PackageManagerError {
     #[error(transparent)]
     #[diagnostic(transparent)]
-    LoadPackageJson(pacquet_package_json::PackageJsonError),
+    LoadPackageJson(PackageJsonError),
 
     #[error(transparent)]
     #[diagnostic(transparent)]
-    LoadLockfile(pacquet_lockfile::LoadLockfileError),
+    LoadLockfile(LoadLockfileError),
 
     #[error(transparent)]
     #[diagnostic(transparent)]
-    AddCommand(pacquet_package_manager::AddError),
+    AddCommand(AddError),
 }
 
 pub struct PackageManager {
