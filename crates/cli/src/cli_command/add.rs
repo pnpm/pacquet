@@ -69,9 +69,7 @@ impl PackageManager {
         }
         .run()
         .await
-        .unwrap();
-
-        Ok(())
+        .map_err(PackageManagerError::AddCommand)
     }
 }
 

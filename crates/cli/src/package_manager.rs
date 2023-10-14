@@ -20,6 +20,10 @@ pub enum PackageManagerError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     LoadLockfile(pacquet_lockfile::LoadLockfileError),
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    AddCommand(pacquet_package_manager::AddError),
 }
 
 pub struct PackageManager {
