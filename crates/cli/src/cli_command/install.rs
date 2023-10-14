@@ -4,7 +4,7 @@ use pacquet_package_json::DependencyGroup;
 use pacquet_package_manager::Install;
 
 #[derive(Debug, Parser)]
-pub struct CliInstallDependencyOptions {
+pub struct InstallDependencyOptions {
     /// pacquet will not install any package listed in devDependencies and will remove those insofar
     /// they were already installed, if the NODE_ENV environment variable is set to production.
     /// Use this flag to instruct pacquet to ignore NODE_ENV and take its production status from this
@@ -20,11 +20,11 @@ pub struct CliInstallDependencyOptions {
     pub no_optional: bool,
 }
 
-impl CliInstallDependencyOptions {
+impl InstallDependencyOptions {
     /// Convert the command arguments to an iterator of [`DependencyGroup`]
     /// which filters the types of dependencies to install.
     fn dependency_groups(&self) -> impl Iterator<Item = DependencyGroup> {
-        let &CliInstallDependencyOptions { prod, dev, no_optional } = self;
+        let &InstallDependencyOptions { prod, dev, no_optional } = self;
         let has_both = prod == dev;
         let has_prod = has_both || prod;
         let has_dev = has_both || dev;
@@ -40,7 +40,7 @@ impl CliInstallDependencyOptions {
 pub struct InstallArgs {
     /// --prod, --dev, and --no-optional
     #[clap(flatten)]
-    pub dependency_options: CliInstallDependencyOptions,
+    pub dependency_options: InstallDependencyOptions,
 
     /// Don't generate a lockfile and fail if the lockfile is outdated.
     #[clap(long)]
@@ -79,57 +79,53 @@ mod tests {
     fn install_args_to_dependency_groups() {
         use DependencyGroup::{Default, Dev, Optional};
         let create_list =
-            |opts: CliInstallDependencyOptions| opts.dependency_groups().collect::<Vec<_>>();
+            |opts: InstallDependencyOptions| opts.dependency_groups().collect::<Vec<_>>();
 
         // no flags -> prod + dev + optional
         assert_eq!(
-            create_list(CliInstallDependencyOptions {
-                prod: false,
-                dev: false,
-                no_optional: false
-            }),
+            create_list(InstallDependencyOptions { prod: false, dev: false, no_optional: false }),
             [Default, Dev, Optional],
         );
 
         // --prod -> prod + optional
         assert_eq!(
-            create_list(CliInstallDependencyOptions { prod: true, dev: false, no_optional: false }),
+            create_list(InstallDependencyOptions { prod: true, dev: false, no_optional: false }),
             [Default, Optional],
         );
 
         // --dev -> dev + optional
         assert_eq!(
-            create_list(CliInstallDependencyOptions { prod: false, dev: true, no_optional: false }),
+            create_list(InstallDependencyOptions { prod: false, dev: true, no_optional: false }),
             [Dev, Optional],
         );
 
         // --no-optional -> prod + dev
         assert_eq!(
-            create_list(CliInstallDependencyOptions { prod: false, dev: false, no_optional: true }),
+            create_list(InstallDependencyOptions { prod: false, dev: false, no_optional: true }),
             [Default, Dev],
         );
 
         // --prod --no-optional -> prod
         assert_eq!(
-            create_list(CliInstallDependencyOptions { prod: true, dev: false, no_optional: true }),
+            create_list(InstallDependencyOptions { prod: true, dev: false, no_optional: true }),
             [Default],
         );
 
         // --dev --no-optional -> dev
         assert_eq!(
-            create_list(CliInstallDependencyOptions { prod: false, dev: true, no_optional: true }),
+            create_list(InstallDependencyOptions { prod: false, dev: true, no_optional: true }),
             [Dev],
         );
 
         // --prod --dev -> prod + dev + optional
         assert_eq!(
-            create_list(CliInstallDependencyOptions { prod: true, dev: true, no_optional: false }),
+            create_list(InstallDependencyOptions { prod: true, dev: true, no_optional: false }),
             [Default, Dev, Optional],
         );
 
         // --prod --dev --no-optional -> prod + dev
         assert_eq!(
-            create_list(CliInstallDependencyOptions { prod: true, dev: true, no_optional: true }),
+            create_list(InstallDependencyOptions { prod: true, dev: true, no_optional: true }),
             [Default, Dev],
         );
     }
