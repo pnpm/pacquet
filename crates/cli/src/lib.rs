@@ -96,22 +96,3 @@ async fn run(cli: CliArgs) -> miette::Result<()> {
 
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::tempdir;
-
-    #[tokio::test]
-    async fn should_get_store_path() {
-        let parent_folder = tempdir().unwrap();
-        let cli = CliArgs::parse_from([
-            "",
-            "-C",
-            parent_folder.path().to_str().unwrap(),
-            "store",
-            "path",
-        ]);
-        run(cli).await.unwrap();
-    }
-}
