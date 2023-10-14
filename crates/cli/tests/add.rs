@@ -14,7 +14,7 @@ where
     Args::Item: AsRef<OsStr>,
 {
     let (mut command, current_dir) = pacquet_with_temp_cwd();
-    command.current_dir(current_dir.path()).args(args).assert().success();
+    command.args(args).assert().success();
     current_dir
 }
 
