@@ -7,72 +7,72 @@ use std::{
 };
 
 use dashmap::DashMap;
+use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use pipe_trait::Pipe;
 use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
-use thiserror::Error;
 use tokio::sync::{Notify, RwLock};
 use tracing::instrument;
 use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
 
-#[derive(Error, Debug, Diagnostic)]
-#[error("Failed to fetch {url}: {error}")]
+#[derive(Debug, Display, Error, Diagnostic)]
+#[display(fmt = "Failed to fetch {url}: {error}")]
 pub struct NetworkError {
     pub url: String,
     pub error: reqwest::Error,
 }
 
-#[derive(Error, Debug, Diagnostic)]
-#[error("Cannot parse {integrity:?} from {url} as an integrity: {error}")]
+#[derive(Debug, Display, Error, Diagnostic)]
+#[display(fmt = "Cannot parse {integrity:?} from {url} as an integrity: {error}")]
 pub struct ParseIntegrityError {
     pub url: String,
     pub integrity: String,
-    #[source]
+    #[error(source)]
     pub error: ssri::Error,
 }
 
-#[derive(Error, Debug, Diagnostic)]
-#[error("Failed to verify the integrity of {url}: {error}")]
+#[derive(Debug, Display, Error, Diagnostic)]
+#[display(fmt = "Failed to verify the integrity of {url}: {error}")]
 pub struct VerifyChecksumError {
     pub url: String,
-    #[source]
+    #[error(source)]
     pub error: ssri::Error,
 }
 
-#[derive(Error, Debug, Diagnostic)]
+#[derive(Debug, Display, Error, From, Diagnostic)]
 #[non_exhaustive]
 pub enum TarballError {
-    #[error(transparent)]
     #[diagnostic(code(pacquet_tarball::fetch_tarball))]
-    FetchTarball(#[from] NetworkError),
+    FetchTarball(NetworkError),
 
-    #[error(transparent)]
+    #[from(ignore)]
     #[diagnostic(code(pacquet_tarball::io_error))]
     ReadTarballEntries(std::io::Error),
 
-    #[error(transparent)]
     #[diagnostic(code(pacquet_tarball::parse_integrity_error))]
-    ParseIntegrity(#[from] ParseIntegrityError),
+    ParseIntegrity(ParseIntegrityError),
 
-    #[error(transparent)]
     #[diagnostic(code(pacquet_tarball::verify_checksum_error))]
-    Checksum(#[from] VerifyChecksumError),
+    Checksum(VerifyChecksumError),
 
-    #[error("integrity creation failed: {}", _0)]
+    #[from(ignore)]
+    #[display(fmt = "Integrity creation failed: {_0}")]
     #[diagnostic(code(pacquet_tarball::integrity_error))]
     Integrity(ssri::Error),
 
-    #[error(transparent)]
+    #[from(ignore)]
+    #[display(fmt = "Failed to decode gzip: {_0}")]
     #[diagnostic(code(pacquet_tarball::decode_gzip))]
     DecodeGzip(InflateDecodeErrors),
 
-    #[error(transparent)]
+    #[from(ignore)]
+    #[display(fmt = "Failed to write cafs: {_0}")]
     #[diagnostic(transparent)]
     WriteCafs(pacquet_cafs::CafsError),
 
-    #[error(transparent)]
+    #[from(ignore)]
     #[diagnostic(code(pacquet_tarball::task_join_error))]
     TaskJoin(tokio::task::JoinError),
 }

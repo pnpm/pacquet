@@ -15,6 +15,7 @@ pacquet_cafs        = { workspace = true }
 pacquet_diagnostics = { workspace = true }
 
 dashmap      = { workspace = true }
+derive_more  = { workspace = true }
 miette       = { workspace = true }
 pipe-trait   = { workspace = true }
 reqwest      = { workspace = true }
@@ -22,7 +23,6 @@ ssri         = { workspace = true }
 tar          = { workspace = true }
 tokio        = { workspace = true }
 zune-inflate = { workspace = true }
-thiserror    = { workspace = true }
 tracing      = { workspace = true }
 
 [dev-dependencies]

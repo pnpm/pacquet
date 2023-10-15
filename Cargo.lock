@@ -1470,6 +1470,7 @@ name = "pacquet_tarball"
 version = "0.0.1"
 dependencies = [
  "dashmap",
+ "derive_more",
  "miette",
  "pacquet_cafs",
  "pacquet_diagnostics",
@@ -1479,7 +1480,6 @@ dependencies = [
  "ssri",
  "tar",
  "tempfile",
- "thiserror",
  "tokio",
  "tracing",
  "zune-inflate",
