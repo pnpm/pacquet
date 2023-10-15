@@ -2,7 +2,7 @@ use crate::{ParsePkgNameError, PkgName};
 use derive_more::{Display, Error};
 use serde::{Deserialize, Serialize};
 use split_first_char::SplitFirstChar;
-use std::{fmt::Display, str::FromStr};
+use std::str::FromStr;
 
 /// Syntax: `{name}@{suffix}`
 ///
@@ -10,8 +10,8 @@ use std::{fmt::Display, str::FromStr};
 /// * `ts-node@10.9.1`, `@types/node@18.7.19`, `typescript@5.1.6`
 /// * `react-json-view@1.21.3(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)`
 #[derive(Debug, Display, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
-#[display(fmt = "{name}@{suffix}")]
-#[display(bound = "Suffix: Display")]
+#[display("{name}@{suffix}")]
+#[display(bound(Suffix: Display))]
 #[serde(try_from = "&'de str", into = "String")]
 #[serde(bound(
     deserialize = "Suffix: FromStr, Suffix::Err: Display",
@@ -31,17 +31,17 @@ impl<Suffix> PkgNameSuffix<Suffix> {
 
 /// Error when parsing [`PkgNameSuffix`] from a string.
 #[derive(Debug, Display, Error)]
-#[display(bound = "ParseSuffixError: Display")]
+#[display(bound(ParseSuffixError: Display))]
 pub enum ParsePkgNameSuffixError<ParseSuffixError> {
-    #[display(fmt = "Input is empty")]
+    #[display("Input is empty")]
     EmptyInput,
-    #[display(fmt = "Suffix is missing")]
+    #[display("Suffix is missing")]
     MissingSuffix,
-    #[display(fmt = "Name is empty")]
+    #[display("Name is empty")]
     EmptyName,
-    #[display(fmt = "Failed to parse suffix: {_0}")]
+    #[display("Failed to parse suffix: {_0}")]
     ParseSuffixFailure(#[error(source)] ParseSuffixError),
-    #[display(fmt = "Failed to parse name: {_0}")]
+    #[display("Failed to parse name: {_0}")]
     ParseNameFailure(#[error(source)] ParsePkgNameError),
 }
 

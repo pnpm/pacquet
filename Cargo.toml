@@ -31,7 +31,7 @@ async-recursion    = { version = "1.0.5" }
 clap               = { version = "4", features = ["derive", "string"] }
 command-extra      = { version = "1.0.0" }
 dashmap            = { version = "5.5.3" }
-derive_more        = { version = "0.99.17" }
+derive_more        = { version = "1.0.0-beta.3", features = ["full"] }
 home               = { version = "0.5.5" }
 insta              = { version = "1.32.0", features = ["yaml", "glob", "walkdir"] }
 itertools          = { version = "0.11.0" }

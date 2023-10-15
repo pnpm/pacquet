@@ -28,7 +28,7 @@ pub struct CreateVirtualDirBySnapshot<'a> {
 /// Error type of [`CreateVirtualDirBySnapshot`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum CreateVirtualDirError {
-    #[display(fmt = "Failed to recursively create node_modules directory at {dir:?}: {error}")]
+    #[display("Failed to recursively create node_modules directory at {dir:?}: {error}")]
     #[diagnostic(code(pacquet_package_manager::create_node_modules_dir))]
     CreateNodeModulesDir {
         dir: PathBuf,

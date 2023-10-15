@@ -18,14 +18,14 @@ use tracing::instrument;
 use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
 
 #[derive(Debug, Display, Error, Diagnostic)]
-#[display(fmt = "Failed to fetch {url}: {error}")]
+#[display("Failed to fetch {url}: {error}")]
 pub struct NetworkError {
     pub url: String,
     pub error: reqwest::Error,
 }
 
 #[derive(Debug, Display, Error, Diagnostic)]
-#[display(fmt = "Cannot parse {integrity:?} from {url} as an integrity: {error}")]
+#[display("Cannot parse {integrity:?} from {url} as an integrity: {error}")]
 pub struct ParseIntegrityError {
     pub url: String,
     pub integrity: String,
@@ -34,7 +34,7 @@ pub struct ParseIntegrityError {
 }
 
 #[derive(Debug, Display, Error, Diagnostic)]
-#[display(fmt = "Failed to verify the integrity of {url}: {error}")]
+#[display("Failed to verify the integrity of {url}: {error}")]
 pub struct VerifyChecksumError {
     pub url: String,
     #[error(source)]
@@ -58,17 +58,17 @@ pub enum TarballError {
     Checksum(VerifyChecksumError),
 
     #[from(ignore)]
-    #[display(fmt = "Integrity creation failed: {_0}")]
+    #[display("Integrity creation failed: {_0}")]
     #[diagnostic(code(pacquet_tarball::integrity_error))]
     Integrity(ssri::Error),
 
     #[from(ignore)]
-    #[display(fmt = "Failed to decode gzip: {_0}")]
+    #[display("Failed to decode gzip: {_0}")]
     #[diagnostic(code(pacquet_tarball::decode_gzip))]
     DecodeGzip(InflateDecodeErrors),
 
     #[from(ignore)]
-    #[display(fmt = "Failed to write cafs: {_0}")]
+    #[display("Failed to write cafs: {_0}")]
     #[diagnostic(transparent)]
     WriteCafs(pacquet_cafs::CafsError),
 

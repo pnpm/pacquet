@@ -5,11 +5,11 @@ use std::process::Command;
 #[derive(Debug, Display, Error, Diagnostic)]
 #[non_exhaustive]
 pub enum ExecutorError {
-    #[display(fmt = "Failed to spawn command: {_0}")]
+    #[display("Failed to spawn command: {_0}")]
     #[diagnostic(code(pacquet_executor::spawn_command))]
     SpawnCommand(#[error(source)] std::io::Error),
 
-    #[display(fmt = "Process exits with an error: {_0}")]
+    #[display("Process exits with an error: {_0}")]
     #[diagnostic(code(pacquet_executor::wait_process))]
     WaitProcess(#[error(source)] std::io::Error),
 }

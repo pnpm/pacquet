@@ -10,14 +10,14 @@ use std::{
 /// Error type for [`symlink_package`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum SymlinkPackageError {
-    #[display(fmt = "Failed to create directory at {dir:?}: {error}")]
+    #[display("Failed to create directory at {dir:?}: {error}")]
     CreateParentDir {
         dir: PathBuf,
         #[error(source)]
         error: io::Error,
     },
 
-    #[display(fmt = "Failed to create symlink at {symlink_path:?} to {symlink_target:?}: {error}")]
+    #[display("Failed to create symlink at {symlink_path:?} to {symlink_target:?}: {error}")]
     SymlinkDir {
         symlink_target: PathBuf,
         symlink_path: PathBuf,

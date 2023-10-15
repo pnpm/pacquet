@@ -8,13 +8,13 @@ use std::{
 /// Error type for [`link_file`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum LinkFileError {
-    #[display(fmt = "cannot create directory at {dirname:?}: {error}")]
+    #[display("cannot create directory at {dirname:?}: {error}")]
     CreateDir {
         dirname: PathBuf,
         #[error(source)]
         error: io::Error,
     },
-    #[display(fmt = "fail to create a link from {from:?} to {to:?}: {error}")]
+    #[display("fail to create a link from {from:?} to {to:?}: {error}")]
     CreateLink {
         from: PathBuf,
         to: PathBuf,

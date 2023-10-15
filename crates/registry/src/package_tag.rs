@@ -6,7 +6,7 @@ use std::str::FromStr;
 #[derive(Debug, Display, From, TryInto)]
 pub enum PackageTag {
     /// Literally `latest``.
-    #[display(fmt = "latest")]
+    #[display("latest")]
     Latest,
     /// Pinned version.
     Version(Version),

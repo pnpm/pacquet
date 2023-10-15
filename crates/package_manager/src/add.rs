@@ -37,9 +37,9 @@ where
 /// Error type of [`Add`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum AddError {
-    #[display(fmt = "Failed to add package to manifest: {_0}")]
+    #[display("Failed to add package to manifest: {_0}")]
     AddDependencyToPackageJson(#[error(source)] PackageJsonError),
-    #[display(fmt = "Failed save the manifest file: {_0}")]
+    #[display("Failed save the manifest file: {_0}")]
     SavePackageJson(#[error(source)] PackageJsonError),
 }
 
