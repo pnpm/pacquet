@@ -19,8 +19,14 @@ fn store_path_should_return_store_dir_from_npmrc() {
     assert!(output.status.success());
 
     eprintln!("Stdout");
+    let normalize = |path: &str| path.replace('\\', "/");
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim_end(),
-        dir.path().pipe(dunce::canonicalize).unwrap().join("foo/bar").to_string_lossy(),
+        String::from_utf8_lossy(&output.stdout).trim_end().pipe(normalize),
+        dir.path()
+            .pipe(dunce::canonicalize)
+            .unwrap()
+            .join("foo/bar")
+            .to_string_lossy()
+            .pipe_as_ref(normalize),
     );
 }
