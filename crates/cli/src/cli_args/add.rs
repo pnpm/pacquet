@@ -57,7 +57,7 @@ pub struct AddArgs {
 
 impl AddArgs {
     /// Execute the subcommand.
-    pub async fn run(&self, mut state: State) -> miette::Result<()> {
+    pub async fn run(self, mut state: State) -> miette::Result<()> {
         // TODO: if a package already exists in another dependency group, don't remove the existing entry.
 
         let State { config, package_json, lockfile, http_client, tarball_cache } = &mut state;

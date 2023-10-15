@@ -48,7 +48,7 @@ pub struct InstallArgs {
 }
 
 impl InstallArgs {
-    pub async fn run(&self, state: State) -> miette::Result<()> {
+    pub async fn run(self, state: State) -> miette::Result<()> {
         let State { config, http_client, tarball_cache, lockfile, package_json } = &state;
         let InstallArgs { dependency_options, frozen_lockfile } = self;
 
@@ -59,7 +59,7 @@ impl InstallArgs {
             package_json,
             lockfile: lockfile.as_ref(),
             dependency_groups: dependency_options.dependency_groups(),
-            frozen_lockfile: *frozen_lockfile,
+            frozen_lockfile,
         }
         .run()
         .await;

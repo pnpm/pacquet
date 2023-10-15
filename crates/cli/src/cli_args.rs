@@ -51,12 +51,13 @@ pub enum CliCommand {
 
 impl CliArgs {
     /// Execute the command
-    pub async fn run(&self) -> miette::Result<()> {
-        let package_json_path = || self.dir.join("package.json");
+    pub async fn run(self) -> miette::Result<()> {
+        let CliArgs { command, dir } = self;
+        let package_json_path = || dir.join("package.json");
         let npmrc = || Npmrc::current(env::current_dir, home::home_dir, Default::default).leak();
         let state = || State::init(package_json_path(), npmrc()).wrap_err("initialize the state");
 
-        match &self.command {
+        match command {
             CliCommand::Init => {
                 // init command throws an error if package.json file exist.
                 PackageJson::init(&package_json_path()).wrap_err("initialize package.json")?;
