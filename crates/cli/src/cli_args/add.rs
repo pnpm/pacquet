@@ -60,7 +60,7 @@ impl AddArgs {
     pub async fn run(self, mut state: State) -> miette::Result<()> {
         // TODO: if a package already exists in another dependency group, don't remove the existing entry.
 
-        let State { config, package_json, lockfile, http_client, tarball_cache } = &mut state;
+        let State { tarball_cache, http_client, config, package_json, lockfile } = &mut state;
 
         Add {
             tarball_cache,
