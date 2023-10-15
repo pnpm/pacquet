@@ -33,7 +33,6 @@ miette      = { workspace = true }
 reqwest     = { workspace = true }
 pipe-trait  = { workspace = true }
 tokio       = { workspace = true }
-tracing     = { workspace = true }
 
 [dev-dependencies]
 pacquet_testing_utils = { workspace = true }
