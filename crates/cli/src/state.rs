@@ -8,6 +8,14 @@ use reqwest::Client;
 use std::path::PathBuf;
 use thiserror::Error;
 
+pub struct State {
+    pub config: &'static Npmrc,
+    pub package_json: PackageJson,
+    pub lockfile: Option<Lockfile>,
+    pub http_client: Client,
+    pub tarball_cache: Cache,
+}
+
 #[derive(Error, Debug, Diagnostic)]
 #[non_exhaustive]
 pub enum InitStateError {
@@ -18,14 +26,6 @@ pub enum InitStateError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     LoadLockfile(LoadLockfileError),
-}
-
-pub struct State {
-    pub config: &'static Npmrc,
-    pub package_json: PackageJson,
-    pub lockfile: Option<Lockfile>,
-    pub http_client: Client,
-    pub tarball_cache: Cache,
 }
 
 impl State {
