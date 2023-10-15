@@ -62,8 +62,8 @@ impl CliArgs {
                 // init command throws an error if package.json file exist.
                 PackageJson::init(&package_json_path()).wrap_err("initialize package.json")?;
             }
-            CliCommand::Add(args) => return args.run(state()?).await,
-            CliCommand::Install(args) => return args.run(state()?).await,
+            CliCommand::Add(args) => args.run(state()?).await?,
+            CliCommand::Install(args) => args.run(state()?).await?,
             CliCommand::Test => {
                 let package_json = PackageJson::from_path(package_json_path())
                     .wrap_err("getting the package.json in current directory")?;
