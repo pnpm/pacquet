@@ -72,18 +72,7 @@ impl CliArgs {
                         .wrap_err(format!("executing command: \"{0}\"", script))?;
                 }
             }
-            CliCommand::Run(args) => {
-                let package_json = PackageJson::from_path(package_json_path())
-                    .wrap_err("getting the package.json in current directory")?;
-                if let Some(script) = package_json.script(&args.command, args.if_present)? {
-                    let mut command = script.to_string();
-                    // append an empty space between script and additional args
-                    command.push(' ');
-                    // then append the additional args
-                    command.push_str(&args.args.join(" "));
-                    execute_shell(command.trim())?;
-                }
-            }
+            CliCommand::Run(args) => args.run(package_json_path())?,
             CliCommand::Start => {
                 // Runs an arbitrary command specified in the package's start property of its scripts
                 // object. If no start property is specified on the scripts object, it will attempt to
@@ -98,22 +87,7 @@ impl CliArgs {
                 };
                 execute_shell(command).wrap_err(format!("executing command: \"{0}\"", command))?;
             }
-            CliCommand::Store(command) => match command {
-                StoreCommand::Store => {
-                    panic!("Not implemented")
-                }
-                StoreCommand::Add => {
-                    panic!("Not implemented")
-                }
-                StoreCommand::Prune => {
-                    let config = npmrc();
-                    pacquet_cafs::prune_sync(&config.store_dir).wrap_err("pruning store")?;
-                }
-                StoreCommand::Path => {
-                    let config = npmrc();
-                    println!("{}", config.store_dir.display());
-                }
-            },
+            CliCommand::Store(command) => command.run(|| npmrc())?,
         }
 
         Ok(())

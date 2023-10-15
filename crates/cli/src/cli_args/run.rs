@@ -1,4 +1,8 @@
 use clap::Args;
+use miette::Context;
+use pacquet_executor::execute_shell;
+use pacquet_package_json::PackageJson;
+use std::path::PathBuf;
 
 #[derive(Debug, Args)]
 pub struct RunArgs {
@@ -13,4 +17,25 @@ pub struct RunArgs {
     /// execution chain.
     #[clap(long)]
     pub if_present: bool,
+}
+
+impl RunArgs {
+    /// Execute the subcommand.
+    pub fn run(self, package_json_path: PathBuf) -> miette::Result<()> {
+        let RunArgs { command, args, if_present } = self;
+
+        let package_json = PackageJson::from_path(package_json_path)
+            .wrap_err("getting the package.json in current directory")?;
+
+        if let Some(script) = package_json.script(&command, if_present)? {
+            let mut command = script.to_string();
+            // append an empty space between script and additional args
+            command.push(' ');
+            // then append the additional args
+            command.push_str(&args.join(" "));
+            execute_shell(command.trim())?;
+        }
+
+        Ok(())
+    }
 }
