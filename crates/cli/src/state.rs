@@ -10,10 +10,15 @@ use std::path::PathBuf;
 
 /// Application state when running `pacquet run` or `pacquet install`.
 pub struct State {
+    /// Configuration read from `.npmrc`
     pub config: &'static Npmrc,
+    /// Data from the `package.json` file.
     pub package_json: PackageJson,
+    /// Data from the `pnpm-lock.yaml` file.
     pub lockfile: Option<Lockfile>,
+    /// HTTP client to make HTTP requests.
     pub http_client: Client,
+    /// Shared cache that store downloaded tarballs.
     pub tarball_cache: Cache,
 }
 
