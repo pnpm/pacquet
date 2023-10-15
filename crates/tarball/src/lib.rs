@@ -110,17 +110,27 @@ fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm,
     integrity.pipe(IntegrityChecker::new).chain(data).result()
 }
 
+/// This subroutine downloads and extracts a tarball to the store directory.
+///
+/// It returns a CAS map of files in the tarball.
 #[must_use]
 pub struct DownloadTarballToStore<'a> {
+    /// Shared cache that store downloaded tarballs.
     pub tarball_cache: &'a Cache,
+    /// HTTP client to make HTTP requests.
     pub http_client: &'a Client,
+    /// Path to the store directory.
     pub store_dir: &'static Path,
+    /// Integrity of the tarball. It can be obtained from the registry index.
     pub package_integrity: &'a str,
+    /// Unpack size of the tarball. It can be obtained from the registry index.
     pub package_unpacked_size: Option<usize>,
+    /// URL to the tarball.
     pub package_url: &'a str,
 }
 
 impl<'a> DownloadTarballToStore<'a> {
+    /// Execute the subroutine.
     pub async fn run(self) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
         let &DownloadTarballToStore { tarball_cache, package_url, .. } = &self;
 
