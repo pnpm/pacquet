@@ -8,6 +8,7 @@ use pipe_trait::Pipe;
 use reqwest::Client;
 use std::path::PathBuf;
 
+/// Application state when running `pacquet run` or `pacquet install`.
 pub struct State {
     pub config: &'static Npmrc,
     pub package_json: PackageJson,
@@ -16,6 +17,7 @@ pub struct State {
     pub tarball_cache: Cache,
 }
 
+/// Error type of [`State::init`].
 #[derive(Debug, Display, Error, Diagnostic)]
 #[non_exhaustive]
 pub enum InitStateError {
@@ -27,6 +29,7 @@ pub enum InitStateError {
 }
 
 impl State {
+    /// Initialize the application state.
     pub fn init(
         package_json_path: PathBuf,
         config: &'static Npmrc,
