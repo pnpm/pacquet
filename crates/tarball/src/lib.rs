@@ -45,12 +45,12 @@ pub struct VerifyChecksumError {
 #[non_exhaustive]
 pub enum TarballError {
     #[error(transparent)]
-    #[diagnostic(code(pacquet_tarball::request_error))]
-    Network(#[from] NetworkError),
+    #[diagnostic(code(pacquet_tarball::fetch_tarball))]
+    FetchTarball(#[from] NetworkError),
 
     #[error(transparent)]
     #[diagnostic(code(pacquet_tarball::io_error))]
-    Io(#[from] std::io::Error),
+    ReadTarballEntries(std::io::Error),
 
     #[error(transparent)]
     #[diagnostic(code(pacquet_tarball::parse_integrity_error))]
@@ -62,19 +62,19 @@ pub enum TarballError {
 
     #[error("integrity creation failed: {}", _0)]
     #[diagnostic(code(pacquet_tarball::integrity_error))]
-    Integrity(#[from] ssri::Error),
+    Integrity(ssri::Error),
 
     #[error(transparent)]
-    #[diagnostic(code(pacquet_tarball::decompression_error))]
-    Decompression(#[from] InflateDecodeErrors),
+    #[diagnostic(code(pacquet_tarball::decode_gzip))]
+    DecodeGzip(InflateDecodeErrors),
 
     #[error(transparent)]
     #[diagnostic(transparent)]
-    Cafs(#[from] pacquet_cafs::CafsError),
+    WriteCafs(pacquet_cafs::CafsError),
 
     #[error(transparent)]
     #[diagnostic(code(pacquet_tarball::task_join_error))]
-    TaskJoin(#[from] tokio::task::JoinError),
+    TaskJoin(tokio::task::JoinError),
 }
 
 /// Value of the cache.
@@ -99,10 +99,9 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
         options = options.set_size_hint(size);
     }
 
-    let mut decoder = DeflateDecoder::new_with_options(gz_data, options);
-    let decompressed = decoder.decode_gzip()?;
-
-    Ok(decompressed)
+    DeflateDecoder::new_with_options(gz_data, options)
+        .decode_gzip()
+        .map_err(TarballError::DecodeGzip)
 }
 
 #[instrument(skip(data), fields(data_len = data.len()))]
@@ -181,7 +180,9 @@ impl<'a> DownloadTarballToStore<'a> {
 
         tracing::info!(target: "pacquet::download", ?package_url, "New cache");
 
-        let network_error = |error| NetworkError { url: package_url.to_string(), error };
+        let network_error = |error| {
+            TarballError::FetchTarball(NetworkError { url: package_url.to_string(), error })
+        };
         let response = http_client
             .get(package_url)
             .send()
@@ -209,7 +210,7 @@ impl<'a> DownloadTarballToStore<'a> {
                 decompress_gzip(&response, package_unpacked_size).map_err(TaskError::Other)?;
             Archive::new(Cursor::new(data))
                 .entries()
-                .map_err(TarballError::Io)
+                .map_err(TarballError::ReadTarballEntries)
                 .map_err(TaskError::Other)?
                 .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir())
                 .map(|entry| -> Result<(OsString, PathBuf), TarballError> {
@@ -222,7 +223,8 @@ impl<'a> DownloadTarballToStore<'a> {
                     let entry_path = entry.path().unwrap();
                     let cleaned_entry_path =
                         entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
-                    let integrity = pacquet_cafs::write_sync(store_dir, &buffer)?;
+                    let integrity = pacquet_cafs::write_sync(store_dir, &buffer)
+                        .map_err(TarballError::WriteCafs)?;
 
                     Ok((cleaned_entry_path, store_dir.join(integrity)))
                 })
