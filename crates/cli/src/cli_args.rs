@@ -52,19 +52,19 @@ pub enum CliCommand {
 impl CliArgs {
     /// Execute the command
     pub async fn run(&self) -> miette::Result<()> {
-        let package_json_path = self.dir.join("package.json");
+        let package_json_path = || self.dir.join("package.json");
         let npmrc = || Npmrc::current(env::current_dir, home::home_dir, Default::default).leak();
-        let state = || State::init(&package_json_path, npmrc()).wrap_err("initialize the state");
+        let state = || State::init(package_json_path(), npmrc()).wrap_err("initialize the state");
 
         match &self.command {
             CliCommand::Init => {
                 // init command throws an error if package.json file exist.
-                PackageJson::init(&package_json_path).wrap_err("initialize package.json")?;
+                PackageJson::init(&package_json_path()).wrap_err("initialize package.json")?;
             }
             CliCommand::Add(args) => return args.run(state()?).await,
             CliCommand::Install(args) => return args.run(state()?).await,
             CliCommand::Test => {
-                let package_json = PackageJson::from_path(package_json_path)
+                let package_json = PackageJson::from_path(package_json_path())
                     .wrap_err("getting the package.json in current directory")?;
                 if let Some(script) = package_json.script("test", false)? {
                     execute_shell(script)
@@ -72,7 +72,7 @@ impl CliArgs {
                 }
             }
             CliCommand::Run(args) => {
-                let package_json = PackageJson::from_path(package_json_path)
+                let package_json = PackageJson::from_path(package_json_path())
                     .wrap_err("getting the package.json in current directory")?;
                 if let Some(script) = package_json.script(&args.command, args.if_present)? {
                     let mut command = script.to_string();
@@ -88,7 +88,7 @@ impl CliArgs {
                 // object. If no start property is specified on the scripts object, it will attempt to
                 // run node server.js as a default, failing if neither are present.
                 // The intended usage of the property is to specify a command that starts your program.
-                let package_json = PackageJson::from_path(package_json_path)
+                let package_json = PackageJson::from_path(package_json_path())
                     .wrap_err("getting the package.json in current directory")?;
                 let command = if let Some(script) = package_json.script("start", true)? {
                     script
