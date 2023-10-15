@@ -1344,7 +1344,6 @@ name = "pacquet_diagnostics"
 version = "0.0.1"
 dependencies = [
  "miette",
- "thiserror",
  "tracing",
  "tracing-subscriber",
 ]
