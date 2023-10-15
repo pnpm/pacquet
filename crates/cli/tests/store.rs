@@ -21,6 +21,6 @@ fn store_path_should_return_store_dir_from_npmrc() {
     eprintln!("Stdout");
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).trim_end(),
-        dir.path().pipe(fs::canonicalize).unwrap().join("foo/bar").to_string_lossy(),
+        dir.path().pipe(dunce::canonicalize).unwrap().join("foo/bar").to_string_lossy(),
     );
 }

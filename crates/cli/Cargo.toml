@@ -39,6 +39,7 @@ tracing     = { workspace = true }
 pacquet_testing_utils = { workspace = true }
 
 assert_cmd        = { workspace = true }
+dunce             = { workspace = true }
 command-extra     = { workspace = true }
 insta             = { workspace = true }
 pretty_assertions = { workspace = true }
