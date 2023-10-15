@@ -27,14 +27,13 @@ pub enum InitStateError {
 }
 
 impl State {
-    pub fn init<P: Into<PathBuf>>(
-        package_json_path: P,
+    pub fn init(
+        package_json_path: PathBuf,
         config: &'static Npmrc,
     ) -> Result<Self, InitStateError> {
         Ok(State {
             config,
             package_json: package_json_path
-                .into()
                 .pipe(PackageJson::create_if_needed)
                 .map_err(InitStateError::LoadPackageJson)?,
             lockfile: call_load_lockfile(config.lockfile, Lockfile::load_from_current_dir)
