@@ -11,9 +11,9 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-miette    = { workspace = true }
-ssri      = { workspace = true }
-thiserror = { workspace = true }
+derive_more = { workspace = true }
+miette      = { workspace = true }
+ssri        = { workspace = true }
 
 [dev-dependencies]
 tempfile          = { workspace = true }

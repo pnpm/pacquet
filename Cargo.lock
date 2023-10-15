@@ -1301,11 +1301,11 @@ checksum = "c1b04fb49957986fdce4d6ee7a65027d55d4b6d2265e5848bbb507b58ccfdb6f"
 name = "pacquet_cafs"
 version = "0.0.1"
 dependencies = [
+ "derive_more",
  "miette",
  "pretty_assertions",
  "ssri",
  "tempfile",
- "thiserror",
 ]
 
 [[package]]
@@ -1425,6 +1425,7 @@ dependencies = [
 name = "pacquet_package_json"
 version = "0.0.1"
 dependencies = [
+ "derive_more",
  "insta",
  "miette",
  "pipe-trait",
@@ -1433,7 +1434,6 @@ dependencies = [
  "serde_json",
  "strum",
  "tempfile",
- "thiserror",
 ]
 
 [[package]]
@@ -1478,7 +1478,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror",
  "tokio",
 ]
 

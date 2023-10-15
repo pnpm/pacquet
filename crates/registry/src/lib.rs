@@ -8,37 +8,38 @@ pub use package_distribution::PackageDistribution;
 pub use package_tag::PackageTag;
 pub use package_version::PackageVersion;
 
+use derive_more::{Display, Error, From};
 use miette::Diagnostic;
-use thiserror::Error;
 
-#[derive(Debug, Error)]
-#[error("failed to request {url}: {error}")]
+#[derive(Debug, Display, Error)]
+#[display("Failed to request {url}: {error}")]
 pub struct NetworkError {
     pub url: String,
-    #[source]
+    #[error(source)]
     pub error: reqwest::Error,
 }
 
-#[derive(Error, Debug, Diagnostic)]
+#[derive(Debug, Display, Error, From, Diagnostic)]
 #[non_exhaustive]
 pub enum RegistryError {
-    #[error("missing latest tag on {0}")]
+    #[from(ignore)] // TODO: remove this after derive(From) has been removed
+    #[display("Missing latest tag on {_0}")]
     #[diagnostic(code(pacquet_registry::missing_latest_tag))]
-    MissingLatestTag(String),
+    MissingLatestTag(#[error(not(source))] String),
 
-    #[error("missing version {0} on package {1}")]
+    #[from(ignore)] // TODO: remove this after derive(From) has been removed
+    #[display("Missing version {_0} on package {_1}")]
     #[diagnostic(code(pacquet_registry::missing_version_release))]
     MissingVersionRelease(String, String),
 
-    #[error(transparent)]
     #[diagnostic(code(pacquet_registry::network_error))]
-    Network(#[from] NetworkError),
+    Network(NetworkError), // TODO: remove derive(Error), split this variant
 
-    #[error(transparent)]
     #[diagnostic(code(pacquet_registry::io_error))]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error), // TODO: remove derive(Error), split this variant
 
-    #[error("serialization failed: {0}")]
+    #[from(ignore)] // TODO: remove this after derive(From) has been removed
+    #[display("Serialization failed: {_0}")]
     #[diagnostic(code(pacquet_registry::serialization_error))]
-    Serialization(String),
+    Serialization(#[error(not(source))] String),
 }

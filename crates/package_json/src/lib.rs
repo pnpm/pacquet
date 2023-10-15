@@ -4,41 +4,42 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use strum::IntoStaticStr;
-use thiserror::Error;
 
-#[derive(Error, Debug, Diagnostic)]
+#[derive(Debug, Display, Error, From, Diagnostic)]
 #[non_exhaustive]
 pub enum PackageJsonError {
-    #[error(transparent)]
     #[diagnostic(code(pacquet_package_json::serialization_error))]
-    Serialization(#[from] serde_json::Error),
+    Serialization(serde_json::Error), // TODO: remove derive(From), split this variant
 
-    #[error(transparent)]
     #[diagnostic(code(pacquet_package_json::io_error))]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error), // TODO: remove derive(From), split this variant
 
-    #[error("package.json file already exists")]
+    #[display("package.json file already exists")]
     #[diagnostic(
         code(pacquet_package_json::already_exist_error),
         help("Your current working directory already has a package.json file.")
     )]
     AlreadyExist,
 
-    #[error("invalid attribute: {0}")]
+    #[from(ignore)] // TODO: remove this after derive(From) has been removed
+    #[display("invalid attribute: {_0}")]
     #[diagnostic(code(pacquet_package_json::invalid_attribute))]
-    InvalidAttribute(String),
+    InvalidAttribute(#[error(not(source))] String),
 
-    #[error("No package.json was found in {0}")]
+    #[from(ignore)] // TODO: remove this after derive(From) has been removed
+    #[display("No package.json was found in {_0}")]
     #[diagnostic(code(pacquet_package_json::no_import_manifest_found))]
-    NoImporterManifestFound(String),
+    NoImporterManifestFound(#[error(not(source))] String),
 
-    #[error("Missing script: \"{0}\"")]
+    #[from(ignore)] // TODO: remove this after derive(From) has been removed
+    #[display("Missing script: {_0:?}")]
     #[diagnostic(code(pacquet_package_json::no_script_error))]
-    NoScript(String),
+    NoScript(#[error(not(source))] String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, IntoStaticStr)]
