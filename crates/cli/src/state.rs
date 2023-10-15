@@ -1,3 +1,4 @@
+use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::{LoadLockfileError, Lockfile};
 use pacquet_npmrc::Npmrc;
@@ -6,7 +7,6 @@ use pacquet_tarball::Cache;
 use pipe_trait::Pipe;
 use reqwest::Client;
 use std::path::PathBuf;
-use thiserror::Error;
 
 pub struct State {
     pub config: &'static Npmrc,
@@ -16,16 +16,14 @@ pub struct State {
     pub tarball_cache: Cache,
 }
 
-#[derive(Error, Debug, Diagnostic)]
+#[derive(Debug, Display, Error, Diagnostic)]
 #[non_exhaustive]
 pub enum InitStateError {
-    #[error(transparent)]
     #[diagnostic(transparent)]
-    LoadPackageJson(PackageJsonError),
+    LoadPackageJson(#[error(source)] PackageJsonError),
 
-    #[error(transparent)]
     #[diagnostic(transparent)]
-    LoadLockfile(LoadLockfileError),
+    LoadLockfile(#[error(source)] LoadLockfileError),
 }
 
 impl State {

@@ -1297,6 +1297,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "command-extra",
+ "derive_more",
  "home",
  "insta",
  "miette",
@@ -1316,7 +1317,6 @@ dependencies = [
  "reqwest",
  "serde_json",
  "tempfile",
- "thiserror",
  "tokio",
  "tracing",
 ]

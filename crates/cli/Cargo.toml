@@ -26,14 +26,14 @@ pacquet_registry        = { workspace = true }
 pacquet_tarball         = { workspace = true }
 pacquet_diagnostics     = { workspace = true }
 
-clap       = { workspace = true }
-home       = { workspace = true }
-miette     = { workspace = true }
-reqwest    = { workspace = true }
-pipe-trait = { workspace = true }
-thiserror  = { workspace = true }
-tokio      = { workspace = true }
-tracing    = { workspace = true }
+clap        = { workspace = true }
+derive_more = { workspace = true }
+home        = { workspace = true }
+miette      = { workspace = true }
+reqwest     = { workspace = true }
+pipe-trait  = { workspace = true }
+tokio       = { workspace = true }
+tracing     = { workspace = true }
 
 [dev-dependencies]
 pacquet_testing_utils = { workspace = true }
