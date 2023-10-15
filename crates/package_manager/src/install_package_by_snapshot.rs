@@ -3,7 +3,7 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::{DependencyPath, LockfileResolution, PackageSnapshot, PkgNameVerPeer};
 use pacquet_npmrc::Npmrc;
-use pacquet_tarball::{download_tarball_to_store, Cache, TarballError};
+use pacquet_tarball::{Cache, DownloadTarballToStore, TarballError};
 use pipe_trait::Pipe;
 use reqwest::Client;
 use std::borrow::Cow;
@@ -68,14 +68,15 @@ impl<'a> InstallPackageBySnapshot<'a> {
         };
 
         // TODO: skip when already exists in store?
-        let cas_paths = download_tarball_to_store(
+        let cas_paths = DownloadTarballToStore {
             tarball_cache,
             http_client,
-            &config.store_dir,
-            integrity,
-            None,
-            &tarball_url,
-        )
+            store_dir: &config.store_dir,
+            package_integrity: integrity,
+            package_unpacked_size: None,
+            package_url: &tarball_url,
+        }
+        .run()
         .await
         .map_err(InstallPackageBySnapshotError::DownloadTarball)?;
 

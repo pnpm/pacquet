@@ -3,7 +3,7 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageTag, PackageVersion, RegistryError};
-use pacquet_tarball::{download_tarball_to_store, Cache, TarballError};
+use pacquet_tarball::{Cache, DownloadTarballToStore, TarballError};
 use reqwest::Client;
 use std::{path::Path, str::FromStr};
 
@@ -80,14 +80,19 @@ impl<'a> InstallPackageFromRegistry<'a> {
         let store_folder_name = package_version.to_virtual_store_name();
 
         // TODO: skip when it already exists in store?
-        let cas_paths = download_tarball_to_store(
+        let cas_paths = DownloadTarballToStore {
             tarball_cache,
             http_client,
-            &config.store_dir,
-            package_version.dist.integrity.as_ref().expect("has integrity field"),
-            package_version.dist.unpacked_size,
-            package_version.as_tarball_url(),
-        )
+            store_dir: &config.store_dir,
+            package_integrity: package_version
+                .dist
+                .integrity
+                .as_ref()
+                .expect("has integrity field"),
+            package_unpacked_size: package_version.dist.unpacked_size,
+            package_url: package_version.as_tarball_url(),
+        }
+        .run()
         .await
         .map_err(InstallPackageFromRegistryError::DownloadTarballToStore)?;
 
