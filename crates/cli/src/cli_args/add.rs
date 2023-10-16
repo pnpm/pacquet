@@ -71,7 +71,7 @@ pub struct AddArgs {
     #[clap(flatten)]
     pub dependency_options: AddDependencyOptions,
     /// Saved dependencies will be configured with an exact version rather than using
-    /// pacquet's default semver range operator.
+    /// the default semver range operator.
     #[clap(short = 'E', long = "save-exact")]
     pub save_exact: bool,
     /// The directory with links to the store (default is node_modules/.pacquet).
