@@ -29,7 +29,7 @@ where
     /// Function that creates an iterator [`DependencyGroup`]s.
     pub list_dependency_groups: ListDependencyGroups, // must be a function because it is called multiple times
     /// Name of the package to add.
-    pub package: &'a str,
+    pub package_name: &'a str,
     /// Whether `--save-exact` is provided.
     pub save_exact: bool, // TODO: add `save-exact` to `.npmrc`, merge configs, and remove this
 }
@@ -57,12 +57,12 @@ where
             manifest,
             lockfile,
             list_dependency_groups,
-            package,
+            package_name,
             save_exact,
         } = self;
 
         let latest_version = PackageVersion::fetch_from_registry(
-            package,
+            package_name,
             PackageTag::Latest, // TODO: add support for specifying tags
             http_client,
             &config.registry,
@@ -73,7 +73,7 @@ where
         let version_range = latest_version.serialize(save_exact);
         for dependency_group in list_dependency_groups() {
             manifest
-                .add_dependency(package, &version_range, dependency_group)
+                .add_dependency(package_name, &version_range, dependency_group)
                 .map_err(AddError::AddDependencyToManifest)?;
         }
 

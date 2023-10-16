@@ -66,7 +66,7 @@ impl AddDependencyOptions {
 #[derive(Debug, Args)]
 pub struct AddArgs {
     /// Name of the package
-    pub package: String,
+    pub package_name: String,
     /// --save-prod, --save-dev, --save-optional, --save-peer
     #[clap(flatten)]
     pub dependency_options: AddDependencyOptions,
@@ -94,7 +94,7 @@ impl AddArgs {
             manifest,
             lockfile: lockfile.as_ref(),
             list_dependency_groups: || self.dependency_options.dependency_groups(),
-            package: &self.package,
+            package_name: &self.package_name,
             save_exact: self.save_exact,
         }
         .run()
