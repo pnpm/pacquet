@@ -1,5 +1,5 @@
 [package]
-name                  = "pacquet_package_manager"
+name                  = "pacquet-package-manager"
 version               = "0.0.1"
 publish               = false
 authors.workspace     = true
@@ -11,12 +11,12 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-pacquet_fs               = { workspace = true }
-pacquet_lockfile         = { workspace = true }
-pacquet_npmrc            = { workspace = true }
-pacquet_package_manifest = { workspace = true }
-pacquet_registry         = { workspace = true }
-pacquet_tarball          = { workspace = true }
+pacquet-fs               = { workspace = true }
+pacquet-lockfile         = { workspace = true }
+pacquet-npmrc            = { workspace = true }
+pacquet-package-manifest = { workspace = true }
+pacquet-registry         = { workspace = true }
+pacquet-tarball          = { workspace = true }
 
 async-recursion = { workspace = true }
 derive_more     = { workspace = true }
@@ -30,7 +30,7 @@ tracing         = { workspace = true }
 miette          = { workspace = true }
 
 [dev-dependencies]
-pacquet_testing_utils = { workspace = true }
+pacquet-testing-utils = { workspace = true }
 
 node-semver       = { workspace = true }
 insta             = { workspace = true }

@@ -1298,7 +1298,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1b04fb49957986fdce4d6ee7a65027d55d4b6d2265e5848bbb507b58ccfdb6f"
 
 [[package]]
-name = "pacquet_cafs"
+name = "pacquet-cafs"
 version = "0.0.1"
 dependencies = [
  "derive_more",
@@ -1309,7 +1309,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pacquet_cli"
+name = "pacquet-cli"
 version = "0.0.1"
 dependencies = [
  "assert_cmd",
@@ -1320,17 +1320,17 @@ dependencies = [
  "home",
  "insta",
  "miette",
- "pacquet_cafs",
- "pacquet_diagnostics",
- "pacquet_executor",
- "pacquet_fs",
- "pacquet_lockfile",
- "pacquet_npmrc",
- "pacquet_package_manager",
- "pacquet_package_manifest",
- "pacquet_registry",
- "pacquet_tarball",
- "pacquet_testing_utils",
+ "pacquet-cafs",
+ "pacquet-diagnostics",
+ "pacquet-executor",
+ "pacquet-fs",
+ "pacquet-lockfile",
+ "pacquet-npmrc",
+ "pacquet-package-manager",
+ "pacquet-package-manifest",
+ "pacquet-registry",
+ "pacquet-tarball",
+ "pacquet-testing-utils",
  "pipe-trait",
  "pretty_assertions",
  "reqwest",
@@ -1340,7 +1340,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pacquet_diagnostics"
+name = "pacquet-diagnostics"
 version = "0.0.1"
 dependencies = [
  "miette",
@@ -1349,7 +1349,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pacquet_executor"
+name = "pacquet-executor"
 version = "0.0.1"
 dependencies = [
  "derive_more",
@@ -1357,14 +1357,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "pacquet_fs"
+name = "pacquet-fs"
 version = "0.0.1"
 dependencies = [
  "junction",
 ]
 
 [[package]]
-name = "pacquet_integrated_benchmark"
+name = "pacquet-integrated-benchmark"
 version = "0.0.0"
 dependencies = [
  "clap",
@@ -1377,13 +1377,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "pacquet_lockfile"
+name = "pacquet-lockfile"
 version = "0.0.1"
 dependencies = [
  "derive_more",
  "node-semver",
- "pacquet_diagnostics",
- "pacquet_package_manifest",
+ "pacquet-diagnostics",
+ "pacquet-package-manifest",
  "pipe-trait",
  "pretty_assertions",
  "serde",
@@ -1393,15 +1393,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "pacquet_micro_benchmark"
+name = "pacquet-micro-benchmark"
 version = "0.0.0"
 dependencies = [
  "clap",
  "criterion",
  "mockito",
  "node-semver",
- "pacquet_registry",
- "pacquet_tarball",
+ "pacquet-registry",
+ "pacquet-tarball",
  "pipe-trait",
  "project-root",
  "reqwest",
@@ -1410,7 +1410,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pacquet_npmrc"
+name = "pacquet-npmrc"
 version = "0.0.1"
 dependencies = [
  "home",
@@ -1422,7 +1422,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pacquet_package_manager"
+name = "pacquet-package-manager"
 version = "0.0.1"
 dependencies = [
  "async-recursion",
@@ -1431,13 +1431,13 @@ dependencies = [
  "insta",
  "miette",
  "node-semver",
- "pacquet_fs",
- "pacquet_lockfile",
- "pacquet_npmrc",
- "pacquet_package_manifest",
- "pacquet_registry",
- "pacquet_tarball",
- "pacquet_testing_utils",
+ "pacquet-fs",
+ "pacquet-lockfile",
+ "pacquet-npmrc",
+ "pacquet-package-manifest",
+ "pacquet-registry",
+ "pacquet-tarball",
+ "pacquet-testing-utils",
  "pipe-trait",
  "pretty_assertions",
  "rayon",
@@ -1450,7 +1450,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pacquet_package_manifest"
+name = "pacquet-package-manifest"
 version = "0.0.1"
 dependencies = [
  "derive_more",
@@ -1465,13 +1465,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "pacquet_registry"
+name = "pacquet-registry"
 version = "0.0.1"
 dependencies = [
  "derive_more",
  "miette",
  "node-semver",
- "pacquet_diagnostics",
+ "pacquet-diagnostics",
  "pipe-trait",
  "pretty_assertions",
  "reqwest",
@@ -1482,14 +1482,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "pacquet_tarball"
+name = "pacquet-tarball"
 version = "0.0.1"
 dependencies = [
  "dashmap",
  "derive_more",
  "miette",
- "pacquet_cafs",
- "pacquet_diagnostics",
+ "pacquet-cafs",
+ "pacquet-diagnostics",
  "pipe-trait",
  "pretty_assertions",
  "reqwest",
@@ -1502,7 +1502,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pacquet_testing_utils"
+name = "pacquet-testing-utils"
 version = "0.0.0"
 dependencies = [
  "assert_cmd",

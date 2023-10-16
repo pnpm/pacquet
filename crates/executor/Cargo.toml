@@ -1,5 +1,5 @@
 [package]
-name                  = "pacquet_executor"
+name                  = "pacquet-executor"
 version               = "0.0.1"
 publish               = false
 authors.workspace     = true

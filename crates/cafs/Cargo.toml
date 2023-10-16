@@ -1,5 +1,5 @@
 [package]
-name                  = "pacquet_cafs"
+name                  = "pacquet-cafs"
 version               = "0.0.1"
 publish               = false
 authors.workspace     = true

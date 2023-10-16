@@ -1,5 +1,5 @@
 [package]
-name                  = "pacquet_cli"
+name                  = "pacquet-cli"
 version               = "0.0.1"
 publish               = false
 authors.workspace     = true
@@ -15,16 +15,16 @@ name = "pacquet"
 path = "src/bin/main.rs"
 
 [dependencies]
-pacquet_cafs             = { workspace = true }
-pacquet_executor         = { workspace = true }
-pacquet_fs               = { workspace = true }
-pacquet_lockfile         = { workspace = true }
-pacquet_npmrc            = { workspace = true }
-pacquet_package_manifest = { workspace = true }
-pacquet_package_manager  = { workspace = true }
-pacquet_registry         = { workspace = true }
-pacquet_tarball          = { workspace = true }
-pacquet_diagnostics      = { workspace = true }
+pacquet-cafs             = { workspace = true }
+pacquet-executor         = { workspace = true }
+pacquet-fs               = { workspace = true }
+pacquet-lockfile         = { workspace = true }
+pacquet-npmrc            = { workspace = true }
+pacquet-package-manifest = { workspace = true }
+pacquet-package-manager  = { workspace = true }
+pacquet-registry         = { workspace = true }
+pacquet-tarball          = { workspace = true }
+pacquet-diagnostics      = { workspace = true }
 
 clap        = { workspace = true }
 derive_more = { workspace = true }
@@ -35,7 +35,7 @@ pipe-trait  = { workspace = true }
 tokio       = { workspace = true }
 
 [dev-dependencies]
-pacquet_testing_utils = { workspace = true }
+pacquet-testing-utils = { workspace = true }
 
 assert_cmd        = { workspace = true }
 dunce             = { workspace = true }

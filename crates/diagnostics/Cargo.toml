@@ -1,5 +1,5 @@
 [package]
-name                  = "pacquet_diagnostics"
+name                  = "pacquet-diagnostics"
 version               = "0.0.1"
 publish               = false
 authors.workspace     = true
