@@ -63,7 +63,7 @@ pub enum BundleDependencies {
 
 pub struct PackageJson {
     path: PathBuf,
-    value: Value,
+    value: Value, // TODO: convert this into a proper struct + an array of keys order
 }
 
 impl PackageJson {
