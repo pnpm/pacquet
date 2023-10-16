@@ -192,7 +192,7 @@ impl PackageManifest {
     pub fn script(
         &self,
         command: &str,
-        if_present: bool,
+        if_present: bool, // TODO: split this function into 2, one with --if-present, one without
     ) -> Result<Option<&str>, PackageManifestError> {
         if let Some(script_str) = self
             .value
