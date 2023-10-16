@@ -26,7 +26,7 @@ where
     pub package_json: &'a mut PackageJson,
     /// Data from the `pnpm-lock.yaml` file.
     pub lockfile: Option<&'a Lockfile>,
-    /// List of [`DependencyGroup`]s.
+    /// Function that creates an iterator [`DependencyGroup`]s.
     pub list_dependency_groups: ListDependencyGroups,
     /// Name of the package to add.
     pub package: &'a str,
