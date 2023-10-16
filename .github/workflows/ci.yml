@@ -38,7 +38,7 @@ jobs:
           save-cache: ${{ github.ref_name == 'main' }}
 
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --locked -- -D warnings
 
       - name: Doc
         run: RUSTDOCFLAGS='-D warnings' cargo doc
