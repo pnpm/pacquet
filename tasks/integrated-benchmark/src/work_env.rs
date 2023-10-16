@@ -6,7 +6,7 @@ use itertools::Itertools;
 use os_display::Quotable;
 use pipe_trait::Pipe;
 use std::{
-    fs::{self, File, Permissions},
+    fs::{self, File},
     io::Write,
     iter,
     path::{Path, PathBuf},
@@ -230,7 +230,7 @@ fn create_install_script(dir: &Path, scenario: BenchmarkScenario, for_pnpm: bool
 
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
+        use std::{fs::Permissions, os::unix::fs::PermissionsExt};
         let permissions = Permissions::from_mode(0o777);
         fs::set_permissions(path, permissions).expect("make the script executable");
     }

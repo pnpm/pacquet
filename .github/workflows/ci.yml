@@ -17,8 +17,8 @@ concurrency:
   cancel-in-progress: ${{ github.ref_name != 'main' }}
 
 jobs:
-  cache: # Warm cache factory for all other CI jobs
-    name: Check and Build
+  test:
+    name: Lint and Test
     strategy:
       fail-fast: false
       matrix:
@@ -33,17 +33,22 @@ jobs:
       - name: Install Rust Toolchain
         uses: ./.github/actions/rustup
         with:
+          docs: true
+          clippy: true
           save-cache: ${{ github.ref_name == 'main' }}
+
+      - name: Clippy
+        run: cargo clippy --locked -- -D warnings
+
+      - name: Doc
+        env:
+          RUSTDOCFLAGS: '-D warnings'
+        run: cargo doc
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@cargo-nextest
 
-      - name: Cargo check
-        run: cargo ck
-
-      - name: Build cache by Cargo Check and Cargo Test
-        run: |
-          cargo nextest run --workspace --all-targets --all-features --no-run
+      - run: cargo nextest run
 
   typos:
     name: Spell Check
@@ -88,52 +93,3 @@ jobs:
           restore-cache: false
 
       - run: cargo fmt --all -- --check
-
-  lint:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: ./.github/actions/rustup
-        with:
-          clippy: true
-
-      - name: Run Clippy
-        run: cargo lint -- -D warnings
-
-  doc:
-    name: Doc
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: ./.github/actions/rustup
-        with:
-          docs: true
-
-      - name: Run doc
-        run: RUSTDOCFLAGS='-D warnings' cargo doc
-
-  test:
-    name: Test
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-          - os: ubuntu-latest
-          - os: macos-latest
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust Toolchain
-        uses: ./.github/actions/rustup
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@cargo-nextest
-
-      - run: cargo nextest run
