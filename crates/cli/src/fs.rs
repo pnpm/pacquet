@@ -1,8 +1,8 @@
-use std::{io, os, path::Path};
+use std::{io, path::Path};
 
 #[cfg(unix)]
 pub fn symlink_dir(original: &Path, link: &Path) -> io::Result<()> {
-    os::unix::fs::symlink(original, link)
+    std::os::unix::fs::symlink(original, link)
 }
 
 #[cfg(windows)]
