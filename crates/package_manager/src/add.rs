@@ -31,7 +31,7 @@ where
     /// Name of the package to add.
     pub package: &'a str,
     /// Whether `--save-exact` is provided.
-    pub save_exact: bool,
+    pub save_exact: bool, // TODO: add `save-exact` to `.npmrc`, merge configs, and remove this
 }
 
 /// Error type of [`Add`].
