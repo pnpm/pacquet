@@ -49,7 +49,7 @@ test:
 
 # Lint the whole project
 lint:
-  cargo clippy -- --deny warnings
+  cargo clippy --locked -- --deny warnings
 
 # Get code coverage
 codecov:
