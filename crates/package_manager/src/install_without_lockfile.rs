@@ -3,7 +3,7 @@ use async_recursion::async_recursion;
 use futures_util::future;
 use node_semver::Version;
 use pacquet_npmrc::Npmrc;
-use pacquet_package_json::{DependencyGroup, PackageJson};
+use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::PackageVersion;
 use pacquet_tarball::Cache;
 use pipe_trait::Pipe;
@@ -27,7 +27,7 @@ pub struct InstallWithoutLockfile<'a, DependencyGroupList> {
     /// Configuration read from `.npmrc`.
     pub config: &'static Npmrc,
     /// Data from the `package.json` file.
-    pub package_json: &'a PackageJson,
+    pub package_json: &'a PackageManifest,
     /// List of [`DependencyGroup`]s.
     pub dependency_groups: DependencyGroupList,
 }

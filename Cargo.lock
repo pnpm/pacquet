@@ -1326,8 +1326,8 @@ dependencies = [
  "pacquet_fs",
  "pacquet_lockfile",
  "pacquet_npmrc",
- "pacquet_package_json",
  "pacquet_package_manager",
+ "pacquet_package_manifest",
  "pacquet_registry",
  "pacquet_tarball",
  "pacquet_testing_utils",
@@ -1383,7 +1383,7 @@ dependencies = [
  "derive_more",
  "node-semver",
  "pacquet_diagnostics",
- "pacquet_package_json",
+ "pacquet_package_manifest",
  "pipe-trait",
  "pretty_assertions",
  "serde",
@@ -1422,21 +1422,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pacquet_package_json"
-version = "0.0.1"
-dependencies = [
- "derive_more",
- "insta",
- "miette",
- "pipe-trait",
- "pretty_assertions",
- "serde",
- "serde_json",
- "strum",
- "tempfile",
-]
-
-[[package]]
 name = "pacquet_package_manager"
 version = "0.0.1"
 dependencies = [
@@ -1449,7 +1434,7 @@ dependencies = [
  "pacquet_fs",
  "pacquet_lockfile",
  "pacquet_npmrc",
- "pacquet_package_json",
+ "pacquet_package_manifest",
  "pacquet_registry",
  "pacquet_tarball",
  "pacquet_testing_utils",
@@ -1462,6 +1447,21 @@ dependencies = [
  "tokio",
  "tracing",
  "walkdir",
+]
+
+[[package]]
+name = "pacquet_package_manifest"
+version = "0.0.1"
+dependencies = [
+ "derive_more",
+ "insta",
+ "miette",
+ "pipe-trait",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "strum",
+ "tempfile",
 ]
 
 [[package]]

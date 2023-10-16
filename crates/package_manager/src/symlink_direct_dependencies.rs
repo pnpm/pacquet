@@ -1,7 +1,7 @@
 use crate::symlink_package;
 use pacquet_lockfile::{PkgName, PkgNameVerPeer, RootProjectSnapshot};
 use pacquet_npmrc::Npmrc;
-use pacquet_package_json::DependencyGroup;
+use pacquet_package_manifest::DependencyGroup;
 use rayon::prelude::*;
 
 /// This subroutine creates symbolic links in the `node_modules` directory for

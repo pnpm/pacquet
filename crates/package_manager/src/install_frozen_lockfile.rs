@@ -1,7 +1,7 @@
 use crate::{CreateVirtualStore, SymlinkDirectDependencies};
 use pacquet_lockfile::{DependencyPath, PackageSnapshot, RootProjectSnapshot};
 use pacquet_npmrc::Npmrc;
-use pacquet_package_json::DependencyGroup;
+use pacquet_package_manifest::DependencyGroup;
 use pacquet_tarball::Cache;
 use reqwest::Client;
 use std::collections::HashMap;

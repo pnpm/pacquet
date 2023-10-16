@@ -13,32 +13,32 @@ use strum::IntoStaticStr;
 #[derive(Debug, Display, Error, From, Diagnostic)]
 #[non_exhaustive]
 pub enum PackageJsonError {
-    #[diagnostic(code(pacquet_package_json::serialization_error))]
+    #[diagnostic(code(pacquet_package_manifest::serialization_error))]
     Serialization(serde_json::Error), // TODO: remove derive(From), split this variant
 
-    #[diagnostic(code(pacquet_package_json::io_error))]
+    #[diagnostic(code(pacquet_package_manifest::io_error))]
     Io(std::io::Error), // TODO: remove derive(From), split this variant
 
     #[display("package.json file already exists")]
     #[diagnostic(
-        code(pacquet_package_json::already_exist_error),
+        code(pacquet_package_manifest::already_exist_error),
         help("Your current working directory already has a package.json file.")
     )]
     AlreadyExist,
 
     #[from(ignore)] // TODO: remove this after derive(From) has been removed
     #[display("invalid attribute: {_0}")]
-    #[diagnostic(code(pacquet_package_json::invalid_attribute))]
+    #[diagnostic(code(pacquet_package_manifest::invalid_attribute))]
     InvalidAttribute(#[error(not(source))] String),
 
     #[from(ignore)] // TODO: remove this after derive(From) has been removed
     #[display("No package.json was found in {_0}")]
-    #[diagnostic(code(pacquet_package_json::no_import_manifest_found))]
+    #[diagnostic(code(pacquet_package_manifest::no_import_manifest_found))]
     NoImporterManifestFound(#[error(not(source))] String),
 
     #[from(ignore)] // TODO: remove this after derive(From) has been removed
     #[display("Missing script: {_0:?}")]
-    #[diagnostic(code(pacquet_package_json::no_script_error))]
+    #[diagnostic(code(pacquet_package_manifest::no_script_error))]
     NoScript(#[error(not(source))] String),
 }
 
@@ -61,12 +61,12 @@ pub enum BundleDependencies {
     List(Vec<String>),
 }
 
-pub struct PackageJson {
+pub struct PackageManifest {
     path: PathBuf,
     value: Value, // TODO: convert this into a proper struct + an array of keys order
 }
 
-impl PackageJson {
+impl PackageManifest {
     fn create_init_package_json(name: &str) -> Value {
         json!({
             "name": name,
@@ -88,7 +88,7 @@ impl PackageJson {
             .and_then(|folder| folder.file_name())
             .and_then(|file_name| file_name.to_str())
             .unwrap_or("");
-        let package_json = PackageJson::create_init_package_json(name);
+        let package_json = PackageManifest::create_init_package_json(name);
         let contents = serde_json::to_string_pretty(&package_json)?;
         fs::write(path, &contents)?; // TODO: forbid overwriting existing files
         Ok((package_json, contents))
@@ -103,28 +103,28 @@ impl PackageJson {
         if path.exists() {
             return Err(PackageJsonError::AlreadyExist);
         }
-        let (_, contents) = PackageJson::write_to_file(path)?;
+        let (_, contents) = PackageManifest::write_to_file(path)?;
         println!("Wrote to {path}\n\n{contents}", path = path.display());
         Ok(())
     }
 
-    pub fn from_path(path: PathBuf) -> Result<PackageJson, PackageJsonError> {
+    pub fn from_path(path: PathBuf) -> Result<PackageManifest, PackageJsonError> {
         if !path.exists() {
             return Err(PackageJsonError::NoImporterManifestFound(path.display().to_string()));
         }
 
-        let value = PackageJson::read_from_file(&path)?;
-        Ok(PackageJson { path, value })
+        let value = PackageManifest::read_from_file(&path)?;
+        Ok(PackageManifest { path, value })
     }
 
-    pub fn create_if_needed(path: PathBuf) -> Result<PackageJson, PackageJsonError> {
+    pub fn create_if_needed(path: PathBuf) -> Result<PackageManifest, PackageJsonError> {
         let value = if path.exists() {
-            PackageJson::read_from_file(&path)?
+            PackageManifest::read_from_file(&path)?
         } else {
-            PackageJson::write_to_file(&path).map(|(value, _)| value)?
+            PackageManifest::write_to_file(&path).map(|(value, _)| value)?
         };
 
-        Ok(PackageJson { path, value })
+        Ok(PackageManifest { path, value })
     }
 
     pub fn path(&self) -> &'_ Path {
@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     fn test_init_package_json_content() {
-        let package_json = PackageJson::create_init_package_json("test");
+        let package_json = PackageManifest::create_init_package_json("test");
         assert_snapshot!(serde_json::to_string_pretty(&package_json).unwrap());
     }
 
@@ -232,24 +232,24 @@ mod tests {
     fn init_should_throw_if_exists() {
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "hello world").unwrap();
-        PackageJson::init(tmp.path()).expect_err("package.json already exist");
+        PackageManifest::init(tmp.path()).expect_err("package.json already exist");
     }
 
     #[test]
     fn init_should_create_package_json_if_not_exist() {
         let dir = tempdir().unwrap();
         let tmp = dir.path().join("package.json");
-        PackageJson::init(&tmp).unwrap();
+        PackageManifest::init(&tmp).unwrap();
         assert!(tmp.exists());
         assert!(tmp.is_file());
-        assert_eq!(PackageJson::from_path(tmp.clone()).unwrap().path, tmp);
+        assert_eq!(PackageManifest::from_path(tmp.clone()).unwrap().path, tmp);
     }
 
     #[test]
     fn should_add_dependency() {
         let dir = tempdir().unwrap();
         let tmp = dir.path().join("package.json");
-        let mut package_json = PackageJson::create_if_needed(tmp.clone()).unwrap();
+        let mut package_json = PackageManifest::create_if_needed(tmp.clone()).unwrap();
         package_json.add_dependency("fastify", "1.0.0", DependencyGroup::Prod).unwrap();
 
         let dependencies: HashMap<_, _> =
@@ -264,7 +264,7 @@ mod tests {
     fn should_throw_on_missing_command() {
         let dir = tempdir().unwrap();
         let tmp = dir.path().join("package.json");
-        let package_json = PackageJson::create_if_needed(tmp).unwrap();
+        let package_json = PackageManifest::create_if_needed(tmp).unwrap();
         package_json.script("dev", false).expect_err("dev command should not exist");
     }
 
@@ -279,7 +279,7 @@ mod tests {
         "#;
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "{}", data).unwrap();
-        let package_json = PackageJson::create_if_needed(tmp.path().to_path_buf()).unwrap();
+        let package_json = PackageManifest::create_if_needed(tmp.path().to_path_buf()).unwrap();
         package_json.script("test", false).unwrap();
         package_json.script("invalid", false).expect_err("invalid command should not exist");
         package_json.script("invalid", true).unwrap();
@@ -299,7 +299,7 @@ mod tests {
         "#;
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "{}", data).unwrap();
-        let package_json = PackageJson::create_if_needed(tmp.path().to_path_buf()).unwrap();
+        let package_json = PackageManifest::create_if_needed(tmp.path().to_path_buf()).unwrap();
         let dependencies = |groups| package_json.dependencies(groups).collect::<HashMap<_, _>>();
         assert!(dependencies([DependencyGroup::Peer]).contains_key("fast-querystring"));
         assert!(dependencies([DependencyGroup::Prod]).contains_key("fastify"));
@@ -321,7 +321,8 @@ mod tests {
                 eprintln!("CASE: {data}");
                 let tmp = NamedTempFile::new().unwrap();
                 write!(tmp.as_file(), "{}", data).unwrap();
-                let package_json = PackageJson::create_if_needed(tmp.path().to_path_buf()).unwrap();
+                let package_json =
+                    PackageManifest::create_if_needed(tmp.path().to_path_buf()).unwrap();
                 let bundle = package_json.bundle_dependencies().unwrap();
                 assert_eq!(bundle, $output);
             }};

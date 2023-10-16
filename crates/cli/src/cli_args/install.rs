@@ -1,7 +1,7 @@
 use crate::State;
 use clap::Args;
-use pacquet_package_json::DependencyGroup;
 use pacquet_package_manager::Install;
+use pacquet_package_manifest::DependencyGroup;
 
 #[derive(Debug, Args)]
 pub struct InstallDependencyOptions {
@@ -71,7 +71,7 @@ impl InstallArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pacquet_package_json::DependencyGroup;
+    use pacquet_package_manifest::DependencyGroup;
     use pretty_assertions::assert_eq;
 
     #[test]

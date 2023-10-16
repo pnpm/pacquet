@@ -1,5 +1,6 @@
 ---
 source: crates/package_json/src/lib.rs
+assertion_line: 228
 expression: "serde_json::to_string_pretty(&package_json).unwrap()"
 ---
 {

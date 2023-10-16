@@ -1,7 +1,7 @@
 pub mod _utils;
 pub use _utils::*;
 
-use pacquet_package_json::{DependencyGroup, PackageJson};
+use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_testing_utils::fs::{get_all_folders, get_filenames_in_folder};
 use pretty_assertions::assert_eq;
 use std::{env, fs};
@@ -64,7 +64,7 @@ pub fn should_symlink_correctly() {
 #[test]
 fn should_add_to_package_json() {
     let dir = exec_pacquet_in_temp_cwd(["add", "is-odd"]);
-    let file = PackageJson::from_path(dir.path().join("package.json")).unwrap();
+    let file = PackageManifest::from_path(dir.path().join("package.json")).unwrap();
     eprintln!("Ensure is-odd is added to package.json#dependencies");
     assert!(file.dependencies([DependencyGroup::Prod]).any(|(k, _)| k == "is-odd"));
 }
@@ -72,7 +72,7 @@ fn should_add_to_package_json() {
 #[test]
 fn should_add_dev_dependency() {
     let dir = exec_pacquet_in_temp_cwd(["add", "is-odd", "--save-dev"]);
-    let file = PackageJson::from_path(dir.path().join("package.json")).unwrap();
+    let file = PackageManifest::from_path(dir.path().join("package.json")).unwrap();
     eprintln!("Ensure is-odd is added to package.json#devDependencies");
     assert!(file.dependencies([DependencyGroup::Dev]).any(|(k, _)| k == "is-odd"));
 }
@@ -80,7 +80,7 @@ fn should_add_dev_dependency() {
 #[test]
 fn should_add_peer_dependency() {
     let dir = exec_pacquet_in_temp_cwd(["add", "is-odd", "--save-peer"]);
-    let file = PackageJson::from_path(dir.path().join("package.json")).unwrap();
+    let file = PackageManifest::from_path(dir.path().join("package.json")).unwrap();
     eprintln!("Ensure is-odd is added to package.json#devDependencies");
     assert!(file.dependencies([DependencyGroup::Dev]).any(|(k, _)| k == "is-odd"));
     eprintln!("Ensure is-odd is added to package.json#peerDependencies");

@@ -2,7 +2,7 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::{LoadLockfileError, Lockfile};
 use pacquet_npmrc::Npmrc;
-use pacquet_package_json::{PackageJson, PackageJsonError};
+use pacquet_package_manifest::{PackageJsonError, PackageManifest};
 use pacquet_tarball::Cache;
 use pipe_trait::Pipe;
 use reqwest::Client;
@@ -17,7 +17,7 @@ pub struct State {
     /// Configuration read from `.npmrc`
     pub config: &'static Npmrc,
     /// Data from the `package.json` file.
-    pub package_json: PackageJson,
+    pub package_json: PackageManifest,
     /// Data from the `pnpm-lock.yaml` file.
     pub lockfile: Option<Lockfile>,
 }
@@ -42,7 +42,7 @@ impl State {
         Ok(State {
             config,
             package_json: package_json_path
-                .pipe(PackageJson::create_if_needed)
+                .pipe(PackageManifest::create_if_needed)
                 .map_err(InitStateError::LoadPackageJson)?,
             lockfile: call_load_lockfile(config.lockfile, Lockfile::load_from_current_dir)
                 .map_err(InitStateError::LoadLockfile)?,

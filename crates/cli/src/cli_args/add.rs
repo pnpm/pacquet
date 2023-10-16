@@ -1,8 +1,8 @@
 use crate::State;
 use clap::Args;
 use miette::Context;
-use pacquet_package_json::DependencyGroup;
 use pacquet_package_manager::Add;
+use pacquet_package_manifest::DependencyGroup;
 use std::path::PathBuf;
 
 #[derive(Debug, Args)]
@@ -106,7 +106,7 @@ impl AddArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pacquet_package_json::DependencyGroup;
+    use pacquet_package_manifest::DependencyGroup;
     use pretty_assertions::assert_eq;
 
     #[test]

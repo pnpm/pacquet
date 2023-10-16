@@ -10,7 +10,7 @@ use install::InstallArgs;
 use miette::Context;
 use pacquet_executor::execute_shell;
 use pacquet_npmrc::Npmrc;
-use pacquet_package_json::PackageJson;
+use pacquet_package_manifest::PackageManifest;
 use run::RunArgs;
 use std::{env, path::PathBuf};
 use store::StoreCommand;
@@ -60,12 +60,12 @@ impl CliArgs {
         match command {
             CliCommand::Init => {
                 // init command throws an error if package.json file exist.
-                PackageJson::init(&package_json_path()).wrap_err("initialize package.json")?;
+                PackageManifest::init(&package_json_path()).wrap_err("initialize package.json")?;
             }
             CliCommand::Add(args) => args.run(state()?).await?,
             CliCommand::Install(args) => args.run(state()?).await?,
             CliCommand::Test => {
-                let package_json = PackageJson::from_path(package_json_path())
+                let package_json = PackageManifest::from_path(package_json_path())
                     .wrap_err("getting the package.json in current directory")?;
                 if let Some(script) = package_json.script("test", false)? {
                     execute_shell(script)
@@ -78,7 +78,7 @@ impl CliArgs {
                 // object. If no start property is specified on the scripts object, it will attempt to
                 // run node server.js as a default, failing if neither are present.
                 // The intended usage of the property is to specify a command that starts your program.
-                let package_json = PackageJson::from_path(package_json_path())
+                let package_json = PackageManifest::from_path(package_json_path())
                     .wrap_err("getting the package.json in current directory")?;
                 let command = if let Some(script) = package_json.script("start", true)? {
                     script

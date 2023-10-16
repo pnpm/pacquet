@@ -13,18 +13,18 @@ repository  = "https://github.com/anonrig/pacquet"
 
 [workspace.dependencies]
 # Crates
-pacquet_cli             = { path = "crates/cli" }
-pacquet_fs              = { path = "crates/fs" }
-pacquet_registry        = { path = "crates/registry" }
-pacquet_tarball         = { path = "crates/tarball" }
-pacquet_testing_utils   = { path = "crates/testing-utils" }
-pacquet_package_json    = { path = "crates/package_json" }
-pacquet_package_manager = { path = "crates/package_manager" }
-pacquet_lockfile        = { path = "crates/lockfile" }
-pacquet_npmrc           = { path = "crates/npmrc" }
-pacquet_executor        = { path = "crates/executor" }
-pacquet_cafs            = { path = "crates/cafs" }
-pacquet_diagnostics     = { path = "crates/diagnostics" }
+pacquet_cli              = { path = "crates/cli" }
+pacquet_fs               = { path = "crates/fs" }
+pacquet_registry         = { path = "crates/registry" }
+pacquet_tarball          = { path = "crates/tarball" }
+pacquet_testing_utils    = { path = "crates/testing-utils" }
+pacquet_package_manifest = { path = "crates/package_manifest" }
+pacquet_package_manager  = { path = "crates/package_manager" }
+pacquet_lockfile         = { path = "crates/lockfile" }
+pacquet_npmrc            = { path = "crates/npmrc" }
+pacquet_executor         = { path = "crates/executor" }
+pacquet_cafs             = { path = "crates/cafs" }
+pacquet_diagnostics      = { path = "crates/diagnostics" }
 
 # Dependencies
 async-recursion    = { version = "1.0.5" }

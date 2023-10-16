@@ -3,8 +3,8 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::Lockfile;
 use pacquet_npmrc::Npmrc;
-use pacquet_package_json::PackageJsonError;
-use pacquet_package_json::{DependencyGroup, PackageJson};
+use pacquet_package_manifest::PackageJsonError;
+use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::{PackageTag, PackageVersion};
 use pacquet_tarball::Cache;
 use reqwest::Client;
@@ -23,7 +23,7 @@ where
     /// Configuration read from `.npmrc`.
     pub config: &'static Npmrc,
     /// Data from the `package.json` file.
-    pub package_json: &'a mut PackageJson,
+    pub package_json: &'a mut PackageManifest,
     /// Data from the `pnpm-lock.yaml` file.
     pub lockfile: Option<&'a Lockfile>,
     /// Function that creates an iterator [`DependencyGroup`]s.

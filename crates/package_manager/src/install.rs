@@ -1,7 +1,7 @@
 use crate::{InstallFrozenLockfile, InstallWithoutLockfile};
 use pacquet_lockfile::Lockfile;
 use pacquet_npmrc::Npmrc;
-use pacquet_package_json::{DependencyGroup, PackageJson};
+use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_tarball::Cache;
 use reqwest::Client;
 
@@ -18,7 +18,7 @@ where
     /// Configuration read from `.npmrc`.
     pub config: &'static Npmrc,
     /// Data from the `package.json` file.
-    pub package_json: &'a PackageJson,
+    pub package_json: &'a PackageManifest,
     /// Data from the `pnpm-lock.yaml` file.
     pub lockfile: Option<&'a Lockfile>,
     /// List of [`DependencyGroup`]s.
@@ -85,7 +85,7 @@ where
 mod tests {
     use super::*;
     use pacquet_npmrc::Npmrc;
-    use pacquet_package_json::{DependencyGroup, PackageJson};
+    use pacquet_package_manifest::{DependencyGroup, PackageManifest};
     use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
     use std::env;
     use tempfile::tempdir;
@@ -99,7 +99,8 @@ mod tests {
         let virtual_store_dir = modules_dir.join(".pacquet"); // TODO: we shouldn't have to define this
 
         let package_json_path = dir.path().join("package.json");
-        let mut package_json = PackageJson::create_if_needed(package_json_path.clone()).unwrap();
+        let mut package_json =
+            PackageManifest::create_if_needed(package_json_path.clone()).unwrap();
 
         package_json.add_dependency("is-odd", "3.0.1", DependencyGroup::Prod).unwrap();
         package_json

@@ -1,9 +1,9 @@
 ---
 source: crates/cli/tests/init.rs
-assertion_line: 56
+assertion_line: 43
 expression: "String::from_utf8_lossy(&output.stderr).trim_end()"
 ---
-Error: pacquet_package_json::already_exist_error
+Error: pacquet_package_manifest::already_exist_error
 
   × initialize package.json
   ╰─▶ package.json file already exists

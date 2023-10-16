@@ -1,7 +1,7 @@
 use clap::Args;
 use miette::Context;
 use pacquet_executor::execute_shell;
-use pacquet_package_json::PackageJson;
+use pacquet_package_manifest::PackageManifest;
 use std::path::PathBuf;
 
 #[derive(Debug, Args)]
@@ -24,7 +24,7 @@ impl RunArgs {
     pub fn run(self, package_json_path: PathBuf) -> miette::Result<()> {
         let RunArgs { command, args, if_present } = self;
 
-        let package_json = PackageJson::from_path(package_json_path)
+        let package_json = PackageManifest::from_path(package_json_path)
             .wrap_err("getting the package.json in current directory")?;
 
         if let Some(script) = package_json.script(&command, if_present)? {

@@ -1,5 +1,5 @@
 [package]
-name                  = "pacquet_package_json"
+name                  = "pacquet_package_manifest"
 version               = "0.0.1"
 publish               = false
 authors.workspace     = true
