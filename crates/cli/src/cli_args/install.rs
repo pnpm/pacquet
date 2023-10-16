@@ -10,14 +10,14 @@ pub struct InstallDependencyOptions {
     /// Use this flag to instruct pacquet to ignore NODE_ENV and take its production status from this
     /// flag instead.
     #[arg(short = 'P', long)]
-    pub prod: bool,
+    prod: bool,
     /// Only devDependencies are installed and dependencies are removed insofar they were
     /// already installed, regardless of the NODE_ENV.
     #[arg(short = 'D', long)]
-    pub dev: bool,
+    dev: bool,
     /// optionalDependencies are not installed.
     #[arg(long)]
-    pub no_optional: bool,
+    no_optional: bool,
 }
 
 impl InstallDependencyOptions {
