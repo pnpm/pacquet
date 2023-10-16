@@ -41,7 +41,9 @@ jobs:
         run: cargo clippy --locked -- -D warnings
 
       - name: Doc
-        run: RUSTDOCFLAGS='-D warnings' cargo doc
+        env:
+          RUSTDOCFLAGS: '-D warnings'
+        run: cargo doc
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@cargo-nextest
