@@ -2,7 +2,7 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::{LoadLockfileError, Lockfile};
 use pacquet_npmrc::Npmrc;
-use pacquet_package_manifest::{PackageJsonError, PackageManifest};
+use pacquet_package_manifest::{PackageManifest, PackageManifestError};
 use pacquet_tarball::Cache;
 use pipe_trait::Pipe;
 use reqwest::Client;
@@ -27,7 +27,7 @@ pub struct State {
 #[non_exhaustive]
 pub enum InitStateError {
     #[diagnostic(transparent)]
-    LoadPackageJson(#[error(source)] PackageJsonError),
+    LoadManifest(#[error(source)] PackageManifestError),
 
     #[diagnostic(transparent)]
     LoadLockfile(#[error(source)] LoadLockfileError),
@@ -40,7 +40,7 @@ impl State {
             config,
             manifest: manifest_path
                 .pipe(PackageManifest::create_if_needed)
-                .map_err(InitStateError::LoadPackageJson)?,
+                .map_err(InitStateError::LoadManifest)?,
             lockfile: call_load_lockfile(config.lockfile, Lockfile::load_from_current_dir)
                 .map_err(InitStateError::LoadLockfile)?,
             http_client: Client::new(),

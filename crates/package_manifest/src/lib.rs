@@ -12,7 +12,7 @@ use strum::IntoStaticStr;
 
 #[derive(Debug, Display, Error, From, Diagnostic)]
 #[non_exhaustive]
-pub enum PackageJsonError {
+pub enum PackageManifestError {
     #[diagnostic(code(pacquet_package_manifest::serialization_error))]
     Serialization(serde_json::Error), // TODO: remove derive(From), split this variant
 
@@ -83,7 +83,7 @@ impl PackageManifest {
         })
     }
 
-    fn write_to_file(path: &Path) -> Result<(Value, String), PackageJsonError> {
+    fn write_to_file(path: &Path) -> Result<(Value, String), PackageManifestError> {
         let name = path
             .parent()
             .and_then(|folder| folder.file_name())
@@ -95,30 +95,30 @@ impl PackageManifest {
         Ok((manifest, contents))
     }
 
-    fn read_from_file(path: &Path) -> Result<Value, PackageJsonError> {
+    fn read_from_file(path: &Path) -> Result<Value, PackageManifestError> {
         let contents = fs::read_to_string(path)?;
-        serde_json::from_str(&contents).map_err(PackageJsonError::from)
+        serde_json::from_str(&contents).map_err(PackageManifestError::from)
     }
 
-    pub fn init(path: &Path) -> Result<(), PackageJsonError> {
+    pub fn init(path: &Path) -> Result<(), PackageManifestError> {
         if path.exists() {
-            return Err(PackageJsonError::AlreadyExist);
+            return Err(PackageManifestError::AlreadyExist);
         }
         let (_, contents) = PackageManifest::write_to_file(path)?;
         println!("Wrote to {path}\n\n{contents}", path = path.display());
         Ok(())
     }
 
-    pub fn from_path(path: PathBuf) -> Result<PackageManifest, PackageJsonError> {
+    pub fn from_path(path: PathBuf) -> Result<PackageManifest, PackageManifestError> {
         if !path.exists() {
-            return Err(PackageJsonError::NoImporterManifestFound(path.display().to_string()));
+            return Err(PackageManifestError::NoImporterManifestFound(path.display().to_string()));
         }
 
         let value = PackageManifest::read_from_file(&path)?;
         Ok(PackageManifest { path, value })
     }
 
-    pub fn create_if_needed(path: PathBuf) -> Result<PackageManifest, PackageJsonError> {
+    pub fn create_if_needed(path: PathBuf) -> Result<PackageManifest, PackageManifestError> {
         let value = if path.exists() {
             PackageManifest::read_from_file(&path)?
         } else {
@@ -136,7 +136,7 @@ impl PackageManifest {
         &self.value
     }
 
-    pub fn save(&self) -> Result<(), PackageJsonError> {
+    pub fn save(&self) -> Result<(), PackageManifestError> {
         let mut file = fs::File::create(&self.path)?;
         let contents = serde_json::to_string_pretty(&self.value)?;
         file.write_all(contents.as_bytes())?;
@@ -171,13 +171,13 @@ impl PackageManifest {
         name: &str,
         version: &str,
         dependency_group: DependencyGroup,
-    ) -> Result<(), PackageJsonError> {
+    ) -> Result<(), PackageManifestError> {
         let dependency_type: &str = dependency_group.into();
         if let Some(field) = self.value.get_mut(dependency_type) {
             if let Some(dependencies) = field.as_object_mut() {
                 dependencies.insert(name.to_string(), Value::String(version.to_string()));
             } else {
-                return Err(PackageJsonError::InvalidAttribute(
+                return Err(PackageManifestError::InvalidAttribute(
                     "dependencies attribute should be an object".to_string(),
                 ));
             }
@@ -193,7 +193,7 @@ impl PackageManifest {
         &self,
         command: &str,
         if_present: bool,
-    ) -> Result<Option<&str>, PackageJsonError> {
+    ) -> Result<Option<&str>, PackageManifestError> {
         if let Some(script_str) = self
             .value
             .get("scripts")
@@ -206,7 +206,7 @@ impl PackageManifest {
         if if_present {
             Ok(None)
         } else {
-            Err(PackageJsonError::NoScript(command.to_string()))
+            Err(PackageManifestError::NoScript(command.to_string()))
         }
     }
 }

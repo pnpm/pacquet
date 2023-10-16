@@ -3,7 +3,7 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::Lockfile;
 use pacquet_npmrc::Npmrc;
-use pacquet_package_manifest::PackageJsonError;
+use pacquet_package_manifest::PackageManifestError;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::{PackageTag, PackageVersion};
 use pacquet_tarball::Cache;
@@ -38,9 +38,9 @@ where
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum AddError {
     #[display("Failed to add package to manifest: {_0}")]
-    AddDependencyToPackageJson(#[error(source)] PackageJsonError),
+    AddDependencyToManifest(#[error(source)] PackageManifestError),
     #[display("Failed save the manifest file: {_0}")]
-    SavePackageJson(#[error(source)] PackageJsonError),
+    SaveManifest(#[error(source)] PackageManifestError),
 }
 
 impl<'a, ListDependencyGroups, DependencyGroupList>
@@ -74,7 +74,7 @@ where
         for dependency_group in list_dependency_groups() {
             manifest
                 .add_dependency(package, &version_range, dependency_group)
-                .map_err(AddError::AddDependencyToPackageJson)?;
+                .map_err(AddError::AddDependencyToManifest)?;
         }
 
         Install {
@@ -89,7 +89,7 @@ where
         .run()
         .await;
 
-        manifest.save().map_err(AddError::SavePackageJson)?;
+        manifest.save().map_err(AddError::SaveManifest)?;
 
         Ok(())
     }
