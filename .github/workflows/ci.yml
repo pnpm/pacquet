@@ -115,7 +115,7 @@ jobs:
           docs: true
 
       - name: Run doc
-        run: RUSTDOCFLAGS='-D warnings' cargo doc -p pacquet_cli
+        run: RUSTDOCFLAGS='-D warnings' cargo doc
 
   test:
     name: Test
