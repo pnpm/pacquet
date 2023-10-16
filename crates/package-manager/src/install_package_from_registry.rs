@@ -17,17 +17,11 @@ use std::{path::Path, str::FromStr};
 /// `node_modules/.pacquet/fastify@1.0.0/node_modules`.
 #[must_use]
 pub struct InstallPackageFromRegistry<'a> {
-    /// Shared cache that store downloaded tarballs.
     pub tarball_cache: &'a Cache,
-    /// HTTP client to make HTTP requests.
     pub http_client: &'a Client,
-    /// Configuration read from `.npmrc`.
     pub config: &'static Npmrc,
-    /// Path to a `node_modules` directory.
     pub node_modules_dir: &'a Path,
-    /// Name of the package to be installed.
     pub name: &'a str,
-    /// Version range of the package to be installed.
     pub version_range: &'a str,
 }
 

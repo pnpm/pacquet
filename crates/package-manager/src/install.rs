@@ -11,19 +11,12 @@ pub struct Install<'a, DependencyGroupList>
 where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
-    /// Shared cache that store downloaded tarballs.
     pub tarball_cache: &'a Cache,
-    /// HTTP client to make HTTP requests.
     pub http_client: &'a Client,
-    /// Configuration read from `.npmrc`.
     pub config: &'static Npmrc,
-    /// Data from the `package.json` file.
     pub manifest: &'a PackageManifest,
-    /// Data from the `pnpm-lock.yaml` file.
     pub lockfile: Option<&'a Lockfile>,
-    /// List of [`DependencyGroup`]s.
     pub dependency_groups: DependencyGroupList,
-    /// Whether `--frozen-lockfile` is specified.
     pub frozen_lockfile: bool,
 }
 

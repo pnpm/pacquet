@@ -15,11 +15,8 @@ pub struct SymlinkDirectDependencies<'a, DependencyGroupList>
 where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
-    /// Configuration read from `.npmrc`.
     pub config: &'static Npmrc,
-    /// The part of the lockfile that snapshots `package.json`.
     pub project_snapshot: &'a RootProjectSnapshot,
-    /// List of [`DependencyGroup`]s.
     pub dependency_groups: DependencyGroupList,
 }
 

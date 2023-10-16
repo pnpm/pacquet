@@ -20,17 +20,11 @@ pub struct InstallFrozenLockfile<'a, DependencyGroupList>
 where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
-    /// Shared cache that store downloaded tarballs.
     pub tarball_cache: &'a Cache,
-    /// HTTP client to make HTTP requests.
     pub http_client: &'a Client,
-    /// Configuration read from `.npmrc`.
     pub config: &'static Npmrc,
-    /// The part of the lockfile that snapshots `package.json`.
     pub project_snapshot: &'a RootProjectSnapshot,
-    /// The `packages` object from the lockfile.
     pub packages: Option<&'a HashMap<DependencyPath, PackageSnapshot>>,
-    /// List of [`DependencyGroup`]s.
     pub dependency_groups: DependencyGroupList,
 }
 

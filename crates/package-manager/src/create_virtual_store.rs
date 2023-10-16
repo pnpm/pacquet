@@ -10,15 +10,10 @@ use std::collections::HashMap;
 /// This subroutine generates filesystem layout for the virtual store at `node_modules/.pacquet`.
 #[must_use]
 pub struct CreateVirtualStore<'a> {
-    /// Shared cache that store downloaded tarballs.
     pub tarball_cache: &'a Cache,
-    /// HTTP client to make HTTP requests.
     pub http_client: &'a Client,
-    /// Configuration read from `.npmrc`.
     pub config: &'static Npmrc,
-    /// The `packages` object from the lockfile.
     pub packages: Option<&'a HashMap<DependencyPath, PackageSnapshot>>,
-    /// The part of the lockfile that snapshots `package.json`.
     pub project_snapshot: &'a RootProjectSnapshot,
 }
 

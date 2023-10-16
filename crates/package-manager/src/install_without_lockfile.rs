@@ -20,15 +20,10 @@ use reqwest::Client;
 /// * Repeat the process for the dependencies of the package.
 #[must_use]
 pub struct InstallWithoutLockfile<'a, DependencyGroupList> {
-    /// Shared cache that store downloaded tarballs.
     pub tarball_cache: &'a Cache,
-    /// HTTP client to make HTTP requests.
     pub http_client: &'a Client,
-    /// Configuration read from `.npmrc`.
     pub config: &'static Npmrc,
-    /// Data from the `package.json` file.
     pub manifest: &'a PackageManifest,
-    /// List of [`DependencyGroup`]s.
     pub dependency_groups: DependencyGroupList,
 }
 

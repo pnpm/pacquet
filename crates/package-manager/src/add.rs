@@ -16,22 +16,14 @@ where
     ListDependencyGroups: Fn() -> DependencyGroupList,
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
-    /// Shared cache that store downloaded tarballs.
     pub tarball_cache: &'a Cache,
-    /// HTTP client to make HTTP requests.
     pub http_client: &'a Client,
-    /// Configuration read from `.npmrc`.
     pub config: &'static Npmrc,
-    /// Data from the `package.json` file.
     pub manifest: &'a mut PackageManifest,
-    /// Data from the `pnpm-lock.yaml` file.
     pub lockfile: Option<&'a Lockfile>,
-    /// Function that creates an iterator [`DependencyGroup`]s.
     pub list_dependency_groups: ListDependencyGroups, // must be a function because it is called multiple times
-    /// Name of the package to add.
     pub package_name: &'a str, // TODO: 1. support version range, 2. multiple arguments, 3. name this `packages`
-    /// Whether `--save-exact` is provided.
-    pub save_exact: bool, // TODO: add `save-exact` to `.npmrc`, merge configs, and remove this
+    pub save_exact: bool,      // TODO: add `save-exact` to `.npmrc`, merge configs, and remove this
 }
 
 /// Error type of [`Add`].

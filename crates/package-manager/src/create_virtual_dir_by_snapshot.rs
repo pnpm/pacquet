@@ -13,15 +13,10 @@ use std::{
 /// This subroutine installs the files from [`cas_paths`](Self::cas_paths) then creates the symlink layout.
 #[must_use]
 pub struct CreateVirtualDirBySnapshot<'a> {
-    /// Path to the virtual store dir (usually canonical paths of `node_modules/.pacquet`).
     pub virtual_store_dir: &'a Path,
-    /// CAS files map.
     pub cas_paths: &'a HashMap<OsString, PathBuf>,
-    /// Import method.
     pub import_method: PackageImportMethod,
-    /// Key of the package map from the lockfile.
     pub dependency_path: &'a DependencyPath,
-    /// Value of the package map from the lockfile.
     pub package_snapshot: &'a PackageSnapshot,
 }
 
