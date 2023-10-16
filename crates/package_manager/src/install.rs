@@ -101,7 +101,7 @@ mod tests {
         let package_json_path = dir.path().join("package.json");
         let mut package_json = PackageJson::create_if_needed(package_json_path.clone()).unwrap();
 
-        package_json.add_dependency("is-odd", "3.0.1", DependencyGroup::Default).unwrap();
+        package_json.add_dependency("is-odd", "3.0.1", DependencyGroup::Prod).unwrap();
         package_json
             .add_dependency("fast-decode-uri-component", "1.0.1", DependencyGroup::Dev)
             .unwrap();
@@ -121,7 +121,7 @@ mod tests {
             package_json: &package_json,
             lockfile: None,
             dependency_groups: [
-                DependencyGroup::Default,
+                DependencyGroup::Prod,
                 DependencyGroup::Dev,
                 DependencyGroup::Optional,
             ],

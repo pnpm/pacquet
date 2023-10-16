@@ -56,7 +56,7 @@ impl AddDependencyOptions {
     /// which selects which target group to save to.
     fn dependency_groups(&self) -> impl Iterator<Item = DependencyGroup> {
         std::iter::empty()
-            .chain(self.save_prod().then_some(DependencyGroup::Default))
+            .chain(self.save_prod().then_some(DependencyGroup::Prod))
             .chain(self.save_dev().then_some(DependencyGroup::Dev))
             .chain(self.save_optional().then_some(DependencyGroup::Optional))
             .chain(self.save_peer().then_some(DependencyGroup::Peer))
@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn dependency_options_to_dependency_groups() {
-        use DependencyGroup::{Default, Dev, Optional, Peer};
+        use DependencyGroup::{Dev, Optional, Peer, Prod};
         let create_list = |opts: AddDependencyOptions| opts.dependency_groups().collect::<Vec<_>>();
 
         // no flags -> prod
@@ -122,7 +122,7 @@ mod tests {
                 save_optional: false,
                 save_peer: false
             }),
-            [Default]
+            [Prod]
         );
 
         // --save-prod -> prod
@@ -133,7 +133,7 @@ mod tests {
                 save_optional: false,
                 save_peer: false
             }),
-            [Default]
+            [Prod]
         );
 
         // --save-dev -> dev
@@ -177,7 +177,7 @@ mod tests {
                 save_optional: false,
                 save_peer: true
             }),
-            [Default, Peer]
+            [Prod, Peer]
         );
 
         // --save-dev --save-peer -> dev + peer

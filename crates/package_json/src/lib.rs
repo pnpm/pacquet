@@ -45,7 +45,7 @@ pub enum PackageJsonError {
 #[derive(Debug, Clone, Copy, PartialEq, IntoStaticStr)]
 pub enum DependencyGroup {
     #[strum(serialize = "dependencies")]
-    Default,
+    Prod,
     #[strum(serialize = "devDependencies")]
     Dev,
     #[strum(serialize = "optionalDependencies")]
@@ -250,10 +250,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let tmp = dir.path().join("package.json");
         let mut package_json = PackageJson::create_if_needed(tmp.clone()).unwrap();
-        package_json.add_dependency("fastify", "1.0.0", DependencyGroup::Default).unwrap();
+        package_json.add_dependency("fastify", "1.0.0", DependencyGroup::Prod).unwrap();
 
         let dependencies: HashMap<_, _> =
-            package_json.dependencies([DependencyGroup::Default]).collect();
+            package_json.dependencies([DependencyGroup::Prod]).collect();
         assert!(dependencies.contains_key("fastify"));
         assert_eq!(dependencies.get("fastify").unwrap(), &"1.0.0");
         package_json.save().unwrap();
@@ -302,7 +302,7 @@ mod tests {
         let package_json = PackageJson::create_if_needed(tmp.path().to_path_buf()).unwrap();
         let dependencies = |groups| package_json.dependencies(groups).collect::<HashMap<_, _>>();
         assert!(dependencies([DependencyGroup::Peer]).contains_key("fast-querystring"));
-        assert!(dependencies([DependencyGroup::Default]).contains_key("fastify"));
+        assert!(dependencies([DependencyGroup::Prod]).contains_key("fastify"));
     }
 
     #[test]

@@ -30,7 +30,7 @@ impl InstallDependencyOptions {
         let has_dev = has_both || dev;
         let has_optional = !no_optional;
         std::iter::empty()
-            .chain(has_prod.then_some(DependencyGroup::Default))
+            .chain(has_prod.then_some(DependencyGroup::Prod))
             .chain(has_dev.then_some(DependencyGroup::Dev))
             .chain(has_optional.then_some(DependencyGroup::Optional))
     }
@@ -76,20 +76,20 @@ mod tests {
 
     #[test]
     fn dependency_options_to_dependency_groups() {
-        use DependencyGroup::{Default, Dev, Optional};
+        use DependencyGroup::{Dev, Optional, Prod};
         let create_list =
             |opts: InstallDependencyOptions| opts.dependency_groups().collect::<Vec<_>>();
 
         // no flags -> prod + dev + optional
         assert_eq!(
             create_list(InstallDependencyOptions { prod: false, dev: false, no_optional: false }),
-            [Default, Dev, Optional],
+            [Prod, Dev, Optional],
         );
 
         // --prod -> prod + optional
         assert_eq!(
             create_list(InstallDependencyOptions { prod: true, dev: false, no_optional: false }),
-            [Default, Optional],
+            [Prod, Optional],
         );
 
         // --dev -> dev + optional
@@ -101,13 +101,13 @@ mod tests {
         // --no-optional -> prod + dev
         assert_eq!(
             create_list(InstallDependencyOptions { prod: false, dev: false, no_optional: true }),
-            [Default, Dev],
+            [Prod, Dev],
         );
 
         // --prod --no-optional -> prod
         assert_eq!(
             create_list(InstallDependencyOptions { prod: true, dev: false, no_optional: true }),
-            [Default],
+            [Prod],
         );
 
         // --dev --no-optional -> dev
@@ -119,13 +119,13 @@ mod tests {
         // --prod --dev -> prod + dev + optional
         assert_eq!(
             create_list(InstallDependencyOptions { prod: true, dev: true, no_optional: false }),
-            [Default, Dev, Optional],
+            [Prod, Dev, Optional],
         );
 
         // --prod --dev --no-optional -> prod + dev
         assert_eq!(
             create_list(InstallDependencyOptions { prod: true, dev: true, no_optional: true }),
-            [Default, Dev],
+            [Prod, Dev],
         );
     }
 }
