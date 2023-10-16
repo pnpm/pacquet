@@ -22,19 +22,44 @@ pub struct AddDependencyOptions {
 }
 
 impl AddDependencyOptions {
+    /// Whether to add entry to `"dependencies"`.
+    ///
+    /// **NOTE:** no `--save-*` flags implies save as prod.
+    #[inline(always)]
+    fn save_prod(&self) -> bool {
+        let &AddDependencyOptions { save_prod, save_dev, save_optional, save_peer } = self;
+        save_prod || (!save_dev && !save_optional && !save_peer)
+    }
+
+    /// Whether to add entry to `"devDependencies"`.
+    ///
+    /// **NOTE:** `--save-peer` without any other `--save-*` flags implies save as dev.
+    #[inline(always)]
+    fn save_dev(&self) -> bool {
+        let &AddDependencyOptions { save_prod, save_dev, save_optional, save_peer } = self;
+        save_dev || (!save_prod && !save_optional && save_peer)
+    }
+
+    /// Whether to add entry to `"optionalDependencies"`.
+    #[inline(always)]
+    pub fn save_optional(&self) -> bool {
+        self.save_optional
+    }
+
+    /// Whether to add entry to `"peerDependencies"`.
+    #[inline(always)]
+    pub fn save_peer(&self) -> bool {
+        self.save_peer
+    }
+
     /// Convert the `--save-*` flags to an iterator of [`DependencyGroup`]
     /// which selects which target group to save to.
     fn dependency_groups(&self) -> impl Iterator<Item = DependencyGroup> {
-        let &AddDependencyOptions { save_prod, save_dev, save_optional, save_peer } = self;
-        let has_prod = save_prod || (!save_dev && !save_optional && !save_peer); // no --save-* flags implies --save-prod
-        let has_dev = save_dev || (!save_prod && !save_optional && save_peer); // --save-peer with nothing else implies --save-dev
-        let has_optional = save_optional;
-        let has_peer = save_peer;
         std::iter::empty()
-            .chain(has_prod.then_some(DependencyGroup::Default))
-            .chain(has_dev.then_some(DependencyGroup::Dev))
-            .chain(has_optional.then_some(DependencyGroup::Optional))
-            .chain(has_peer.then_some(DependencyGroup::Peer))
+            .chain(self.save_prod().then_some(DependencyGroup::Default))
+            .chain(self.save_dev().then_some(DependencyGroup::Dev))
+            .chain(self.save_optional().then_some(DependencyGroup::Optional))
+            .chain(self.save_peer().then_some(DependencyGroup::Peer))
     }
 }
 
