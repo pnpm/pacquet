@@ -59,7 +59,6 @@ impl CliArgs {
 
         match command {
             CliCommand::Init => {
-                // init command throws an error if package.json file exist.
                 PackageManifest::init(&manifest_path()).wrap_err("initialize package.json")?;
             }
             CliCommand::Add(args) => args.run(state()?).await?,
