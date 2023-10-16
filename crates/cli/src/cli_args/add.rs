@@ -42,13 +42,13 @@ impl AddDependencyOptions {
 
     /// Whether to add entry to `"optionalDependencies"`.
     #[inline(always)]
-    pub fn save_optional(&self) -> bool {
+    fn save_optional(&self) -> bool {
         self.save_optional
     }
 
     /// Whether to add entry to `"peerDependencies"`.
     #[inline(always)]
-    pub fn save_peer(&self) -> bool {
+    fn save_peer(&self) -> bool {
         self.save_peer
     }
 
