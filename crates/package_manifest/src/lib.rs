@@ -61,6 +61,7 @@ pub enum BundleDependencies {
     List(Vec<String>),
 }
 
+/// Content of the `package.json` files and its path.
 pub struct PackageManifest {
     path: PathBuf,
     value: Value, // TODO: convert this into a proper struct + an array of keys order
