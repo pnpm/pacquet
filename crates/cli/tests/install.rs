@@ -11,7 +11,7 @@ fn should_install_dependencies() {
     let (command, dir) = pacquet_with_temp_cwd();
 
     eprintln!("Creating package.json...");
-    let package_json_path = dir.path().join("package.json");
+    let manifest_path = dir.path().join("package.json");
     let package_json_content = serde_json::json!({
         "dependencies": {
             "is-odd": "3.0.1",
@@ -20,7 +20,7 @@ fn should_install_dependencies() {
             "fast-decode-uri-component": "1.0.1",
         },
     });
-    fs::write(&package_json_path, package_json_content.to_string()).expect("write to package.json");
+    fs::write(&manifest_path, package_json_content.to_string()).expect("write to package.json");
 
     eprintln!("Executing command...");
     command.with_arg("install").assert().success();

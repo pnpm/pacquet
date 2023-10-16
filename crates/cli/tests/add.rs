@@ -13,10 +13,10 @@ fn should_install_all_dependencies() {
     eprintln!("Directory list");
     insta::assert_debug_snapshot!(get_all_folders(dir.path()));
 
-    let package_json_path = dir.path().join("package.json");
+    let manifest_path = dir.path().join("package.json");
 
-    eprintln!("Ensure the manifest file ({package_json_path:?}) exists");
-    assert!(package_json_path.exists());
+    eprintln!("Ensure the manifest file ({manifest_path:?}) exists");
+    assert!(manifest_path.exists());
 
     let virtual_store_dir = dir.path().join("node_modules").join(".pacquet");
 
@@ -44,10 +44,10 @@ pub fn should_symlink_correctly() {
     eprintln!("Directory list");
     insta::assert_debug_snapshot!(get_all_folders(dir.path()));
 
-    let package_json_path = dir.path().join("package.json");
+    let manifest_path = dir.path().join("package.json");
 
-    eprintln!("Ensure the manifest file ({package_json_path:?}) exists");
-    assert!(package_json_path.exists());
+    eprintln!("Ensure the manifest file ({manifest_path:?}) exists");
+    assert!(manifest_path.exists());
 
     let virtual_store_dir = dir.path().join("node_modules").join(".pacquet");
 

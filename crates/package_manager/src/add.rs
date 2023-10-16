@@ -23,7 +23,7 @@ where
     /// Configuration read from `.npmrc`.
     pub config: &'static Npmrc,
     /// Data from the `package.json` file.
-    pub package_json: &'a mut PackageManifest,
+    pub manifest: &'a mut PackageManifest,
     /// Data from the `pnpm-lock.yaml` file.
     pub lockfile: Option<&'a Lockfile>,
     /// Function that creates an iterator [`DependencyGroup`]s.
@@ -54,7 +54,7 @@ where
             tarball_cache,
             http_client,
             config,
-            package_json,
+            manifest,
             lockfile,
             list_dependency_groups,
             package,
@@ -72,7 +72,7 @@ where
 
         let version_range = latest_version.serialize(save_exact);
         for dependency_group in list_dependency_groups() {
-            package_json
+            manifest
                 .add_dependency(package, &version_range, dependency_group)
                 .map_err(AddError::AddDependencyToPackageJson)?;
         }
@@ -81,7 +81,7 @@ where
             tarball_cache,
             http_client,
             config,
-            package_json,
+            manifest,
             lockfile,
             dependency_groups: list_dependency_groups(),
             frozen_lockfile: false,
@@ -89,7 +89,7 @@ where
         .run()
         .await;
 
-        package_json.save().map_err(AddError::SavePackageJson)?;
+        manifest.save().map_err(AddError::SavePackageJson)?;
 
         Ok(())
     }

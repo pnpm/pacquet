@@ -27,7 +27,7 @@ pub struct InstallWithoutLockfile<'a, DependencyGroupList> {
     /// Configuration read from `.npmrc`.
     pub config: &'static Npmrc,
     /// Data from the `package.json` file.
-    pub package_json: &'a PackageManifest,
+    pub manifest: &'a PackageManifest,
     /// List of [`DependencyGroup`]s.
     pub dependency_groups: DependencyGroupList,
 }
@@ -42,11 +42,11 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
             tarball_cache,
             http_client,
             config,
-            package_json,
+            manifest,
             dependency_groups,
         } = self;
 
-        let _: Vec<()> = package_json
+        let _: Vec<()> = manifest
             .dependencies(dependency_groups.into_iter())
             .map(|(name, version_range)| async move {
                 let dependency = InstallPackageFromRegistry {
@@ -65,7 +65,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                     tarball_cache,
                     http_client,
                     config,
-                    package_json,
+                    manifest,
                     dependency_groups: (),
                 }
                 .install_dependencies_from_registry(&dependency)

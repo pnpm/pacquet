@@ -21,13 +21,13 @@ pub struct RunArgs {
 
 impl RunArgs {
     /// Execute the subcommand.
-    pub fn run(self, package_json_path: PathBuf) -> miette::Result<()> {
+    pub fn run(self, manifest_path: PathBuf) -> miette::Result<()> {
         let RunArgs { command, args, if_present } = self;
 
-        let package_json = PackageManifest::from_path(package_json_path)
+        let manifest = PackageManifest::from_path(manifest_path)
             .wrap_err("getting the package.json in current directory")?;
 
-        if let Some(script) = package_json.script(&command, if_present)? {
+        if let Some(script) = manifest.script(&command, if_present)? {
             let mut command = script.to_string();
             // append an empty space between script and additional args
             command.push(' ');

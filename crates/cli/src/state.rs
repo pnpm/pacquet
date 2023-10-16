@@ -17,7 +17,7 @@ pub struct State {
     /// Configuration read from `.npmrc`
     pub config: &'static Npmrc,
     /// Data from the `package.json` file.
-    pub package_json: PackageManifest,
+    pub manifest: PackageManifest,
     /// Data from the `pnpm-lock.yaml` file.
     pub lockfile: Option<Lockfile>,
 }
@@ -35,13 +35,10 @@ pub enum InitStateError {
 
 impl State {
     /// Initialize the application state.
-    pub fn init(
-        package_json_path: PathBuf,
-        config: &'static Npmrc,
-    ) -> Result<Self, InitStateError> {
+    pub fn init(manifest_path: PathBuf, config: &'static Npmrc) -> Result<Self, InitStateError> {
         Ok(State {
             config,
-            package_json: package_json_path
+            manifest: manifest_path
                 .pipe(PackageManifest::create_if_needed)
                 .map_err(InitStateError::LoadPackageJson)?,
             lockfile: call_load_lockfile(config.lockfile, Lockfile::load_from_current_dir)

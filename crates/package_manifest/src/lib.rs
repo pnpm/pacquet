@@ -89,10 +89,10 @@ impl PackageManifest {
             .and_then(|folder| folder.file_name())
             .and_then(|file_name| file_name.to_str())
             .unwrap_or("");
-        let package_json = PackageManifest::create_init_package_json(name);
-        let contents = serde_json::to_string_pretty(&package_json)?;
+        let manifest = PackageManifest::create_init_package_json(name);
+        let contents = serde_json::to_string_pretty(&manifest)?;
         fs::write(path, &contents)?; // TODO: forbid overwriting existing files
-        Ok((package_json, contents))
+        Ok((manifest, contents))
     }
 
     fn read_from_file(path: &Path) -> Result<Value, PackageJsonError> {
@@ -225,8 +225,8 @@ mod tests {
 
     #[test]
     fn test_init_package_json_content() {
-        let package_json = PackageManifest::create_init_package_json("test");
-        assert_snapshot!(serde_json::to_string_pretty(&package_json).unwrap());
+        let manifest = PackageManifest::create_init_package_json("test");
+        assert_snapshot!(serde_json::to_string_pretty(&manifest).unwrap());
     }
 
     #[test]
@@ -250,14 +250,13 @@ mod tests {
     fn should_add_dependency() {
         let dir = tempdir().unwrap();
         let tmp = dir.path().join("package.json");
-        let mut package_json = PackageManifest::create_if_needed(tmp.clone()).unwrap();
-        package_json.add_dependency("fastify", "1.0.0", DependencyGroup::Prod).unwrap();
+        let mut manifest = PackageManifest::create_if_needed(tmp.clone()).unwrap();
+        manifest.add_dependency("fastify", "1.0.0", DependencyGroup::Prod).unwrap();
 
-        let dependencies: HashMap<_, _> =
-            package_json.dependencies([DependencyGroup::Prod]).collect();
+        let dependencies: HashMap<_, _> = manifest.dependencies([DependencyGroup::Prod]).collect();
         assert!(dependencies.contains_key("fastify"));
         assert_eq!(dependencies.get("fastify").unwrap(), &"1.0.0");
-        package_json.save().unwrap();
+        manifest.save().unwrap();
         assert!(read_to_string(tmp).unwrap().contains("fastify"));
     }
 
@@ -265,8 +264,8 @@ mod tests {
     fn should_throw_on_missing_command() {
         let dir = tempdir().unwrap();
         let tmp = dir.path().join("package.json");
-        let package_json = PackageManifest::create_if_needed(tmp).unwrap();
-        package_json.script("dev", false).expect_err("dev command should not exist");
+        let manifest = PackageManifest::create_if_needed(tmp).unwrap();
+        manifest.script("dev", false).expect_err("dev command should not exist");
     }
 
     #[test]
@@ -280,10 +279,10 @@ mod tests {
         "#;
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "{}", data).unwrap();
-        let package_json = PackageManifest::create_if_needed(tmp.path().to_path_buf()).unwrap();
-        package_json.script("test", false).unwrap();
-        package_json.script("invalid", false).expect_err("invalid command should not exist");
-        package_json.script("invalid", true).unwrap();
+        let manifest = PackageManifest::create_if_needed(tmp.path().to_path_buf()).unwrap();
+        manifest.script("test", false).unwrap();
+        manifest.script("invalid", false).expect_err("invalid command should not exist");
+        manifest.script("invalid", true).unwrap();
     }
 
     #[test]
@@ -300,8 +299,8 @@ mod tests {
         "#;
         let tmp = NamedTempFile::new().unwrap();
         write!(tmp.as_file(), "{}", data).unwrap();
-        let package_json = PackageManifest::create_if_needed(tmp.path().to_path_buf()).unwrap();
-        let dependencies = |groups| package_json.dependencies(groups).collect::<HashMap<_, _>>();
+        let manifest = PackageManifest::create_if_needed(tmp.path().to_path_buf()).unwrap();
+        let dependencies = |groups| manifest.dependencies(groups).collect::<HashMap<_, _>>();
         assert!(dependencies([DependencyGroup::Peer]).contains_key("fast-querystring"));
         assert!(dependencies([DependencyGroup::Prod]).contains_key("fastify"));
     }
@@ -322,9 +321,8 @@ mod tests {
                 eprintln!("CASE: {data}");
                 let tmp = NamedTempFile::new().unwrap();
                 write!(tmp.as_file(), "{}", data).unwrap();
-                let package_json =
-                    PackageManifest::create_if_needed(tmp.path().to_path_buf()).unwrap();
-                let bundle = package_json.bundle_dependencies().unwrap();
+                let manifest = PackageManifest::create_if_needed(tmp.path().to_path_buf()).unwrap();
+                let bundle = manifest.bundle_dependencies().unwrap();
                 assert_eq!(bundle, $output);
             }};
         }

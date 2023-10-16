@@ -18,7 +18,7 @@ where
     /// Configuration read from `.npmrc`.
     pub config: &'static Npmrc,
     /// Data from the `package.json` file.
-    pub package_json: &'a PackageManifest,
+    pub manifest: &'a PackageManifest,
     /// Data from the `pnpm-lock.yaml` file.
     pub lockfile: Option<&'a Lockfile>,
     /// List of [`DependencyGroup`]s.
@@ -37,7 +37,7 @@ where
             tarball_cache,
             http_client,
             config,
-            package_json,
+            manifest,
             lockfile,
             dependency_groups,
             frozen_lockfile,
@@ -51,7 +51,7 @@ where
                     tarball_cache,
                     http_client,
                     config,
-                    package_json,
+                    manifest,
                     dependency_groups,
                 }
                 .run()
@@ -98,16 +98,15 @@ mod tests {
         let modules_dir = project_root.join("node_modules"); // TODO: we shouldn't have to define this
         let virtual_store_dir = modules_dir.join(".pacquet"); // TODO: we shouldn't have to define this
 
-        let package_json_path = dir.path().join("package.json");
-        let mut package_json =
-            PackageManifest::create_if_needed(package_json_path.clone()).unwrap();
+        let manifest_path = dir.path().join("package.json");
+        let mut manifest = PackageManifest::create_if_needed(manifest_path.clone()).unwrap();
 
-        package_json.add_dependency("is-odd", "3.0.1", DependencyGroup::Prod).unwrap();
-        package_json
+        manifest.add_dependency("is-odd", "3.0.1", DependencyGroup::Prod).unwrap();
+        manifest
             .add_dependency("fast-decode-uri-component", "1.0.1", DependencyGroup::Dev)
             .unwrap();
 
-        package_json.save().unwrap();
+        manifest.save().unwrap();
 
         let mut config = Npmrc::new();
         config.store_dir = store_dir.to_path_buf();
@@ -119,7 +118,7 @@ mod tests {
             tarball_cache: &Default::default(),
             http_client: &Default::default(),
             config,
-            package_json: &package_json,
+            manifest: &manifest,
             lockfile: None,
             dependency_groups: [
                 DependencyGroup::Prod,

@@ -10,12 +10,12 @@ use std::{env, fs};
 fn should_create_package_json() {
     let dir = exec_pacquet_in_temp_cwd(["init"]);
 
-    let package_json_path = dir.path().join("package.json");
-    dbg!(&package_json_path);
+    let manifest_path = dir.path().join("package.json");
+    dbg!(&manifest_path);
 
     eprintln!("Content of package.json");
     let package_json_content =
-        fs::read_to_string(&package_json_path).expect("read from package.json");
+        fs::read_to_string(&manifest_path).expect("read from package.json");
     insta::assert_snapshot!(package_json_content);
 
     eprintln!("Created files");
@@ -26,11 +26,11 @@ fn should_create_package_json() {
 fn should_throw_on_existing_file() {
     let (command, dir) = pacquet_with_temp_cwd();
 
-    let package_json_path = dir.path().join("package.json");
-    dbg!(&package_json_path);
+    let manifest_path = dir.path().join("package.json");
+    dbg!(&manifest_path);
 
     eprintln!("Creating package.json...");
-    fs::write(&package_json_path, "{}").expect("write to package.json");
+    fs::write(&manifest_path, "{}").expect("write to package.json");
 
     eprintln!("Executing pacquet init...");
     let output = command.with_arg("init").output().expect("execute pacquet init");
