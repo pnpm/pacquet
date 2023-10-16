@@ -14,8 +14,7 @@ fn should_create_package_json() {
     dbg!(&manifest_path);
 
     eprintln!("Content of package.json");
-    let package_json_content =
-        fs::read_to_string(&manifest_path).expect("read from package.json");
+    let package_json_content = fs::read_to_string(&manifest_path).expect("read from package.json");
     insta::assert_snapshot!(package_json_content);
 
     eprintln!("Created files");
