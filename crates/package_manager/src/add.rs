@@ -27,7 +27,7 @@ where
     /// Data from the `pnpm-lock.yaml` file.
     pub lockfile: Option<&'a Lockfile>,
     /// Function that creates an iterator [`DependencyGroup`]s.
-    pub list_dependency_groups: ListDependencyGroups,
+    pub list_dependency_groups: ListDependencyGroups, // must be a function because it is called multiple times
     /// Name of the package to add.
     pub package: &'a str,
     /// Whether `--save-exact` is provided.
