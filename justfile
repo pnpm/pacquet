@@ -41,7 +41,7 @@ fmt:
 
 # Run cargo check
 check:
-  cargo ck
+  cargo check --locked
 
 # Run all the tests
 test:
@@ -49,7 +49,7 @@ test:
 
 # Lint the whole project
 lint:
-  cargo lint -- --deny warnings
+  cargo clippy --locked -- --deny warnings
 
 # Get code coverage
 codecov:

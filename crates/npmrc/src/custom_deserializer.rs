@@ -34,9 +34,9 @@ fn get_drive_letter(current_dir: &Path) -> Option<char> {
 #[cfg(windows)]
 fn default_store_dir_windows(home_dir: &Path, current_dir: &Path) -> PathBuf {
     let current_drive =
-        get_drive_letter(&current_dir).expect("current dir is an absolute path with drive letter");
+        get_drive_letter(current_dir).expect("current dir is an absolute path with drive letter");
     let home_drive =
-        get_drive_letter(&home_dir).expect("home dir is an absolute path with drive letter");
+        get_drive_letter(home_dir).expect("home dir is an absolute path with drive letter");
 
     if current_drive == home_drive {
         return home_dir.join("AppData/Local/pacquet/store");
