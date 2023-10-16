@@ -66,7 +66,7 @@ impl AddDependencyOptions {
 #[derive(Debug, Args)]
 pub struct AddArgs {
     /// Name of the package
-    pub package_name: String,
+    pub package_name: String, // TODO: 1. support version range, 2. multiple arguments, 3. name this `packages`
     /// --save-prod, --save-dev, --save-optional, --save-peer
     #[clap(flatten)]
     pub dependency_options: AddDependencyOptions,

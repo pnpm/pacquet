@@ -29,7 +29,7 @@ where
     /// Function that creates an iterator [`DependencyGroup`]s.
     pub list_dependency_groups: ListDependencyGroups, // must be a function because it is called multiple times
     /// Name of the package to add.
-    pub package_name: &'a str,
+    pub package_name: &'a str, // TODO: 1. support version range, 2. multiple arguments, 3. name this `packages`
     /// Whether `--save-exact` is provided.
     pub save_exact: bool, // TODO: add `save-exact` to `.npmrc`, merge configs, and remove this
 }
