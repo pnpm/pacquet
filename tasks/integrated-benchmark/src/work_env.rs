@@ -49,8 +49,8 @@ impl WorkEnv {
         self.root().join(sub_dir.to_dir_name())
     }
 
-    fn revision_install_script(&self, revision: &str) -> PathBuf {
-        self.sub_dir_path(SubDir::PacquetRevision(revision)).join("install.bash")
+    fn sub_install_script(&self, sub_dir: SubDir) -> PathBuf {
+        self.sub_dir_path(sub_dir).join("install.bash")
     }
 
     fn revision_repo(&self, revision: &str) -> PathBuf {
@@ -95,7 +95,7 @@ impl WorkEnv {
         }
 
         eprintln!("Populating proxy registry cache...");
-        self.revision_install_script(WorkEnv::INIT_PROXY_CACHE)
+        self.sub_install_script(SubDir::Static(WorkEnv::INIT_PROXY_CACHE))
             .pipe(Command::new)
             .pipe_mut(executor("install.bash"))
     }
@@ -162,8 +162,15 @@ impl WorkEnv {
 
         self.hyperfine_options.append_to(&mut command);
 
-        for revision in self.revisions().chain(self.with_pnpm.then_some(WorkEnv::PNPM)) {
-            command.arg("--command-name").arg(revision).arg(self.revision_install_script(revision));
+        for sub_dir in self
+            .revisions()
+            .map(SubDir::PacquetRevision)
+            .chain(self.with_pnpm.then_some(SubDir::Static(WorkEnv::PNPM)))
+        {
+            command
+                .arg("--command-name")
+                .arg(sub_dir.to_dir_name())
+                .arg(self.sub_install_script(sub_dir));
         }
 
         command
