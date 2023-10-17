@@ -33,8 +33,12 @@ impl WorkEnv {
         &self.root
     }
 
-    fn revisions(&self) -> impl Iterator<Item = &'_ str> + '_ {
+    fn revision_names(&self) -> impl Iterator<Item = &'_ str> + '_ {
         self.revisions.iter().map(AsRef::as_ref)
+    }
+
+    fn revision_subs(&self) -> impl Iterator<Item = SubDir<'_>> + '_ {
+        self.revisions.iter().map(AsRef::as_ref).map(SubDir::PacquetRevision)
     }
 
     fn registry(&self) -> &'_ str {
@@ -79,8 +83,7 @@ impl WorkEnv {
     fn init(&self) {
         eprintln!("Initializing...");
         let sub_dir_list = self
-            .revisions()
-            .map(SubDir::PacquetRevision)
+            .revision_subs()
             .chain(iter::once(SubDir::Static(WorkEnv::INIT_PROXY_CACHE)))
             .chain(self.with_pnpm.then_some(SubDir::Static(WorkEnv::PNPM)));
         for sub_dir in sub_dir_list {
@@ -102,7 +105,7 @@ impl WorkEnv {
 
     fn build(&self) {
         eprintln!("Building...");
-        for revision in self.revisions() {
+        for revision in self.revision_names() {
             eprintln!("Revision: {revision:?}");
 
             let repository = self.repository();
@@ -149,8 +152,7 @@ impl WorkEnv {
 
     fn benchmark(&self) {
         let cleanup_targets = self
-            .revisions()
-            .map(SubDir::PacquetRevision)
+            .revision_subs()
             .map(|revision| self.sub_dir_path(revision))
             .flat_map(|revision| [revision.join("node_modules"), revision.join("store-dir")])
             .map(|path| path.maybe_quote().to_string())
@@ -162,10 +164,8 @@ impl WorkEnv {
 
         self.hyperfine_options.append_to(&mut command);
 
-        for sub_dir in self
-            .revisions()
-            .map(SubDir::PacquetRevision)
-            .chain(self.with_pnpm.then_some(SubDir::Static(WorkEnv::PNPM)))
+        for sub_dir in
+            self.revision_subs().chain(self.with_pnpm.then_some(SubDir::Static(WorkEnv::PNPM)))
         {
             command
                 .arg("--command-name")
