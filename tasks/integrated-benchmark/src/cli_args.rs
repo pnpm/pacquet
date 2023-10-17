@@ -13,7 +13,7 @@ pub struct CliArgs {
     pub registry: String,
 
     /// Automatically launch verdaccio if local registry doesn't response.
-    #[clap(long, short)]
+    #[clap(long, short = 'V')]
     pub verdaccio: bool,
 
     /// Path to the git repository of pacquet.
