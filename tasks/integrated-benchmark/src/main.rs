@@ -29,7 +29,7 @@ async fn main() {
             listen: &registry,
             stdout: &work_env.join("verdaccio.stdout"),
             stderr: &work_env.join("verdaccio.stderr"),
-            max_retries: 5,
+            max_retries: 10,
             retry_delay: tokio::time::Duration::from_millis(500),
         }
         .spawn_if_necessary()
