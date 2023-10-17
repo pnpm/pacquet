@@ -31,16 +31,14 @@ where
 {
     for revision in list {
         let revision = revision.as_ref();
-        let throw = |reason: &str| {
-            eprintln!("Revision {revision:?} is invalid");
-            panic!("{reason}");
-        };
         if revision.starts_with('.') {
-            throw("Revision cannot start with a dot");
+            eprintln!("Revision {revision:?} is invalid");
+            panic!("Revision cannot start with a dot");
         }
         for char in revision.chars() {
             if !matches!(char, 'a'..='z' | 'A'..='Z' | '-' | '_' | '+' | '.') {
-                throw(&format!("Invalid character: {char:?}"));
+                eprintln!("Revision {revision:?} is invalid");
+                panic!("Invalid character: {char:?}");
             }
         }
     }
