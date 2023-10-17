@@ -6,6 +6,7 @@ use itertools::Itertools;
 use os_display::Quotable;
 use pipe_trait::Pipe;
 use std::{
+    fmt,
     fs::{self, File},
     io::Write,
     iter,
@@ -50,7 +51,7 @@ impl WorkEnv {
     }
 
     fn sub_dir_path(&self, sub_dir: SubDir) -> PathBuf {
-        self.root().join(sub_dir.to_dir_name())
+        self.root().join(sub_dir.to_string())
     }
 
     fn sub_install_script(&self, sub_dir: SubDir) -> PathBuf {
@@ -167,7 +168,7 @@ impl WorkEnv {
         for sub_dir in self.revision_subs().chain(self.with_pnpm.then_some(WorkEnv::PNPM)) {
             command
                 .arg("--command-name")
-                .arg(sub_dir.to_dir_name())
+                .arg(sub_dir.to_string())
                 .arg(self.sub_install_script(sub_dir));
         }
 
@@ -261,11 +262,11 @@ enum SubDir<'a> {
     Static(&'a str),
 }
 
-impl<'a> SubDir<'a> {
-    pub fn to_dir_name(self) -> String {
+impl<'a> fmt::Display for SubDir<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SubDir::PacquetRevision(revision) => format!("pacquet@{revision}"),
-            SubDir::Static(name) => name.to_string(),
+            SubDir::PacquetRevision(revision) => write!(f, "pacquet@{revision}"),
+            SubDir::Static(name) => write!(f, "{name}"),
         }
     }
 }
