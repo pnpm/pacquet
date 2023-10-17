@@ -38,8 +38,5 @@ where
         if revision.starts_with('.') {
             throw("Revision cannot start with a dot");
         }
-        if revision == "PNPM" {
-            throw("PNPM is a reserved name");
-        }
     }
 }
