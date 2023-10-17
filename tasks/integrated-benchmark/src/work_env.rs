@@ -27,7 +27,7 @@ pub struct WorkEnv {
 
 impl WorkEnv {
     const INIT_PROXY_CACHE: &str = ".init-proxy-cache";
-    const PNPM: &str = "PNPM";
+    const PNPM: &str = "pnpm";
 
     fn root(&self) -> &'_ Path {
         &self.root
