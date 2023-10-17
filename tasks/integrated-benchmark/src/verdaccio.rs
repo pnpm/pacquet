@@ -19,7 +19,7 @@ impl Drop for Verdaccio {
         let pid = process.id();
 
         eprintln!("info: Terminating verdaccio with the kill command (kill {pid})...");
-        match Command::new("kill").arg(process.id().to_string()).output() {
+        match Command::new("kill").arg(pid.to_string()).output() {
             Err(error) => {
                 eprintln!("warn: Failed to terminate verdaccio with the kill command: {error}");
             }
