@@ -38,5 +38,10 @@ where
         if revision.starts_with('.') {
             throw("Revision cannot start with a dot");
         }
+        for char in revision.chars() {
+            if !matches!(char, 'a'..='z' | 'A'..='Z' | '-' | '_' | '+' | '.') {
+                throw(&format!("Invalid character: {char:?}"));
+            }
+        }
     }
 }
