@@ -26,8 +26,8 @@ pub struct WorkEnv {
 }
 
 impl WorkEnv {
-    const INIT_PROXY_CACHE: &str = ".init-proxy-cache";
-    const PNPM: &str = "pnpm";
+    const INIT_PROXY_CACHE: SubDir<'static> = SubDir::Static(".init-proxy-cache");
+    const PNPM: SubDir<'static> = SubDir::Static("pnpm");
 
     fn root(&self) -> &'_ Path {
         &self.root
@@ -84,8 +84,8 @@ impl WorkEnv {
         eprintln!("Initializing...");
         let sub_dir_list = self
             .revision_subs()
-            .chain(iter::once(SubDir::Static(WorkEnv::INIT_PROXY_CACHE)))
-            .chain(self.with_pnpm.then_some(SubDir::Static(WorkEnv::PNPM)));
+            .chain(iter::once(WorkEnv::INIT_PROXY_CACHE))
+            .chain(self.with_pnpm.then_some(WorkEnv::PNPM));
         for sub_dir in sub_dir_list {
             let dir = self.sub_dir_path(sub_dir);
             let for_pnpm = matches!(sub_dir, SubDir::Static(_));
@@ -98,7 +98,7 @@ impl WorkEnv {
         }
 
         eprintln!("Populating proxy registry cache...");
-        self.sub_install_script(SubDir::Static(WorkEnv::INIT_PROXY_CACHE))
+        self.sub_install_script(WorkEnv::INIT_PROXY_CACHE)
             .pipe(Command::new)
             .pipe_mut(executor("install.bash"))
     }
@@ -164,9 +164,7 @@ impl WorkEnv {
 
         self.hyperfine_options.append_to(&mut command);
 
-        for sub_dir in
-            self.revision_subs().chain(self.with_pnpm.then_some(SubDir::Static(WorkEnv::PNPM)))
-        {
+        for sub_dir in self.revision_subs().chain(self.with_pnpm.then_some(WorkEnv::PNPM)) {
             command
                 .arg("--command-name")
                 .arg(sub_dir.to_dir_name())
