@@ -27,8 +27,8 @@ async fn main() {
         verdaccio::VerdaccioOptions {
             client: &Default::default(),
             listen: &registry,
-            stdout: &work_env.join("verdaccio.stdout"),
-            stderr: &work_env.join("verdaccio.stderr"),
+            stdout: &work_env.join("verdaccio.stdout.log"),
+            stderr: &work_env.join("verdaccio.stderr.log"),
             max_retries: 10,
             retry_delay: tokio::time::Duration::from_millis(500),
         }
