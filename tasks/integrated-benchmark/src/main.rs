@@ -8,6 +8,7 @@ async fn main() {
     let cli_args::CliArgs {
         scenario,
         registry,
+        verdaccio,
         repository,
         package_json,
         hyperfine_options,
@@ -20,7 +21,12 @@ async fn main() {
         std::fs::create_dir_all(&work_env).expect("create work env");
     }
     let work_env = std::fs::canonicalize(work_env).expect("get absolute path to work env");
-    verify::ensure_virtual_registry(&registry).await;
+    if verdaccio {
+        verify::ensure_program("verdaccio");
+        todo!("automatically launch verdaccio");
+    } else {
+        verify::ensure_virtual_registry(&registry).await;
+    }
     verify::ensure_git_repo(&repository);
     verify::validate_revision_list(&revisions);
     verify::ensure_program("bash");

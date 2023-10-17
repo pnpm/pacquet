@@ -12,6 +12,10 @@ pub struct CliArgs {
     #[clap(long, short, default_value = "http://localhost:4873")]
     pub registry: String,
 
+    /// Automatically launch verdaccio if local registry doesn't response.
+    #[clap(long, short)]
+    pub verdaccio: bool,
+
     /// Path to the git repository of pacquet.
     #[clap(long, short = 'R', default_value = ".")]
     pub repository: PathBuf,
