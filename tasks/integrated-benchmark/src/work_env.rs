@@ -45,16 +45,16 @@ impl WorkEnv {
         &self.repository
     }
 
-    fn revision_root(&self, revision: &str) -> PathBuf {
-        self.root().join(revision)
+    fn sub_dir_path(&self, sub_dir: SubDir) -> PathBuf {
+        self.root().join(sub_dir.to_dir_name())
     }
 
     fn revision_install_script(&self, revision: &str) -> PathBuf {
-        self.revision_root(revision).join("install.bash")
+        self.sub_dir_path(SubDir::PacquetRevision(revision)).join("install.bash")
     }
 
     fn revision_repo(&self, revision: &str) -> PathBuf {
-        self.revision_root(revision).join("pacquet")
+        self.sub_dir_path(SubDir::PacquetRevision(revision)).join("pacquet")
     }
 
     fn resolve_revision(&self, revision: &str) -> String {
@@ -78,14 +78,15 @@ impl WorkEnv {
 
     fn init(&self) {
         eprintln!("Initializing...");
-        let entries = self
+        let sub_dir_list = self
             .revisions()
-            .map(|revision| (revision, false))
-            .chain(iter::once((WorkEnv::INIT_PROXY_CACHE, true)))
-            .chain(self.with_pnpm.then_some((WorkEnv::PNPM, true)));
-        for (revision, for_pnpm) in entries {
-            eprintln!("Revision: {revision:?}");
-            let dir = self.revision_root(revision);
+            .map(SubDir::PacquetRevision)
+            .chain(iter::once(SubDir::Static(WorkEnv::INIT_PROXY_CACHE)))
+            .chain(self.with_pnpm.then_some(SubDir::Static(WorkEnv::PNPM)));
+        for sub_dir in sub_dir_list {
+            let dir = self.sub_dir_path(sub_dir);
+            let for_pnpm = matches!(sub_dir, SubDir::Static(_));
+            eprintln!("Sub directory: {dir:?}");
             fs::create_dir_all(&dir).expect("create directory for the revision");
             create_package_json(&dir, self.package_json.as_deref());
             create_install_script(&dir, self.scenario, for_pnpm);
@@ -149,7 +150,8 @@ impl WorkEnv {
     fn benchmark(&self) {
         let cleanup_targets = self
             .revisions()
-            .map(|revision| self.revision_root(revision))
+            .map(SubDir::PacquetRevision)
+            .map(|revision| self.sub_dir_path(revision))
             .flat_map(|revision| [revision.join("node_modules"), revision.join("store-dir")])
             .map(|path| path.maybe_quote().to_string())
             .join(" ");
@@ -245,5 +247,20 @@ fn executor<'a>(message: &'a str) -> impl FnOnce(&'a mut Command) {
             .output()
             .expect(message);
         assert!(output.status.success(), "Process exits with non-zero status: {message}");
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SubDir<'a> {
+    PacquetRevision(&'a str),
+    Static(&'a str),
+}
+
+impl<'a> SubDir<'a> {
+    pub fn to_dir_name(self) -> String {
+        match self {
+            SubDir::PacquetRevision(revision) => format!("pacquet@{revision}"),
+            SubDir::Static(name) => name.to_string(),
+        }
     }
 }
