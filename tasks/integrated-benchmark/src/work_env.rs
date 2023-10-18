@@ -54,7 +54,7 @@ impl WorkEnv {
         self.root().join(id.to_string())
     }
 
-    fn sub_install_script(&self, id: BenchId) -> PathBuf {
+    fn script_path(&self, id: BenchId) -> PathBuf {
         self.bench_dir(id).join("install.bash")
     }
 
@@ -99,7 +99,7 @@ impl WorkEnv {
         }
 
         eprintln!("Populating proxy registry cache...");
-        self.sub_install_script(WorkEnv::INIT_PROXY_CACHE)
+        self.script_path(WorkEnv::INIT_PROXY_CACHE)
             .pipe(Command::new)
             .pipe_mut(executor("install.bash"))
     }
@@ -166,7 +166,7 @@ impl WorkEnv {
         self.hyperfine_options.append_to(&mut command);
 
         for id in self.revision_ids().chain(self.with_pnpm.then_some(WorkEnv::PNPM)) {
-            command.arg("--command-name").arg(id.to_string()).arg(self.sub_install_script(id));
+            command.arg("--command-name").arg(id.to_string()).arg(self.script_path(id));
         }
 
         command
