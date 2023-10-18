@@ -35,12 +35,10 @@ where
             eprintln!("Revision {revision:?} is invalid");
             panic!("Revision cannot start with a dot");
         }
-        for char in revision.chars() {
-            if !matches!(char, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '+' | '.' | '~' | '^')
-            {
-                eprintln!("Revision {revision:?} is invalid");
-                panic!("Invalid character: {char:?}");
-            }
+        let invalid_char = revision.chars().find(|char| !matches!(char, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '+' | '.' | '~' | '^'));
+        if let Some(char) = invalid_char {
+            eprintln!("Revision {revision:?} is invalid");
+            panic!("Invalid character: {char:?}");
         }
     }
 }
