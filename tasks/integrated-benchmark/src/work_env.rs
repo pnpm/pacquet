@@ -50,16 +50,16 @@ impl WorkEnv {
         &self.repository
     }
 
-    fn sub_dir_path(&self, id: BenchId) -> PathBuf {
+    fn bench_dir(&self, id: BenchId) -> PathBuf {
         self.root().join(id.to_string())
     }
 
     fn sub_install_script(&self, id: BenchId) -> PathBuf {
-        self.sub_dir_path(id).join("install.bash")
+        self.bench_dir(id).join("install.bash")
     }
 
     fn revision_repo(&self, revision: &str) -> PathBuf {
-        self.sub_dir_path(BenchId::PacquetRevision(revision)).join("pacquet")
+        self.bench_dir(BenchId::PacquetRevision(revision)).join("pacquet")
     }
 
     fn resolve_revision(&self, revision: &str) -> String {
@@ -88,7 +88,7 @@ impl WorkEnv {
             .chain(iter::once(WorkEnv::INIT_PROXY_CACHE))
             .chain(self.with_pnpm.then_some(WorkEnv::PNPM));
         for id in id_list {
-            let dir = self.sub_dir_path(id);
+            let dir = self.bench_dir(id);
             let for_pnpm = matches!(id, BenchId::Static(_));
             eprintln!("Sub directory: {dir:?}");
             fs::create_dir_all(&dir).expect("create directory for the revision");
@@ -154,7 +154,7 @@ impl WorkEnv {
     fn benchmark(&self) {
         let cleanup_targets = self
             .revision_ids()
-            .map(|revision| self.sub_dir_path(revision))
+            .map(|revision| self.bench_dir(revision))
             .flat_map(|revision| [revision.join("node_modules"), revision.join("store-dir")])
             .map(|path| path.maybe_quote().to_string())
             .join(" ");
