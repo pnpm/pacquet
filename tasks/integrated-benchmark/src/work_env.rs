@@ -27,8 +27,8 @@ pub struct WorkEnv {
 }
 
 impl WorkEnv {
-    const INIT_PROXY_CACHE: SubDir<'static> = SubDir::Static(".init-proxy-cache");
-    const PNPM: SubDir<'static> = SubDir::Static("pnpm");
+    const INIT_PROXY_CACHE: BenchId<'static> = BenchId::Static(".init-proxy-cache");
+    const PNPM: BenchId<'static> = BenchId::Static("pnpm");
 
     fn root(&self) -> &'_ Path {
         &self.root
@@ -38,8 +38,8 @@ impl WorkEnv {
         self.revisions.iter().map(AsRef::as_ref)
     }
 
-    fn revision_subs(&self) -> impl Iterator<Item = SubDir<'_>> + '_ {
-        self.revision_names().map(SubDir::PacquetRevision)
+    fn revision_ids(&self) -> impl Iterator<Item = BenchId<'_>> + '_ {
+        self.revision_names().map(BenchId::PacquetRevision)
     }
 
     fn registry(&self) -> &'_ str {
@@ -50,16 +50,16 @@ impl WorkEnv {
         &self.repository
     }
 
-    fn sub_dir_path(&self, sub_dir: SubDir) -> PathBuf {
-        self.root().join(sub_dir.to_string())
+    fn sub_dir_path(&self, id: BenchId) -> PathBuf {
+        self.root().join(id.to_string())
     }
 
-    fn sub_install_script(&self, sub_dir: SubDir) -> PathBuf {
-        self.sub_dir_path(sub_dir).join("install.bash")
+    fn sub_install_script(&self, id: BenchId) -> PathBuf {
+        self.sub_dir_path(id).join("install.bash")
     }
 
     fn revision_repo(&self, revision: &str) -> PathBuf {
-        self.sub_dir_path(SubDir::PacquetRevision(revision)).join("pacquet")
+        self.sub_dir_path(BenchId::PacquetRevision(revision)).join("pacquet")
     }
 
     fn resolve_revision(&self, revision: &str) -> String {
@@ -83,13 +83,13 @@ impl WorkEnv {
 
     fn init(&self) {
         eprintln!("Initializing...");
-        let sub_dir_list = self
-            .revision_subs()
+        let id_list = self
+            .revision_ids()
             .chain(iter::once(WorkEnv::INIT_PROXY_CACHE))
             .chain(self.with_pnpm.then_some(WorkEnv::PNPM));
-        for sub_dir in sub_dir_list {
-            let dir = self.sub_dir_path(sub_dir);
-            let for_pnpm = matches!(sub_dir, SubDir::Static(_));
+        for id in id_list {
+            let dir = self.sub_dir_path(id);
+            let for_pnpm = matches!(id, BenchId::Static(_));
             eprintln!("Sub directory: {dir:?}");
             fs::create_dir_all(&dir).expect("create directory for the revision");
             create_package_json(&dir, self.package_json.as_deref());
@@ -153,7 +153,7 @@ impl WorkEnv {
 
     fn benchmark(&self) {
         let cleanup_targets = self
-            .revision_subs()
+            .revision_ids()
             .map(|revision| self.sub_dir_path(revision))
             .flat_map(|revision| [revision.join("node_modules"), revision.join("store-dir")])
             .map(|path| path.maybe_quote().to_string())
@@ -165,11 +165,8 @@ impl WorkEnv {
 
         self.hyperfine_options.append_to(&mut command);
 
-        for sub_dir in self.revision_subs().chain(self.with_pnpm.then_some(WorkEnv::PNPM)) {
-            command
-                .arg("--command-name")
-                .arg(sub_dir.to_string())
-                .arg(self.sub_install_script(sub_dir));
+        for id in self.revision_ids().chain(self.with_pnpm.then_some(WorkEnv::PNPM)) {
+            command.arg("--command-name").arg(id.to_string()).arg(self.sub_install_script(id));
         }
 
         command
@@ -257,16 +254,16 @@ fn executor<'a>(message: &'a str) -> impl FnOnce(&'a mut Command) {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum SubDir<'a> {
+enum BenchId<'a> {
     PacquetRevision(&'a str),
     Static(&'a str),
 }
 
-impl<'a> fmt::Display for SubDir<'a> {
+impl<'a> fmt::Display for BenchId<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SubDir::PacquetRevision(revision) => write!(f, "pacquet@{revision}"),
-            SubDir::Static(name) => write!(f, "{name}"),
+            BenchId::PacquetRevision(revision) => write!(f, "pacquet@{revision}"),
+            BenchId::Static(name) => write!(f, "{name}"),
         }
     }
 }
