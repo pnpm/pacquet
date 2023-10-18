@@ -39,7 +39,7 @@ impl WorkEnv {
     }
 
     fn revision_subs(&self) -> impl Iterator<Item = SubDir<'_>> + '_ {
-        self.revisions.iter().map(AsRef::as_ref).map(SubDir::PacquetRevision)
+        self.revision_names().map(SubDir::PacquetRevision)
     }
 
     fn registry(&self) -> &'_ str {
