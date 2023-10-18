@@ -36,7 +36,8 @@ where
             panic!("Revision cannot start with a dot");
         }
         for char in revision.chars() {
-            if !matches!(char, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '+' | '.' | '~') {
+            if !matches!(char, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '+' | '.' | '~' | '^')
+            {
                 eprintln!("Revision {revision:?} is invalid");
                 panic!("Invalid character: {char:?}");
             }
