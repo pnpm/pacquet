@@ -28,12 +28,15 @@ jobs:
 
       - name: Make main branch visible
         run: |
+          echo
           echo 'Checking out main branch...' >&2
           git checkout main
           git log -n 1
+          echo
           echo 'Switching back...' >&2
           git checkout -
           git log -n 1
+          echo
           echo 'Inspecting branches...'
           git branch
 
