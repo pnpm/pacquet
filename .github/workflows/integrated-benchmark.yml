@@ -33,6 +33,9 @@ jobs:
             echo -e "\033[0;33m$*\033[0m" >&2
           }
 
+          subsection 'Configuring git...'
+          git config --global advice.detachedHead false
+
           subsection 'Checking out main branch...'
           git checkout main
           git log --oneline -n 3
