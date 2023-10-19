@@ -26,6 +26,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Make main branch visible
+        run: |
+          echo 'Checking out main branch...' >&2
+          git checkout main
+          git log -n 1
+          echo 'Switching back...' >&2
+          git checkout -
+          git log -n 1
+          echo 'Inspecting branches...'
+          git branch
+
       - name: Install Rust Toolchain
         uses: ./.github/actions/rustup
         with:
