@@ -28,16 +28,20 @@ jobs:
 
       - name: Make main branch visible
         run: |
-          echo
-          echo 'Checking out main branch...' >&2
+          subsection() {
+            echo >&2
+            echo -e "\033[0;33m$*\033[0m" >&2
+          }
+
+          subsection 'Checking out main branch...'
           git checkout main
           git log --oneline -n 3
-          echo
-          echo 'Switching back...' >&2
+
+          subsection 'Switching back...'
           git checkout -
           git log --oneline -n 3
-          echo
-          echo 'Inspecting branches...'
+
+          subsection 'Inspecting branches...'
           git branch
 
       - name: Install Rust Toolchain
