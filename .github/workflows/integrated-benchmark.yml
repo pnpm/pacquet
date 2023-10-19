@@ -28,6 +28,16 @@ jobs:
         with:
           shared-key: integrated-benchmark
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+          run_install: false
+          standalone: true
+
+      - name: Install verdaccio
+        run: pnpm install --global verdaccio
+
       - name: Compile
         run: cargo build --bin=integrated-benchmark
 
