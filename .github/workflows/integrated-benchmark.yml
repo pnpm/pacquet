@@ -43,7 +43,7 @@ jobs:
 
       - name: 'Benchmark: Frozen Lockfile'
         run: |
-          cargo run --bin=integrated-benchmark --scenario=frozen-lockfile --verdaccio HEAD main
+          cargo run --bin=integrated-benchmark -- --scenario=frozen-lockfile --verdaccio HEAD main
           cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.md
 
       - name: Generate summary
