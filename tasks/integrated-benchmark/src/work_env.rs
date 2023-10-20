@@ -107,10 +107,19 @@ impl WorkEnv {
             let repository = self.repository();
             let revision_repo = self.revision_repo(revision);
             if revision_repo.exists() {
+                if !revision_repo.join(".git").exists() {
+                    eprintln!("Initializing a git repository at {revision_repo:?}...");
+                    Command::new("git")
+                        .current_dir(&revision_repo)
+                        .arg("init")
+                        .arg(&revision_repo)
+                        .pipe(executor("git init"));
+                }
                 eprintln!("Updating {revision_repo:?} to upstream...");
                 Command::new("git")
                     .current_dir(&revision_repo)
                     .arg("fetch")
+                    .arg(repository)
                     .pipe(executor("git fetch"));
             } else {
                 eprintln!("Cloning {repository:?} to {revision_repo:?}...");
