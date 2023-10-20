@@ -79,6 +79,15 @@ jobs:
       - name: Compile
         run: cargo build --bin=integrated-benchmark
 
+      - name: Cache benchmark builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: integrated-benchmark-builds-${{ matrix.os }}
+          cache-targets: false
+          cache-directories: bench-work-env/*/pacquet/target
+        timeout-minutes: 1
+        continue-on-error: true
+
       - name: 'Benchmark: Frozen Lockfile'
         run: |
           cargo run --bin=integrated-benchmark -- --scenario=frozen-lockfile --verdaccio HEAD main
