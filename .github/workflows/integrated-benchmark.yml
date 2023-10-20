@@ -30,9 +30,7 @@ jobs:
         run: |
           subsection() {
             echo >&2
-            tput setaf 3 >&2
-            echo "$@" >&2
-            tput init >&2
+            echo -e "\033[0;33m$*\033[0m" >&2
           }
 
           subsection 'Configuring git...'
