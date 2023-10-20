@@ -70,6 +70,8 @@ jobs:
         uses: ./.github/actions/rustup
         with:
           shared-key: integrated-benchmark
+          restore-cache: true
+          save-cache: true
 
       - name: Install pnpm
         uses: pnpm/action-setup@v2
