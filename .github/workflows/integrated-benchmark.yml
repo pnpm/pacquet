@@ -50,6 +50,7 @@ jobs:
       - name: Cache pnpm stores
         uses: actions/cache@v3
         with:
+          key: integrated-benchmark-pnpm-stores
           path: |
             ~/.pnpm-store/v3
             bench-work-env/.init-proxy-cache/store-dir
