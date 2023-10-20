@@ -62,8 +62,7 @@ jobs:
         with:
           key: integrated-benchmark-builds-${{ matrix.os }}
           path: |
-            ~/.pnpm-store/v3
-            bench-work-env/.init-proxy-cache/store-dir
+            bench-work-env/*/pacquet/target
         timeout-minutes: 1
         continue-on-error: true
 
