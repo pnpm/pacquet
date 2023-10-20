@@ -115,7 +115,7 @@ impl WorkEnv {
                         .arg(&revision_repo)
                         .pipe(executor("git init"));
                 }
-                eprintln!("Updating {revision_repo:?} to upstream...");
+                eprintln!("Fetching from {repository:?}...");
                 Command::new("git")
                     .current_dir(&revision_repo)
                     .arg("fetch")
