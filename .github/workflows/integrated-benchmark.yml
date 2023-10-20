@@ -94,7 +94,7 @@ jobs:
           chmod +x "HYPERFINE.tmp/${archive_name}/hyperfine"
           echo "$(pwd)/HYPERFINE.tmp/${archive_name}" >> "$GITHUB_PATH"
 
-      - name: Compile
+      - name: Build the benchmark executor
         run: cargo build --bin=integrated-benchmark
 
       - name: 'Benchmark: Frozen Lockfile'
