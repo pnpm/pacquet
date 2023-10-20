@@ -79,6 +79,15 @@ jobs:
       - name: Compile
         run: cargo build --bin=integrated-benchmark
 
+      - name: Cache pnpm stores
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.pnpm-store/v3
+            bench-work-env/.init-proxy-cache/store-dir
+        timeout-minutes: 1
+        continue-on-error: true
+
       - name: Cache benchmark builds
         uses: Swatinem/rust-cache@v2
         with:
