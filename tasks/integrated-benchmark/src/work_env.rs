@@ -88,9 +88,9 @@ impl WorkEnv {
             .chain(iter::once(WorkEnv::INIT_PROXY_CACHE))
             .chain(self.with_pnpm.then_some(WorkEnv::PNPM));
         for id in id_list {
+            eprintln!("ID: {id}");
             let dir = self.bench_dir(id);
             let for_pnpm = matches!(id, BenchId::Static(_));
-            eprintln!("Sub directory: {dir:?}");
             fs::create_dir_all(&dir).expect("create directory for the revision");
             create_package_json(&dir, self.package_json.as_deref());
             create_install_script(&dir, self.scenario, for_pnpm);
