@@ -57,11 +57,14 @@ jobs:
         timeout-minutes: 1
         continue-on-error: true
 
-      - name: Cache benchmark builds
+      - name: Cache Rust builds
         uses: actions/cache@v3
         with:
           key: integrated-benchmark-builds-${{ matrix.os }}
           path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
             bench-work-env/*/pacquet/target
         timeout-minutes: 1
         continue-on-error: true
@@ -70,8 +73,8 @@ jobs:
         uses: ./.github/actions/rustup
         with:
           shared-key: integrated-benchmark
-          restore-cache: true
-          save-cache: true
+          restore-cache: false # it's insufficient
+          save-cache: false # it's insufficient
 
       - name: Install pnpm
         uses: pnpm/action-setup@v2
