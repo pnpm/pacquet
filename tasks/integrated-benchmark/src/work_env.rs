@@ -6,6 +6,7 @@ use itertools::Itertools;
 use os_display::Quotable;
 use pipe_trait::Pipe;
 use std::{
+    fmt,
     fs::{self, File},
     io::Write,
     iter,
@@ -26,15 +27,19 @@ pub struct WorkEnv {
 }
 
 impl WorkEnv {
-    const INIT_PROXY_CACHE: &str = ".init-proxy-cache";
-    const PNPM: &str = "PNPM";
+    const INIT_PROXY_CACHE: BenchId<'static> = BenchId::Static(".init-proxy-cache");
+    const PNPM: BenchId<'static> = BenchId::Static("pnpm");
 
     fn root(&self) -> &'_ Path {
         &self.root
     }
 
-    fn revisions(&self) -> impl Iterator<Item = &'_ str> + '_ {
+    fn revision_names(&self) -> impl Iterator<Item = &'_ str> + '_ {
         self.revisions.iter().map(AsRef::as_ref)
+    }
+
+    fn revision_ids(&self) -> impl Iterator<Item = BenchId<'_>> + '_ {
+        self.revision_names().map(BenchId::PacquetRevision)
     }
 
     fn registry(&self) -> &'_ str {
@@ -45,16 +50,16 @@ impl WorkEnv {
         &self.repository
     }
 
-    fn revision_root(&self, revision: &str) -> PathBuf {
-        self.root().join(revision)
+    fn bench_dir(&self, id: BenchId) -> PathBuf {
+        self.root().join(id.to_string())
     }
 
-    fn revision_install_script(&self, revision: &str) -> PathBuf {
-        self.revision_root(revision).join("install.bash")
+    fn script_path(&self, id: BenchId) -> PathBuf {
+        self.bench_dir(id).join("install.bash")
     }
 
     fn revision_repo(&self, revision: &str) -> PathBuf {
-        self.revision_root(revision).join("pacquet")
+        self.bench_dir(BenchId::PacquetRevision(revision)).join("pacquet")
     }
 
     fn resolve_revision(&self, revision: &str) -> String {
@@ -78,14 +83,14 @@ impl WorkEnv {
 
     fn init(&self) {
         eprintln!("Initializing...");
-        let entries = self
-            .revisions()
-            .map(|revision| (revision, false))
-            .chain(iter::once((WorkEnv::INIT_PROXY_CACHE, true)))
-            .chain(self.with_pnpm.then_some((WorkEnv::PNPM, true)));
-        for (revision, for_pnpm) in entries {
-            eprintln!("Revision: {revision:?}");
-            let dir = self.revision_root(revision);
+        let id_list = self
+            .revision_ids()
+            .chain(iter::once(WorkEnv::INIT_PROXY_CACHE))
+            .chain(self.with_pnpm.then_some(WorkEnv::PNPM));
+        for id in id_list {
+            eprintln!("ID: {id}");
+            let dir = self.bench_dir(id);
+            let for_pnpm = matches!(id, BenchId::Static(_));
             fs::create_dir_all(&dir).expect("create directory for the revision");
             create_package_json(&dir, self.package_json.as_deref());
             create_install_script(&dir, self.scenario, for_pnpm);
@@ -94,14 +99,14 @@ impl WorkEnv {
         }
 
         eprintln!("Populating proxy registry cache...");
-        self.revision_install_script(WorkEnv::INIT_PROXY_CACHE)
+        self.script_path(WorkEnv::INIT_PROXY_CACHE)
             .pipe(Command::new)
             .pipe_mut(executor("install.bash"))
     }
 
     fn build(&self) {
         eprintln!("Building...");
-        for revision in self.revisions() {
+        for revision in self.revision_names() {
             eprintln!("Revision: {revision:?}");
 
             let repository = self.repository();
@@ -148,8 +153,8 @@ impl WorkEnv {
 
     fn benchmark(&self) {
         let cleanup_targets = self
-            .revisions()
-            .map(|revision| self.revision_root(revision))
+            .revision_ids()
+            .map(|revision| self.bench_dir(revision))
             .flat_map(|revision| [revision.join("node_modules"), revision.join("store-dir")])
             .map(|path| path.maybe_quote().to_string())
             .join(" ");
@@ -160,8 +165,8 @@ impl WorkEnv {
 
         self.hyperfine_options.append_to(&mut command);
 
-        for revision in self.revisions().chain(self.with_pnpm.then_some(WorkEnv::PNPM)) {
-            command.arg("--command-name").arg(revision).arg(self.revision_install_script(revision));
+        for id in self.revision_ids().chain(self.with_pnpm.then_some(WorkEnv::PNPM)) {
+            command.arg("--command-name").arg(id.to_string()).arg(self.script_path(id));
         }
 
         command
@@ -245,5 +250,20 @@ fn executor<'a>(message: &'a str) -> impl FnOnce(&'a mut Command) {
             .output()
             .expect(message);
         assert!(output.status.success(), "Process exits with non-zero status: {message}");
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BenchId<'a> {
+    PacquetRevision(&'a str),
+    Static(&'a str),
+}
+
+impl<'a> fmt::Display for BenchId<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BenchId::PacquetRevision(revision) => write!(f, "pacquet@{revision}"),
+            BenchId::Static(name) => write!(f, "{name}"),
+        }
     }
 }
