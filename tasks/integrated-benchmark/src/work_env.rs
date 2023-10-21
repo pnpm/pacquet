@@ -118,6 +118,7 @@ impl WorkEnv {
                         .current_dir(&revision_repo)
                         .arg("init")
                         .arg(&revision_repo)
+                        .arg("--initial-branch=__blank__")
                         .pipe(executor("git init"));
                 }
                 eprintln!("Fetching from {repository:?}...");
