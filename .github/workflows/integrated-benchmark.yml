@@ -53,7 +53,15 @@ jobs:
           key: integrated-benchmark-pnpm-stores
           path: |
             ~/.pnpm-store/v3
-            bench-work-env/.init-proxy-cache/store-dir
+        timeout-minutes: 1
+        continue-on-error: true
+
+      - name: Cache verdaccio
+        uses: actions/cache@v3
+        with:
+          key: integrated-benchmark-verdaccio
+          path: |
+            ~/.local/share/verdaccio/storage
         timeout-minutes: 1
         continue-on-error: true
 
