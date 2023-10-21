@@ -114,10 +114,10 @@ jobs:
           cargo run --bin=integrated-benchmark -- --scenario=frozen-lockfile --verdaccio HEAD main
           cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.md
 
-      - name: 'Benchmark: Clean Install'
-        run: |
-          cargo run --bin=integrated-benchmark -- --scenario=clean-install --verdaccio HEAD main
-          cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_CLEAN_INSTALL.md
+      # - name: 'Benchmark: Clean Install'
+      #   run: |
+      #     cargo run --bin=integrated-benchmark -- --scenario=clean-install --verdaccio HEAD main
+      #     cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_CLEAN_INSTALL.md
 
       - name: Generate summary
         run: |
@@ -127,10 +127,10 @@ jobs:
             echo '### Scenario: Frozen Lockfile'
             echo
             cat bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.md
-            echo
-            echo '### Scenario: Clean Install'
-            echo
-            cat bench-work-env/BENCHMARK_REPORT_CLEAN_INSTALL.md
+            # echo
+            # echo '### Scenario: Clean Install'
+            # echo
+            # cat bench-work-env/BENCHMARK_REPORT_CLEAN_INSTALL.md
           ) > bench-work-env/SUMMARY.md
 
       - name: Find Comment
