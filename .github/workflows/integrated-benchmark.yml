@@ -47,16 +47,6 @@ jobs:
           subsection 'Inspecting branches...'
           git branch
 
-      - name: Cache pnpm
-        uses: actions/cache@v3
-        with:
-          key: integrated-benchmark-pnpm
-          path: |
-            ~/.local/share/pnpm-store/v3
-            ~/.cache/pnpm
-        timeout-minutes: 1
-        continue-on-error: true
-
       - name: Cache verdaccio
         uses: actions/cache@v3
         with:
@@ -91,6 +81,15 @@ jobs:
           version: 8
           run_install: false
           standalone: true
+
+      - name: Cache pnpm
+        uses: actions/cache@v3
+        with:
+          key: integrated-benchmark-pnpm
+          path: |
+            ${{ env.PNPM_HOME }}/store/v3
+        timeout-minutes: 1
+        continue-on-error: true
 
       - name: Install verdaccio
         run: pnpm install --global verdaccio
