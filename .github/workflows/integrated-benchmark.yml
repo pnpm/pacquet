@@ -52,7 +52,8 @@ jobs:
         with:
           key: integrated-benchmark-pnpm-stores
           path: |
-            ~/.pnpm-store/v3
+            ~/.local/share/pnpm-store/v3
+            ~/.cache/pnpm
         timeout-minutes: 1
         continue-on-error: true
 
