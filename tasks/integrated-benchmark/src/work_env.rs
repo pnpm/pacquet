@@ -121,6 +121,7 @@ impl WorkEnv {
                         .arg("--initial-branch=__blank__")
                         .pipe(executor("git init"));
                 }
+
                 eprintln!("Fetching from {repository:?}...");
                 Command::new("git")
                     .current_dir(&revision_repo)
