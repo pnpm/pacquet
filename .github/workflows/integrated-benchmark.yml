@@ -47,10 +47,10 @@ jobs:
           subsection 'Inspecting branches...'
           git branch
 
-      - name: Cache pnpm stores
+      - name: Cache pnpm
         uses: actions/cache@v3
         with:
-          key: integrated-benchmark-pnpm-stores
+          key: integrated-benchmark-pnpm
           path: |
             ~/.local/share/pnpm-store/v3
             ~/.cache/pnpm
