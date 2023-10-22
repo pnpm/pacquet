@@ -94,11 +94,10 @@ jobs:
       - name: Install verdaccio
         run: pnpm install --global verdaccio
 
-      - name: Install cargo-binstall
-        uses: taiki-e/install-action@cargo-binstall
-
       - name: Install hyperfine
-        run: cargo binstall hyperfine@1.18.0
+        uses: ./.github/actions/binstall
+        with:
+          args: hyperfine@1.18.0
 
       - name: Build the benchmark executor
         run: cargo build --bin=integrated-benchmark
