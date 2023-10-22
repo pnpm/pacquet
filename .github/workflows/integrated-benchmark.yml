@@ -16,8 +16,9 @@ permissions:
 jobs:
   benchmark:
     strategy:
+      max-parallel: 1
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     name: Run benchmark on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     steps:
