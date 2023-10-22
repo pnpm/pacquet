@@ -1,5 +1,6 @@
 use crate::{
     cli_args::{BenchmarkScenario, HyperfineOptions},
+    constants::SCRIPT_EXECUTOR,
     fixtures::PACKAGE_JSON,
 };
 use itertools::Itertools;
@@ -103,8 +104,9 @@ impl WorkEnv {
         }
 
         eprintln!("Populating proxy registry cache...");
-        self.script_path(WorkEnv::INIT_PROXY_CACHE)
+        SCRIPT_EXECUTOR
             .pipe(Command::new)
+            .arg(self.script_path(WorkEnv::INIT_PROXY_CACHE))
             .pipe_mut(executor(WorkEnv::SCRIPT_NAME))
     }
 

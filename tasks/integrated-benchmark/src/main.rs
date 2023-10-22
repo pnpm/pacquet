@@ -1,4 +1,5 @@
 mod cli_args;
+mod constants;
 mod fixtures;
 mod verdaccio;
 mod verify;
@@ -39,7 +40,7 @@ async fn main() {
     };
     verify::ensure_git_repo(&repository);
     verify::validate_revision_list(&revisions);
-    verify::ensure_program("bash");
+    verify::ensure_program(constants::SCRIPT_EXECUTOR);
     verify::ensure_program("cargo");
     verify::ensure_program("git");
     verify::ensure_program("hyperfine");
