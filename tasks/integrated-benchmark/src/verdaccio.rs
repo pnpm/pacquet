@@ -85,9 +85,8 @@ impl<'a> VerdaccioOptions<'a> {
     async fn spawn(self) -> Verdaccio {
         let VerdaccioOptions { listen, stdout, stderr, .. } = self;
 
-        ensure_program("verdaccio");
-
-        let process = Command::new("verdaccio")
+        let process = "verdaccio"
+            .pipe(ensure_program)
             .arg("--listen")
             .arg(listen)
             .stdin(Stdio::null())
