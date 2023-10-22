@@ -29,6 +29,10 @@ pub struct WorkEnv {
 impl WorkEnv {
     const INIT_PROXY_CACHE: BenchId<'static> = BenchId::Static(".init-proxy-cache");
     const PNPM: BenchId<'static> = BenchId::Static("pnpm");
+    #[cfg(unix)]
+    const SCRIPT_NAME: &str = "install.bash";
+    #[cfg(windows)]
+    const SCRIPT_NAME: &str = "install.ps1";
 
     fn root(&self) -> &'_ Path {
         &self.root
@@ -55,14 +59,7 @@ impl WorkEnv {
     }
 
     fn script_path(&self, id: BenchId) -> PathBuf {
-        let script_name = if cfg!(unix) {
-            "install.bash"
-        } else if cfg!(windows) {
-            "install.ps1"
-        } else {
-            panic!("unsupported platform")
-        };
-        self.bench_dir(id).join(script_name)
+        self.bench_dir(id).join(WorkEnv::SCRIPT_NAME)
     }
 
     fn revision_repo(&self, revision: &str) -> PathBuf {
@@ -108,7 +105,7 @@ impl WorkEnv {
         eprintln!("Populating proxy registry cache...");
         self.script_path(WorkEnv::INIT_PROXY_CACHE)
             .pipe(Command::new)
-            .pipe_mut(executor("install.bash"))
+            .pipe_mut(executor(WorkEnv::SCRIPT_NAME))
     }
 
     fn build(&self) {
@@ -235,35 +232,23 @@ fn may_create_lockfile(dir: &Path, scenario: BenchmarkScenario) {
 }
 
 fn create_install_script(dir: &Path, scenario: BenchmarkScenario, for_pnpm: bool) {
-    let path = dir.join("install.bash");
+    let path = dir.join(WorkEnv::SCRIPT_NAME);
 
     eprintln!("Creating script {path:?}...");
-    let mut file = File::create(&path).expect("create install.bash");
+    let mut file = File::create(&path).expect("create install script");
 
-    writeln!(file, "#!/bin/bash").unwrap();
-    writeln!(file, "set -o errexit -o nounset -o pipefail").unwrap();
-    writeln!(file, r#"cd "$(dirname "$0")""#).unwrap();
+    if cfg!(unix) {
+        writeln!(file, "#!/bin/bash").unwrap();
+        writeln!(file, "set -o errexit -o nounset -o pipefail").unwrap();
+        writeln!(file, r#"cd "$(dirname "$0")""#).unwrap();
 
-    let command = if for_pnpm { "pnpm" } else { "./pacquet/target/release/pacquet" };
-    write!(file, "exec {command} install").unwrap();
-    for arg in scenario.install_args() {
-        write!(file, " {arg}").unwrap();
-    }
-    writeln!(file).unwrap();
-
-    #[cfg(unix)]
-    {
-        use std::{fs::Permissions, os::unix::fs::PermissionsExt};
-        let permissions = Permissions::from_mode(0o777);
-        fs::set_permissions(path, permissions).expect("make the script executable");
-    }
-
-    if cfg!(windows) {
-        let path = dir.join("install.ps1");
-
-        eprintln!("Creating script {path:?}...");
-        let mut file = File::create(&path).expect("create install.ps1");
-
+        let command = if for_pnpm { "pnpm" } else { "./pacquet/target/release/pacquet" };
+        write!(file, "exec {command} install").unwrap();
+        for arg in scenario.install_args() {
+            write!(file, " {arg}").unwrap();
+        }
+        writeln!(file).unwrap();
+    } else if cfg!(windows) {
         writeln!(file, "#!/usr/bin/env pwsh").unwrap();
         writeln!(file, "Set-StrictMode -Version 3.0").unwrap();
         writeln!(file, r#"Set-Location $PSScriptRoot"#).unwrap();
@@ -274,6 +259,15 @@ fn create_install_script(dir: &Path, scenario: BenchmarkScenario, for_pnpm: bool
             write!(file, " {arg}").unwrap();
         }
         writeln!(file).unwrap();
+    } else {
+        panic!("Unsupported platform");
+    }
+
+    #[cfg(unix)]
+    {
+        use std::{fs::Permissions, os::unix::fs::PermissionsExt};
+        let permissions = Permissions::from_mode(0o777);
+        fs::set_permissions(path, permissions).expect("make the script executable");
     }
 }
 
