@@ -18,7 +18,7 @@ jobs:
     strategy:
       max-parallel: 1
       matrix:
-        os: [ubuntu-latest, macos-latest] # windows is skipped because of complexity
+        os: [ubuntu-latest] # windows is skipped because of complexity, macos is skipped because of inconsistency
     name: Run benchmark on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     steps:
