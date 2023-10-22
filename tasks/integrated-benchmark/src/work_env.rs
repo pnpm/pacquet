@@ -58,6 +58,12 @@ impl WorkEnv {
         self.bench_dir(id).join("install.bash")
     }
 
+    fn bash_command(&self, id: BenchId) -> String {
+        let script_path = self.script_path(id);
+        let script_path = script_path.to_str().expect("convert script path to UTF-8");
+        format!("bash {script_path}")
+    }
+
     fn revision_repo(&self, revision: &str) -> PathBuf {
         self.bench_dir(BenchId::PacquetRevision(revision)).join("pacquet")
     }
@@ -99,8 +105,8 @@ impl WorkEnv {
         }
 
         eprintln!("Populating proxy registry cache...");
-        self.script_path(WorkEnv::INIT_PROXY_CACHE)
-            .pipe(Command::new)
+        Command::new("bash")
+            .arg(self.script_path(WorkEnv::INIT_PROXY_CACHE))
             .pipe_mut(executor("install.bash"))
     }
 
@@ -177,7 +183,7 @@ impl WorkEnv {
         self.hyperfine_options.append_to(&mut command);
 
         for id in self.revision_ids().chain(self.with_pnpm.then_some(WorkEnv::PNPM)) {
-            command.arg("--command-name").arg(id.to_string()).arg(self.script_path(id));
+            command.arg("--command-name").arg(id.to_string()).arg(self.bash_command(id));
         }
 
         command
