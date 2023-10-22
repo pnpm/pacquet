@@ -1,6 +1,6 @@
 use crate::{
     cli_args::{BenchmarkScenario, HyperfineOptions},
-    constants::SCRIPT_EXECUTOR,
+    constants::{SCRIPT_EXECUTOR, SCRIPT_NAME},
     fixtures::PACKAGE_JSON,
 };
 use itertools::Itertools;
@@ -30,10 +30,6 @@ pub struct WorkEnv {
 impl WorkEnv {
     const INIT_PROXY_CACHE: BenchId<'static> = BenchId::Static(".init-proxy-cache");
     const PNPM: BenchId<'static> = BenchId::Static("pnpm");
-    #[cfg(unix)]
-    const SCRIPT_NAME: &str = "install.bash";
-    #[cfg(windows)]
-    const SCRIPT_NAME: &str = "install.ps1";
 
     fn root(&self) -> &'_ Path {
         &self.root
@@ -60,7 +56,7 @@ impl WorkEnv {
     }
 
     fn script_path(&self, id: BenchId) -> PathBuf {
-        self.bench_dir(id).join(WorkEnv::SCRIPT_NAME)
+        self.bench_dir(id).join(SCRIPT_NAME)
     }
 
     fn revision_repo(&self, revision: &str) -> PathBuf {
@@ -107,7 +103,7 @@ impl WorkEnv {
         SCRIPT_EXECUTOR
             .pipe(Command::new)
             .arg(self.script_path(WorkEnv::INIT_PROXY_CACHE))
-            .pipe_mut(executor(WorkEnv::SCRIPT_NAME))
+            .pipe_mut(executor(SCRIPT_NAME))
     }
 
     fn build(&self) {
@@ -234,7 +230,7 @@ fn may_create_lockfile(dir: &Path, scenario: BenchmarkScenario) {
 }
 
 fn create_install_script(dir: &Path, scenario: BenchmarkScenario, for_pnpm: bool) {
-    let path = dir.join(WorkEnv::SCRIPT_NAME);
+    let path = dir.join(SCRIPT_NAME);
 
     eprintln!("Creating script {path:?}...");
     let mut file = File::create(&path).expect("create install script");
