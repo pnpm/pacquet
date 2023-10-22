@@ -15,4 +15,5 @@ runs:
         uses: taiki-e/install-action@cargo-binstall
 
       - name: Running cargo-binstall with provided arguments
+        shell: bash
         run: cargo binstall ${{ inputs.args }}

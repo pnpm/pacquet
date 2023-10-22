@@ -27,6 +27,7 @@ jobs:
           fetch-depth: 0
 
       - name: Make main branch visible
+        shell: bash
         run: |
           subsection() {
             echo >&2
@@ -103,16 +104,19 @@ jobs:
         run: cargo build --bin=integrated-benchmark
 
       - name: 'Benchmark: Frozen Lockfile'
+        shell: bash
         run: |
           cargo run --bin=integrated-benchmark -- --scenario=frozen-lockfile --verdaccio HEAD main
           cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.md
 
       # - name: 'Benchmark: Clean Install'
+      #   shell: bash
       #   run: |
       #     cargo run --bin=integrated-benchmark -- --scenario=clean-install --verdaccio HEAD main
       #     cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_CLEAN_INSTALL.md
 
       - name: Generate summary
+        shell: bash
         run: |
           (
             echo '## Integrated-Benchmark Report'
