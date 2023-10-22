@@ -94,17 +94,11 @@ jobs:
       - name: Install verdaccio
         run: pnpm install --global verdaccio
 
+      - name: Install cargo-binstall
+        uses: taiki-e/install-action@cargo-binstall
+
       - name: Install hyperfine
-        env:
-          REPO: https://github.com/sharkdp/hyperfine
-          VERSION: '1.18.0'
-        run: |
-          mkdir -p HYPERFINE.tmp
-          archive_name="hyperfine-v${VERSION}-x86_64-unknown-linux-gnu"
-          curl -L "${REPO}/releases/download/v${VERSION}/${archive_name}.tar.gz" > tmp.hyperfine.tar.gz
-          tar xf tmp.hyperfine.tar.gz --directory=HYPERFINE.tmp
-          chmod +x "HYPERFINE.tmp/${archive_name}/hyperfine"
-          echo "$(pwd)/HYPERFINE.tmp/${archive_name}" >> "$GITHUB_PATH"
+        run: cargo binstall hyperfine@1.18.0
 
       - name: Build the benchmark executor
         run: cargo build --bin=integrated-benchmark
