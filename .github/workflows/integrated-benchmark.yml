@@ -119,7 +119,7 @@ jobs:
         shell: bash
         run: |
           (
-            echo '## Integrated-Benchmark Report'
+            echo '## Integrated-Benchmark Report (${{ runner.os }})'
             echo
             echo '### Scenario: Frozen Lockfile'
             echo
@@ -138,7 +138,7 @@ jobs:
         with:
           issue-number: ${{ github.event.pull_request.number }}
           comment-author: 'github-actions[bot]'
-          body-includes: Integrated-Benchmark Report
+          body-includes: Integrated-Benchmark Report (${{ runner.os }})
 
       - name: Create or update comment
         # Check if the event is not triggered by a fork
