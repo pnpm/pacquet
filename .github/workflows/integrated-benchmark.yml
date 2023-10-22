@@ -98,7 +98,7 @@ jobs:
       - name: Install hyperfine
         uses: ./.github/actions/binstall
         with:
-          args: hyperfine@1.18.0
+          packages: hyperfine@1.18.0
 
       - name: Build the benchmark executor
         run: cargo build --bin=integrated-benchmark
