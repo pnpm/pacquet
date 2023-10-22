@@ -13,6 +13,9 @@ permissions:
   issues: write
   pull-requests: write
 
+env:
+  RUST_BACKTRACE: '1'
+
 jobs:
   benchmark:
     strategy:
