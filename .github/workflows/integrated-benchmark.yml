@@ -55,7 +55,7 @@ jobs:
       - name: Cache verdaccio
         uses: actions/cache@v3
         with:
-          key: integrated-benchmark-verdaccio
+          key: integrated-benchmark-verdaccio-${{ matrix.os }}
           path: |
             ~/.local/share/verdaccio/storage
         timeout-minutes: 1
@@ -90,7 +90,7 @@ jobs:
       - name: Cache pnpm
         uses: actions/cache@v3
         with:
-          key: integrated-benchmark-pnpm
+          key: integrated-benchmark-pnpm-${{ matrix.os }}
           path: |
             ${{ env.PNPM_HOME }}/store/v3
         timeout-minutes: 1
