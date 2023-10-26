@@ -19,7 +19,7 @@ impl<const MAJOR: u16> LockfileVersion<MAJOR> {
 /// Error when [`ComVer`] fails compatibility check.
 #[derive(Debug, Display, Error)]
 pub enum LockfileVersionError<const MAJOR: u16> {
-    #[display(fmt = "The lockfileVersion of {_0} is incompatible with {MAJOR}.x")]
+    #[display("The lockfileVersion of {_0} is incompatible with {MAJOR}.x")]
     IncompatibleMajor(#[error(not(source))] ComVer),
 }
 

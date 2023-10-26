@@ -1,0 +1,40 @@
+[package]
+name                  = "pacquet-package-manager"
+version               = "0.0.1"
+publish               = false
+authors.workspace     = true
+description.workspace = true
+edition.workspace     = true
+homepage.workspace    = true
+keywords.workspace    = true
+license.workspace     = true
+repository.workspace  = true
+
+[dependencies]
+pacquet-fs               = { workspace = true }
+pacquet-lockfile         = { workspace = true }
+pacquet-npmrc            = { workspace = true }
+pacquet-package-manifest = { workspace = true }
+pacquet-registry         = { workspace = true }
+pacquet-tarball          = { workspace = true }
+
+async-recursion = { workspace = true }
+derive_more     = { workspace = true }
+futures-util    = { workspace = true }
+node-semver     = { workspace = true }
+pipe-trait      = { workspace = true }
+rayon           = { workspace = true }
+reflink-copy    = { workspace = true }
+reqwest         = { workspace = true }
+tracing         = { workspace = true }
+miette          = { workspace = true }
+
+[dev-dependencies]
+pacquet-testing-utils = { workspace = true }
+
+node-semver       = { workspace = true }
+insta             = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile          = { workspace = true }
+tokio             = { workspace = true }
+walkdir           = { workspace = true }

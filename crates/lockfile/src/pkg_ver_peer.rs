@@ -10,7 +10,7 @@ use std::str::FromStr;
 ///
 /// **NOTE:** The peer part isn't guaranteed to be correct. It is only assumed to be.
 #[derive(Debug, Display, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[display(fmt = "{version}{peer}")]
+#[display("{version}{peer}")]
 #[serde(try_from = "&'de str", into = "String")]
 pub struct PkgVerPeer {
     version: Version,
@@ -38,9 +38,9 @@ impl PkgVerPeer {
 /// Error when parsing [`PkgVerPeer`] from a string.
 #[derive(Debug, Display, Error)]
 pub enum ParsePkgVerPeerError {
-    #[display(fmt = "Failed to parse the version part: {_0}")]
+    #[display("Failed to parse the version part: {_0}")]
     ParseVersionFailure(#[error(source)] SemverError),
-    #[display(fmt = "Mismatch parenthesis")]
+    #[display("Mismatch parenthesis")]
     MismatchParenthesis,
 }
 

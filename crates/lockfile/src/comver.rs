@@ -6,7 +6,7 @@ use std::{num::ParseIntError, str::FromStr};
 ///
 /// It contains only major and minor.
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[display(fmt = "{major}.{minor}")]
+#[display("{major}.{minor}")]
 #[serde(try_from = "&'de str", into = "String")]
 pub struct ComVer {
     pub major: u16,
@@ -23,11 +23,11 @@ impl ComVer {
 /// Error when parsing [`ComVer`] from a string.
 #[derive(Debug, Display, Error)]
 pub enum ParseComVerError {
-    #[display(fmt = "Dot is missing")]
+    #[display("Dot is missing")]
     MissingDot,
-    #[display(fmt = "Major is not a valid number: {_0}")]
+    #[display("Major is not a valid number: {_0}")]
     InvalidMajor(ParseIntError),
-    #[display(fmt = "Minor is not a valid number: {_0}")]
+    #[display("Minor is not a valid number: {_0}")]
     InvalidMinor(ParseIntError),
 }
 

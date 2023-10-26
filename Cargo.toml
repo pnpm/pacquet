@@ -13,21 +13,26 @@ repository  = "https://github.com/anonrig/pacquet"
 
 [workspace.dependencies]
 # Crates
-pacquet_cli          = { path = "crates/cli" }
-pacquet_registry     = { path = "crates/registry" }
-pacquet_tarball      = { path = "crates/tarball" }
-pacquet_package_json = { path = "crates/package_json" }
-pacquet_lockfile     = { path = "crates/lockfile" }
-pacquet_npmrc        = { path = "crates/npmrc" }
-pacquet_executor     = { path = "crates/executor" }
-pacquet_cafs         = { path = "crates/cafs" }
-pacquet_diagnostics  = { path = "crates/diagnostics" }
+pacquet-cli              = { path = "crates/cli" }
+pacquet-fs               = { path = "crates/fs" }
+pacquet-registry         = { path = "crates/registry" }
+pacquet-tarball          = { path = "crates/tarball" }
+pacquet-testing-utils    = { path = "crates/testing-utils" }
+pacquet-package-manifest = { path = "crates/package-manifest" }
+pacquet-package-manager  = { path = "crates/package-manager" }
+pacquet-lockfile         = { path = "crates/lockfile" }
+pacquet-npmrc            = { path = "crates/npmrc" }
+pacquet-executor         = { path = "crates/executor" }
+pacquet-cafs             = { path = "crates/cafs" }
+pacquet-diagnostics      = { path = "crates/diagnostics" }
 
 # Dependencies
 async-recursion    = { version = "1.0.5" }
 clap               = { version = "4", features = ["derive", "string"] }
+command-extra      = { version = "1.0.0" }
 dashmap            = { version = "5.5.3" }
-derive_more        = { version = "0.99.17" }
+derive_more        = { version = "1.0.0-beta.3", features = ["full"] }
+dunce              = { version = "1.0.4" }
 home               = { version = "0.5.5" }
 insta              = { version = "1.32.0", features = ["yaml", "glob", "walkdir"] }
 itertools          = { version = "0.11.0" }
@@ -49,7 +54,6 @@ ssri               = { version = "9.0.0" }
 strum              = { version = "0.25.0", features = ["derive"] }
 tar                = { version = "0.4.40" }
 text-block-macros  = { version = "0.1.1" }
-thiserror          = { version = "1.0.48" }
 tracing            = { version = "0.1.37" }
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 tokio              = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
@@ -59,6 +63,7 @@ zune-inflate       = { version = "0.2.54" }
 
 
 # Dev dependencies
+assert_cmd        = { version = "2.0.12" }
 criterion         = { version = "0.5.1", features = ["async_tokio"] }
 pretty_assertions = { version = "1.4.0" }
 project-root      = { version = "0.2.2" }

@@ -17,7 +17,7 @@ use std::str::FromStr;
 /// * `registry.npmjs.com/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)`
 /// * `registry.node-modules.io/ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)`
 #[derive(Debug, Display, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
-#[display(fmt = "{}/{package_specifier}", "custom_registry.as_deref().unwrap_or_default()")]
+#[display("{}/{package_specifier}", custom_registry.as_deref().unwrap_or_default())]
 #[serde(try_from = "&'de str", into = "String")]
 pub struct DependencyPath {
     pub custom_registry: Option<String>,
@@ -27,9 +27,9 @@ pub struct DependencyPath {
 /// Error when parsing [`DependencyPath`] from a string.
 #[derive(Debug, Display, Error)]
 pub enum ParseDependencyPathError {
-    #[display(fmt = "Invalid syntax")]
+    #[display("Invalid syntax")]
     InvalidSyntax,
-    #[display(fmt = "Failed to parse specifier: {_0}")]
+    #[display("Failed to parse specifier: {_0}")]
     ParsePackageSpecifierFailure(ParsePkgNameVerPeerError),
 }
 
