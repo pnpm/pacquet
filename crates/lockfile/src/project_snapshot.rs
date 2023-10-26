@@ -1,5 +1,5 @@
 use crate::{PkgName, ResolvedDependencyMap, ResolvedDependencySpec};
-use pacquet_package_json::DependencyGroup;
+use pacquet_package_manifest::DependencyGroup;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -25,7 +25,7 @@ impl ProjectSnapshot {
     /// Lookup dependency map according to group.
     pub fn get_map_by_group(&self, group: DependencyGroup) -> Option<&'_ ResolvedDependencyMap> {
         match group {
-            DependencyGroup::Default => self.dependencies.as_ref(),
+            DependencyGroup::Prod => self.dependencies.as_ref(),
             DependencyGroup::Optional => self.optional_dependencies.as_ref(),
             DependencyGroup::Dev => self.dev_dependencies.as_ref(),
             DependencyGroup::Peer => None,
@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn dependencies_by_groups() {
-        use DependencyGroup::{Default, Dev, Optional, Peer};
+        use DependencyGroup::{Dev, Optional, Peer, Prod};
 
         macro_rules! case {
             ($input:expr => $output:expr) => {{
@@ -95,7 +95,7 @@ mod tests {
         }
 
         case!([] => []);
-        case!([Default] => [
+        case!([Prod] => [
             ("react", "^17.0.2", "17.0.2"),
             ("react-dom", "^17.0.2", "17.0.2(react@17.0.2)"),
         ]);
@@ -107,16 +107,16 @@ mod tests {
             ("ts-node", "10.9.1", "10.9.1(@types/node@18.7.19)(typescript@5.1.6)"),
             ("typescript", "^5.1.6", "5.1.6"),
         ]);
-        case!([Default, Peer] => [
+        case!([Prod, Peer] => [
             ("react", "^17.0.2", "17.0.2"),
             ("react-dom", "^17.0.2", "17.0.2(react@17.0.2)"),
         ]);
-        case!([Default, Peer, Optional] => [
+        case!([Prod, Peer, Optional] => [
             ("@types/node", "^18.7.19", "18.7.19"),
             ("react", "^17.0.2", "17.0.2"),
             ("react-dom", "^17.0.2", "17.0.2(react@17.0.2)"),
         ]);
-        case!([Default, Peer, Optional, Dev] => [
+        case!([Prod, Peer, Optional, Dev] => [
             ("@types/node", "^18.7.19", "18.7.19"),
             ("react", "^17.0.2", "17.0.2"),
             ("react-dom", "^17.0.2", "17.0.2(react@17.0.2)"),

@@ -7,76 +7,74 @@ use std::{
 };
 
 use dashmap::DashMap;
-use pacquet_diagnostics::{
-    miette::{self, Diagnostic},
-    thiserror::{self, Error},
-    tracing::{self, instrument},
-};
+use derive_more::{Display, Error, From};
+use miette::Diagnostic;
 use pipe_trait::Pipe;
 use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
 use tokio::sync::{Notify, RwLock};
+use tracing::instrument;
 use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
 
-#[derive(Error, Debug, Diagnostic)]
-#[error("Failed to fetch {url}: {error}")]
+#[derive(Debug, Display, Error, Diagnostic)]
+#[display("Failed to fetch {url}: {error}")]
 pub struct NetworkError {
     pub url: String,
     pub error: reqwest::Error,
 }
 
-#[derive(Error, Debug, Diagnostic)]
-#[error("Cannot parse {integrity:?} from {url} as an integrity: {error}")]
+#[derive(Debug, Display, Error, Diagnostic)]
+#[display("Cannot parse {integrity:?} from {url} as an integrity: {error}")]
 pub struct ParseIntegrityError {
     pub url: String,
     pub integrity: String,
-    #[source]
+    #[error(source)]
     pub error: ssri::Error,
 }
 
-#[derive(Error, Debug, Diagnostic)]
-#[error("Failed to verify the integrity of {url}: {error}")]
+#[derive(Debug, Display, Error, Diagnostic)]
+#[display("Failed to verify the integrity of {url}: {error}")]
 pub struct VerifyChecksumError {
     pub url: String,
-    #[source]
+    #[error(source)]
     pub error: ssri::Error,
 }
 
-#[derive(Error, Debug, Diagnostic)]
+#[derive(Debug, Display, Error, From, Diagnostic)]
 #[non_exhaustive]
 pub enum TarballError {
-    #[error(transparent)]
-    #[diagnostic(code(pacquet_tarball::request_error))]
-    Network(#[from] NetworkError),
+    #[diagnostic(code(pacquet_tarball::fetch_tarball))]
+    FetchTarball(NetworkError),
 
-    #[error(transparent)]
+    #[from(ignore)]
     #[diagnostic(code(pacquet_tarball::io_error))]
-    Io(#[from] std::io::Error),
+    ReadTarballEntries(std::io::Error),
 
-    #[error(transparent)]
     #[diagnostic(code(pacquet_tarball::parse_integrity_error))]
-    ParseIntegrity(#[from] ParseIntegrityError),
+    ParseIntegrity(ParseIntegrityError),
 
-    #[error(transparent)]
     #[diagnostic(code(pacquet_tarball::verify_checksum_error))]
-    Checksum(#[from] VerifyChecksumError),
+    Checksum(VerifyChecksumError),
 
-    #[error("integrity creation failed: {}", _0)]
+    #[from(ignore)]
+    #[display("Integrity creation failed: {_0}")]
     #[diagnostic(code(pacquet_tarball::integrity_error))]
-    Integrity(#[from] ssri::Error),
+    Integrity(ssri::Error),
 
-    #[error(transparent)]
-    #[diagnostic(code(pacquet_tarball::decompression_error))]
-    Decompression(#[from] InflateDecodeErrors),
+    #[from(ignore)]
+    #[display("Failed to decode gzip: {_0}")]
+    #[diagnostic(code(pacquet_tarball::decode_gzip))]
+    DecodeGzip(InflateDecodeErrors),
 
-    #[error(transparent)]
+    #[from(ignore)]
+    #[display("Failed to write cafs: {_0}")]
     #[diagnostic(transparent)]
-    Cafs(#[from] pacquet_cafs::CafsError),
+    WriteCafs(pacquet_cafs::CafsError),
 
-    #[error(transparent)]
+    #[from(ignore)]
     #[diagnostic(code(pacquet_tarball::task_join_error))]
-    TaskJoin(#[from] tokio::task::JoinError),
+    TaskJoin(tokio::task::JoinError),
 }
 
 /// Value of the cache.
@@ -101,10 +99,9 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
         options = options.set_size_hint(size);
     }
 
-    let mut decoder = DeflateDecoder::new_with_options(gz_data, options);
-    let decompressed = decoder.decode_gzip()?;
-
-    Ok(decompressed)
+    DeflateDecoder::new_with_options(gz_data, options)
+        .decode_gzip()
+        .map_err(TarballError::DecodeGzip)
 }
 
 #[instrument(skip(data), fields(data_len = data.len()))]
@@ -112,126 +109,136 @@ fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm,
     integrity.pipe(IntegrityChecker::new).chain(data).result()
 }
 
-#[instrument(skip(cache), fields(cache_len = cache.len()))]
-pub async fn download_tarball_to_store(
-    cache: &Cache,
-    http_client: &Client,
-    store_dir: &'static Path,
-    package_integrity: &str,
-    package_unpacked_size: Option<usize>,
-    package_url: &str,
-) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
-    // QUESTION: I see no copying from existing store_dir, is there such mechanism?
-    // TODO: If it's not implemented yet, implement it
+/// This subroutine downloads and extracts a tarball to the store directory.
+///
+/// It returns a CAS map of files in the tarball.
+#[must_use]
+pub struct DownloadTarballToStore<'a> {
+    pub tarball_cache: &'a Cache,
+    pub http_client: &'a Client,
+    pub store_dir: &'static Path,
+    pub package_integrity: &'a str,
+    pub package_unpacked_size: Option<usize>,
+    pub package_url: &'a str,
+}
 
-    if let Some(cache_lock) = cache.get(package_url) {
-        let notify = match &*cache_lock.write().await {
-            CacheValue::Available(cas_paths) => {
+impl<'a> DownloadTarballToStore<'a> {
+    /// Execute the subroutine.
+    pub async fn run(self) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
+        let &DownloadTarballToStore { tarball_cache, package_url, .. } = &self;
+
+        // QUESTION: I see no copying from existing store_dir, is there such mechanism?
+        // TODO: If it's not implemented yet, implement it
+
+        if let Some(cache_lock) = tarball_cache.get(package_url) {
+            let notify = match &*cache_lock.write().await {
+                CacheValue::Available(cas_paths) => {
+                    return Ok(Arc::clone(cas_paths));
+                }
+                CacheValue::InProgress(notify) => Arc::clone(notify),
+            };
+
+            tracing::info!(target: "pacquet::download", ?package_url, "Wait for cache");
+            notify.notified().await;
+            if let CacheValue::Available(cas_paths) = &*cache_lock.read().await {
                 return Ok(Arc::clone(cas_paths));
             }
-            CacheValue::InProgress(notify) => Arc::clone(notify),
-        };
+            unreachable!("Failed to get or compute tarball data for {package_url:?}");
+        } else {
+            let notify = Arc::new(Notify::new());
+            let cache_lock = notify
+                .pipe_ref(Arc::clone)
+                .pipe(CacheValue::InProgress)
+                .pipe(RwLock::new)
+                .pipe(Arc::new);
+            if tarball_cache.insert(package_url.to_string(), Arc::clone(&cache_lock)).is_some() {
+                tracing::warn!(target: "pacquet::download", ?package_url, "Race condition detected when writing to cache");
+            }
+            let cas_paths = self.without_cache().await?;
+            let mut cache_write = cache_lock.write().await;
+            *cache_write = CacheValue::Available(Arc::clone(&cas_paths));
+            notify.notify_waiters();
+            Ok(cas_paths)
+        }
+    }
 
-        tracing::info!(target: "pacquet::download", ?package_url, "Wait for cache");
-        notify.notified().await;
-        if let CacheValue::Available(cas_paths) = &*cache_lock.read().await {
-            return Ok(Arc::clone(cas_paths));
-        }
-        unreachable!("Failed to get or compute tarball data for {package_url:?}");
-    } else {
-        let notify = Arc::new(Notify::new());
-        let cache_lock = notify
-            .pipe_ref(Arc::clone)
-            .pipe(CacheValue::InProgress)
-            .pipe(RwLock::new)
-            .pipe(Arc::new);
-        if cache.insert(package_url.to_string(), Arc::clone(&cache_lock)).is_some() {
-            tracing::warn!(target: "pacquet::download", ?package_url, "Race condition detected when writing to cache");
-        }
-        let cas_paths = download_tarball_to_store_uncached(
-            package_url,
+    async fn without_cache(&self) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
+        let &DownloadTarballToStore {
             http_client,
             store_dir,
             package_integrity,
             package_unpacked_size,
-        )
-        .await?;
-        let mut cache_write = cache_lock.write().await;
-        *cache_write = CacheValue::Available(Arc::clone(&cas_paths));
-        notify.notify_waiters();
+            package_url,
+            ..
+        } = self;
+
+        tracing::info!(target: "pacquet::download", ?package_url, "New cache");
+
+        let network_error = |error| {
+            TarballError::FetchTarball(NetworkError { url: package_url.to_string(), error })
+        };
+        let response = http_client
+            .get(package_url)
+            .send()
+            .await
+            .map_err(network_error)?
+            .bytes()
+            .await
+            .map_err(network_error)?;
+
+        tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
+
+        let package_integrity: Integrity =
+            package_integrity.parse().map_err(|error| ParseIntegrityError {
+                url: package_url.to_string(),
+                integrity: package_integrity.to_string(),
+                error,
+            })?;
+        enum TaskError {
+            Checksum(ssri::Error),
+            Other(TarballError),
+        }
+        let cas_paths = tokio::task::spawn(async move {
+            verify_checksum(&response, package_integrity).map_err(TaskError::Checksum)?;
+            let data =
+                decompress_gzip(&response, package_unpacked_size).map_err(TaskError::Other)?;
+            Archive::new(Cursor::new(data))
+                .entries()
+                .map_err(TarballError::ReadTarballEntries)
+                .map_err(TaskError::Other)?
+                .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir())
+                .map(|entry| -> Result<(OsString, PathBuf), TarballError> {
+                    let mut entry = entry.unwrap();
+
+                    // Read the contents of the entry
+                    let mut buffer = Vec::with_capacity(entry.size() as usize);
+                    entry.read_to_end(&mut buffer).unwrap();
+
+                    let entry_path = entry.path().unwrap();
+                    let cleaned_entry_path =
+                        entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
+                    let integrity = pacquet_cafs::write_sync(store_dir, &buffer)
+                        .map_err(TarballError::WriteCafs)?;
+
+                    Ok((cleaned_entry_path, store_dir.join(integrity)))
+                })
+                .collect::<Result<HashMap<OsString, PathBuf>, TarballError>>()
+                .map_err(TaskError::Other)
+        })
+        .await
+        .expect("no join error")
+        .map_err(|error| match error {
+            TaskError::Checksum(error) => {
+                TarballError::Checksum(VerifyChecksumError { url: package_url.to_string(), error })
+            }
+            TaskError::Other(error) => error,
+        })?
+        .pipe(Arc::new);
+
+        tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
+
         Ok(cas_paths)
     }
-}
-
-async fn download_tarball_to_store_uncached(
-    package_url: &str,
-    http_client: &Client,
-    store_dir: &'static Path,
-    package_integrity: &str,
-    package_unpacked_size: Option<usize>,
-) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
-    tracing::info!(target: "pacquet::download", ?package_url, "New cache");
-
-    let network_error = |error| NetworkError { url: package_url.to_string(), error };
-    let response = http_client
-        .get(package_url)
-        .send()
-        .await
-        .map_err(network_error)?
-        .bytes()
-        .await
-        .map_err(network_error)?;
-
-    tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
-
-    let package_integrity: Integrity =
-        package_integrity.parse().map_err(|error| ParseIntegrityError {
-            url: package_url.to_string(),
-            integrity: package_integrity.to_string(),
-            error,
-        })?;
-    enum TaskError {
-        Checksum(ssri::Error),
-        Other(TarballError),
-    }
-    let cas_paths = tokio::task::spawn(async move {
-        verify_checksum(&response, package_integrity).map_err(TaskError::Checksum)?;
-        let data = decompress_gzip(&response, package_unpacked_size).map_err(TaskError::Other)?;
-        Archive::new(Cursor::new(data))
-            .entries()
-            .map_err(TarballError::Io)
-            .map_err(TaskError::Other)?
-            .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir())
-            .map(|entry| -> Result<(OsString, PathBuf), TarballError> {
-                let mut entry = entry.unwrap();
-
-                // Read the contents of the entry
-                let mut buffer = Vec::with_capacity(entry.size() as usize);
-                entry.read_to_end(&mut buffer).unwrap();
-
-                let entry_path = entry.path().unwrap();
-                let cleaned_entry_path =
-                    entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
-                let integrity = pacquet_cafs::write_sync(store_dir, &buffer)?;
-
-                Ok((cleaned_entry_path, store_dir.join(integrity)))
-            })
-            .collect::<Result<HashMap<OsString, PathBuf>, TarballError>>()
-            .map_err(TaskError::Other)
-    })
-    .await
-    .expect("no join error")
-    .map_err(|error| match error {
-        TaskError::Checksum(error) => {
-            TarballError::Checksum(VerifyChecksumError { url: package_url.to_string(), error })
-        }
-        TaskError::Other(error) => error,
-    })?
-    .pipe(Arc::new);
-
-    tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
-
-    Ok(cas_paths)
 }
 
 #[cfg(test)]
@@ -262,14 +269,15 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     async fn packages_under_orgs_should_work() {
         let (store_dir, store_path) = tempdir_with_leaked_path();
-        let cas_files = download_tarball_to_store(
-            &Default::default(),
-            &Client::new(),
-            store_path,
-            "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
-            Some(16697),
-            "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
-        )
+        let cas_files = DownloadTarballToStore {
+            tarball_cache: &Default::default(),
+            http_client: &Default::default(),
+            store_dir: store_path,
+            package_integrity: "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
+            package_unpacked_size: Some(16697),
+            package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz"
+        }
+        .run()
         .await
         .unwrap();
 
@@ -301,14 +309,15 @@ mod tests {
     #[tokio::test]
     async fn should_throw_error_on_checksum_mismatch() {
         let (store_dir, store_path) = tempdir_with_leaked_path();
-        download_tarball_to_store(
-            &Default::default(),
-            &Client::new(),
-            store_path,
-            "sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
-            Some(16697),
-            "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
-        )
+        DownloadTarballToStore {
+            tarball_cache: &Default::default(),
+            http_client: &Default::default(),
+            store_dir: store_path,
+            package_integrity: "sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
+            package_unpacked_size: Some(16697),
+            package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
+        }
+        .run()
         .await
         .expect_err("checksum mismatch");
 

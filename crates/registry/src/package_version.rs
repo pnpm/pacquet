@@ -1,9 +1,9 @@
-use std::{collections::HashMap, fmt::Display};
+use std::collections::HashMap;
 
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 
-use crate::{package_distribution::PackageDistribution, NetworkError, RegistryError};
+use crate::{package_distribution::PackageDistribution, NetworkError, PackageTag, RegistryError};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -25,11 +25,11 @@ impl PartialEq for PackageVersion {
 impl PackageVersion {
     pub async fn fetch_from_registry(
         name: &str,
-        version: impl Display, // TODO: change to node_semver::Version to increase resistance against programmer errors
+        tag: PackageTag,
         http_client: &reqwest::Client,
         registry: &str,
     ) -> Result<Self, RegistryError> {
-        let url = || format!("{registry}{name}/{version}");
+        let url = || format!("{registry}{name}/{tag}");
         let network_error = |error| NetworkError { error, url: url() };
 
         http_client

@@ -3,7 +3,7 @@ use std::{fs, path::Path};
 use clap::Parser;
 use criterion::{Criterion, Throughput};
 use mockito::ServerGuard;
-use pacquet_tarball::download_tarball_to_store;
+use pacquet_tarball::DownloadTarballToStore;
 use pipe_trait::Pipe;
 use project_root::get_project_root;
 use reqwest::Client;
@@ -32,14 +32,14 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
             let http_client = Client::new();
 
             let cas_map =
-                download_tarball_to_store(
-                    &Default::default(),
-                    &http_client,
-                    dir.path(),
-                    "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
-                    Some(16697),
-                    url,
-                ).await.unwrap();
+                DownloadTarballToStore{
+                    tarball_cache: &Default::default(),
+                    http_client: &http_client,
+                    store_dir: dir.path(),
+                    package_integrity: "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
+                    package_unpacked_size: Some(16697),
+                    package_url: url,
+                }.run().await.unwrap();
             cas_map.len()
         });
     });

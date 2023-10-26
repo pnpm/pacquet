@@ -21,9 +21,9 @@ pub struct PkgName {
 /// Error when parsing [`PkgName`] from a string input.
 #[derive(Debug, Display, Error)]
 pub enum ParsePkgNameError {
-    #[display(fmt = "Missing bare name")]
+    #[display("Missing bare name")]
     MissingName,
-    #[display(fmt = "Name is empty")]
+    #[display("Name is empty")]
     EmptyName,
 }
 

@@ -1,5 +1,5 @@
 [package]
-name                  = "pacquet_lockfile"
+name                  = "pacquet-lockfile"
 version               = "0.0.1"
 publish               = false
 authors.workspace     = true
@@ -11,8 +11,8 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-pacquet_diagnostics  = { workspace = true }
-pacquet_package_json = { workspace = true }
+pacquet-diagnostics      = { workspace = true }
+pacquet-package-manifest = { workspace = true }
 
 derive_more       = { workspace = true }
 node-semver       = { workspace = true }

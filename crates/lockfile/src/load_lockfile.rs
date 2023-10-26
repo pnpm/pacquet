@@ -11,15 +11,15 @@ use std::{
 #[derive(Debug, Display, Error, Diagnostic)]
 #[non_exhaustive]
 pub enum LoadLockfileError {
-    #[display(fmt = "Failed to get current_dir: {_0}")]
+    #[display("Failed to get current_dir: {_0}")]
     #[diagnostic(code(pacquet_lockfile::current_dir))]
     CurrentDir(io::Error),
 
-    #[display(fmt = "Failed to read lockfile content: {_0}")]
+    #[display("Failed to read lockfile content: {_0}")]
     #[diagnostic(code(pacquet_lockfile::read_file))]
     ReadFile(io::Error),
 
-    #[display(fmt = "Failed to parse lockfile content as YAML: {_0}")]
+    #[display("Failed to parse lockfile content as YAML: {_0}")]
     #[diagnostic(code(pacquet_lockfile::parse_yaml))]
     ParseYaml(serde_yaml::Error),
 }

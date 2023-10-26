@@ -32,7 +32,7 @@ jobs:
           shared-key: micro-benchmark
 
       - name: Compile
-        run: cargo build --release -p pacquet_micro_benchmark
+        run: cargo build --release --bin=micro-benchmark
 
       - name: Sleep for CPU cooldown
         shell: bash
@@ -48,7 +48,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Compile
-        run: cargo build --release -p pacquet_micro_benchmark
+        run: cargo build --release --bin=micro-benchmark
 
       - name: Sleep for CPU cooldown
         shell: bash

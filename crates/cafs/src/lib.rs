@@ -5,16 +5,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use ssri::{Algorithm, IntegrityOpts};
-use thiserror::Error;
 
-#[derive(Error, Debug, Diagnostic)]
+#[derive(Debug, Display, Error, From, Diagnostic)]
 #[non_exhaustive]
 pub enum CafsError {
-    #[error(transparent)]
     #[diagnostic(code(pacquet_cafs::io_error))]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error), // TODO: remove derive(From), split this variant
 }
 
 enum FileType {
