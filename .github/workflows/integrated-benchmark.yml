@@ -1,0 +1,152 @@
+name: Integrated-Benchmark
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  benchmark:
+    strategy:
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-latest] # windows is skipped because of complexity, macos is skipped because of inconsistency
+    name: Run benchmark on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Make main branch visible
+        shell: bash
+        run: |
+          subsection() {
+            echo >&2
+            echo -e "\033[0;33m$*\033[0m" >&2
+          }
+
+          subsection 'Configuring git...'
+          git config --global advice.detachedHead false
+
+          subsection 'Checking out main branch...'
+          git checkout main
+          git log --oneline -n 3
+
+          subsection 'Switching back...'
+          git checkout -
+          git log --oneline -n 3
+
+          subsection 'Inspecting branches...'
+          git branch
+
+      - name: Cache verdaccio
+        uses: actions/cache@v3
+        with:
+          key: integrated-benchmark-verdaccio
+          path: |
+            ~/.local/share/verdaccio/storage
+        timeout-minutes: 1
+        continue-on-error: true
+
+      - name: Cache Rust builds
+        uses: actions/cache@v3
+        with:
+          key: integrated-benchmark-builds-${{ matrix.os }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            bench-work-env/*/pacquet/target
+        timeout-minutes: 1
+        continue-on-error: true
+
+      - name: Install Rust Toolchain
+        uses: ./.github/actions/rustup
+        with:
+          shared-key: integrated-benchmark
+          restore-cache: false # it's insufficient
+          save-cache: false # it's insufficient
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+          run_install: false
+          standalone: true
+
+      - name: Cache pnpm
+        uses: actions/cache@v3
+        with:
+          key: integrated-benchmark-pnpm
+          path: |
+            ${{ env.PNPM_HOME }}/store/v3
+        timeout-minutes: 1
+        continue-on-error: true
+
+      - name: Install verdaccio
+        run: pnpm install --global verdaccio
+
+      - name: Install hyperfine
+        uses: ./.github/actions/binstall
+        with:
+          packages: hyperfine@1.18.0
+
+      - name: Build the benchmark executor
+        run: cargo build --bin=integrated-benchmark
+
+      - name: 'Benchmark: Frozen Lockfile'
+        shell: bash
+        run: |
+          cargo run --bin=integrated-benchmark -- --scenario=frozen-lockfile --verdaccio HEAD main
+          cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.md
+
+      # - name: 'Benchmark: Clean Install'
+      #   shell: bash
+      #   run: |
+      #     cargo run --bin=integrated-benchmark -- --scenario=clean-install --verdaccio HEAD main
+      #     cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_CLEAN_INSTALL.md
+
+      - name: Generate summary
+        shell: bash
+        run: |
+          (
+            echo '## Integrated-Benchmark Report (${{ runner.os }})'
+            echo
+            echo '### Scenario: Frozen Lockfile'
+            echo
+            cat bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.md
+            # echo
+            # echo '### Scenario: Clean Install'
+            # echo
+            # cat bench-work-env/BENCHMARK_REPORT_CLEAN_INSTALL.md
+          ) > bench-work-env/SUMMARY.md
+
+      - name: Find Comment
+        # Check if the event is not triggered by a fork
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: peter-evans/find-comment@v2
+        id: fc
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: 'github-actions[bot]'
+          body-includes: Integrated-Benchmark Report (${{ runner.os }})
+
+      - name: Create or update comment
+        # Check if the event is not triggered by a fork
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          body-file: bench-work-env/SUMMARY.md

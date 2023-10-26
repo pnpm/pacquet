@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, process::Command};
 use which::which;
 
 pub async fn ensure_virtual_registry(registry: &str) {
@@ -16,9 +16,9 @@ pub fn ensure_git_repo(path: &Path) {
     assert!(path.join("Cargo.lock").is_file());
 }
 
-pub fn ensure_program(program: &str) {
+pub fn ensure_program(program: &str) -> Command {
     match which(program) {
-        Ok(_) => (),
+        Ok(real_program) => Command::new(real_program),
         Err(which::Error::CannotFindBinaryPath) => panic!("Cannot find {program} in $PATH"),
         Err(error) => panic!("{error}"),
     }

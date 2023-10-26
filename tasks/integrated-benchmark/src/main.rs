@@ -23,7 +23,6 @@ async fn main() {
     }
     let work_env = std::fs::canonicalize(work_env).expect("get absolute path to work env");
     let verdaccio = if verdaccio {
-        verify::ensure_program("verdaccio");
         verdaccio::VerdaccioOptions {
             client: &Default::default(),
             listen: &registry,
