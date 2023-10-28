@@ -1,14 +1,14 @@
 [package]
-name                  = "pacquet-testing-utils"
-version               = "0.0.0"
-description           = "Common utilities to test pacquet code"
-publish               = false
-authors.workspace     = true
-edition.workspace     = true
-homepage.workspace    = true
-keywords.workspace    = true
-license.workspace     = true
-repository.workspace  = true
+name                 = "pacquet-testing-utils"
+version              = "0.0.0"
+description          = "Common utilities to test pacquet code"
+publish              = false
+authors.workspace    = true
+edition.workspace    = true
+homepage.workspace   = true
+keywords.workspace   = true
+license.workspace    = true
+repository.workspace = true
 
 [dependencies]
 assert_cmd    = { workspace = true }
