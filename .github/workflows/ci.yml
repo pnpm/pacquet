@@ -97,6 +97,6 @@ jobs:
       - name: Install Taplo CLI
         uses: ./.github/actions/binstall
         with:
-          packages: taplo@0.8.1
+          packages: taplo-cli@0.8.1
 
       - run: taplo format --check
