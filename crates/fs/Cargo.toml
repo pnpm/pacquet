@@ -1,14 +1,14 @@
 [package]
-name                  = "pacquet-fs"
-description           = "Filesystem utility functions used by pacquet"
-version               = "0.0.1"
-publish               = false
-authors.workspace     = true
-edition.workspace     = true
-homepage.workspace    = true
-keywords.workspace    = true
-license.workspace     = true
-repository.workspace  = true
+name                 = "pacquet-fs"
+description          = "Filesystem utility functions used by pacquet"
+version              = "0.0.1"
+publish              = false
+authors.workspace    = true
+edition.workspace    = true
+homepage.workspace   = true
+keywords.workspace   = true
+license.workspace    = true
+repository.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 junction = { workspace = true }

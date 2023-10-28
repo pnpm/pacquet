@@ -61,7 +61,6 @@ walkdir            = { version = "2.4.0" }
 which              = { version = "4.4.2" }
 zune-inflate       = { version = "0.2.54" }
 
-
 # Dev dependencies
 assert_cmd        = { version = "2.0.12" }
 criterion         = { version = "0.5.1", features = ["async_tokio"] }
