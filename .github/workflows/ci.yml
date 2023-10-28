@@ -93,3 +93,10 @@ jobs:
           restore-cache: false
 
       - run: cargo fmt --all -- --check
+
+      - name: Install Taplo CLI
+        uses: ./.github/actions/binstall
+        with:
+          packages: taplo@0.8.1
+
+      - run: taplo format --check
