@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     pub fn should_use_xdg_data_home_env_var() {
-        env::set_var("XDG_DATA_HOME", "/hello");
+        env::set_var("XDG_DATA_HOME", "/hello"); // TODO: change this to dependency injection
         let value: Npmrc = serde_ini::from_str("").unwrap();
         assert_eq!(display_store_dir(&value.store_dir), "/hello/pnpm/store");
         env::remove_var("XDG_DATA_HOME");
