@@ -1486,6 +1486,8 @@ name = "pacquet-store-dir"
 version = "0.0.1"
 dependencies = [
  "derive_more",
+ "pipe-trait",
+ "pretty_assertions",
  "serde",
 ]
 

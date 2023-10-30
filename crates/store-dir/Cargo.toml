@@ -13,3 +13,7 @@ repository.workspace = true
 [dependencies]
 derive_more = { workspace = true }
 serde       = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+pipe-trait        = { workspace = true }

@@ -42,3 +42,32 @@ impl StoreDir {
         self.v3().join("tmp")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pipe_trait::Pipe;
+    use pretty_assertions::assert_eq;
+
+    #[cfg(unix)]
+    #[test]
+    fn file_path_by_hash_str() {
+        let received = "/home/user/.local/share/pnpm/store"
+            .pipe(PathBuf::from)
+            .pipe(StoreDir::from)
+            .file_path_by_hash_str("3e", "f722d37b016c63ac0126cfdcec");
+        let expected = PathBuf::from(
+            "/home/user/.local/share/pnpm/store/v3/files/3e/f722d37b016c63ac0126cfdcec",
+        );
+        assert_eq!(&received, &expected);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tmp() {
+        let received =
+            "/home/user/.local/share/pnpm/store".pipe(PathBuf::from).pipe(StoreDir::from).tmp();
+        let expected = PathBuf::from("/home/user/.local/share/pnpm/store/v3/tmp");
+        assert_eq!(&received, &expected);
+    }
+}
