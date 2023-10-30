@@ -1484,6 +1484,9 @@ dependencies = [
 [[package]]
 name = "pacquet-store-dir"
 version = "0.0.1"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "pacquet-tarball"

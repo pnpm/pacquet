@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Represent a store directory.
@@ -6,6 +7,8 @@ use std::path::PathBuf;
 /// * The files in `node_modules` directories are hardlinks or reflinks to the files in the store directory.
 /// * The store directory can and often act as a global shared cache of all installation of different workspaces.
 /// * The location of the store directory can be customized by `store-dir` field.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(transparent)]
 pub struct StoreDir {
     /// Path to the root of the store directory from which all sub-paths are derived.
     ///
