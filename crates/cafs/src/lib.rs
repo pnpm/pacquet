@@ -17,7 +17,6 @@ pub fn write_sync(
     suffix: Option<FileSuffix>,
 ) -> Result<PathBuf, CafsError> {
     let file_hash = Sha512::digest(buffer);
-
     let file_path = store_dir.file_path_by_content_address(file_hash, suffix);
 
     if !file_path.exists() {
