@@ -56,7 +56,7 @@ impl StoreDir {
     /// Path to a file in the store directory.
     pub fn file_path_by_content_address(
         &self,
-        integrity: Integrity, // TODO: use proper sha2::Sha512 to remove assert_eq
+        integrity: &Integrity, // TODO: use proper sha2::Sha512 to remove assert_eq
         suffix: Option<FileSuffix>,
     ) -> PathBuf {
         let (algorithm, hex) = integrity.to_hex();
