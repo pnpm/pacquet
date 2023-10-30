@@ -29,6 +29,11 @@ pub struct StoreDir {
 }
 
 impl StoreDir {
+    /// Construct an instance of [`StoreDir`].
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        root.into().into()
+    }
+
     /// Create an object that [displays](std::fmt::Display) the root of the store directory.
     pub fn display(&self) -> path::Display {
         self.root.display()
@@ -85,8 +90,7 @@ mod tests {
     #[test]
     fn file_path_by_hash_str() {
         let received = "/home/user/.local/share/pnpm/store"
-            .pipe(PathBuf::from)
-            .pipe(StoreDir::from)
+            .pipe(StoreDir::new)
             .file_path_by_hash_str("3e", "f722d37b016c63ac0126cfdcec");
         let expected = PathBuf::from(
             "/home/user/.local/share/pnpm/store/v3/files/3e/f722d37b016c63ac0126cfdcec",
@@ -99,7 +103,7 @@ mod tests {
     fn file_path_by_content_address() {
         fn case(file_content: &str, suffix: Option<FileSuffix>, expected: &str) {
             eprintln!("CASE: {file_content:?}, {suffix:?}");
-            let store_dir = "STORE_DIR".pipe(PathBuf::from).pipe(StoreDir::from);
+            let store_dir = StoreDir::new("STORE_DIR");
             let integrity =
                 IntegrityOpts::new().algorithm(Algorithm::Sha512).chain(file_content).result();
             dbg!(&integrity);
@@ -130,8 +134,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn tmp() {
-        let received =
-            "/home/user/.local/share/pnpm/store".pipe(PathBuf::from).pipe(StoreDir::from).tmp();
+        let received = StoreDir::new("/home/user/.local/share/pnpm/store").tmp();
         let expected = PathBuf::from("/home/user/.local/share/pnpm/store/v3/tmp");
         assert_eq!(&received, &expected);
     }

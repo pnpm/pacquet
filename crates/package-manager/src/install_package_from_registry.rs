@@ -115,6 +115,7 @@ mod tests {
     use super::*;
     use node_semver::Version;
     use pacquet_npmrc::Npmrc;
+    use pacquet_store_dir::StoreDir;
     use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
     use std::fs;
@@ -127,7 +128,7 @@ mod tests {
             hoist_pattern: vec![],
             public_hoist_pattern: vec![],
             shamefully_hoist: false,
-            store_dir: store_dir.to_path_buf().into(),
+            store_dir: StoreDir::new(store_dir),
             modules_dir: modules_dir.to_path_buf(),
             node_linker: Default::default(),
             symlink: false,

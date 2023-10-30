@@ -1439,6 +1439,7 @@ dependencies = [
  "pacquet-npmrc",
  "pacquet-package-manifest",
  "pacquet-registry",
+ "pacquet-store-dir",
  "pacquet-tarball",
  "pacquet-testing-utils",
  "pipe-trait",
