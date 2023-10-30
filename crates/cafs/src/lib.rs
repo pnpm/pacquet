@@ -27,6 +27,15 @@ pub fn write_sync(
     fs::create_dir_all(parent_dir)?;
     fs::write(&file_path, buffer)?;
 
+    #[cfg(unix)]
+    {
+        use std::{fs::Permissions, os::unix::fs::PermissionsExt};
+        if suffix == Some(FileSuffix::Exec) {
+            let permissions = Permissions::from_mode(0o777);
+            fs::set_permissions(&file_path, permissions).expect("make the file executable");
+        }
+    }
+
     Ok(file_path)
 }
 
