@@ -247,6 +247,7 @@ mod tests {
         assert_eq!(value.modules_cache_max_age, 1000);
     }
 
+    #[cfg(unix)]
     #[test]
     pub fn should_use_pnpm_home_env_var() {
         env::set_var("PNPM_HOME", "/hello"); // TODO: change this to dependency injection
@@ -255,6 +256,7 @@ mod tests {
         env::remove_var("PNPM_HOME");
     }
 
+    #[cfg(unix)]
     #[test]
     pub fn should_use_xdg_data_home_env_var() {
         env::set_var("XDG_DATA_HOME", "/hello");
