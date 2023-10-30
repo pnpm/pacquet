@@ -79,6 +79,7 @@ mod tests {
     use super::*;
     use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
+    use ssri::{Algorithm, IntegrityOpts};
 
     #[cfg(unix)]
     #[test]
@@ -91,6 +92,39 @@ mod tests {
             "/home/user/.local/share/pnpm/store/v3/files/3e/f722d37b016c63ac0126cfdcec",
         );
         assert_eq!(&received, &expected);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_path_by_content_address() {
+        fn case(file_content: &str, suffix: Option<FileSuffix>, expected: &str) {
+            eprintln!("CASE: {file_content:?}, {suffix:?}");
+            let store_dir = "STORE_DIR".pipe(PathBuf::from).pipe(StoreDir::from);
+            let integrity =
+                IntegrityOpts::new().algorithm(Algorithm::Sha512).chain(file_content).result();
+            dbg!(&integrity);
+            let received = store_dir.file_path_by_content_address(&integrity, suffix);
+            let expected = PathBuf::from(expected);
+            assert_eq!(&received, &expected);
+        }
+
+        case(
+            "hello world",
+            None,
+            "STORE_DIR/v3/files/30/9ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f",
+        );
+
+        case(
+            "hello world",
+            Some(FileSuffix::Exec),
+            "STORE_DIR/v3/files/30/9ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f-exec",
+        );
+
+        case(
+            "hello world",
+            Some(FileSuffix::Index),
+            "STORE_DIR/v3/files/30/9ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f-index.json",
+        );
     }
 
     #[cfg(unix)]
