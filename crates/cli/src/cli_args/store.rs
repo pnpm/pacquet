@@ -28,8 +28,7 @@ impl StoreCommand {
                 panic!("Not implemented")
             }
             StoreCommand::Prune => {
-                // pacquet_cafs::prune_sync(&config().store_dir).wrap_err("pruning store")?;
-                todo!("pruning the store is not yet implemented")
+                pacquet_cafs::prune_sync(&config().store_dir).wrap_err("pruning store")?;
             }
             StoreCommand::Path => {
                 println!("{}", config().store_dir.display());

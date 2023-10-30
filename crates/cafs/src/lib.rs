@@ -51,11 +51,9 @@ pub fn write_sync(store_dir: &StoreDir, buffer: &[u8]) -> Result<PathBuf, CafsEr
     Ok(file_path)
 }
 
-pub fn prune_sync(store_dir: &Path) -> Result<(), CafsError> {
-    // TODO: This should remove unreferenced packages, not all packages.
+pub fn prune_sync(store_dir: &StoreDir) -> Result<(), CafsError> {
     // Ref: https://pnpm.io/cli/store#prune
-    fs::remove_dir_all(store_dir)?;
-    Ok(())
+    todo!("remove orphaned files")
 }
 
 #[cfg(test)]
@@ -81,15 +79,5 @@ mod tests {
             content_path_from_hex(FileType::Index, "1234567890abcdef1234567890abcdef12345678"),
             PathBuf::from("12/34567890abcdef1234567890abcdef12345678-index.json")
         );
-    }
-
-    #[test]
-    fn should_write_and_clear() {
-        let dir = tempdir().unwrap();
-        let buffer = vec![0, 1, 2, 3, 4, 5, 6];
-        let store_path = write_sync(&dir.path().to_path_buf().into(), &buffer).unwrap();
-        assert!(store_path.exists());
-        prune_sync(dir.path()).unwrap();
-        assert!(!store_path.exists());
     }
 }
