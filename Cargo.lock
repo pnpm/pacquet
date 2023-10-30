@@ -1489,6 +1489,8 @@ dependencies = [
  "pipe-trait",
  "pretty_assertions",
  "serde",
+ "ssri",
+ "strum",
 ]
 
 [[package]]

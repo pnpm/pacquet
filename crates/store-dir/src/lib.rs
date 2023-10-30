@@ -1,6 +1,17 @@
 use derive_more::From;
 use serde::{Deserialize, Serialize};
+use ssri::{Algorithm, Integrity}; // TODO: use proper sha2::Sha512 to remove assert_eq
 use std::path::{self, PathBuf};
+use strum::IntoStaticStr;
+
+/// Optional suffix of a content address of a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
+pub enum FileSuffix {
+    #[strum(serialize = "-exec")]
+    Exec,
+    #[strum(serialize = "-index.json")]
+    Index,
+}
 
 /// Represent a store directory.
 ///
@@ -38,8 +49,23 @@ impl StoreDir {
     /// **Parameters:**
     /// * `head` is the first 2 hexadecimal digit of the file address.
     /// * `tail` is the rest of the address and an optional suffix.
-    pub fn file_path_by_hash_str(&self, head: &str, tail: &str) -> PathBuf {
+    fn file_path_by_hash_str(&self, head: &str, tail: &str) -> PathBuf {
         self.files().join(head).join(tail)
+    }
+
+    /// Path to a file in the store directory.
+    pub fn file_path_by_content_address(
+        &self,
+        integrity: Integrity, // TODO: use proper sha2::Sha512 to remove assert_eq
+        suffix: Option<FileSuffix>,
+    ) -> PathBuf {
+        let (algorithm, hex) = integrity.to_hex();
+        assert_eq!(algorithm, Algorithm::Sha512, "Only Sha512 algorithm is supported"); // TODO: use proper sha2::Sha512 to remove assert_eq
+        let head = &hex[..2];
+        let middle = &hex[2..];
+        let suffix = suffix.map_or("", <&str>::from);
+        let tail = format!("{middle}{suffix}");
+        self.file_path_by_hash_str(head, &tail)
     }
 
     /// Path to the temporary directory inside the store.
