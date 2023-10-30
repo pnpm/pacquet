@@ -154,6 +154,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::env;
 
+    #[cfg(unix)]
     #[test]
     fn test_default_store_dir_with_pnpm_home_env() {
         env::set_var("PNPM_HOME", "/tmp/pnpm-home"); // TODO: change this to dependency injection
@@ -162,6 +163,7 @@ mod tests {
         env::remove_var("PNPM_HOME");
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_default_store_dir_with_xdg_env() {
         env::set_var("XDG_DATA_HOME", "/tmp/xdg_data_home"); // TODO: change this to dependency injection
