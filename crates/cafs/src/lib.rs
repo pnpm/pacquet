@@ -19,11 +19,13 @@ pub fn write_sync(
     let file_hash = Sha512::digest(buffer);
     let file_path = store_dir.file_path_by_content_address(file_hash, suffix);
 
-    if !file_path.exists() {
-        let parent_dir = file_path.parent().unwrap();
-        fs::create_dir_all(parent_dir)?;
-        fs::write(&file_path, buffer)?;
+    if file_path.exists() {
+        return Ok(file_path);
     }
+
+    let parent_dir = file_path.parent().unwrap();
+    fs::create_dir_all(parent_dir)?;
+    fs::write(&file_path, buffer)?;
 
     Ok(file_path)
 }
