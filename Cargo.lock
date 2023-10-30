@@ -1485,6 +1485,7 @@ dependencies = [
 name = "pacquet-store-dir"
 version = "0.0.1"
 dependencies = [
+ "derive_more",
  "serde",
 ]
 

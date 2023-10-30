@@ -11,4 +11,5 @@ license.workspace    = true
 repository.workspace = true
 
 [dependencies]
-serde = { workspace = true }
+derive_more = { workspace = true }
+serde       = { workspace = true }
