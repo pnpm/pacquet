@@ -1,8 +1,11 @@
 use derive_more::From;
 use serde::{Deserialize, Serialize};
-use ssri::{Algorithm, Integrity}; // TODO: use proper sha2::Sha512 to remove assert_eq
+use sha2::{digest, Sha512};
 use std::path::{self, PathBuf};
 use strum::IntoStaticStr;
+
+/// Content hash of a file.
+pub type FileHash = digest::Output<Sha512>;
 
 /// Optional suffix of a content address of a file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
@@ -61,11 +64,10 @@ impl StoreDir {
     /// Path to a file in the store directory.
     pub fn file_path_by_content_address(
         &self,
-        integrity: &Integrity, // TODO: use proper sha2::Sha512 to remove assert_eq
+        hash: FileHash,
         suffix: Option<FileSuffix>,
     ) -> PathBuf {
-        let (algorithm, hex) = integrity.to_hex();
-        assert_eq!(algorithm, Algorithm::Sha512, "Only Sha512 algorithm is supported"); // TODO: use proper sha2::Sha512 to remove assert_eq
+        let hex = format!("{hash:x}");
         let head = &hex[..2];
         let middle = &hex[2..];
         let suffix = suffix.map_or("", <&str>::from);
@@ -85,7 +87,7 @@ mod tests {
     use super::*;
     use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
-    use ssri::{Algorithm, IntegrityOpts};
+    use sha2::{Digest, Sha512};
 
     #[test]
     fn file_path_by_hash_str() {
@@ -103,10 +105,11 @@ mod tests {
         fn case(file_content: &str, suffix: Option<FileSuffix>, expected: &str) {
             eprintln!("CASE: {file_content:?}, {suffix:?}");
             let store_dir = StoreDir::new("STORE_DIR");
-            let integrity =
-                IntegrityOpts::new().algorithm(Algorithm::Sha512).chain(file_content).result();
-            dbg!(&integrity);
-            let received = store_dir.file_path_by_content_address(&integrity, suffix);
+            let mut hasher = Sha512::new();
+            hasher.update(file_content);
+            let file_hash = hasher.finalize();
+            eprintln!("file_hash = {file_hash:x}");
+            let received = store_dir.file_path_by_content_address(file_hash, suffix);
             let expected = PathBuf::from(expected);
             assert_eq!(&received, &expected);
         }

@@ -13,7 +13,7 @@ repository.workspace = true
 [dependencies]
 derive_more = { workspace = true }
 serde       = { workspace = true }
-ssri        = { workspace = true }
+sha2        = { workspace = true }
 strum       = { workspace = true }
 
 [dev-dependencies]

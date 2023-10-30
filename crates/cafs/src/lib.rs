@@ -1,7 +1,7 @@
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use pacquet_store_dir::StoreDir;
-use ssri::{Algorithm, IntegrityOpts};
+use sha2::{Digest, Sha512};
 use std::{fs, path::PathBuf};
 
 #[derive(Debug, Display, Error, From, Diagnostic)]
@@ -12,8 +12,11 @@ pub enum CafsError {
 }
 
 pub fn write_sync(store_dir: &StoreDir, buffer: &[u8]) -> Result<PathBuf, CafsError> {
-    let integrity = IntegrityOpts::new().algorithm(Algorithm::Sha512).chain(buffer).result();
-    let file_path = store_dir.file_path_by_content_address(&integrity, None);
+    let mut hasher = Sha512::new();
+    hasher.update(buffer);
+    let file_hash = hasher.finalize();
+
+    let file_path = store_dir.file_path_by_content_address(file_hash, None);
 
     if !file_path.exists() {
         let parent_dir = file_path.parent().unwrap();
