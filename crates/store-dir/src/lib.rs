@@ -1,6 +1,6 @@
 use derive_more::From;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{self, PathBuf};
 
 /// Represent a store directory.
 ///
@@ -18,6 +18,11 @@ pub struct StoreDir {
 }
 
 impl StoreDir {
+    /// Create an object that [displays](std::fmt::Display) the root of the store directory.
+    pub fn display(&self) -> path::Display {
+        self.root.display()
+    }
+
     /// Get `{store}/v3`.
     fn v3(&self) -> PathBuf {
         self.root.join("v3")
