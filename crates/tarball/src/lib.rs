@@ -8,7 +8,6 @@ use std::{
 
 use dashmap::DashMap;
 use derive_more::{Display, Error, From};
-use libc::S_IXUSR;
 use miette::Diagnostic;
 use pacquet_store_dir::{FileSuffix, StoreDir};
 use pipe_trait::Pipe;
@@ -18,6 +17,11 @@ use tar::Archive;
 use tokio::sync::{Notify, RwLock};
 use tracing::instrument;
 use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
+
+/// Mask of the executable bits.
+///
+/// This value is equal to `S_IXUSR` in libc.
+const EXEC_MASK: u32 = 64;
 
 #[derive(Debug, Display, Error, Diagnostic)]
 #[display("Failed to fetch {url}: {error}")]
@@ -213,7 +217,7 @@ impl<'a> DownloadTarballToStore<'a> {
                     let mut entry = entry.unwrap();
 
                     let mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
-                    let is_executable = mode & S_IXUSR != 0;
+                    let is_executable = mode & EXEC_MASK != 0;
                     let file_suffix = is_executable.then_some(FileSuffix::Exec);
 
                     // Read the contents of the entry

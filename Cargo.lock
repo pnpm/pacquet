@@ -1503,7 +1503,6 @@ version = "0.0.1"
 dependencies = [
  "dashmap",
  "derive_more",
- "libc",
  "miette",
  "pacquet-cafs",
  "pacquet-diagnostics",
