@@ -1,4 +1,5 @@
 use clap::Subcommand;
+use miette::Context;
 use pacquet_npmrc::Npmrc;
 
 #[derive(Debug, Subcommand)]
