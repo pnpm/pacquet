@@ -211,6 +211,10 @@ mod tests {
 
     use super::*;
 
+    fn display_store_dir(store_dir: &StoreDir) -> String {
+        store_dir.display().to_string().replace('\\', "/")
+    }
+
     #[test]
     pub fn have_default_values() {
         let value = Npmrc::new();
@@ -247,21 +251,19 @@ mod tests {
         assert_eq!(value.modules_cache_max_age, 1000);
     }
 
-    #[cfg(unix)]
     #[test]
     pub fn should_use_pnpm_home_env_var() {
         env::set_var("PNPM_HOME", "/hello"); // TODO: change this to dependency injection
         let value: Npmrc = serde_ini::from_str("").unwrap();
-        assert_eq!(value.store_dir.display().to_string(), "/hello/store");
+        assert_eq!(display_store_dir(&value.store_dir), "/hello/store");
         env::remove_var("PNPM_HOME");
     }
 
-    #[cfg(unix)]
     #[test]
     pub fn should_use_xdg_data_home_env_var() {
         env::set_var("XDG_DATA_HOME", "/hello");
         let value: Npmrc = serde_ini::from_str("").unwrap();
-        assert_eq!(value.store_dir.display().to_string(), "/hello/pnpm/store");
+        assert_eq!(display_store_dir(&value.store_dir), "/hello/pnpm/store");
         env::remove_var("XDG_DATA_HOME");
     }
 

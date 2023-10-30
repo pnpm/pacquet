@@ -81,7 +81,6 @@ impl StoreDir {
     }
 }
 
-#[cfg(unix)] // avoid test failure on windows due to forward/backward slash difference
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,7 +107,7 @@ mod tests {
             let file_hash = Sha512::digest(file_content);
             eprintln!("file_hash = {file_hash:x}");
             let received = store_dir.file_path_by_content_address(file_hash, suffix);
-            let expected = PathBuf::from(expected);
+            let expected: PathBuf = expected.split('/').collect();
             assert_eq!(&received, &expected);
         }
 
