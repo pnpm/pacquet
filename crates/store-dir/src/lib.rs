@@ -30,6 +30,6 @@ impl StoreDir {
     /// * `head` is the first 2 hexadecimal digit of the file address.
     /// * `tail` is the rest of the address and an optional suffix.
     pub fn file_path_by_hash_str(&self, head: &str, tail: &str) -> PathBuf {
-        self.files().join(format!("{head}{tail}"))
+        self.files().join(head).join(tail)
     }
 }
