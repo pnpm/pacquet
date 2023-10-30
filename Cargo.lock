@@ -1303,6 +1303,7 @@ version = "0.0.1"
 dependencies = [
  "derive_more",
  "miette",
+ "pacquet-store-dir",
  "pretty_assertions",
  "ssri",
  "tempfile",
@@ -1401,6 +1402,7 @@ dependencies = [
  "mockito",
  "node-semver",
  "pacquet-registry",
+ "pacquet-store-dir",
  "pacquet-tarball",
  "pipe-trait",
  "project-root",
@@ -1414,6 +1416,7 @@ name = "pacquet-npmrc"
 version = "0.0.1"
 dependencies = [
  "home",
+ "pacquet-store-dir",
  "pipe-trait",
  "pretty_assertions",
  "serde",
@@ -1502,6 +1505,7 @@ dependencies = [
  "miette",
  "pacquet-cafs",
  "pacquet-diagnostics",
+ "pacquet-store-dir",
  "pipe-trait",
  "pretty_assertions",
  "reqwest",

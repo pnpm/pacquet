@@ -11,6 +11,8 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
+pacquet-store-dir = { workspace = true }
+
 home       = { workspace = true }
 pipe-trait = { workspace = true }
 serde      = { workspace = true }

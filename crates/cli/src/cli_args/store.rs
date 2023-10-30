@@ -1,5 +1,4 @@
 use clap::Subcommand;
-use miette::Context;
 use pacquet_npmrc::Npmrc;
 
 #[derive(Debug, Subcommand)]
@@ -29,7 +28,8 @@ impl StoreCommand {
                 panic!("Not implemented")
             }
             StoreCommand::Prune => {
-                pacquet_cafs::prune_sync(&config().store_dir).wrap_err("pruning store")?;
+                // pacquet_cafs::prune_sync(&config().store_dir).wrap_err("pruning store")?;
+                todo!("pruning the store is not yet implemented")
             }
             StoreCommand::Path => {
                 println!("{}", config().store_dir.display());

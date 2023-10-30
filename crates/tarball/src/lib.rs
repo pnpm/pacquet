@@ -2,13 +2,14 @@ use std::{
     collections::HashMap,
     ffi::OsString,
     io::{Cursor, Read},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
 };
 
 use dashmap::DashMap;
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
+use pacquet_store_dir::StoreDir;
 use pipe_trait::Pipe;
 use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
@@ -116,7 +117,7 @@ fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm,
 pub struct DownloadTarballToStore<'a> {
     pub tarball_cache: &'a Cache,
     pub http_client: &'a Client,
-    pub store_dir: &'static Path,
+    pub store_dir: &'static StoreDir,
     pub package_integrity: &'a str,
     pub package_unpacked_size: Option<usize>,
     pub package_url: &'a str,
@@ -217,10 +218,10 @@ impl<'a> DownloadTarballToStore<'a> {
                     let entry_path = entry.path().unwrap();
                     let cleaned_entry_path =
                         entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
-                    let integrity = pacquet_cafs::write_sync(store_dir, &buffer)
+                    let file_path = pacquet_cafs::write_sync(store_dir, &buffer)
                         .map_err(TarballError::WriteCafs)?;
 
-                    Ok((cleaned_entry_path, store_dir.join(integrity)))
+                    Ok((cleaned_entry_path, file_path))
                 })
                 .collect::<Result<HashMap<OsString, PathBuf>, TarballError>>()
                 .map_err(TaskError::Other)
@@ -259,9 +260,10 @@ mod tests {
     ///
     /// **Side effect:**
     /// The `'static` path becomes dangling outside the scope of [`TempDir`].
-    fn tempdir_with_leaked_path() -> (TempDir, &'static Path) {
+    fn tempdir_with_leaked_path() -> (TempDir, &'static StoreDir) {
         let tempdir = tempdir().unwrap();
-        let leaked_path = tempdir.path().to_path_buf().pipe(Box::new).pipe(Box::leak);
+        let leaked_path =
+            tempdir.path().to_path_buf().pipe(StoreDir::from).pipe(Box::new).pipe(Box::leak);
         (tempdir, leaked_path)
     }
 

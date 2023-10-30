@@ -13,6 +13,7 @@ repository.workspace  = true
 [dependencies]
 pacquet-cafs        = { workspace = true }
 pacquet-diagnostics = { workspace = true }
+pacquet-store-dir   = { workspace = true }
 
 dashmap      = { workspace = true }
 derive_more  = { workspace = true }

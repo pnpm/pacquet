@@ -127,7 +127,7 @@ mod tests {
             hoist_pattern: vec![],
             public_hoist_pattern: vec![],
             shamefully_hoist: false,
-            store_dir: store_dir.to_path_buf(),
+            store_dir: store_dir.to_path_buf().into(),
             modules_dir: modules_dir.to_path_buf(),
             node_linker: Default::default(),
             symlink: false,

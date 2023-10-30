@@ -7,6 +7,7 @@ use std::{
 
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
+use pacquet_store_dir::StoreDir;
 use ssri::{Algorithm, IntegrityOpts};
 
 #[derive(Debug, Display, Error, From, Diagnostic)]
@@ -37,11 +38,9 @@ fn content_path_from_hex(file_type: FileType, hex: &str) -> PathBuf {
     Path::new(&hex[..2]).join(file_name)
 }
 
-pub fn write_sync(store_dir: &Path, buffer: &[u8]) -> Result<PathBuf, CafsError> {
-    let hex_integrity =
-        IntegrityOpts::new().algorithm(Algorithm::Sha512).chain(buffer).result().to_hex().1;
-    let content_path = content_path_from_hex(FileType::NonExec, &hex_integrity);
-    let file_path = store_dir.join(&content_path);
+pub fn write_sync(store_dir: &StoreDir, buffer: &[u8]) -> Result<PathBuf, CafsError> {
+    let integrity = IntegrityOpts::new().algorithm(Algorithm::Sha512).chain(buffer).result();
+    let file_path = store_dir.file_path_by_content_address(&integrity, None);
 
     if !file_path.exists() {
         let parent_dir = file_path.parent().unwrap();
@@ -49,7 +48,7 @@ pub fn write_sync(store_dir: &Path, buffer: &[u8]) -> Result<PathBuf, CafsError>
         fs::write(&file_path, buffer)?;
     }
 
-    Ok(content_path)
+    Ok(file_path)
 }
 
 pub fn prune_sync(store_dir: &Path) -> Result<(), CafsError> {
@@ -88,8 +87,7 @@ mod tests {
     fn should_write_and_clear() {
         let dir = tempdir().unwrap();
         let buffer = vec![0, 1, 2, 3, 4, 5, 6];
-        let saved_file_path = write_sync(dir.path(), &buffer).unwrap();
-        let store_path = dir.path().join(saved_file_path);
+        let store_path = write_sync(&dir.path().to_path_buf().into(), &buffer).unwrap();
         assert!(store_path.exists());
         prune_sync(dir.path()).unwrap();
         assert!(!store_path.exists());
