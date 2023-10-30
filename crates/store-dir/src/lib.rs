@@ -35,4 +35,9 @@ impl StoreDir {
     pub fn file_path_by_hash_str(&self, head: &str, tail: &str) -> PathBuf {
         self.files().join(head).join(tail)
     }
+
+    /// Path to the temporary directory inside the store.
+    pub fn tmp(&self) -> PathBuf {
+        self.v3().join("tmp")
+    }
 }
