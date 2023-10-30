@@ -8,8 +8,9 @@ use std::{
 
 use dashmap::DashMap;
 use derive_more::{Display, Error, From};
+use libc::S_IXUSR;
 use miette::Diagnostic;
-use pacquet_store_dir::StoreDir;
+use pacquet_store_dir::{FileSuffix, StoreDir};
 use pipe_trait::Pipe;
 use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
@@ -211,6 +212,10 @@ impl<'a> DownloadTarballToStore<'a> {
                 .map(|entry| -> Result<(OsString, PathBuf), TarballError> {
                     let mut entry = entry.unwrap();
 
+                    let mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
+                    let is_executable = mode & S_IXUSR != 0;
+                    let file_suffix = is_executable.then_some(FileSuffix::Exec);
+
                     // Read the contents of the entry
                     let mut buffer = Vec::with_capacity(entry.size() as usize);
                     entry.read_to_end(&mut buffer).unwrap();
@@ -218,7 +223,7 @@ impl<'a> DownloadTarballToStore<'a> {
                     let entry_path = entry.path().unwrap();
                     let cleaned_entry_path =
                         entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
-                    let file_path = pacquet_cafs::write_sync(store_dir, &buffer, None)
+                    let file_path = pacquet_cafs::write_sync(store_dir, &buffer, file_suffix)
                         .map_err(TarballError::WriteCafs)?;
 
                     Ok((cleaned_entry_path, file_path))
