@@ -218,7 +218,7 @@ impl<'a> DownloadTarballToStore<'a> {
                     let entry_path = entry.path().unwrap();
                     let cleaned_entry_path =
                         entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
-                    let file_path = pacquet_cafs::write_sync(store_dir, &buffer)
+                    let file_path = pacquet_cafs::write_sync(store_dir, &buffer, None)
                         .map_err(TarballError::WriteCafs)?;
 
                     Ok((cleaned_entry_path, file_path))
