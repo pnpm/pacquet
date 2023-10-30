@@ -12,9 +12,7 @@ pub enum CafsError {
 }
 
 pub fn write_sync(store_dir: &StoreDir, buffer: &[u8]) -> Result<PathBuf, CafsError> {
-    let mut hasher = Sha512::new();
-    hasher.update(buffer);
-    let file_hash = hasher.finalize();
+    let file_hash = Sha512::new_with_prefix(buffer).finalize();
 
     let file_path = store_dir.file_path_by_content_address(file_hash, None);
 

@@ -105,9 +105,7 @@ mod tests {
         fn case(file_content: &str, suffix: Option<FileSuffix>, expected: &str) {
             eprintln!("CASE: {file_content:?}, {suffix:?}");
             let store_dir = StoreDir::new("STORE_DIR");
-            let mut hasher = Sha512::new();
-            hasher.update(file_content);
-            let file_hash = hasher.finalize();
+            let file_hash = Sha512::new_with_prefix(file_content).finalize();
             eprintln!("file_hash = {file_hash:x}");
             let received = store_dir.file_path_by_content_address(file_hash, suffix);
             let expected = PathBuf::from(expected);
