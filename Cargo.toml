@@ -25,7 +25,7 @@ pacquet-npmrc            = { path = "crates/npmrc" }
 pacquet-executor         = { path = "crates/executor" }
 pacquet-cafs             = { path = "crates/cafs" }
 pacquet-diagnostics      = { path = "crates/diagnostics" }
-pacquet-store-dir        = { path = "crates/diagnostics" }
+pacquet-store-dir        = { path = "crates/store-dir" }
 
 # Dependencies
 async-recursion    = { version = "1.0.5" }
