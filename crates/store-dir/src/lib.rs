@@ -79,6 +79,7 @@ impl StoreDir {
     }
 }
 
+#[cfg(unix)] // avoid test failure on windows due to forward/backward slash difference
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,7 +87,6 @@ mod tests {
     use pretty_assertions::assert_eq;
     use ssri::{Algorithm, IntegrityOpts};
 
-    #[cfg(unix)]
     #[test]
     fn file_path_by_hash_str() {
         let received = "/home/user/.local/share/pnpm/store"
@@ -98,7 +98,6 @@ mod tests {
         assert_eq!(&received, &expected);
     }
 
-    #[cfg(unix)]
     #[test]
     fn file_path_by_content_address() {
         fn case(file_content: &str, suffix: Option<FileSuffix>, expected: &str) {
@@ -131,7 +130,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn tmp() {
         let received = StoreDir::new("/home/user/.local/share/pnpm/store").tmp();
