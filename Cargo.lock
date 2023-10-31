@@ -1348,7 +1348,9 @@ dependencies = [
 name = "pacquet-fs"
 version = "0.0.1"
 dependencies = [
+ "derive_more",
  "junction",
+ "miette",
 ]
 
 [[package]]

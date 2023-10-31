@@ -1,15 +1,15 @@
 use crate::{FileHash, FileSuffix, StoreDir, TarballIndex};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_fs::ensure_file;
+use pacquet_fs::{ensure_file, EnsureFileError};
 use sha2::{Digest, Sha512};
 use ssri::Integrity;
-use std::{fs, io, path::PathBuf};
+use std::{fs, path::PathBuf};
 
 /// Error type of [`StoreDir::write_non_index_file`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum WriteNonIndexFileError {
-    WriteFile(io::Error), // TODO: add more details
+    WriteFile(EnsureFileError),
 }
 
 impl StoreDir {
@@ -40,7 +40,7 @@ impl StoreDir {
 /// Error type of [`StoreDir::write_tarball_index_file`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum WriteTarballIndexFileError {
-    WriteFile(io::Error), // TODO: add more details
+    WriteFile(EnsureFileError),
 }
 
 impl StoreDir {
