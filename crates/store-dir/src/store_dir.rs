@@ -3,19 +3,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{digest, Sha512};
 use ssri::{Algorithm, Integrity};
 use std::path::{self, PathBuf};
-use strum::IntoStaticStr;
 
 /// Content hash of a file.
 pub type FileHash = digest::Output<Sha512>;
-
-/// Optional suffix of a content address of a file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
-enum FileSuffix {
-    #[strum(serialize = "-exec")]
-    Exec,
-    #[strum(serialize = "-index.json")]
-    Index,
-}
 
 /// Represent a store directory.
 ///
@@ -63,10 +53,10 @@ impl StoreDir {
     }
 
     /// Path to a file in the store directory.
-    fn file_path_by_hex_str(&self, hex: &str, suffix: Option<FileSuffix>) -> PathBuf {
+    fn file_path_by_hex_str(&self, hex: &str, suffix: Option<&'static str>) -> PathBuf {
         let head = &hex[..2];
         let middle = &hex[2..];
-        let suffix = suffix.map_or("", <&str>::from);
+        let suffix = suffix.unwrap_or("");
         let tail = format!("{middle}{suffix}");
         self.file_path_by_head_tail(head, &tail)
     }
@@ -74,7 +64,7 @@ impl StoreDir {
     /// Path to a file in the store directory.
     pub fn file_path_by_content_address(&self, hash: FileHash, executable: bool) -> PathBuf {
         let hex = format!("{hash:x}");
-        let suffix = executable.then_some(FileSuffix::Exec);
+        let suffix = executable.then_some("-exec");
         self.file_path_by_hex_str(&hex, suffix)
     }
 
@@ -82,7 +72,7 @@ impl StoreDir {
     pub fn tarball_index_file_path(&self, tarball_integrity: &Integrity) -> PathBuf {
         let (algorithm, hex) = tarball_integrity.to_hex();
         assert_eq!(algorithm, Algorithm::Sha512, "Only Sha512 is supported"); // TODO: propagate this error
-        self.file_path_by_hex_str(&hex, Some(FileSuffix::Index))
+        self.file_path_by_hex_str(&hex, Some("-index.json"))
     }
 
     /// Path to the temporary directory inside the store.
