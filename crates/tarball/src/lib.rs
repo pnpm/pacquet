@@ -202,6 +202,7 @@ impl<'a> DownloadTarballToStore<'a> {
                 integrity: package_integrity.to_string(),
                 error,
             })?;
+        #[derive(Debug, From)]
         enum TaskError {
             Checksum(ssri::Error),
             Other(TarballError),
@@ -240,8 +241,7 @@ impl<'a> DownloadTarballToStore<'a> {
                     entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
                 let (file_path, file_hash) =
                     pacquet_cafs::write_non_index_file(store_dir, &buffer, file_suffix)
-                        .map_err(TarballError::WriteCafs)
-                        .map_err(TaskError::Other)?;
+                        .map_err(TarballError::WriteCafs)?;
 
                 let tarball_index_key = cleaned_entry_path
                     .to_str()
@@ -269,8 +269,7 @@ impl<'a> DownloadTarballToStore<'a> {
                 serde_json::to_string(&tarball_index).expect("convert a TarballIndex to JSON");
 
             pacquet_cafs::write_tarball_index_file(store_dir, &package_integrity, &tarball_index)
-                .map_err(TarballError::WriteCafs)
-                .map_err(TaskError::Other)?;
+                .map_err(TarballError::WriteCafs)?;
 
             Ok(cas_paths)
         })
