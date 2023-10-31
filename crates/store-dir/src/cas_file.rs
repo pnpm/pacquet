@@ -19,7 +19,7 @@ impl StoreDir {
         executable: bool,
     ) -> Result<(PathBuf, FileHash), WriteCasFileError> {
         let file_hash = Sha512::digest(buffer);
-        let file_path = self.file_path_by_content_address(file_hash, executable);
+        let file_path = self.cas_file_path(file_hash, executable);
 
         ensure_file(&file_path, buffer).map_err(WriteCasFileError::WriteFile)?;
 

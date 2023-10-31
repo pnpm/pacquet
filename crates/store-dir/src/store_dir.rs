@@ -61,7 +61,7 @@ impl StoreDir {
     }
 
     /// Path to a file in the store directory.
-    pub fn file_path_by_content_address(&self, hash: FileHash, executable: bool) -> PathBuf {
+    pub fn cas_file_path(&self, hash: FileHash, executable: bool) -> PathBuf {
         let hex = format!("{hash:x}");
         let suffix = if executable { "-exec" } else { "" };
         self.file_path_by_hex_str(&hex, suffix)
@@ -105,7 +105,7 @@ mod tests {
             let store_dir = StoreDir::new("STORE_DIR");
             let file_hash = Sha512::digest(file_content);
             eprintln!("file_hash = {file_hash:x}");
-            let received = store_dir.file_path_by_content_address(file_hash, executable);
+            let received = store_dir.cas_file_path(file_hash, executable);
             let expected: PathBuf = expected.split('/').collect();
             assert_eq!(&received, &expected);
         }
