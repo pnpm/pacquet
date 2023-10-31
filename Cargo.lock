@@ -1370,6 +1370,7 @@ dependencies = [
  "clap",
  "itertools 0.11.0",
  "os_display",
+ "pacquet-fs",
  "pipe-trait",
  "reqwest",
  "tokio",

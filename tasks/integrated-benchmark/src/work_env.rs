@@ -4,6 +4,7 @@ use crate::{
 };
 use itertools::Itertools;
 use os_display::Quotable;
+use pacquet_fs::make_file_executable;
 use pipe_trait::Pipe;
 use std::{
     fmt,
@@ -250,12 +251,7 @@ fn create_install_script(dir: &Path, scenario: BenchmarkScenario, for_pnpm: bool
     }
     writeln!(file).unwrap();
 
-    #[cfg(unix)]
-    {
-        use std::{fs::Permissions, os::unix::fs::PermissionsExt};
-        let permissions = Permissions::from_mode(0o777);
-        fs::set_permissions(path, permissions).expect("make the script executable");
-    }
+    make_file_executable(&path).expect("make the script executable");
 }
 
 fn executor<'a>(message: &'a str) -> impl FnOnce(&'a mut Command) {
