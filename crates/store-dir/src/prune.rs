@@ -2,6 +2,7 @@ use crate::StoreDir;
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 
+/// Error type of [`StoreDir::prune`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum PruneError {}
 

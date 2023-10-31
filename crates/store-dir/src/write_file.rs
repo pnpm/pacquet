@@ -19,6 +19,7 @@ fn write_file_if_not_exist(file_path: &Path, content: &[u8]) -> io::Result<()> {
     fs::write(file_path, content)
 }
 
+/// Error type of [`StoreDir::write_non_index_file`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum WriteNonIndexFileError {
     WriteFile(io::Error), // TODO: add more details
@@ -49,6 +50,7 @@ impl StoreDir {
     }
 }
 
+/// Error type of [`StoreDir::write_tarball_index_file`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum WriteTarballIndexFileError {
     WriteFile(io::Error), // TODO: add more details
