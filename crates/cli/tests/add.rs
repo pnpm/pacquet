@@ -8,7 +8,7 @@ use std::{env, fs};
 
 #[test]
 fn should_install_all_dependencies() {
-    let (root, workspace) = exec_pacquet_in_temp_cwd(["add", "is-even"]);
+    let (root, workspace) = exec_pacquet_in_temp_cwd(true, ["add", "is-even"]);
 
     eprintln!("Directory list");
     insta::assert_debug_snapshot!(get_all_folders(&workspace));
@@ -41,7 +41,7 @@ fn should_install_all_dependencies() {
 #[test]
 #[cfg(unix)]
 pub fn should_symlink_correctly() {
-    let (root, workspace) = exec_pacquet_in_temp_cwd(["add", "is-odd"]);
+    let (root, workspace) = exec_pacquet_in_temp_cwd(true, ["add", "is-odd"]);
 
     eprintln!("Directory list");
     insta::assert_debug_snapshot!(get_all_folders(&workspace));
@@ -67,7 +67,7 @@ pub fn should_symlink_correctly() {
 
 #[test]
 fn should_add_to_package_json() {
-    let (root, dir) = exec_pacquet_in_temp_cwd(["add", "is-odd"]);
+    let (root, dir) = exec_pacquet_in_temp_cwd(true, ["add", "is-odd"]);
     let file = PackageManifest::from_path(dir.join("package.json")).unwrap();
     eprintln!("Ensure is-odd is added to package.json#dependencies");
     assert!(file.dependencies([DependencyGroup::Prod]).any(|(k, _)| k == "is-odd"));
@@ -76,7 +76,7 @@ fn should_add_to_package_json() {
 
 #[test]
 fn should_add_dev_dependency() {
-    let (root, dir) = exec_pacquet_in_temp_cwd(["add", "is-odd", "--save-dev"]);
+    let (root, dir) = exec_pacquet_in_temp_cwd(true, ["add", "is-odd", "--save-dev"]);
     let file = PackageManifest::from_path(dir.join("package.json")).unwrap();
     eprintln!("Ensure is-odd is added to package.json#devDependencies");
     assert!(file.dependencies([DependencyGroup::Dev]).any(|(k, _)| k == "is-odd"));
@@ -85,7 +85,7 @@ fn should_add_dev_dependency() {
 
 #[test]
 fn should_add_peer_dependency() {
-    let (root, dir) = exec_pacquet_in_temp_cwd(["add", "is-odd", "--save-peer"]);
+    let (root, dir) = exec_pacquet_in_temp_cwd(true, ["add", "is-odd", "--save-peer"]);
     let file = PackageManifest::from_path(dir.join("package.json")).unwrap();
     eprintln!("Ensure is-odd is added to package.json#devDependencies");
     assert!(file.dependencies([DependencyGroup::Dev]).any(|(k, _)| k == "is-odd"));

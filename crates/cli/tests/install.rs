@@ -8,7 +8,7 @@ use std::fs;
 
 #[test]
 fn should_install_dependencies() {
-    let (command, root, workspace) = pacquet_with_temp_cwd();
+    let (command, root, workspace) = pacquet_with_temp_cwd(true);
 
     eprintln!("Creating package.json...");
     let manifest_path = workspace.join("package.json");

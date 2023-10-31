@@ -8,7 +8,7 @@ use std::{env, fs};
 
 #[test]
 fn should_create_package_json() {
-    let (root, workspace) = exec_pacquet_in_temp_cwd(["init"]);
+    let (root, workspace) = exec_pacquet_in_temp_cwd(false, ["init"]);
 
     let manifest_path = workspace.join("package.json");
     dbg!(&manifest_path);
@@ -18,14 +18,14 @@ fn should_create_package_json() {
     insta::assert_snapshot!(package_json_content);
 
     eprintln!("Created files");
-    assert_eq!(get_filenames_in_folder(&workspace), [".npmrc", "package.json"]);
+    assert_eq!(get_filenames_in_folder(&workspace), ["package.json"]);
 
     drop(root); // cleanup
 }
 
 #[test]
 fn should_throw_on_existing_file() {
-    let (command, root, workspace) = pacquet_with_temp_cwd();
+    let (command, root, workspace) = pacquet_with_temp_cwd(false);
 
     let manifest_path = workspace.join("package.json");
     dbg!(&manifest_path);
