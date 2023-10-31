@@ -87,7 +87,7 @@ fn should_install_exec_files() {
     }
 
     #[cfg(windows)]
-    let _ = non_exec_files;
+    let _ = non_exec_files; // suppress clippy complaint on windows
 
     drop(root); // cleanup
 }
