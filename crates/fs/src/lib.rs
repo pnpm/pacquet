@@ -24,5 +24,8 @@ pub fn make_file_executable(file_path: &Path) -> io::Result<()> {
     };
 
     #[cfg(windows)]
-    return Ok(());
+    return {
+        drop(file_path);
+        Ok(())
+    };
 }
