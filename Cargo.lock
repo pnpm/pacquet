@@ -1521,6 +1521,7 @@ dependencies = [
  "command-extra",
  "junction",
  "tempfile",
+ "text-block-macros",
  "walkdir",
 ]
 

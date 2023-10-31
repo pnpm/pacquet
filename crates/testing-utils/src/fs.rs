@@ -35,6 +35,30 @@ pub fn get_all_folders(root: &std::path::Path) -> Vec<String> {
     files
 }
 
+pub fn get_all_files(root: &std::path::Path) -> Vec<String> {
+    let mut files = Vec::new();
+    for entry in walkdir::WalkDir::new(root) {
+        let entry = entry.unwrap();
+        let entry_path = entry.path();
+
+        // We need this mutation to ensure that both Unix and Windows paths resolves the same.
+        // TODO: Find a better way to do this?
+        let simple_path = entry_path
+            .strip_prefix(root)
+            .unwrap()
+            .components()
+            .map(|c| c.as_os_str().to_str().expect("invalid UTF-8"))
+            .collect::<Vec<_>>()
+            .join("/");
+
+        if !simple_path.is_empty() {
+            files.push(simple_path);
+        }
+    }
+    files.sort();
+    files
+}
+
 // Helper function to check if a path is a symlink or junction
 pub fn is_symlink_or_junction(path: &Path) -> io::Result<bool> {
     #[cfg(windows)]
