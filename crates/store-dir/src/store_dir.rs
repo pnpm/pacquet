@@ -99,7 +99,7 @@ mod tests {
     }
 
     #[test]
-    fn file_path_by_content_address() {
+    fn cas_file_path() {
         fn case(file_content: &str, executable: bool, expected: &str) {
             eprintln!("CASE: {file_content:?}, {executable:?}");
             let store_dir = StoreDir::new("STORE_DIR");
