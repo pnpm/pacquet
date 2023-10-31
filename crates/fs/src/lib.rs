@@ -51,6 +51,7 @@ pub fn ensure_file(file_path: &Path, content: &[u8]) -> Result<(), EnsureFileErr
 
 /// Set file mode to 777 on POSIX platforms such as Linux or macOS,
 /// or do nothing on Windows.
+#[cfg_attr(windows, allow(unused))]
 pub fn make_file_executable(file_path: &Path) -> io::Result<()> {
     #[cfg(unix)]
     return {
@@ -63,8 +64,5 @@ pub fn make_file_executable(file_path: &Path) -> io::Result<()> {
     };
 
     #[cfg(windows)]
-    return {
-        drop(file_path);
-        Ok(())
-    };
+    return Ok(());
 }
