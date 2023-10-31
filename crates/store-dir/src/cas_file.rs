@@ -1,9 +1,8 @@
-use crate::{FileHash, FileSuffix, StoreDir, TarballIndex};
+use crate::{FileHash, FileSuffix, StoreDir};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_fs::{ensure_file, EnsureFileError};
 use sha2::{Digest, Sha512};
-use ssri::Integrity;
 use std::{fs, path::PathBuf};
 
 /// Error type of [`StoreDir::write_cas_file`].
@@ -34,26 +33,5 @@ impl StoreDir {
         }
 
         Ok((file_path, file_hash))
-    }
-}
-
-/// Error type of [`StoreDir::write_tarball_index_file`].
-#[derive(Debug, Display, Error, Diagnostic)]
-pub enum WriteTarballIndexFileError {
-    WriteFile(EnsureFileError),
-}
-
-impl StoreDir {
-    /// Write a JSON file that indexes files in a tarball to the store directory.
-    pub fn write_tarball_index_file(
-        &self,
-        tarball_integrity: &Integrity,
-        index_content: &TarballIndex,
-    ) -> Result<(), WriteTarballIndexFileError> {
-        let file_path = self.tarball_index_file_path(tarball_integrity);
-        let index_content =
-            serde_json::to_string(&index_content).expect("convert a TarballIndex to JSON");
-        ensure_file(&file_path, index_content.as_bytes())
-            .map_err(WriteTarballIndexFileError::WriteFile)
     }
 }
