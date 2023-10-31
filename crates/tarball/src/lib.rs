@@ -6,12 +6,14 @@ use std::{
     sync::Arc,
 };
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STD, Engine};
 use dashmap::DashMap;
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use pacquet_store_dir::{FileSuffix, StoreDir};
 use pipe_trait::Pipe;
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
 use tokio::sync::{Notify, RwLock};
@@ -206,34 +208,65 @@ impl<'a> DownloadTarballToStore<'a> {
         }
         let cas_paths = tokio::task::spawn(async move {
             verify_checksum(&response, package_integrity).map_err(TaskError::Checksum)?;
-            let data =
-                decompress_gzip(&response, package_unpacked_size).map_err(TaskError::Other)?;
-            Archive::new(Cursor::new(data))
+
+            let mut archive = decompress_gzip(&response, package_unpacked_size)
+                .map_err(TaskError::Other)?
+                .pipe(Cursor::new)
+                .pipe(Archive::new);
+
+            let entries = archive
                 .entries()
                 .map_err(TarballError::ReadTarballEntries)
                 .map_err(TaskError::Other)?
-                .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir())
-                .map(|entry| -> Result<(OsString, PathBuf), TarballError> {
-                    let mut entry = entry.unwrap();
+                .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir());
 
-                    let mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
-                    let is_executable = mode & EXEC_MASK != 0;
-                    let file_suffix = is_executable.then_some(FileSuffix::Exec);
+            let ((_, Some(capacity)) | (capacity, None)) = entries.size_hint();
+            let mut cas_paths = HashMap::<OsString, PathBuf>::with_capacity(capacity);
+            let mut tarball_index = TarballIndex { files: HashMap::with_capacity(capacity) };
 
-                    // Read the contents of the entry
-                    let mut buffer = Vec::with_capacity(entry.size() as usize);
-                    entry.read_to_end(&mut buffer).unwrap();
+            for entry in entries {
+                let mut entry = entry.unwrap();
 
-                    let entry_path = entry.path().unwrap();
-                    let cleaned_entry_path =
-                        entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
-                    let file_path = pacquet_cafs::write_sync(store_dir, &buffer, file_suffix)
-                        .map_err(TarballError::WriteCafs)?;
+                let file_mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
+                let is_executable = file_mode & EXEC_MASK != 0;
+                let file_suffix = is_executable.then_some(FileSuffix::Exec);
 
-                    Ok((cleaned_entry_path, file_path))
-                })
-                .collect::<Result<HashMap<OsString, PathBuf>, TarballError>>()
-                .map_err(TaskError::Other)
+                // Read the contents of the entry
+                let mut buffer = Vec::with_capacity(entry.size() as usize);
+                entry.read_to_end(&mut buffer).unwrap();
+
+                let entry_path = entry.path().unwrap();
+                let cleaned_entry_path =
+                    entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
+                let (file_path, file_hash) =
+                    pacquet_cafs::write_sync(store_dir, &buffer, file_suffix)
+                        .map_err(TarballError::WriteCafs)
+                        .map_err(TaskError::Other)?;
+
+                if let Some(previous) = cas_paths.insert(cleaned_entry_path.clone(), file_path) {
+                    panic!(
+                        "Unexpected error: {previous:?} already exists at {cleaned_entry_path:?}"
+                    );
+                }
+
+                let file_size = entry.header().size().ok();
+                let file_integrity = format!("sha512-{}", BASE64_STD.encode(file_hash));
+                let file_attrs = TarballIndexFileAttrs {
+                    integrity: file_integrity,
+                    mode: file_mode,
+                    size: file_size,
+                };
+
+                tarball_index.files.insert(cleaned_entry_path, file_attrs);
+            }
+
+            let tarball_index =
+                serde_json::to_string(&tarball_index).expect("convert a TarballIndex to JSON");
+            pacquet_cafs::write_sync(store_dir, tarball_index.as_bytes(), Some(FileSuffix::Index))
+                .map_err(TarballError::WriteCafs)
+                .map_err(TaskError::Other)?;
+
+            Ok(cas_paths)
         })
         .await
         .expect("no join error")
@@ -249,6 +282,23 @@ impl<'a> DownloadTarballToStore<'a> {
 
         Ok(cas_paths)
     }
+}
+
+/// Content of an index file (`$STORE_DIR/v3/files/*/*-index.json`).
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TarballIndex {
+    pub files: HashMap<OsString, TarballIndexFileAttrs>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TarballIndexFileAttrs {
+    // pub checked_at: ???
+    pub integrity: String,
+    pub mode: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
 }
 
 #[cfg(test)]

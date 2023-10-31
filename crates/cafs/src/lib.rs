@@ -1,6 +1,6 @@
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
-use pacquet_store_dir::{FileSuffix, StoreDir};
+use pacquet_store_dir::{FileHash, FileSuffix, StoreDir};
 use sha2::{Digest, Sha512};
 use std::{fs, path::PathBuf};
 
@@ -15,12 +15,12 @@ pub fn write_sync(
     store_dir: &StoreDir,
     buffer: &[u8],
     suffix: Option<FileSuffix>,
-) -> Result<PathBuf, CafsError> {
+) -> Result<(PathBuf, FileHash), CafsError> {
     let file_hash = Sha512::digest(buffer);
     let file_path = store_dir.file_path_by_content_address(file_hash, suffix);
 
     if file_path.exists() {
-        return Ok(file_path);
+        return Ok((file_path, file_hash));
     }
 
     let parent_dir = file_path.parent().unwrap();
@@ -36,7 +36,7 @@ pub fn write_sync(
         }
     }
 
-    Ok(file_path)
+    Ok((file_path, file_hash))
 }
 
 pub fn prune_sync(_store_dir: &StoreDir) -> Result<(), CafsError> {
