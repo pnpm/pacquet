@@ -23,7 +23,6 @@ pacquet-package-manager  = { path = "crates/package-manager" }
 pacquet-lockfile         = { path = "crates/lockfile" }
 pacquet-npmrc            = { path = "crates/npmrc" }
 pacquet-executor         = { path = "crates/executor" }
-pacquet-cafs             = { path = "crates/cafs" }
 pacquet-diagnostics      = { path = "crates/diagnostics" }
 pacquet-store-dir        = { path = "crates/store-dir" }
 

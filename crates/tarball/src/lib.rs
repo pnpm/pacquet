@@ -10,7 +10,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STD, Engine};
 use dashmap::DashMap;
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
-use pacquet_store_dir::{FileSuffix, StoreDir};
+use pacquet_store_dir::{FileSuffix, StoreDir, WriteNonIndexFileError, WriteTarballIndexFileError};
 use pipe_trait::Pipe;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -78,7 +78,12 @@ pub enum TarballError {
     #[from(ignore)]
     #[display("Failed to write cafs: {_0}")]
     #[diagnostic(transparent)]
-    WriteCafs(pacquet_cafs::CafsError),
+    WriteNonIndexFile(WriteNonIndexFileError),
+
+    #[from(ignore)]
+    #[display("Failed to write tarball index: {_0}")]
+    #[diagnostic(transparent)]
+    WriteTarballIndexFile(WriteTarballIndexFileError),
 
     #[from(ignore)]
     #[diagnostic(code(pacquet_tarball::task_join_error))]
@@ -239,9 +244,9 @@ impl<'a> DownloadTarballToStore<'a> {
                 let entry_path = entry.path().unwrap();
                 let cleaned_entry_path =
                     entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
-                let (file_path, file_hash) =
-                    pacquet_cafs::write_non_index_file(store_dir, &buffer, file_suffix)
-                        .map_err(TarballError::WriteCafs)?;
+                let (file_path, file_hash) = store_dir
+                    .write_non_index_file(&buffer, file_suffix)
+                    .map_err(TarballError::WriteNonIndexFile)?;
 
                 let tarball_index_key = cleaned_entry_path
                     .to_str()
@@ -267,9 +272,9 @@ impl<'a> DownloadTarballToStore<'a> {
 
             let tarball_index =
                 serde_json::to_string(&tarball_index).expect("convert a TarballIndex to JSON");
-
-            pacquet_cafs::write_tarball_index_file(store_dir, &package_integrity, &tarball_index)
-                .map_err(TarballError::WriteCafs)?;
+            store_dir
+                .write_tarball_index_file(&package_integrity, &tarball_index)
+                .map_err(TarballError::WriteTarballIndexFile)?;
 
             Ok(cas_paths)
         })

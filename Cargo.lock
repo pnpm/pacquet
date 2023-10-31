@@ -1298,19 +1298,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1b04fb49957986fdce4d6ee7a65027d55d4b6d2265e5848bbb507b58ccfdb6f"
 
 [[package]]
-name = "pacquet-cafs"
-version = "0.0.1"
-dependencies = [
- "derive_more",
- "miette",
- "pacquet-store-dir",
- "pretty_assertions",
- "sha2",
- "ssri",
- "tempfile",
-]
-
-[[package]]
 name = "pacquet-cli"
 version = "0.0.1"
 dependencies = [
@@ -1322,7 +1309,6 @@ dependencies = [
  "home",
  "insta",
  "miette",
- "pacquet-cafs",
  "pacquet-diagnostics",
  "pacquet-executor",
  "pacquet-fs",
@@ -1491,6 +1477,7 @@ name = "pacquet-store-dir"
 version = "0.0.1"
 dependencies = [
  "derive_more",
+ "miette",
  "pipe-trait",
  "pretty_assertions",
  "serde",
@@ -1507,7 +1494,6 @@ dependencies = [
  "dashmap",
  "derive_more",
  "miette",
- "pacquet-cafs",
  "pacquet-diagnostics",
  "pacquet-store-dir",
  "pipe-trait",

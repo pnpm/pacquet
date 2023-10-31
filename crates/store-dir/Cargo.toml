@@ -12,6 +12,7 @@ repository.workspace = true
 
 [dependencies]
 derive_more = { workspace = true }
+miette      = { workspace = true }
 serde       = { workspace = true }
 sha2        = { workspace = true }
 ssri        = { workspace = true }
