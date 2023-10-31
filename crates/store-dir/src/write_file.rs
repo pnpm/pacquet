@@ -1,4 +1,4 @@
-use crate::{FileHash, FileSuffix, StoreDir};
+use crate::{FileHash, FileSuffix, StoreDir, TarballIndex};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use sha2::{Digest, Sha512};
@@ -61,9 +61,11 @@ impl StoreDir {
     pub fn write_tarball_index_file(
         &self,
         tarball_integrity: &Integrity,
-        index_content: &str,
+        index_content: &TarballIndex,
     ) -> Result<(), WriteTarballIndexFileError> {
         let file_path = self.tarball_index_file_path(tarball_integrity);
+        let index_content =
+            serde_json::to_string(&index_content).expect("convert a TarballIndex to JSON");
         write_file_if_not_exist(&file_path, index_content.as_bytes())
             .map_err(WriteTarballIndexFileError::WriteFile)
     }

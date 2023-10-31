@@ -10,10 +10,12 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STD, Engine};
 use dashmap::DashMap;
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
-use pacquet_store_dir::{FileSuffix, StoreDir, WriteNonIndexFileError, WriteTarballIndexFileError};
+use pacquet_store_dir::{
+    FileSuffix, StoreDir, TarballIndex, TarballIndexFileAttrs, WriteNonIndexFileError,
+    WriteTarballIndexFileError,
+};
 use pipe_trait::Pipe;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
 use tokio::sync::{Notify, RwLock};
@@ -270,8 +272,6 @@ impl<'a> DownloadTarballToStore<'a> {
                 }
             }
 
-            let tarball_index =
-                serde_json::to_string(&tarball_index).expect("convert a TarballIndex to JSON");
             store_dir
                 .write_tarball_index_file(&package_integrity, &tarball_index)
                 .map_err(TarballError::WriteTarballIndexFile)?;
@@ -292,23 +292,6 @@ impl<'a> DownloadTarballToStore<'a> {
 
         Ok(cas_paths)
     }
-}
-
-/// Content of an index file (`$STORE_DIR/v3/files/*/*-index.json`).
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TarballIndex {
-    pub files: HashMap<String, TarballIndexFileAttrs>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TarballIndexFileAttrs {
-    // pub checked_at: ???
-    pub integrity: String,
-    pub mode: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub size: Option<u64>,
 }
 
 #[cfg(test)]
