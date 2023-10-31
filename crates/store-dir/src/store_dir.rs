@@ -53,10 +53,9 @@ impl StoreDir {
     }
 
     /// Path to a file in the store directory.
-    fn file_path_by_hex_str(&self, hex: &str, suffix: Option<&'static str>) -> PathBuf {
+    fn file_path_by_hex_str(&self, hex: &str, suffix: &'static str) -> PathBuf {
         let head = &hex[..2];
         let middle = &hex[2..];
-        let suffix = suffix.unwrap_or("");
         let tail = format!("{middle}{suffix}");
         self.file_path_by_head_tail(head, &tail)
     }
@@ -64,7 +63,7 @@ impl StoreDir {
     /// Path to a file in the store directory.
     pub fn file_path_by_content_address(&self, hash: FileHash, executable: bool) -> PathBuf {
         let hex = format!("{hash:x}");
-        let suffix = executable.then_some("-exec");
+        let suffix = if executable { "-exec" } else { "" };
         self.file_path_by_hex_str(&hex, suffix)
     }
 
@@ -72,7 +71,7 @@ impl StoreDir {
     pub fn tarball_index_file_path(&self, tarball_integrity: &Integrity) -> PathBuf {
         let (algorithm, hex) = tarball_integrity.to_hex();
         assert_eq!(algorithm, Algorithm::Sha512, "Only Sha512 is supported"); // TODO: propagate this error
-        self.file_path_by_hex_str(&hex, Some("-index.json"))
+        self.file_path_by_hex_str(&hex, "-index.json")
     }
 
     /// Path to the temporary directory inside the store.
