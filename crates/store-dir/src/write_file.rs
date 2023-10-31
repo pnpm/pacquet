@@ -1,23 +1,10 @@
 use crate::{FileHash, FileSuffix, StoreDir, TarballIndex};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
+use pacquet_fs::ensure_file;
 use sha2::{Digest, Sha512};
 use ssri::Integrity;
-use std::{
-    fs, io,
-    path::{Path, PathBuf},
-};
-
-// TODO: separate 2 error cases and add more details
-fn write_file_if_not_exist(file_path: &Path, content: &[u8]) -> io::Result<()> {
-    if file_path.exists() {
-        return Ok(());
-    }
-
-    let parent_dir = file_path.parent().unwrap();
-    fs::create_dir_all(parent_dir)?;
-    fs::write(file_path, content)
-}
+use std::{fs, io, path::PathBuf};
 
 /// Error type of [`StoreDir::write_non_index_file`].
 #[derive(Debug, Display, Error, Diagnostic)]
@@ -35,7 +22,7 @@ impl StoreDir {
         let file_hash = Sha512::digest(buffer);
         let file_path = self.file_path_by_content_address(file_hash, suffix);
 
-        write_file_if_not_exist(&file_path, buffer).map_err(WriteNonIndexFileError::WriteFile)?;
+        ensure_file(&file_path, buffer).map_err(WriteNonIndexFileError::WriteFile)?;
 
         #[cfg(unix)]
         {
@@ -66,7 +53,7 @@ impl StoreDir {
         let file_path = self.tarball_index_file_path(tarball_integrity);
         let index_content =
             serde_json::to_string(&index_content).expect("convert a TarballIndex to JSON");
-        write_file_if_not_exist(&file_path, index_content.as_bytes())
+        ensure_file(&file_path, index_content.as_bytes())
             .map_err(WriteTarballIndexFileError::WriteFile)
     }
 }
