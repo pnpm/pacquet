@@ -3,8 +3,17 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_fs::{ensure_file, EnsureFileError};
 use serde::{Deserialize, Serialize};
-use ssri::Integrity;
-use std::collections::HashMap;
+use ssri::{Algorithm, Integrity};
+use std::{collections::HashMap, path::PathBuf};
+
+impl StoreDir {
+    /// Path to an index file of a tarball.
+    pub fn tarball_index_file_path(&self, tarball_integrity: &Integrity) -> PathBuf {
+        let (algorithm, hex) = tarball_integrity.to_hex();
+        assert_eq!(algorithm, Algorithm::Sha512, "Only Sha512 is supported"); // TODO: propagate this error
+        self.file_path_by_hex_str(&hex, "-index.json")
+    }
+}
 
 /// Content of an index file (`$STORE_DIR/v3/files/*/*-index.json`).
 #[derive(Debug, Deserialize, Serialize)]

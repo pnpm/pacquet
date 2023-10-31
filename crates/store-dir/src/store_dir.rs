@@ -1,7 +1,6 @@
 use derive_more::From;
 use serde::{Deserialize, Serialize};
 use sha2::{digest, Sha512};
-use ssri::{Algorithm, Integrity};
 use std::path::{self, PathBuf};
 
 /// Content hash of a file.
@@ -53,25 +52,11 @@ impl StoreDir {
     }
 
     /// Path to a file in the store directory.
-    fn file_path_by_hex_str(&self, hex: &str, suffix: &'static str) -> PathBuf {
+    pub(crate) fn file_path_by_hex_str(&self, hex: &str, suffix: &'static str) -> PathBuf {
         let head = &hex[..2];
         let middle = &hex[2..];
         let tail = format!("{middle}{suffix}");
         self.file_path_by_head_tail(head, &tail)
-    }
-
-    /// Path to a file in the store directory.
-    pub fn cas_file_path(&self, hash: FileHash, executable: bool) -> PathBuf {
-        let hex = format!("{hash:x}");
-        let suffix = if executable { "-exec" } else { "" };
-        self.file_path_by_hex_str(&hex, suffix)
-    }
-
-    /// Path to an index file of a tarball.
-    pub fn tarball_index_file_path(&self, tarball_integrity: &Integrity) -> PathBuf {
-        let (algorithm, hex) = tarball_integrity.to_hex();
-        assert_eq!(algorithm, Algorithm::Sha512, "Only Sha512 is supported"); // TODO: propagate this error
-        self.file_path_by_hex_str(&hex, "-index.json")
     }
 
     /// Path to the temporary directory inside the store.
@@ -85,7 +70,6 @@ mod tests {
     use super::*;
     use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
-    use sha2::{Digest, Sha512};
 
     #[test]
     fn file_path_by_head_tail() {
@@ -96,31 +80,6 @@ mod tests {
             "/home/user/.local/share/pnpm/store/v3/files/3e/f722d37b016c63ac0126cfdcec",
         );
         assert_eq!(&received, &expected);
-    }
-
-    #[test]
-    fn cas_file_path() {
-        fn case(file_content: &str, executable: bool, expected: &str) {
-            eprintln!("CASE: {file_content:?}, {executable:?}");
-            let store_dir = StoreDir::new("STORE_DIR");
-            let file_hash = Sha512::digest(file_content);
-            eprintln!("file_hash = {file_hash:x}");
-            let received = store_dir.cas_file_path(file_hash, executable);
-            let expected: PathBuf = expected.split('/').collect();
-            assert_eq!(&received, &expected);
-        }
-
-        case(
-            "hello world",
-            false,
-            "STORE_DIR/v3/files/30/9ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f",
-        );
-
-        case(
-            "hello world",
-            true,
-            "STORE_DIR/v3/files/30/9ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f-exec",
-        );
     }
 
     #[test]
