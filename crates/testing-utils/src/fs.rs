@@ -71,3 +71,15 @@ pub fn is_symlink_or_junction(path: &Path) -> io::Result<bool> {
     #[cfg(not(windows))]
     return Ok(path.is_symlink());
 }
+
+/// Check if a file is executable.
+#[cfg(unix)]
+pub fn is_path_executable(path: &Path) -> bool {
+    use std::{fs::File, os::unix::prelude::*};
+    let mode = File::open(path)
+        .expect("open the file")
+        .metadata()
+        .expect("get metadata of the file")
+        .mode();
+    mode & 0o111 != 0
+}
