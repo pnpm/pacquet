@@ -207,7 +207,7 @@ impl<'a> DownloadTarballToStore<'a> {
             Other(TarballError),
         }
         let cas_paths = tokio::task::spawn(async move {
-            verify_checksum(&response, package_integrity).map_err(TaskError::Checksum)?;
+            verify_checksum(&response, package_integrity.clone()).map_err(TaskError::Checksum)?;
 
             let mut archive = decompress_gzip(&response, package_unpacked_size)
                 .map_err(TaskError::Other)?
@@ -239,7 +239,7 @@ impl<'a> DownloadTarballToStore<'a> {
                 let cleaned_entry_path =
                     entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
                 let (file_path, file_hash) =
-                    pacquet_cafs::write_sync(store_dir, &buffer, file_suffix)
+                    pacquet_cafs::write_non_index_file(store_dir, &buffer, file_suffix)
                         .map_err(TarballError::WriteCafs)
                         .map_err(TaskError::Other)?;
 
@@ -268,8 +268,7 @@ impl<'a> DownloadTarballToStore<'a> {
             let tarball_index =
                 serde_json::to_string(&tarball_index).expect("convert a TarballIndex to JSON");
 
-            // TODO: fix bug here
-            pacquet_cafs::write_sync(store_dir, tarball_index.as_bytes(), Some(FileSuffix::Index))
+            pacquet_cafs::write_tarball_index_file(store_dir, &package_integrity, &tarball_index)
                 .map_err(TarballError::WriteCafs)
                 .map_err(TaskError::Other)?;
 

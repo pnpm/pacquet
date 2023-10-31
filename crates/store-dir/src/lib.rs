@@ -1,6 +1,7 @@
 use derive_more::From;
 use serde::{Deserialize, Serialize};
 use sha2::{digest, Sha512};
+use ssri::{Algorithm, Integrity};
 use std::path::{self, PathBuf};
 use strum::IntoStaticStr;
 
@@ -62,7 +63,7 @@ impl StoreDir {
     }
 
     /// Path to a file in the store directory.
-    pub fn file_path_by_hex_str(&self, hex: &str, suffix: Option<FileSuffix>) -> PathBuf {
+    fn file_path_by_hex_str(&self, hex: &str, suffix: Option<FileSuffix>) -> PathBuf {
         let head = &hex[..2];
         let middle = &hex[2..];
         let suffix = suffix.map_or("", <&str>::from);
@@ -78,6 +79,13 @@ impl StoreDir {
     ) -> PathBuf {
         let hex = format!("{hash:x}");
         self.file_path_by_hex_str(&hex, suffix)
+    }
+
+    /// Path to an index file of a tarball.
+    pub fn tarball_index_file_path(&self, tarball_integrity: &Integrity) -> PathBuf {
+        let (algorithm, hex) = tarball_integrity.to_hex();
+        assert_eq!(algorithm, Algorithm::Sha512, "Only Sha512 is supported"); // TODO: propagate this error
+        self.file_path_by_hex_str(&hex, Some(FileSuffix::Index))
     }
 
     /// Path to the temporary directory inside the store.

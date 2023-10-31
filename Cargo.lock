@@ -1306,6 +1306,7 @@ dependencies = [
  "pacquet-store-dir",
  "pretty_assertions",
  "sha2",
+ "ssri",
  "tempfile",
 ]
 
@@ -1494,6 +1495,7 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "sha2",
+ "ssri",
  "strum",
 ]
 

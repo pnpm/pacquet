@@ -16,6 +16,7 @@ pacquet-store-dir = { workspace = true }
 derive_more = { workspace = true }
 miette      = { workspace = true }
 sha2        = { workspace = true }
+ssri        = { workspace = true }
 
 [dev-dependencies]
 tempfile          = { workspace = true }
