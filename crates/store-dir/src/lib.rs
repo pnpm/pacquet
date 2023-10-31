@@ -62,17 +62,22 @@ impl StoreDir {
     }
 
     /// Path to a file in the store directory.
+    pub fn file_path_by_hex_str(&self, hex: &str, suffix: Option<FileSuffix>) -> PathBuf {
+        let head = &hex[..2];
+        let middle = &hex[2..];
+        let suffix = suffix.map_or("", <&str>::from);
+        let tail = format!("{middle}{suffix}");
+        self.file_path_by_head_tail(head, &tail)
+    }
+
+    /// Path to a file in the store directory.
     pub fn file_path_by_content_address(
         &self,
         hash: FileHash,
         suffix: Option<FileSuffix>,
     ) -> PathBuf {
         let hex = format!("{hash:x}");
-        let head = &hex[..2];
-        let middle = &hex[2..];
-        let suffix = suffix.map_or("", <&str>::from);
-        let tail = format!("{middle}{suffix}");
-        self.file_path_by_head_tail(head, &tail)
+        self.file_path_by_hex_str(&hex, suffix)
     }
 
     /// Path to the temporary directory inside the store.
