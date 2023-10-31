@@ -1,5 +1,5 @@
 use command_extra::CommandExtra;
-use pacquet_testing_utils::bin::pacquet_with_temp_sub_cwd;
+use pacquet_testing_utils::bin::pacquet_with_temp_npmrc;
 use pipe_trait::Pipe;
 use pretty_assertions::assert_eq;
 use std::{
@@ -20,7 +20,7 @@ fn canonicalize(path: &Path) -> PathBuf {
 
 #[test]
 fn store_path_should_return_store_dir_from_npmrc() {
-    let (command, root, workspace) = pacquet_with_temp_sub_cwd();
+    let (command, root, workspace) = pacquet_with_temp_npmrc();
 
     eprintln!("Creating .npmrc...");
     fs::write(workspace.join(".npmrc"), "store-dir=foo/bar").expect("write to .npmrc");

@@ -2,7 +2,7 @@ pub mod _utils;
 pub use _utils::*;
 
 use command_extra::CommandExtra;
-use pacquet_testing_utils::{bin::pacquet_with_temp_sub_cwd, fs::get_filenames_in_folder};
+use pacquet_testing_utils::{bin::pacquet_with_temp_npmrc, fs::get_filenames_in_folder};
 use pretty_assertions::assert_eq;
 use std::{env, fs};
 
@@ -18,14 +18,14 @@ fn should_create_package_json() {
     insta::assert_snapshot!(package_json_content);
 
     eprintln!("Created files");
-    assert_eq!(get_filenames_in_folder(&workspace), ["package.json"]);
+    assert_eq!(get_filenames_in_folder(&workspace), [".npmrc", "package.json"]);
 
     drop(root); // cleanup
 }
 
 #[test]
 fn should_throw_on_existing_file() {
-    let (command, root, workspace) = pacquet_with_temp_sub_cwd();
+    let (command, root, workspace) = pacquet_with_temp_npmrc();
 
     let manifest_path = workspace.join("package.json");
     dbg!(&manifest_path);

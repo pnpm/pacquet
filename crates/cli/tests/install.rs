@@ -1,14 +1,14 @@
 use assert_cmd::prelude::*;
 use command_extra::CommandExtra;
 use pacquet_testing_utils::{
-    bin::pacquet_with_temp_sub_cwd,
+    bin::pacquet_with_temp_npmrc,
     fs::{get_all_folders, is_symlink_or_junction},
 };
 use std::fs;
 
 #[test]
 fn should_install_dependencies() {
-    let (command, root, workspace) = pacquet_with_temp_sub_cwd();
+    let (command, root, workspace) = pacquet_with_temp_npmrc();
 
     eprintln!("Creating package.json...");
     let manifest_path = workspace.join("package.json");
