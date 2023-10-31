@@ -243,10 +243,13 @@ impl<'a> DownloadTarballToStore<'a> {
                         .map_err(TarballError::WriteCafs)
                         .map_err(TaskError::Other)?;
 
-                if let Some(previous) = cas_paths.insert(cleaned_entry_path.clone(), file_path) {
-                    panic!(
-                        "Unexpected error: {previous:?} already exists at {cleaned_entry_path:?}"
-                    );
+                let tarball_index_key = cleaned_entry_path
+                    .to_str()
+                    .expect("entry path must be valid UTF-8") // TODO: propagate this error, provide more information
+                    .to_string(); // TODO: convert cleaned_entry_path to String too.
+
+                if let Some(previous) = cas_paths.insert(cleaned_entry_path, file_path) {
+                    panic!("Unexpected error: {previous:?} shouldn't collide");
                 }
 
                 let file_size = entry.header().size().ok();
@@ -257,7 +260,9 @@ impl<'a> DownloadTarballToStore<'a> {
                     size: file_size,
                 };
 
-                tarball_index.files.insert(cleaned_entry_path, file_attrs);
+                if let Some(previous) = tarball_index.files.insert(tarball_index_key, file_attrs) {
+                    panic!("Unexpected error: {previous:?} shouldn't collide");
+                }
             }
 
             let tarball_index =
@@ -288,7 +293,7 @@ impl<'a> DownloadTarballToStore<'a> {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TarballIndex {
-    pub files: HashMap<OsString, TarballIndexFileAttrs>,
+    pub files: HashMap<String, TarballIndexFileAttrs>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
