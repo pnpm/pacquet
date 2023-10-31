@@ -11,7 +11,7 @@ use dashmap::DashMap;
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use pacquet_store_dir::{
-    FileSuffix, StoreDir, TarballIndex, TarballIndexFileAttrs, WriteNonIndexFileError,
+    FileSuffix, StoreDir, TarballIndex, TarballIndexFileAttrs, WriteCasFileError,
     WriteTarballIndexFileError,
 };
 use pipe_trait::Pipe;
@@ -80,7 +80,7 @@ pub enum TarballError {
     #[from(ignore)]
     #[display("Failed to write cafs: {_0}")]
     #[diagnostic(transparent)]
-    WriteNonIndexFile(WriteNonIndexFileError),
+    WriteCasFile(WriteCasFileError),
 
     #[from(ignore)]
     #[display("Failed to write tarball index: {_0}")]
@@ -247,8 +247,8 @@ impl<'a> DownloadTarballToStore<'a> {
                 let cleaned_entry_path =
                     entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
                 let (file_path, file_hash) = store_dir
-                    .write_non_index_file(&buffer, file_suffix)
-                    .map_err(TarballError::WriteNonIndexFile)?;
+                    .write_cas_file(&buffer, file_suffix)
+                    .map_err(TarballError::WriteCasFile)?;
 
                 let tarball_index_key = cleaned_entry_path
                     .to_str()
