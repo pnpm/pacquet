@@ -1,4 +1,4 @@
-use crate::{FileHash, FileSuffix, StoreDir};
+use crate::{FileHash, StoreDir};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_fs::{ensure_file, EnsureFileError};
@@ -16,17 +16,17 @@ impl StoreDir {
     pub fn write_cas_file(
         &self,
         buffer: &[u8],
-        suffix: Option<FileSuffix>,
+        executable: bool,
     ) -> Result<(PathBuf, FileHash), WriteCasFileError> {
         let file_hash = Sha512::digest(buffer);
-        let file_path = self.file_path_by_content_address(file_hash, suffix);
+        let file_path = self.file_path_by_content_address(file_hash, executable);
 
         ensure_file(&file_path, buffer).map_err(WriteCasFileError::WriteFile)?;
 
         #[cfg(unix)]
         {
             use std::{fs::Permissions, os::unix::fs::PermissionsExt};
-            if suffix == Some(FileSuffix::Exec) {
+            if executable {
                 let permissions = Permissions::from_mode(0o777);
                 fs::set_permissions(&file_path, permissions).expect("make the file executable");
             }

@@ -10,7 +10,7 @@ pub type FileHash = digest::Output<Sha512>;
 
 /// Optional suffix of a content address of a file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
-pub enum FileSuffix {
+enum FileSuffix {
     #[strum(serialize = "-exec")]
     Exec,
     #[strum(serialize = "-index.json")]
@@ -72,12 +72,9 @@ impl StoreDir {
     }
 
     /// Path to a file in the store directory.
-    pub fn file_path_by_content_address(
-        &self,
-        hash: FileHash,
-        suffix: Option<FileSuffix>,
-    ) -> PathBuf {
+    pub fn file_path_by_content_address(&self, hash: FileHash, executable: bool) -> PathBuf {
         let hex = format!("{hash:x}");
+        let suffix = executable.then_some(FileSuffix::Exec);
         self.file_path_by_hex_str(&hex, suffix)
     }
 
@@ -114,32 +111,26 @@ mod tests {
 
     #[test]
     fn file_path_by_content_address() {
-        fn case(file_content: &str, suffix: Option<FileSuffix>, expected: &str) {
-            eprintln!("CASE: {file_content:?}, {suffix:?}");
+        fn case(file_content: &str, executable: bool, expected: &str) {
+            eprintln!("CASE: {file_content:?}, {executable:?}");
             let store_dir = StoreDir::new("STORE_DIR");
             let file_hash = Sha512::digest(file_content);
             eprintln!("file_hash = {file_hash:x}");
-            let received = store_dir.file_path_by_content_address(file_hash, suffix);
+            let received = store_dir.file_path_by_content_address(file_hash, executable);
             let expected: PathBuf = expected.split('/').collect();
             assert_eq!(&received, &expected);
         }
 
         case(
             "hello world",
-            None,
+            false,
             "STORE_DIR/v3/files/30/9ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f",
         );
 
         case(
             "hello world",
-            Some(FileSuffix::Exec),
+            true,
             "STORE_DIR/v3/files/30/9ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f-exec",
-        );
-
-        case(
-            "hello world",
-            Some(FileSuffix::Index),
-            "STORE_DIR/v3/files/30/9ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f-index.json",
         );
     }
 

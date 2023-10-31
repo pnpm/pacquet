@@ -11,8 +11,7 @@ use dashmap::DashMap;
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use pacquet_store_dir::{
-    FileSuffix, StoreDir, TarballIndex, TarballIndexFileAttrs, WriteCasFileError,
-    WriteTarballIndexFileError,
+    StoreDir, TarballIndex, TarballIndexFileAttrs, WriteCasFileError, WriteTarballIndexFileError,
 };
 use pipe_trait::Pipe;
 use reqwest::Client;
@@ -237,7 +236,6 @@ impl<'a> DownloadTarballToStore<'a> {
 
                 let file_mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
                 let is_executable = file_mode & EXEC_MASK != 0;
-                let file_suffix = is_executable.then_some(FileSuffix::Exec);
 
                 // Read the contents of the entry
                 let mut buffer = Vec::with_capacity(entry.size() as usize);
@@ -247,7 +245,7 @@ impl<'a> DownloadTarballToStore<'a> {
                 let cleaned_entry_path =
                     entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
                 let (file_path, file_hash) = store_dir
-                    .write_cas_file(&buffer, file_suffix)
+                    .write_cas_file(&buffer, is_executable)
                     .map_err(TarballError::WriteCasFile)?;
 
                 let tarball_index_key = cleaned_entry_path
