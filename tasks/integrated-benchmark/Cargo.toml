@@ -15,6 +15,8 @@ name = "integrated-benchmark"
 path = "src/main.rs"
 
 [dependencies]
+pacquet-fs = { workspace = true }
+
 clap       = { workspace = true }
 itertools  = { workspace = true }
 os_display = { workspace = true }

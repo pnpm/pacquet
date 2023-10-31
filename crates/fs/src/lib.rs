@@ -54,11 +54,17 @@ pub fn ensure_file(file_path: &Path, content: &[u8]) -> Result<(), EnsureFileErr
 pub fn make_file_executable(file_path: &Path) -> io::Result<()> {
     #[cfg(unix)]
     return {
-        use std::{fs::Permissions, os::unix::fs::PermissionsExt};
+        use std::{
+            fs::{set_permissions, Permissions},
+            os::unix::fs::PermissionsExt,
+        };
         let permissions = Permissions::from_mode(0o777);
-        fs::set_permissions(file_path, permissions)
+        set_permissions(file_path, permissions)
     };
 
     #[cfg(windows)]
-    return Ok(());
+    return {
+        drop(file_path);
+        Ok(())
+    };
 }
