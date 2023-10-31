@@ -63,7 +63,7 @@ impl StoreDir {
     }
 
     /// Path to a file in the store directory.
-    pub(crate) fn file_path_by_hex_str(&self, hex: &str, suffix: Option<FileSuffix>) -> PathBuf {
+    fn file_path_by_hex_str(&self, hex: &str, suffix: Option<FileSuffix>) -> PathBuf {
         let head = &hex[..2];
         let middle = &hex[2..];
         let suffix = suffix.map_or("", <&str>::from);
