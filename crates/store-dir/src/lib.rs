@@ -57,7 +57,7 @@ impl StoreDir {
     /// **Parameters:**
     /// * `head` is the first 2 hexadecimal digit of the file address.
     /// * `tail` is the rest of the address and an optional suffix.
-    fn file_path_by_hash_str(&self, head: &str, tail: &str) -> PathBuf {
+    fn file_path_by_head_tail(&self, head: &str, tail: &str) -> PathBuf {
         self.files().join(head).join(tail)
     }
 
@@ -72,7 +72,7 @@ impl StoreDir {
         let middle = &hex[2..];
         let suffix = suffix.map_or("", <&str>::from);
         let tail = format!("{middle}{suffix}");
-        self.file_path_by_hash_str(head, &tail)
+        self.file_path_by_head_tail(head, &tail)
     }
 
     /// Path to the temporary directory inside the store.
@@ -89,10 +89,10 @@ mod tests {
     use sha2::{Digest, Sha512};
 
     #[test]
-    fn file_path_by_hash_str() {
+    fn file_path_by_head_tail() {
         let received = "/home/user/.local/share/pnpm/store"
             .pipe(StoreDir::new)
-            .file_path_by_hash_str("3e", "f722d37b016c63ac0126cfdcec");
+            .file_path_by_head_tail("3e", "f722d37b016c63ac0126cfdcec");
         let expected = PathBuf::from(
             "/home/user/.local/share/pnpm/store/v3/files/3e/f722d37b016c63ac0126cfdcec",
         );
