@@ -41,6 +41,10 @@ pub fn get_all_files(root: &std::path::Path) -> Vec<String> {
         let entry = entry.unwrap();
         let entry_path = entry.path();
 
+        if entry.file_type().is_dir() {
+            continue;
+        }
+
         // We need this mutation to ensure that both Unix and Windows paths resolves the same.
         // TODO: Find a better way to do this?
         let simple_path = entry_path
