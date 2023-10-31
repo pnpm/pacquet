@@ -26,7 +26,8 @@ pub struct TarballIndex {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TarballIndexFileAttrs {
-    // pub checked_at: ???
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checked_at: Option<u128>,
     pub integrity: String,
     pub mode: u32,
     #[serde(skip_serializing_if = "Option::is_none")]

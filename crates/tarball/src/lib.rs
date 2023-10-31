@@ -4,6 +4,7 @@ use std::{
     io::{Cursor, Read},
     path::PathBuf,
     sync::Arc,
+    time::UNIX_EPOCH,
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STD, Engine};
@@ -257,9 +258,11 @@ impl<'a> DownloadTarballToStore<'a> {
                     panic!("Unexpected error: {previous:?} shouldn't collide");
                 }
 
+                let checked_at = UNIX_EPOCH.elapsed().ok().map(|x| x.as_millis());
                 let file_size = entry.header().size().ok();
                 let file_integrity = format!("sha512-{}", BASE64_STD.encode(file_hash));
                 let file_attrs = TarballIndexFileAttrs {
+                    checked_at,
                     integrity: file_integrity,
                     mode: file_mode,
                     size: file_size,
