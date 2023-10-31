@@ -53,3 +53,20 @@ impl StoreDir {
             .map_err(WriteTarballIndexFileError::WriteFile)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ssri::IntegrityOpts;
+
+    #[test]
+    fn tarball_index_file_path() {
+        let store_dir = StoreDir::new("STORE_DIR");
+        let tarball_integrity =
+            IntegrityOpts::new().algorithm(Algorithm::Sha512).chain(b"TARBALL CONTENT").result();
+        let received = store_dir.tarball_index_file_path(&tarball_integrity);
+        let expected = "STORE_DIR/v3/files/bc/d60799116ebef60071b9f2c7dafd7e2a4e1b366e341f750b2de52dd6995ab409b530f31b2b0a56c168a808a977156c3f5f13b026fb117d36314d8077f8733f-index.json";
+        let expected: PathBuf = expected.split('/').collect();
+        assert_eq!(&received, &expected);
+    }
+}
