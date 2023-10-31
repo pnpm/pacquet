@@ -267,6 +267,8 @@ impl<'a> DownloadTarballToStore<'a> {
 
             let tarball_index =
                 serde_json::to_string(&tarball_index).expect("convert a TarballIndex to JSON");
+
+            // TODO: fix bug here
             pacquet_cafs::write_sync(store_dir, tarball_index.as_bytes(), Some(FileSuffix::Index))
                 .map_err(TarballError::WriteCafs)
                 .map_err(TaskError::Other)?;
