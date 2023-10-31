@@ -2,7 +2,7 @@ use assert_cmd::prelude::*;
 use command_extra::CommandExtra;
 use pacquet_testing_utils::{
     bin::pacquet_with_temp_cwd,
-    fs::{get_all_folders, is_symlink_or_junction},
+    fs::{get_all_files, get_all_folders, is_symlink_or_junction},
 };
 use std::fs;
 
@@ -39,8 +39,10 @@ fn should_install_dependencies() {
     );
     assert!(workspace.join("node_modules/.pacquet/fast-decode-uri-component@1.0.1").is_dir());
 
-    eprintln!("Directory list");
-    insta::assert_debug_snapshot!(get_all_folders(&workspace));
+    eprintln!("Snapshot");
+    let workspace_folders = get_all_folders(&workspace);
+    let store_files = get_all_files(&root.path().join("pacquet-store"));
+    insta::assert_debug_snapshot!((workspace_folders, store_files));
 
     drop(root); // cleanup
 }
