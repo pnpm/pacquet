@@ -1,9 +1,9 @@
 use crate::{FileHash, StoreDir};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_fs::{ensure_file, EnsureFileError};
+use pacquet_fs::{ensure_file, make_file_executable, EnsureFileError};
 use sha2::{Digest, Sha512};
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
 /// Error type of [`StoreDir::write_cas_file`].
 #[derive(Debug, Display, Error, Diagnostic)]
@@ -22,15 +22,7 @@ impl StoreDir {
         let file_path = self.cas_file_path(file_hash, executable);
 
         ensure_file(&file_path, buffer).map_err(WriteCasFileError::WriteFile)?;
-
-        #[cfg(unix)]
-        {
-            use std::{fs::Permissions, os::unix::fs::PermissionsExt};
-            if executable {
-                let permissions = Permissions::from_mode(0o777);
-                fs::set_permissions(&file_path, permissions).expect("make the file executable");
-            }
-        }
+        make_file_executable(&file_path).expect("make the file executable"); // TODO: propagate this error
 
         Ok((file_path, file_hash))
     }

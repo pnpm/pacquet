@@ -48,3 +48,17 @@ pub fn ensure_file(file_path: &Path, content: &[u8]) -> Result<(), EnsureFileErr
     fs::write(file_path, content)
         .map_err(|error| EnsureFileError::WriteFile { file_path: file_path.to_path_buf(), error })
 }
+
+/// Set file mode to 777 on POSIX platforms such as Linux or macOS,
+/// or do nothing on Windows.
+pub fn make_file_executable(file_path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    return {
+        use std::{fs::Permissions, os::unix::fs::PermissionsExt};
+        let permissions = Permissions::from_mode(0o777);
+        fs::set_permissions(file_path, permissions)
+    };
+
+    #[cfg(windows)]
+    return Ok(());
+}
