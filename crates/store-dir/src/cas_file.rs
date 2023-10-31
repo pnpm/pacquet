@@ -31,7 +31,10 @@ impl StoreDir {
         let file_path = self.cas_file_path(file_hash, executable);
 
         ensure_file(&file_path, buffer).map_err(WriteCasFileError::WriteFile)?;
-        make_file_executable(&file_path).expect("make the file executable"); // TODO: propagate this error
+        if executable {
+            // TODO: propagate this error
+            make_file_executable(&file_path).expect("make the file executable");
+        }
 
         Ok((file_path, file_hash))
     }
