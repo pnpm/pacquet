@@ -10,7 +10,7 @@ pub fn get_filenames_in_folder(path: &Path) -> Vec<String> {
     files
 }
 
-pub fn get_all_folders(root: &std::path::Path) -> Vec<String> {
+pub fn get_all_folders(root: &Path) -> Vec<String> {
     let mut files = Vec::new();
     for entry in walkdir::WalkDir::new(root) {
         let entry = entry.unwrap();
@@ -35,7 +35,7 @@ pub fn get_all_folders(root: &std::path::Path) -> Vec<String> {
     files
 }
 
-pub fn get_all_files(root: &std::path::Path) -> Vec<String> {
+pub fn get_all_files(root: &Path) -> Vec<String> {
     let mut files = Vec::new();
     for entry in walkdir::WalkDir::new(root) {
         let entry = entry.unwrap();
