@@ -81,5 +81,5 @@ pub fn is_path_executable(path: &Path) -> bool {
         .metadata()
         .expect("get metadata of the file")
         .mode();
-    mode & 0o111 != 0
+    mode & 0b001_001_001 != 0
 }
