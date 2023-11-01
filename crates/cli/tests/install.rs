@@ -67,9 +67,6 @@ fn should_install_exec_files() {
     eprintln!("Listing all files in the store...");
     let store_files = root.path().join("pacquet-store").pipe_as_ref(get_all_files);
 
-    eprintln!("Snapshot");
-    insta::assert_debug_snapshot!(store_files);
-
     #[cfg(unix)]
     {
         use pacquet_testing_utils::fs::is_path_executable;
@@ -83,6 +80,9 @@ fn should_install_exec_files() {
             store_files.iter().partition::<Vec<_>, _>(|path| path.ends_with("-exec")),
         );
     }
+
+    eprintln!("Snapshot");
+    insta::assert_debug_snapshot!(store_files);
 
     drop(root); // cleanup
 }
