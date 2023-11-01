@@ -249,7 +249,7 @@ impl<'a> DownloadTarballToStore<'a> {
                     .to_string(); // TODO: convert cleaned_entry_path to String too.
 
                 if let Some(previous) = cas_paths.insert(cleaned_entry_path, file_path) {
-                    panic!("Unexpected error: {previous:?} shouldn't collide");
+                    tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
                 }
 
                 let checked_at = UNIX_EPOCH.elapsed().ok().map(|x| x.as_millis());
@@ -263,7 +263,7 @@ impl<'a> DownloadTarballToStore<'a> {
                 };
 
                 if let Some(previous) = pkg_files_idx.files.insert(tarball_index_key, file_attrs) {
-                    panic!("Unexpected error: {previous:?} shouldn't collide");
+                    tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
                 }
             }
 
