@@ -73,22 +73,21 @@ fn should_install_exec_files() {
         use pretty_assertions::assert_eq;
         use std::{fs::File, iter::repeat, os::unix::fs::MetadataExt};
 
+        let resolve = |name: &str| root.path().join("pacquet-store").join(name);
+
         eprintln!("All files that end with '-exec' are executable, others not");
         let (suffix_exec, suffix_other) =
             store_files.iter().partition::<Vec<_>, _>(|path| path.ends_with("-exec"));
-        let (mode_exec, mode_other) = store_files.iter().partition::<Vec<_>, _>(|name| {
-            root.path().join("pacquet-store").join(name).pipe_as_ref(is_path_executable)
-        });
+        let (mode_exec, mode_other) = store_files
+            .iter()
+            .partition::<Vec<_>, _>(|name| resolve(name).as_path().pipe(is_path_executable));
         assert_eq!((&suffix_exec, &suffix_other), (&mode_exec, &mode_other));
 
         eprintln!("All executable files have mode 755");
         let actual_modes: Vec<_> = mode_exec
             .iter()
             .map(|name| {
-                let mode = root
-                    .path()
-                    .join("pacquet-store")
-                    .join(name)
+                let mode = resolve(name)
                     .pipe(File::open)
                     .expect("open file to get mode")
                     .metadata()
