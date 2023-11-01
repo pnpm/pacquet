@@ -29,3 +29,17 @@ pub fn pacquet_with_temp_cwd(create_npmrc: bool) -> (Command, TempDir, PathBuf) 
         .with_current_dir(&workspace);
     (command, root, workspace)
 }
+
+pub fn pacquet_and_pnpm_with_temp_cwd(create_npmrc: bool) -> (Command, Command, TempDir, PathBuf) {
+    let root = tempdir().expect("create temporary directory");
+    let workspace = root.path().join("workspace");
+    fs::create_dir(&workspace).expect("create temporary workspace for pacquet");
+    if create_npmrc {
+        create_default_npmrc(&workspace)
+    }
+    let pacquet = Command::cargo_bin("pacquet")
+        .expect("find the pacquet binary")
+        .with_current_dir(&workspace);
+    let pnpm = Command::new("pnpm").with_current_dir(&workspace);
+    (pacquet, pnpm, root, workspace)
+}
