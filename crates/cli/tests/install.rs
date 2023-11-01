@@ -72,13 +72,14 @@ fn should_install_exec_files() {
         use pacquet_testing_utils::fs::is_path_executable;
         use pretty_assertions::assert_eq;
 
+        let (suffix_exec, suffix_other) =
+            store_files.iter().partition::<Vec<_>, _>(|path| path.ends_with("-exec"));
+        let (mode_exec, mode_other) = store_files.iter().partition::<Vec<_>, _>(|name| {
+            root.path().join("pacquet-store").join(name).pipe_as_ref(is_path_executable)
+        });
+
         eprintln!("All files that end with '-exec' are executable, others not");
-        assert_eq!(
-            store_files.iter().partition::<Vec<_>, _>(|name| {
-                root.path().join("pacquet-store").join(name).pipe_as_ref(is_path_executable)
-            }),
-            store_files.iter().partition::<Vec<_>, _>(|path| path.ends_with("-exec")),
-        );
+        assert_eq!((suffix_exec, suffix_other), (mode_exec, mode_other));
     }
 
     eprintln!("Snapshot");
