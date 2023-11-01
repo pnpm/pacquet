@@ -19,13 +19,13 @@ impl StoreDir {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageFilesIndex {
-    pub files: HashMap<String, TarballIndexFileAttrs>,
+    pub files: HashMap<String, PackageFileInfo>,
 }
 
 /// Value of the [`files`](PackageFilesIndex::files) map.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TarballIndexFileAttrs {
+pub struct PackageFileInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checked_at: Option<u128>,
     pub integrity: String,

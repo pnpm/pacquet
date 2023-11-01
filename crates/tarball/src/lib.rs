@@ -12,8 +12,7 @@ use dashmap::DashMap;
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use pacquet_store_dir::{
-    PackageFilesIndex, StoreDir, TarballIndexFileAttrs, WriteCasFileError,
-    WriteTarballIndexFileError,
+    PackageFileInfo, PackageFilesIndex, StoreDir, WriteCasFileError, WriteTarballIndexFileError,
 };
 use pipe_trait::Pipe;
 use reqwest::Client;
@@ -256,7 +255,7 @@ impl<'a> DownloadTarballToStore<'a> {
                 let checked_at = UNIX_EPOCH.elapsed().ok().map(|x| x.as_millis());
                 let file_size = entry.header().size().ok();
                 let file_integrity = format!("sha512-{}", BASE64_STD.encode(file_hash));
-                let file_attrs = TarballIndexFileAttrs {
+                let file_attrs = PackageFileInfo {
                     checked_at,
                     integrity: file_integrity,
                     mode: file_mode,
