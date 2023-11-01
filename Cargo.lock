@@ -1499,6 +1499,7 @@ dependencies = [
  "derive_more",
  "miette",
  "pacquet-diagnostics",
+ "pacquet-fs",
  "pacquet-store-dir",
  "pipe-trait",
  "pretty_assertions",

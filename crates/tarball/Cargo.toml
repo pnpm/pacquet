@@ -12,6 +12,7 @@ repository.workspace  = true
 
 [dependencies]
 pacquet-diagnostics = { workspace = true }
+pacquet-fs          = { workspace = true }
 pacquet-store-dir   = { workspace = true }
 
 base64       = { workspace = true }

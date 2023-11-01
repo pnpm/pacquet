@@ -11,6 +11,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STD, Engine};
 use dashmap::DashMap;
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
+use pacquet_fs::file_mode;
 use pacquet_store_dir::{
     PackageFileInfo, PackageFilesIndex, StoreDir, WriteCasFileError, WriteTarballIndexFileError,
 };
@@ -235,6 +236,7 @@ impl<'a> DownloadTarballToStore<'a> {
                 let mut entry = entry.unwrap();
 
                 let file_mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
+                let file_is_executable = file_mode::is_all_exec(file_mode);
 
                 // Read the contents of the entry
                 let mut buffer = Vec::with_capacity(entry.size() as usize);
@@ -244,7 +246,7 @@ impl<'a> DownloadTarballToStore<'a> {
                 let cleaned_entry_path =
                     entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
                 let (file_path, file_hash) = store_dir
-                    .write_cas_file(&buffer, file_mode)
+                    .write_cas_file(&buffer, file_is_executable)
                     .map_err(TarballError::WriteCasFile)?;
 
                 let tarball_index_key = cleaned_entry_path
