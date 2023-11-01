@@ -12,7 +12,8 @@ use dashmap::DashMap;
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use pacquet_store_dir::{
-    StoreDir, TarballIndex, TarballIndexFileAttrs, WriteCasFileError, WriteTarballIndexFileError,
+    PackageFilesIndex, StoreDir, TarballIndexFileAttrs, WriteCasFileError,
+    WriteTarballIndexFileError,
 };
 use pipe_trait::Pipe;
 use reqwest::Client;
@@ -225,7 +226,7 @@ impl<'a> DownloadTarballToStore<'a> {
 
             let ((_, Some(capacity)) | (capacity, None)) = entries.size_hint();
             let mut cas_paths = HashMap::<OsString, PathBuf>::with_capacity(capacity);
-            let mut tarball_index = TarballIndex { files: HashMap::with_capacity(capacity) };
+            let mut pkg_files_idx = PackageFilesIndex { files: HashMap::with_capacity(capacity) };
 
             for entry in entries {
                 let mut entry = entry.unwrap();
@@ -262,13 +263,13 @@ impl<'a> DownloadTarballToStore<'a> {
                     size: file_size,
                 };
 
-                if let Some(previous) = tarball_index.files.insert(tarball_index_key, file_attrs) {
+                if let Some(previous) = pkg_files_idx.files.insert(tarball_index_key, file_attrs) {
                     panic!("Unexpected error: {previous:?} shouldn't collide");
                 }
             }
 
             store_dir
-                .write_tarball_index_file(&package_integrity, &tarball_index)
+                .write_tarball_index_file(&package_integrity, &pkg_files_idx)
                 .map_err(TarballError::WriteTarballIndexFile)?;
 
             Ok(cas_paths)

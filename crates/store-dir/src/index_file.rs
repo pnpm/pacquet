@@ -18,11 +18,11 @@ impl StoreDir {
 /// Content of an index file (`$STORE_DIR/v3/files/*/*-index.json`).
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TarballIndex {
+pub struct PackageFilesIndex {
     pub files: HashMap<String, TarballIndexFileAttrs>,
 }
 
-/// Value of the [`files`](TarballIndex::files) map.
+/// Value of the [`files`](PackageFilesIndex::files) map.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TarballIndexFileAttrs {
@@ -45,7 +45,7 @@ impl StoreDir {
     pub fn write_tarball_index_file(
         &self,
         tarball_integrity: &Integrity,
-        index_content: &TarballIndex,
+        index_content: &PackageFilesIndex,
     ) -> Result<(), WriteTarballIndexFileError> {
         let file_path = self.tarball_index_file_path(tarball_integrity);
         let index_content =
