@@ -212,6 +212,10 @@ impl<'a> DownloadTarballToStore<'a> {
         let cas_paths = tokio::task::spawn(async move {
             verify_checksum(&response, package_integrity.clone()).map_err(TaskError::Checksum)?;
 
+            // TODO: move tarball extraction to its own function
+            // TODO: test it
+            // TODO: test the duplication of entries
+
             let mut archive = decompress_gzip(&response, package_unpacked_size)
                 .map_err(TaskError::Other)?
                 .pipe(Cursor::new)
