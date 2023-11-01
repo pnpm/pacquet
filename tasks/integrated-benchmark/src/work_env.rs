@@ -251,7 +251,7 @@ fn create_install_script(dir: &Path, scenario: BenchmarkScenario, for_pnpm: bool
     }
     writeln!(file).unwrap();
 
-    make_file_executable(&path).expect("make the script executable");
+    make_file_executable(&file).expect("make the script executable");
 }
 
 fn executor<'a>(message: &'a str) -> impl FnOnce(&'a mut Command) {
