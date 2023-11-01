@@ -7,20 +7,8 @@ use std::{
 };
 
 pub mod file_mode {
-    /// Bit mask to filter readable bits (`r--r--r--`).
-    pub const READ_MASK: u32 = 0b100_100_100;
-
-    /// Bit mask to filter executable bits (`-w--w--w-`).
-    pub const WRITE_MASK: u32 = 0b010_010_010;
-
     /// Bit mask to filter executable bits (`--x--x--x`).
     pub const EXEC_MASK: u32 = 0b001_001_001;
-
-    /// All can read, write, and execute (`rwxrwxrwx`).
-    pub const ALL_RWX: u32 = 0b111_111_111;
-
-    /// All can read and write, but not execute (`rw-rw-rw-`).
-    pub const ALL_RW: u32 = 0b110_110_110;
 
     /// All can read and execute, but only owner can write (`rwxr-xr-x`).
     pub const EXEC_MODE: u32 = 0b111_101_101;
