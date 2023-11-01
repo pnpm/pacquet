@@ -1,7 +1,7 @@
 use crate::{FileHash, StoreDir};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_fs::{ensure_file, file_mode::is_executable, EnsureFileError};
+use pacquet_fs::{ensure_file, file_mode::is_all_exec, EnsureFileError};
 use sha2::{Digest, Sha512};
 use std::path::PathBuf;
 
@@ -9,7 +9,7 @@ impl StoreDir {
     /// Path to a file in the store directory.
     pub fn cas_file_path(&self, hash: FileHash, mode: u32) -> PathBuf {
         let hex = format!("{hash:x}");
-        let suffix = if is_executable(mode) { "-exec" } else { "" };
+        let suffix = if is_all_exec(mode) { "-exec" } else { "" };
         self.file_path_by_hex_str(&hex, suffix)
     }
 }

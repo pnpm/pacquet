@@ -22,9 +22,9 @@ pub mod file_mode {
     /// All can read and write, but not execute (`rw-rw-rw-`).
     pub const ALL_RW: u32 = 0b110_110_110;
 
-    /// Whether a file mode has any executable bit.
-    pub fn is_executable(mode: u32) -> bool {
-        mode & EXEC_MASK != 0
+    /// Whether a file mode has all executable bits.
+    pub fn is_all_exec(mode: u32) -> bool {
+        mode & EXEC_MASK == EXEC_MASK
     }
 }
 
