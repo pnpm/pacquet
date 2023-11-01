@@ -66,11 +66,9 @@ fn should_install_exec_files() {
 
     eprintln!("Listing all files in the store...");
     let store_files = root.path().join("pacquet-store").pipe_as_ref(get_all_files);
-    let (exec_files, non_exec_files): (Vec<_>, Vec<_>) =
-        store_files.iter().partition(|path| path.ends_with("-exec"));
 
     eprintln!("Snapshot");
-    insta::assert_debug_snapshot!(exec_files);
+    insta::assert_debug_snapshot!(store_files);
 
     #[cfg(unix)]
     {
@@ -79,15 +77,12 @@ fn should_install_exec_files() {
 
         eprintln!("All files that end with '-exec' are executable, others not");
         assert_eq!(
-            store_files.iter().partition(|name| {
+            store_files.iter().partition::<Vec<_>, _>(|name| {
                 root.path().join("pacquet-store").join(name).pipe_as_ref(is_path_executable)
             }),
-            (exec_files, non_exec_files),
+            store_files.iter().partition::<Vec<_>, _>(|path| path.ends_with("-exec")),
         );
     }
-
-    #[cfg(windows)]
-    let _ = non_exec_files; // suppress clippy complaint on windows
 
     drop(root); // cleanup
 }
