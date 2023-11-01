@@ -33,14 +33,3 @@ pub fn make_file_executable(file: &File) -> io::Result<()> {
     #[cfg(windows)]
     return Ok(());
 }
-
-/// Set file mode to 777 on POSIX platforms such as Linux or macOS,
-/// or do nothing on Windows.
-#[cfg_attr(windows, allow(unused))]
-pub fn make_path_executable(file_path: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    return File::open(file_path).and_then(|file| make_file_executable(&file));
-
-    #[cfg(windows)]
-    return Ok(());
-}
