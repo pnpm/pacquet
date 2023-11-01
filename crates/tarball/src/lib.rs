@@ -269,7 +269,7 @@ impl<'a> DownloadTarballToStore<'a> {
             }
 
             store_dir
-                .write_tarball_index_file(&package_integrity, &pkg_files_idx)
+                .write_index_file(&package_integrity, &pkg_files_idx)
                 .map_err(TarballError::WriteTarballIndexFile)?;
 
             Ok(cas_paths)
