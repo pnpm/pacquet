@@ -50,7 +50,7 @@ impl StoreDir {
         let file_path = self.tarball_index_file_path(tarball_integrity);
         let index_content =
             serde_json::to_string(&index_content).expect("convert a TarballIndex to JSON");
-        ensure_file(&file_path, index_content.as_bytes())
+        ensure_file(&file_path, index_content.as_bytes(), Some(0o666))
             .map_err(WriteTarballIndexFileError::WriteFile)
     }
 }

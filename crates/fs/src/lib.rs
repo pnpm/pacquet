@@ -1,9 +1,32 @@
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use std::{
-    fs, io,
+    fs::{self, OpenOptions},
+    io::{self, Write},
     path::{Path, PathBuf},
 };
+
+pub mod file_mode {
+    /// Bit mask to filter readable bits (`r--r--r--`).
+    pub const READ_MASK: u32 = 0b100_100_100;
+
+    /// Bit mask to filter executable bits (`-w--w--w-`).
+    pub const WRITE_MASK: u32 = 0b010_010_010;
+
+    /// Bit mask to filter executable bits (`--x--x--x`).
+    pub const EXEC_MASK: u32 = 0b001_001_001;
+
+    /// All can read, write, and execute (`rwxrwxrwx`).
+    pub const ALL_RWX: u32 = 0b111_111_111;
+
+    /// All can read and write, but not execute (`rw-rw-rw-`).
+    pub const ALL_RW: u32 = 0b110_110_110;
+
+    /// Whether a file mode has any executable bit.
+    pub fn is_executable(mode: u32) -> bool {
+        mode & EXEC_MASK != 0
+    }
+}
 
 /// Create a symlink to a directory.
 ///
@@ -24,6 +47,12 @@ pub enum EnsureFileError {
         #[error(source)]
         error: io::Error,
     },
+    #[display("Failed to create file at {file_path:?}: {error}")]
+    CreateFile {
+        file_path: PathBuf,
+        #[error(source)]
+        error: io::Error,
+    },
     #[display("Failed to write to file at {file_path:?}: {error}")]
     WriteFile {
         file_path: PathBuf,
@@ -35,7 +64,11 @@ pub enum EnsureFileError {
 /// Write `content` to `file_path` unless it already exists.
 ///
 /// Ancestor directories will be created if they don't already exist.
-pub fn ensure_file(file_path: &Path, content: &[u8]) -> Result<(), EnsureFileError> {
+pub fn ensure_file(
+    file_path: &Path,
+    content: &[u8],
+    #[cfg_attr(windows, allow(unused))] mode: Option<u32>,
+) -> Result<(), EnsureFileError> {
     if file_path.exists() {
         return Ok(());
     }
@@ -45,7 +78,22 @@ pub fn ensure_file(file_path: &Path, content: &[u8]) -> Result<(), EnsureFileErr
         parent_dir: parent_dir.to_path_buf(),
         error,
     })?;
-    fs::write(file_path, content)
+
+    let mut options = OpenOptions::new();
+    options.write(true).create(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        if let Some(mode) = mode {
+            options.mode(mode);
+        }
+    }
+
+    options
+        .open(file_path)
+        .map_err(|error| EnsureFileError::CreateFile { file_path: file_path.to_path_buf(), error })?
+        .write_all(content)
         .map_err(|error| EnsureFileError::WriteFile { file_path: file_path.to_path_buf(), error })
 }
 
