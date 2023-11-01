@@ -28,17 +28,17 @@ fn should_install_dependencies() {
 
     eprintln!("Make sure the package is installed");
     assert!(is_symlink_or_junction(&workspace.join("node_modules/is-odd")).unwrap());
-    assert!(workspace.join("node_modules/.pacquet/is-odd@3.0.1").exists());
+    assert!(workspace.join("node_modules/.pnpm/is-odd@3.0.1").exists());
 
     eprintln!("Make sure it installs direct dependencies");
     assert!(!workspace.join("node_modules/is-number").exists());
-    assert!(workspace.join("node_modules/.pacquet/is-number@6.0.0").exists());
+    assert!(workspace.join("node_modules/.pnpm/is-number@6.0.0").exists());
 
     eprintln!("Make sure we install dev-dependencies as well");
     assert!(
         is_symlink_or_junction(&workspace.join("node_modules/fast-decode-uri-component")).unwrap()
     );
-    assert!(workspace.join("node_modules/.pacquet/fast-decode-uri-component@1.0.1").is_dir());
+    assert!(workspace.join("node_modules/.pnpm/fast-decode-uri-component@1.0.1").is_dir());
 
     eprintln!("Snapshot");
     let workspace_folders = get_all_folders(&workspace);

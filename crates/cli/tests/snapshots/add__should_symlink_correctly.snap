@@ -1,17 +1,17 @@
 ---
 source: crates/cli/tests/add.rs
-assertion_line: 57
-expression: get_all_folders(dir.path())
+assertion_line: 47
+expression: get_all_folders(&workspace)
 ---
 [
     "node_modules",
-    "node_modules/.pacquet",
-    "node_modules/.pacquet/is-number@6.0.0",
-    "node_modules/.pacquet/is-number@6.0.0/node_modules",
-    "node_modules/.pacquet/is-number@6.0.0/node_modules/is-number",
-    "node_modules/.pacquet/is-odd@3.0.1",
-    "node_modules/.pacquet/is-odd@3.0.1/node_modules",
-    "node_modules/.pacquet/is-odd@3.0.1/node_modules/is-number",
-    "node_modules/.pacquet/is-odd@3.0.1/node_modules/is-odd",
+    "node_modules/.pnpm",
+    "node_modules/.pnpm/is-number@6.0.0",
+    "node_modules/.pnpm/is-number@6.0.0/node_modules",
+    "node_modules/.pnpm/is-number@6.0.0/node_modules/is-number",
+    "node_modules/.pnpm/is-odd@3.0.1",
+    "node_modules/.pnpm/is-odd@3.0.1/node_modules",
+    "node_modules/.pnpm/is-odd@3.0.1/node_modules/is-number",
+    "node_modules/.pnpm/is-odd@3.0.1/node_modules/is-odd",
     "node_modules/is-odd",
 ]

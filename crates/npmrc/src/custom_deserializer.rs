@@ -40,17 +40,17 @@ fn default_store_dir_windows(home_dir: &Path, current_dir: &Path) -> PathBuf {
         get_drive_letter(home_dir).expect("home dir is an absolute path with drive letter");
 
     if current_drive == home_drive {
-        return home_dir.join("AppData/Local/pacquet/store");
+        return home_dir.join("AppData/Local/pnpm/store");
     }
 
-    PathBuf::from(format!("{current_drive}:\\.pacquet-store"))
+    PathBuf::from(format!("{current_drive}:\\.pnpm-store"))
 }
 
 /// If the $PNPM_HOME env variable is set, then $PNPM_HOME/store
-/// If the $XDG_DATA_HOME env variable is set, then $XDG_DATA_HOME/pacquet/store
-/// On Windows: ~/AppData/Local/pacquet/store
-/// On macOS: ~/Library/pacquet/store
-/// On Linux: ~/.local/share/pacquet/store
+/// If the $XDG_DATA_HOME env variable is set, then $XDG_DATA_HOME/pnpm/store
+/// On Windows: ~/AppData/Local/pnpm/store
+/// On macOS: ~/Library/pnpm/store
+/// On Linux: ~/.local/share/pnpm/store
 pub fn default_store_dir() -> StoreDir {
     // TODO: If env variables start with ~, make sure to resolve it into home_dir.
     if let Ok(pnpm_home) = env::var("PNPM_HOME") {
@@ -73,8 +73,8 @@ pub fn default_store_dir() -> StoreDir {
 
     // https://doc.rust-lang.org/std/env/consts/constant.OS.html
     match env::consts::OS {
-        "linux" => home_dir.join(".local/share/pacquet/store").into(),
-        "macos" => home_dir.join("Library/pacquet/store").into(),
+        "linux" => home_dir.join(".local/share/pnpm/store").into(),
+        "macos" => home_dir.join("Library/pnpm/store").into(),
         _ => panic!("unsupported operating system: {}", env::consts::OS),
     }
 }
@@ -86,7 +86,7 @@ pub fn default_modules_dir() -> PathBuf {
 
 pub fn default_virtual_store_dir() -> PathBuf {
     // TODO: find directory with package.json
-    env::current_dir().expect("current directory is unavailable").join("node_modules/.pacquet")
+    env::current_dir().expect("current directory is unavailable").join("node_modules/.pnpm")
 }
 
 pub fn default_registry() -> String {
@@ -189,7 +189,7 @@ mod tests {
         let home_dir = Path::new("C:\\Users\\user");
 
         let store_dir = default_store_dir_windows(&home_dir, &current_dir);
-        assert_eq!(store_dir, Path::new("D:\\.pacquet-store"));
+        assert_eq!(store_dir, Path::new("D:\\.pnpm-store"));
     }
 
     #[cfg(windows)]
@@ -199,6 +199,6 @@ mod tests {
         let home_dir = Path::new("C:\\Users\\user");
 
         let store_dir = default_store_dir_windows(&home_dir, &current_dir);
-        assert_eq!(store_dir, Path::new("C:\\Users\\user\\AppData\\Local\\pacquet\\store"));
+        assert_eq!(store_dir, Path::new("C:\\Users\\user\\AppData\\Local\\pnpm\\store"));
     }
 }
