@@ -34,7 +34,7 @@ pub struct PackageFileInfo {
     pub size: Option<u64>,
 }
 
-/// Error type of [`StoreDir::write_tarball_index_file`].
+/// Error type of [`StoreDir::write_index_file`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum WriteTarballIndexFileError {
     WriteFile(EnsureFileError),
