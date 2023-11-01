@@ -1,3 +1,4 @@
+#![cfg(unix)] // running this on windows result in 'program not found'
 use assert_cmd::prelude::*;
 use command_extra::CommandExtra;
 use pacquet_testing_utils::{bin::pacquet_and_pnpm_with_temp_cwd, fs::get_all_files};
