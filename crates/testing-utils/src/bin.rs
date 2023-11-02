@@ -22,7 +22,7 @@ pub struct CommandTempCwd<NpmrcInfo> {
 impl CommandTempCwd<()> {
     /// Creates a temporary directory, a `workspace` sub-directory, a `pacquet` command,
     /// and a `pnpm` command with current dir set to the `workspace` sub-directory.
-    pub fn create() -> Self {
+    pub fn init() -> Self {
         let root = tempdir().expect("create temporary directory");
         let workspace = root.path().join("workspace");
         fs::create_dir(&workspace).expect("create temporary workspace for the commands");

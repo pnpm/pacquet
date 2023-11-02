@@ -16,7 +16,7 @@ use std::fs;
 #[ignore = "requires metadata cache feature which pacquet doesn't yet have"]
 fn store_usable_by_pnpm_offline() {
     let CommandTempCwd { pacquet, pnpm, root, workspace, .. } =
-        CommandTempCwd::create().add_default_npmrc();
+        CommandTempCwd::init().add_default_npmrc();
 
     eprintln!("Creating package.json...");
     let manifest_path = workspace.join("package.json");
@@ -43,7 +43,7 @@ fn store_usable_by_pnpm_offline() {
 #[test]
 fn same_file_structure() {
     let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info } =
-        CommandTempCwd::create().add_default_npmrc();
+        CommandTempCwd::init().add_default_npmrc();
     let AddDefaultNpmrcInfo { store_dir, .. } = npmrc_info;
 
     let modules_dir = workspace.join("node_modules");
@@ -86,7 +86,7 @@ fn same_file_structure() {
 #[test]
 fn same_index_file_contents() {
     let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info } =
-        CommandTempCwd::create().add_default_npmrc();
+        CommandTempCwd::init().add_default_npmrc();
     let AddDefaultNpmrcInfo { store_dir, .. } = npmrc_info;
 
     let modules_dir = workspace.join("node_modules");

@@ -20,7 +20,7 @@ fn canonicalize(path: &Path) -> PathBuf {
 
 #[test]
 fn store_path_should_return_store_dir_from_npmrc() {
-    let CommandTempCwd { pacquet, root, workspace, .. } = CommandTempCwd::create();
+    let CommandTempCwd { pacquet, root, workspace, .. } = CommandTempCwd::init();
 
     eprintln!("Creating .npmrc...");
     fs::write(workspace.join(".npmrc"), "store-dir=foo/bar").expect("write to .npmrc");

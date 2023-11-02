@@ -13,7 +13,7 @@ use std::fs;
 #[test]
 fn should_install_dependencies() {
     let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
-        CommandTempCwd::create().add_default_npmrc();
+        CommandTempCwd::init().add_default_npmrc();
     let AddDefaultNpmrcInfo { store_dir, .. } = npmrc_info;
 
     eprintln!("Creating package.json...");
@@ -56,7 +56,7 @@ fn should_install_dependencies() {
 #[test]
 fn should_install_exec_files() {
     let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
-        CommandTempCwd::create().add_default_npmrc();
+        CommandTempCwd::init().add_default_npmrc();
     let AddDefaultNpmrcInfo { store_dir, .. } = npmrc_info;
 
     eprintln!("Creating package.json...");
@@ -116,7 +116,7 @@ fn should_install_exec_files() {
 #[test]
 fn should_install_index_files() {
     let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
-        CommandTempCwd::create().add_default_npmrc();
+        CommandTempCwd::init().add_default_npmrc();
     let AddDefaultNpmrcInfo { store_dir, .. } = npmrc_info;
 
     eprintln!("Creating package.json...");

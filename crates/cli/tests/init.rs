@@ -25,7 +25,7 @@ fn should_create_package_json() {
 
 #[test]
 fn should_throw_on_existing_file() {
-    let CommandTempCwd { pacquet, root, workspace, .. } = CommandTempCwd::create();
+    let CommandTempCwd { pacquet, root, workspace, .. } = CommandTempCwd::init();
 
     let manifest_path = workspace.join("package.json");
     dbg!(&manifest_path);

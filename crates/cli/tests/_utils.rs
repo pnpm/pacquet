@@ -17,7 +17,7 @@ where
     Args: IntoIterator,
     Args::Item: AsRef<OsStr>,
 {
-    let env = CommandTempCwd::create();
+    let env = CommandTempCwd::init();
     let (command, root, workspace) = if create_npmrc {
         let env = env.add_default_npmrc();
         (env.pacquet, env.root, env.workspace)
