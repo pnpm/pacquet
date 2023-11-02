@@ -39,13 +39,16 @@ pub fn link_file(source_file: &Path, target_link: &Path) -> Result<(), LinkFileE
         })?;
     }
 
+    // TODO: add hardlink (https://github.com/pnpm/pacquet/issues/174)
+    // NOTE: do not hardlink packages with postinstall
+
     reflink_copy::reflink_or_copy(source_file, target_link).map_err(|error| {
         LinkFileError::CreateLink {
             from: source_file.to_path_buf(),
             to: target_link.to_path_buf(),
             error,
         }
-    })?; // TODO: add hardlink
+    })?;
 
     Ok(())
 }
