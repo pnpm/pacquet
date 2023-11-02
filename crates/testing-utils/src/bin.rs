@@ -17,6 +17,7 @@ fn create_default_npmrc(workspace: &Path) {
     fs::write(workspace.join(".npmrc"), DEFAULT_NPMRC).expect("write to .npmrc");
 }
 
+// TODO: convert this into a struct, add workspace and store_dir fields, make use of them
 pub fn pacquet_with_temp_cwd(create_npmrc: bool) -> (Command, TempDir, PathBuf) {
     let root = tempdir().expect("create temporary directory");
     let workspace = root.path().join("workspace");
@@ -30,6 +31,7 @@ pub fn pacquet_with_temp_cwd(create_npmrc: bool) -> (Command, TempDir, PathBuf) 
     (command, root, workspace)
 }
 
+// TODO: convert this into a struct, add workspace and store_dir fields, make use of them
 pub fn pacquet_and_pnpm_with_temp_cwd(create_npmrc: bool) -> (Command, Command, TempDir, PathBuf) {
     let root = tempdir().expect("create temporary directory");
     let workspace = root.path().join("workspace");
