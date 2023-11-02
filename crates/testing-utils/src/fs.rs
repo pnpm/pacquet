@@ -1,4 +1,5 @@
 use std::{io, path::Path};
+use walkdir::WalkDir;
 
 pub fn get_filenames_in_folder(path: &Path) -> Vec<String> {
     let mut files = std::fs::read_dir(path)
@@ -12,7 +13,7 @@ pub fn get_filenames_in_folder(path: &Path) -> Vec<String> {
 
 pub fn get_all_folders(root: &Path) -> Vec<String> {
     let mut files = Vec::new();
-    for entry in walkdir::WalkDir::new(root) {
+    for entry in WalkDir::new(root) {
         let entry = entry.unwrap();
         let entry_path = entry.path();
         if entry.file_type().is_dir() || entry.file_type().is_symlink() {
@@ -37,7 +38,7 @@ pub fn get_all_folders(root: &Path) -> Vec<String> {
 
 pub fn get_all_files(root: &Path) -> Vec<String> {
     let mut files = Vec::new();
-    for entry in walkdir::WalkDir::new(root) {
+    for entry in WalkDir::new(root) {
         let entry = entry.unwrap();
         let entry_path = entry.path();
 
