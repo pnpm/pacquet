@@ -91,15 +91,17 @@ pub fn ensure_file(
 /// Set file mode to 777 on POSIX platforms such as Linux or macOS,
 /// or do nothing on Windows.
 #[cfg_attr(windows, allow(unused))]
-pub fn make_file_executable(file_path: &Path) -> io::Result<()> {
+pub fn make_file_executable(file: &std::fs::File) -> io::Result<()> {
     #[cfg(unix)]
     return {
         use std::{
-            fs::{set_permissions, Permissions},
-            os::unix::fs::PermissionsExt,
+            fs::Permissions,
+            os::unix::fs::{MetadataExt, PermissionsExt},
         };
-        let permissions = Permissions::from_mode(0o777);
-        set_permissions(file_path, permissions)
+        let mode = file.metadata()?.mode();
+        let mode = mode | file_mode::EXEC_MASK;
+        let permissions = Permissions::from_mode(mode);
+        file.set_permissions(permissions)
     };
 
     #[cfg(windows)]
