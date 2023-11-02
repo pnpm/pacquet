@@ -20,7 +20,7 @@ pub struct CommandTempCwd<NpmrcInfo> {
 }
 
 impl CommandTempCwd<()> {
-    /// Creates a temporary directory, a `workspace` sub-directory, a `pacquet` command,
+    /// Create a temporary directory, a `workspace` sub-directory, a `pacquet` command,
     /// and a `pnpm` command with current dir set to the `workspace` sub-directory.
     pub fn init() -> Self {
         let root = tempdir().expect("create temporary directory");
