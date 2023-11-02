@@ -10,7 +10,10 @@ impl StoreDir {
     /// Path to an index file of a tarball.
     pub fn index_file_path(&self, tarball_integrity: &Integrity) -> PathBuf {
         let (algorithm, hex) = tarball_integrity.to_hex();
-        assert_eq!(algorithm, Algorithm::Sha512, "Only Sha512 is supported"); // TODO: propagate this error
+        assert!(
+            matches!(algorithm, Algorithm::Sha512 | Algorithm::Sha1),
+            "Only Sha1 and Sha512 are supported. {algorithm} isn't",
+        ); // TODO: propagate this error
         self.file_path_by_hex_str(&hex, "-index.json")
     }
 }
