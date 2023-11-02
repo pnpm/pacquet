@@ -19,8 +19,8 @@ where
 {
     let env = CommandTempCwd::create();
     let (command, root, workspace) = if create_npmrc {
-        let CommandTempCwd { pacquet, root, workspace, .. } = env.add_default_npmrc();
-        (pacquet, root, workspace)
+        let env = env.add_default_npmrc();
+        (env.pacquet, env.root, env.workspace)
     } else {
         (env.pacquet, env.root, env.workspace)
     };
