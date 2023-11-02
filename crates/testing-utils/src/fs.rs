@@ -1,8 +1,8 @@
-use std::{io, path::Path};
+use std::{fs, io, path::Path};
 use walkdir::WalkDir;
 
 pub fn get_filenames_in_folder(path: &Path) -> Vec<String> {
-    let mut files = std::fs::read_dir(path)
+    let mut files = fs::read_dir(path)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
         .collect::<Vec<_>>();
