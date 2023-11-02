@@ -34,6 +34,7 @@ pipe-trait  = { workspace = true }
 tokio       = { workspace = true }
 
 [dev-dependencies]
+pacquet-store-dir     = { workspace = true }
 pacquet-testing-utils = { workspace = true }
 
 assert_cmd        = { workspace = true }
@@ -43,3 +44,4 @@ insta             = { workspace = true }
 pretty_assertions = { workspace = true }
 serde_json        = { workspace = true }
 tempfile          = { workspace = true }
+walkdir           = { workspace = true }

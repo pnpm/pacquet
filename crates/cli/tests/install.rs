@@ -1,3 +1,6 @@
+pub mod _utils;
+pub use _utils::*;
+
 use assert_cmd::prelude::*;
 use command_extra::CommandExtra;
 use pacquet_testing_utils::{
@@ -105,4 +108,28 @@ fn should_install_exec_files() {
     insta::assert_debug_snapshot!(store_files);
 
     drop(root); // cleanup
+}
+
+#[test]
+fn should_install_index_files() {
+    let (command, root, workspace) = pacquet_with_temp_cwd(true);
+
+    eprintln!("Creating package.json...");
+    let manifest_path = workspace.join("package.json");
+    let package_json_content = serde_json::json!({
+        "dependencies": {
+            "is-odd": "3.0.1",
+        },
+        "devDependencies": {
+            "fast-decode-uri-component": "1.0.1",
+        },
+    });
+    fs::write(&manifest_path, package_json_content.to_string()).expect("write to package.json");
+
+    eprintln!("Executing command...");
+    command.with_arg("install").assert().success();
+
+    eprintln!("Snapshot");
+    let index_file_contents = root.path().join("pacquet-store").as_path().pipe(index_file_contents);
+    insta::assert_yaml_snapshot!(index_file_contents);
 }
