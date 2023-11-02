@@ -1,0 +1,25 @@
+[package]
+name                 = "pacquet-store-dir"
+description          = "Abstraction over store-dir paths"
+version              = "0.0.1"
+publish              = false
+authors.workspace    = true
+edition.workspace    = true
+homepage.workspace   = true
+keywords.workspace   = true
+license.workspace    = true
+repository.workspace = true
+
+[dependencies]
+pacquet-fs = { workspace = true }
+
+derive_more = { workspace = true }
+miette      = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+sha2        = { workspace = true }
+ssri        = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+pipe-trait        = { workspace = true }

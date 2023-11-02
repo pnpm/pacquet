@@ -10,5 +10,9 @@ keywords.workspace   = true
 license.workspace    = true
 repository.workspace = true
 
+[dependencies]
+derive_more = { workspace = true }
+miette      = { workspace = true }
+
 [target.'cfg(windows)'.dependencies]
 junction = { workspace = true }

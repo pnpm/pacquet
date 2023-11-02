@@ -2,13 +2,19 @@ use std::{
     collections::HashMap,
     ffi::OsString,
     io::{Cursor, Read},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
+    time::UNIX_EPOCH,
 };
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STD, Engine};
 use dashmap::DashMap;
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
+use pacquet_fs::file_mode;
+use pacquet_store_dir::{
+    PackageFileInfo, PackageFilesIndex, StoreDir, WriteCasFileError, WriteTarballIndexFileError,
+};
 use pipe_trait::Pipe;
 use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
@@ -70,7 +76,12 @@ pub enum TarballError {
     #[from(ignore)]
     #[display("Failed to write cafs: {_0}")]
     #[diagnostic(transparent)]
-    WriteCafs(pacquet_cafs::CafsError),
+    WriteCasFile(WriteCasFileError),
+
+    #[from(ignore)]
+    #[display("Failed to write tarball index: {_0}")]
+    #[diagnostic(transparent)]
+    WriteTarballIndexFile(WriteTarballIndexFileError),
 
     #[from(ignore)]
     #[diagnostic(code(pacquet_tarball::task_join_error))]
@@ -116,7 +127,7 @@ fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm,
 pub struct DownloadTarballToStore<'a> {
     pub tarball_cache: &'a Cache,
     pub http_client: &'a Client,
-    pub store_dir: &'static Path,
+    pub store_dir: &'static StoreDir,
     pub package_integrity: &'a str,
     pub package_unpacked_size: Option<usize>,
     pub package_url: &'a str,
@@ -194,36 +205,79 @@ impl<'a> DownloadTarballToStore<'a> {
                 integrity: package_integrity.to_string(),
                 error,
             })?;
+        #[derive(Debug, From)]
         enum TaskError {
             Checksum(ssri::Error),
             Other(TarballError),
         }
         let cas_paths = tokio::task::spawn(async move {
-            verify_checksum(&response, package_integrity).map_err(TaskError::Checksum)?;
-            let data =
-                decompress_gzip(&response, package_unpacked_size).map_err(TaskError::Other)?;
-            Archive::new(Cursor::new(data))
+            verify_checksum(&response, package_integrity.clone()).map_err(TaskError::Checksum)?;
+
+            // TODO: move tarball extraction to its own function
+            // TODO: test it
+            // TODO: test the duplication of entries
+
+            let mut archive = decompress_gzip(&response, package_unpacked_size)
+                .map_err(TaskError::Other)?
+                .pipe(Cursor::new)
+                .pipe(Archive::new);
+
+            let entries = archive
                 .entries()
                 .map_err(TarballError::ReadTarballEntries)
                 .map_err(TaskError::Other)?
-                .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir())
-                .map(|entry| -> Result<(OsString, PathBuf), TarballError> {
-                    let mut entry = entry.unwrap();
+                .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir());
 
-                    // Read the contents of the entry
-                    let mut buffer = Vec::with_capacity(entry.size() as usize);
-                    entry.read_to_end(&mut buffer).unwrap();
+            let ((_, Some(capacity)) | (capacity, None)) = entries.size_hint();
+            let mut cas_paths = HashMap::<OsString, PathBuf>::with_capacity(capacity);
+            let mut pkg_files_idx = PackageFilesIndex { files: HashMap::with_capacity(capacity) };
 
-                    let entry_path = entry.path().unwrap();
-                    let cleaned_entry_path =
-                        entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
-                    let integrity = pacquet_cafs::write_sync(store_dir, &buffer)
-                        .map_err(TarballError::WriteCafs)?;
+            for entry in entries {
+                let mut entry = entry.unwrap();
 
-                    Ok((cleaned_entry_path, store_dir.join(integrity)))
-                })
-                .collect::<Result<HashMap<OsString, PathBuf>, TarballError>>()
-                .map_err(TaskError::Other)
+                let file_mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
+                let file_is_executable = file_mode::is_all_exec(file_mode);
+
+                // Read the contents of the entry
+                let mut buffer = Vec::with_capacity(entry.size() as usize);
+                entry.read_to_end(&mut buffer).unwrap();
+
+                let entry_path = entry.path().unwrap();
+                let cleaned_entry_path =
+                    entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
+                let (file_path, file_hash) = store_dir
+                    .write_cas_file(&buffer, file_is_executable)
+                    .map_err(TarballError::WriteCasFile)?;
+
+                let tarball_index_key = cleaned_entry_path
+                    .to_str()
+                    .expect("entry path must be valid UTF-8") // TODO: propagate this error, provide more information
+                    .to_string(); // TODO: convert cleaned_entry_path to String too.
+
+                if let Some(previous) = cas_paths.insert(cleaned_entry_path, file_path) {
+                    tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
+                }
+
+                let checked_at = UNIX_EPOCH.elapsed().ok().map(|x| x.as_millis());
+                let file_size = entry.header().size().ok();
+                let file_integrity = format!("sha512-{}", BASE64_STD.encode(file_hash));
+                let file_attrs = PackageFileInfo {
+                    checked_at,
+                    integrity: file_integrity,
+                    mode: file_mode,
+                    size: file_size,
+                };
+
+                if let Some(previous) = pkg_files_idx.files.insert(tarball_index_key, file_attrs) {
+                    tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
+                }
+            }
+
+            store_dir
+                .write_index_file(&package_integrity, &pkg_files_idx)
+                .map_err(TarballError::WriteTarballIndexFile)?;
+
+            Ok(cas_paths)
         })
         .await
         .expect("no join error")
@@ -259,9 +313,10 @@ mod tests {
     ///
     /// **Side effect:**
     /// The `'static` path becomes dangling outside the scope of [`TempDir`].
-    fn tempdir_with_leaked_path() -> (TempDir, &'static Path) {
+    fn tempdir_with_leaked_path() -> (TempDir, &'static StoreDir) {
         let tempdir = tempdir().unwrap();
-        let leaked_path = tempdir.path().to_path_buf().pipe(Box::new).pipe(Box::leak);
+        let leaked_path =
+            tempdir.path().to_path_buf().pipe(StoreDir::from).pipe(Box::new).pipe(Box::leak);
         (tempdir, leaked_path)
     }
 

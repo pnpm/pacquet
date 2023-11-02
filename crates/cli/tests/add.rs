@@ -18,7 +18,7 @@ fn should_install_all_dependencies() {
     eprintln!("Ensure the manifest file ({manifest_path:?}) exists");
     assert!(manifest_path.exists());
 
-    let virtual_store_dir = workspace.join("node_modules").join(".pacquet");
+    let virtual_store_dir = workspace.join("node_modules").join(".pnpm");
 
     eprintln!("Ensure virtual store dir ({virtual_store_dir:?}) exists");
     assert!(virtual_store_dir.exists());
@@ -51,7 +51,7 @@ pub fn should_symlink_correctly() {
     eprintln!("Ensure the manifest file ({manifest_path:?}) exists");
     assert!(manifest_path.exists());
 
-    let virtual_store_dir = workspace.join("node_modules").join(".pacquet");
+    let virtual_store_dir = workspace.join("node_modules").join(".pnpm");
 
     eprintln!("Ensure virtual store dir ({virtual_store_dir:?}) exists");
     assert!(virtual_store_dir.exists());

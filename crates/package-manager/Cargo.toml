@@ -30,6 +30,7 @@ tracing         = { workspace = true }
 miette          = { workspace = true }
 
 [dev-dependencies]
+pacquet-store-dir     = { workspace = true }
 pacquet-testing-utils = { workspace = true }
 
 node-semver       = { workspace = true }

@@ -23,13 +23,14 @@ pacquet-package-manager  = { path = "crates/package-manager" }
 pacquet-lockfile         = { path = "crates/lockfile" }
 pacquet-npmrc            = { path = "crates/npmrc" }
 pacquet-executor         = { path = "crates/executor" }
-pacquet-cafs             = { path = "crates/cafs" }
 pacquet-diagnostics      = { path = "crates/diagnostics" }
+pacquet-store-dir        = { path = "crates/store-dir" }
 
 # Dependencies
 async-recursion    = { version = "1.0.5" }
 clap               = { version = "4", features = ["derive", "string"] }
 command-extra      = { version = "1.0.0" }
+base64             = { version = "0.21.5" }
 dashmap            = { version = "5.5.3" }
 derive_more        = { version = "1.0.0-beta.3", features = ["full"] }
 dunce              = { version = "1.0.4" }
@@ -49,6 +50,7 @@ serde              = { version = "1.0.188", features = ["derive"] }
 serde_ini          = { version = "0.2.0" }
 serde_json         = { version = "1.0.107", features = ["preserve_order"] }
 serde_yaml         = { version = "0.9.1" }
+sha2               = { version = "0.10.8" }
 split-first-char   = { version = "0.0.0" }
 ssri               = { version = "9.0.0" }
 strum              = { version = "0.25.0", features = ["derive"] }

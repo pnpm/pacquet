@@ -15,8 +15,9 @@ name = "micro-benchmark"
 path = "src/main.rs"
 
 [dependencies]
-pacquet-registry = { workspace = true }
-pacquet-tarball  = { workspace = true }
+pacquet-registry  = { workspace = true }
+pacquet-store-dir = { workspace = true }
+pacquet-tarball   = { workspace = true }
 
 clap         = { workspace = true }
 criterion    = { workspace = true }

@@ -37,6 +37,13 @@ jobs:
           clippy: true
           save-cache: ${{ github.ref_name == 'main' }}
 
+      - name: Install pnpm (for compatibility check)
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8.9.2
+          run_install: false
+          standalone: true
+
       - name: Clippy
         run: cargo clippy --locked -- -D warnings
 
@@ -48,7 +55,15 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@cargo-nextest
 
-      - run: cargo nextest run
+      - name: Test
+        shell: bash
+        run: |
+          # removing env vars is a temporary workaround for unit tests in pacquet relying on external environment
+          # this should be removed in the future
+          unset PNPM_HOME
+          unset XDG_DATA_HOME
+
+          cargo nextest run
 
   typos:
     name: Spell Check

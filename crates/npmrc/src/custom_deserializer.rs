@@ -1,3 +1,4 @@
+use pacquet_store_dir::StoreDir;
 use serde::{de, Deserialize, Deserializer};
 use std::{env, path::PathBuf, str::FromStr};
 
@@ -39,25 +40,25 @@ fn default_store_dir_windows(home_dir: &Path, current_dir: &Path) -> PathBuf {
         get_drive_letter(home_dir).expect("home dir is an absolute path with drive letter");
 
     if current_drive == home_drive {
-        return home_dir.join("AppData/Local/pacquet/store");
+        return home_dir.join("AppData/Local/pnpm/store");
     }
 
-    PathBuf::from(format!("{current_drive}:\\.pacquet-store"))
+    PathBuf::from(format!("{current_drive}:\\.pnpm-store"))
 }
 
-/// If the $PACQUET_HOME env variable is set, then $PACQUET_HOME/store
-/// If the $XDG_DATA_HOME env variable is set, then $XDG_DATA_HOME/pacquet/store
-/// On Windows: ~/AppData/Local/pacquet/store
-/// On macOS: ~/Library/pacquet/store
-/// On Linux: ~/.local/share/pacquet/store
-pub fn default_store_dir() -> PathBuf {
+/// If the $PNPM_HOME env variable is set, then $PNPM_HOME/store
+/// If the $XDG_DATA_HOME env variable is set, then $XDG_DATA_HOME/pnpm/store
+/// On Windows: ~/AppData/Local/pnpm/store
+/// On macOS: ~/Library/pnpm/store
+/// On Linux: ~/.local/share/pnpm/store
+pub fn default_store_dir() -> StoreDir {
     // TODO: If env variables start with ~, make sure to resolve it into home_dir.
-    if let Ok(pacquet_home) = env::var("PACQUET_HOME") {
-        return PathBuf::from(pacquet_home).join("store");
+    if let Ok(pnpm_home) = env::var("PNPM_HOME") {
+        return PathBuf::from(pnpm_home).join("store").into();
     }
 
     if let Ok(xdg_data_home) = env::var("XDG_DATA_HOME") {
-        return PathBuf::from(xdg_data_home).join("pacquet/store");
+        return PathBuf::from(xdg_data_home).join("pnpm").join("store").into();
     }
 
     // Using ~ (tilde) for defining home path is not supported in Rust and
@@ -67,13 +68,13 @@ pub fn default_store_dir() -> PathBuf {
     #[cfg(windows)]
     if cfg!(windows) {
         let current_dir = env::current_dir().expect("current directory is unavailable");
-        return default_store_dir_windows(&home_dir, &current_dir);
+        return default_store_dir_windows(&home_dir, &current_dir).into();
     }
 
     // https://doc.rust-lang.org/std/env/consts/constant.OS.html
     match env::consts::OS {
-        "linux" => home_dir.join(".local/share/pacquet/store"),
-        "macos" => home_dir.join("Library/pacquet/store"),
+        "linux" => home_dir.join(".local/share/pnpm/store").into(),
+        "macos" => home_dir.join("Library/pnpm/store").into(),
         _ => panic!("unsupported operating system: {}", env::consts::OS),
     }
 }
@@ -85,7 +86,7 @@ pub fn default_modules_dir() -> PathBuf {
 
 pub fn default_virtual_store_dir() -> PathBuf {
     // TODO: find directory with package.json
-    env::current_dir().expect("current directory is unavailable").join("node_modules/.pacquet")
+    env::current_dir().expect("current directory is unavailable").join("node_modules/.pnpm")
 }
 
 pub fn default_registry() -> String {
@@ -126,6 +127,13 @@ where
     Ok(env::current_dir().map_err(de::Error::custom)?.join(path))
 }
 
+pub fn deserialize_store_dir<'de, D>(deserializer: D) -> Result<StoreDir, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_pathbuf(deserializer).map(StoreDir::from)
+}
+
 /// This deserializer adds a trailing "/" if not exist to make our life easier.
 pub fn deserialize_registry<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
@@ -142,23 +150,27 @@ where
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
-    use std::{env, path::Path};
-
     use super::*;
+    use pretty_assertions::assert_eq;
+    use std::env;
+
+    fn display_store_dir(store_dir: &StoreDir) -> String {
+        store_dir.display().to_string().replace('\\', "/")
+    }
+
     #[test]
-    fn test_default_store_dir_with_pac_env() {
-        env::set_var("PACQUET_HOME", "/tmp/pacquet_home");
+    fn test_default_store_dir_with_pnpm_home_env() {
+        env::set_var("PNPM_HOME", "/tmp/pnpm-home"); // TODO: change this to dependency injection
         let store_dir = default_store_dir();
-        assert_eq!(store_dir, Path::new("/tmp/pacquet_home/store"));
-        env::remove_var("PACQUET_HOME");
+        assert_eq!(display_store_dir(&store_dir), "/tmp/pnpm-home/store");
+        env::remove_var("PNPM_HOME");
     }
 
     #[test]
     fn test_default_store_dir_with_xdg_env() {
-        env::set_var("XDG_DATA_HOME", "/tmp/xdg_data_home");
+        env::set_var("XDG_DATA_HOME", "/tmp/xdg_data_home"); // TODO: change this to dependency injection
         let store_dir = default_store_dir();
-        assert_eq!(store_dir, Path::new("/tmp/xdg_data_home/pacquet/store"));
+        assert_eq!(display_store_dir(&store_dir), "/tmp/xdg_data_home/pnpm/store");
         env::remove_var("XDG_DATA_HOME");
     }
 
@@ -177,7 +189,7 @@ mod tests {
         let home_dir = Path::new("C:\\Users\\user");
 
         let store_dir = default_store_dir_windows(&home_dir, &current_dir);
-        assert_eq!(store_dir, Path::new("D:\\.pacquet-store"));
+        assert_eq!(store_dir, Path::new("D:\\.pnpm-store"));
     }
 
     #[cfg(windows)]
@@ -187,6 +199,6 @@ mod tests {
         let home_dir = Path::new("C:\\Users\\user");
 
         let store_dir = default_store_dir_windows(&home_dir, &current_dir);
-        assert_eq!(store_dir, Path::new("C:\\Users\\user\\AppData\\Local\\pacquet\\store"));
+        assert_eq!(store_dir, Path::new("C:\\Users\\user\\AppData\\Local\\pnpm\\store"));
     }
 }

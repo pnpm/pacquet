@@ -102,7 +102,7 @@ mod tests {
         manifest.save().unwrap();
 
         let mut config = Npmrc::new();
-        config.store_dir = store_dir.to_path_buf();
+        config.store_dir = store_dir.into();
         config.modules_dir = modules_dir.to_path_buf();
         config.virtual_store_dir = virtual_store_dir.to_path_buf();
         let config = config.leak();

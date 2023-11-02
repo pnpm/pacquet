@@ -1,0 +1,69 @@
+---
+source: crates/cli/tests/install.rs
+assertion_line: 134
+expression: index_file_contents
+---
+v3/files/09/0a6758fac3c263f5f923075d986d2ed26ff74ca2c957e5b86b17e62342564ae142d5374d01ec5163c6f7091d93d2e0779c8da4083d8d0128f7408169781630-index.json:
+  LICENSE:
+    integrity: sha512-Vdy8f/8awcR1X0y/JLoh4NyuBiyALT25N9K2GC9FVN2F0UUpoMlojqyCWjRbY6uLLl12meK+BxeN9buKByI16w==
+    mode: 420
+    size: 1091
+  README.md:
+    integrity: sha512-QP4YssHyQQdbcycnEQMj8+KfnWyHZf8CIrzPo0eEyqirzRj/vUu/q5eeVHis4nOnTtOgoi8CYTNPp8WeAy7b3g==
+    mode: 420
+    size: 3495
+  index.js:
+    integrity: sha512-iB8QHS8YhvxfmsXI0l5VQJCOFAAxFp6kGkqZQc+V/icRwSksGZVgnG8XSzgVzA3MbNKhAzmjSNOf51vHe1O6ng==
+    mode: 420
+    size: 543
+  package.json:
+    integrity: sha512-VHvNaD4vn3sMJ5DGN7kjFTmUe+kjR5U0WS2RiGpW1iYv3B2M7SSsLMOt/aE5/jmdx1AtOCx6/FNuMFenzxHmwA==
+    mode: 420
+    size: 1381
+v3/files/58/a80a5a0e5e531bd1646c16f05bdf6da1fb0174a1d9c2fede3e5f306cd4302c56049ddd5776bb5b3f32d9ffee4347b707a5a6a1d0f7a12e788d343d1d54c822-index.json:
+  ".travis.yml":
+    integrity: sha512-N46xbCMPzjVO9+cnIu5wjL7+qaSBqll7Bv78EvZlq2AXbL8E1rwVm+QszbxRdk1xUW+GuyigGw5gx2onU/HPRA==
+    mode: 420
+    size: 132
+  LICENSE:
+    integrity: sha512-5cJRTSsNPWvtrST911xV54AhHPBpLCH0ASAcLX36mQrQAYi9aLMMgmqqKnLsrRKnS8A0MDhPkzsXUQNd0bGMog==
+    mode: 420
+    size: 1174
+  README.md:
+    integrity: sha512-ymXfFutFCrY/kPEHqMyayC2pY1QI6BOm9tPhPPuniRezG2ZlJHnrulS2ElZmALKrG8FrgtCCxfh4A5Yajp45MQ==
+    mode: 420
+    size: 1941
+  bench.js:
+    integrity: sha512-YKtUhJ1s/XsFB2w7xNm6/+H4APTV4tZ8OcUhp6PZOzR85ajkU5cQLkDiEDZSxUPI57sWHBXQpuNOwanRHBaNKg==
+    mode: 420
+    size: 941
+  index.js:
+    integrity: sha512-GlwBoTIecaHCY/uDh4y7omhvcfVxtCwtQNk4WL8fTG/39iUSWmiTLCQ+derUqdLxjZsis/5Vw5/mYFpCsucGIA==
+    mode: 420
+    size: 3219
+  package.json:
+    integrity: sha512-/9Pz/tZde0iSFpFncsYYC1wXFN3eFufiyZ/1+KQhS7j4hKDB0GobGopLDWJSrYW1M7Fibw3Y1HTyKD9s39afbA==
+    mode: 420
+    size: 818
+  test.js:
+    integrity: sha512-9wIYD0Rlp3cSetaiETBt1WSZPBf309lAFgTfS8ZX2NiIkC3mMqTPVbVR3fufhLqKkAeIdz8Dx3g2FD75ThgsfA==
+    mode: 420
+    size: 1007
+v3/files/5a/ed551de20b04af0a016254022499417f781a6384e39460ebfe77f1f2b08a5a14bb6d4a9dc1246063eaa1bda8499e66513ef7bcb1ab1d08cac3728c3f07c3ce-index.json:
+  LICENSE:
+    integrity: sha512-n8vl3Ia8M7208SVVnnZ8OqrZTHxLIbgLaU2bAVjuDxDuU7Enwr8F25dor9rx+2d4/QihlBL7PBra1lWGPmw1HQ==
+    mode: 420
+    size: 1088
+  README.md:
+    integrity: sha512-WAHlkulKpAdsF5GAlW8z+CYvpxV6Br/mNqaFS9O5st30R4D/oUBWQq2Ozi7WUU4ZooF4y+zc9WCKO+cQu/PA1A==
+    mode: 420
+    size: 5766
+  index.js:
+    integrity: sha512-F1S3Jxyg4w3H13WYZxGithspggDBL4Z73m9+GdVgR8mrd6kzBFIPoaMbDDpOb7azEPid2MtNlaXGYoB+9zP4Xw==
+    mode: 420
+    size: 662
+  package.json:
+    integrity: sha512-AdMGuA9LFnjGVfOwaF2x96dB/HRtJRwA6SUpiriWMKMWe96MfY13m3J3DEH58wK7Hj8xJnLOeqjmwVbDGe7q2g==
+    mode: 420
+    size: 1444
+
