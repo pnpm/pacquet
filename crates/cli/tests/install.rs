@@ -4,7 +4,7 @@ pub use _utils::*;
 use assert_cmd::prelude::*;
 use command_extra::CommandExtra;
 use pacquet_testing_utils::{
-    bin::pacquet_with_temp_cwd,
+    bin::{AddDefaultNpmrcInfo, CommandTempCwd},
     fs::{get_all_files, get_all_folders, is_symlink_or_junction},
 };
 use pipe_trait::Pipe;
@@ -12,7 +12,9 @@ use std::fs;
 
 #[test]
 fn should_install_dependencies() {
-    let (command, root, workspace) = pacquet_with_temp_cwd(true);
+    let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
+        CommandTempCwd::create().add_default_npmrc();
+    let AddDefaultNpmrcInfo { store_dir, .. } = npmrc_info;
 
     eprintln!("Creating package.json...");
     let manifest_path = workspace.join("package.json");
@@ -27,7 +29,7 @@ fn should_install_dependencies() {
     fs::write(&manifest_path, package_json_content.to_string()).expect("write to package.json");
 
     eprintln!("Executing command...");
-    command.with_arg("install").assert().success();
+    pacquet.with_arg("install").assert().success();
 
     eprintln!("Make sure the package is installed");
     assert!(is_symlink_or_junction(&workspace.join("node_modules/is-odd")).unwrap());
@@ -45,7 +47,7 @@ fn should_install_dependencies() {
 
     eprintln!("Snapshot");
     let workspace_folders = get_all_folders(&workspace);
-    let store_files = get_all_files(&root.path().join("pacquet-store"));
+    let store_files = get_all_files(&store_dir);
     insta::assert_debug_snapshot!((workspace_folders, store_files));
 
     drop(root); // cleanup
@@ -53,7 +55,9 @@ fn should_install_dependencies() {
 
 #[test]
 fn should_install_exec_files() {
-    let (command, root, workspace) = pacquet_with_temp_cwd(true);
+    let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
+        CommandTempCwd::create().add_default_npmrc();
+    let AddDefaultNpmrcInfo { store_dir, .. } = npmrc_info;
 
     eprintln!("Creating package.json...");
     let manifest_path = workspace.join("package.json");
@@ -65,10 +69,10 @@ fn should_install_exec_files() {
     fs::write(&manifest_path, package_json_content.to_string()).expect("write to package.json");
 
     eprintln!("Executing command...");
-    command.with_arg("install").assert().success();
+    pacquet.with_arg("install").assert().success();
 
     eprintln!("Listing all files in the store...");
-    let store_files = root.path().join("pacquet-store").pipe_as_ref(get_all_files);
+    let store_files = get_all_files(&store_dir);
 
     #[cfg(unix)]
     {
@@ -76,21 +80,20 @@ fn should_install_exec_files() {
         use pretty_assertions::assert_eq;
         use std::{fs::File, iter::repeat, os::unix::fs::MetadataExt};
 
-        let resolve = |name: &str| root.path().join("pacquet-store").join(name);
-
         eprintln!("All files that end with '-exec' are executable, others not");
         let (suffix_exec, suffix_other) =
             store_files.iter().partition::<Vec<_>, _>(|path| path.ends_with("-exec"));
         let (mode_exec, mode_other) = store_files
             .iter()
-            .partition::<Vec<_>, _>(|name| resolve(name).as_path().pipe(is_path_executable));
+            .partition::<Vec<_>, _>(|name| store_dir.join(name).as_path().pipe(is_path_executable));
         assert_eq!((&suffix_exec, &suffix_other), (&mode_exec, &mode_other));
 
         eprintln!("All executable files have mode 755");
         let actual_modes: Vec<_> = mode_exec
             .iter()
             .map(|name| {
-                let mode = resolve(name)
+                let mode = store_dir
+                    .join(name)
                     .pipe(File::open)
                     .expect("open file to get mode")
                     .metadata()
@@ -112,7 +115,9 @@ fn should_install_exec_files() {
 
 #[test]
 fn should_install_index_files() {
-    let (command, root, workspace) = pacquet_with_temp_cwd(true);
+    let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
+        CommandTempCwd::create().add_default_npmrc();
+    let AddDefaultNpmrcInfo { store_dir, .. } = npmrc_info;
 
     eprintln!("Creating package.json...");
     let manifest_path = workspace.join("package.json");
@@ -127,9 +132,11 @@ fn should_install_index_files() {
     fs::write(&manifest_path, package_json_content.to_string()).expect("write to package.json");
 
     eprintln!("Executing command...");
-    command.with_arg("install").assert().success();
+    pacquet.with_arg("install").assert().success();
 
     eprintln!("Snapshot");
-    let index_file_contents = root.path().join("pacquet-store").as_path().pipe(index_file_contents);
+    let index_file_contents = index_file_contents(&store_dir);
     insta::assert_yaml_snapshot!(index_file_contents);
+
+    drop(root); // cleanup
 }

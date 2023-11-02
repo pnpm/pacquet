@@ -1,7 +1,7 @@
 use assert_cmd::prelude::*;
 use command_extra::CommandExtra;
 use pacquet_store_dir::{PackageFileInfo, PackageFilesIndex};
-use pacquet_testing_utils::bin::pacquet_with_temp_cwd;
+use pacquet_testing_utils::bin::CommandTempCwd;
 use pipe_trait::Pipe;
 use std::{
     collections::BTreeMap,
@@ -17,7 +17,13 @@ where
     Args: IntoIterator,
     Args::Item: AsRef<OsStr>,
 {
-    let (command, root, workspace) = pacquet_with_temp_cwd(create_npmrc);
+    let env = CommandTempCwd::create();
+    let (command, root, workspace) = if create_npmrc {
+        let CommandTempCwd { pacquet, root, workspace, .. } = env.add_default_npmrc();
+        (pacquet, root, workspace)
+    } else {
+        (env.pacquet, env.root, env.workspace)
+    };
     command.with_args(args).assert().success();
     (root, workspace)
 }
