@@ -4,7 +4,10 @@ pub use _utils::*;
 
 use assert_cmd::prelude::*;
 use command_extra::CommandExtra;
-use pacquet_testing_utils::{bin::pacquet_and_pnpm_with_temp_cwd, fs::get_all_files};
+use pacquet_testing_utils::{
+    bin::{AddDefaultNpmrcInfo, CommandTempCwd},
+    fs::get_all_files,
+};
 use pipe_trait::Pipe;
 use pretty_assertions::assert_eq;
 use std::fs;
@@ -12,7 +15,8 @@ use std::fs;
 #[test]
 #[ignore = "requires metadata cache feature which pacquet doesn't yet have"]
 fn store_usable_by_pnpm_offline() {
-    let (pacquet, pnpm, root, workspace) = pacquet_and_pnpm_with_temp_cwd(true);
+    let CommandTempCwd { pacquet, pnpm, root, workspace, .. } =
+        CommandTempCwd::init().add_default_npmrc();
 
     eprintln!("Creating package.json...");
     let manifest_path = workspace.join("package.json");
@@ -38,9 +42,10 @@ fn store_usable_by_pnpm_offline() {
 
 #[test]
 fn same_file_structure() {
-    let (pacquet, pnpm, root, workspace) = pacquet_and_pnpm_with_temp_cwd(true);
+    let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info } =
+        CommandTempCwd::init().add_default_npmrc();
+    let AddDefaultNpmrcInfo { store_dir, .. } = npmrc_info;
 
-    let store_dir = root.path().join("pacquet-store");
     let modules_dir = workspace.join("node_modules");
     let cleanup = || {
         eprintln!("Cleaning up...");
@@ -80,9 +85,10 @@ fn same_file_structure() {
 
 #[test]
 fn same_index_file_contents() {
-    let (pacquet, pnpm, root, workspace) = pacquet_and_pnpm_with_temp_cwd(true);
+    let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info } =
+        CommandTempCwd::init().add_default_npmrc();
+    let AddDefaultNpmrcInfo { store_dir, .. } = npmrc_info;
 
-    let store_dir = root.path().join("pacquet-store");
     let modules_dir = workspace.join("node_modules");
     let cleanup = || {
         eprintln!("Cleaning up...");
