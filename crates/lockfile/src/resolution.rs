@@ -1,6 +1,7 @@
 use derive_more::{From, TryInto};
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
+use ssri::Integrity;
 
 /// For tarball hosted remotely or locally.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -8,14 +9,14 @@ use serde::{Deserialize, Serialize};
 pub struct TarballResolution {
     pub tarball: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub integrity: Option<String>,
+    pub integrity: Option<Integrity>,
 }
 
 /// For standard package specification, with package name and version range.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RegistryResolution {
-    pub integrity: String,
+    pub integrity: Integrity,
 }
 
 /// For local directory on a filesystem.
@@ -45,10 +46,10 @@ pub enum LockfileResolution {
 
 impl LockfileResolution {
     /// Get the integrity field if available.
-    pub fn integrity(&self) -> Option<&'_ str> {
+    pub fn integrity(&self) -> Option<&'_ Integrity> {
         match self {
-            LockfileResolution::Tarball(resolution) => resolution.integrity.as_deref(),
-            LockfileResolution::Registry(resolution) => resolution.integrity.as_str().pipe(Some),
+            LockfileResolution::Tarball(resolution) => resolution.integrity.as_ref(),
+            LockfileResolution::Registry(resolution) => resolution.integrity.pipe_ref(Some),
             LockfileResolution::Directory(_) | LockfileResolution::Git(_) => None,
         }
     }
@@ -101,6 +102,10 @@ mod tests {
     use pretty_assertions::assert_eq;
     use text_block_macros::text_block;
 
+    fn integrity(integrity_str: &str) -> Integrity {
+        integrity_str.parse().expect("parse integrity string")
+    }
+
     #[test]
     fn deserialize_tarball_resolution() {
         eprintln!("CASE: without integrity");
@@ -124,7 +129,7 @@ mod tests {
         dbg!(&received);
         let expected = LockfileResolution::Tarball(TarballResolution {
             tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
-            integrity: "sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==".to_string().into()
+            integrity: integrity("sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==").into()
         });
         assert_eq!(received, expected);
     }
@@ -147,7 +152,7 @@ mod tests {
         eprintln!("CASE: with integrity");
         let resolution = LockfileResolution::Tarball(TarballResolution {
             tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
-            integrity: "sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==".to_string().into()
+            integrity: integrity("sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==").into()
         });
         let received = serde_yaml::to_string(&resolution).unwrap();
         let received = received.trim();
@@ -167,7 +172,7 @@ mod tests {
         let received: LockfileResolution = serde_yaml::from_str(yaml).unwrap();
         dbg!(&received);
         let expected = LockfileResolution::Registry(RegistryResolution {
-            integrity: "sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==".to_string()
+            integrity: integrity("sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==")
         });
         assert_eq!(received, expected);
     }
@@ -175,7 +180,7 @@ mod tests {
     #[test]
     fn serialize_registry_resolution() {
         let resolution = LockfileResolution::Registry(RegistryResolution {
-            integrity: "sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==".to_string()
+            integrity: integrity("sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==")
         });
         let received = serde_yaml::to_string(&resolution).unwrap();
         let received = received.trim();
