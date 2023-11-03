@@ -130,9 +130,9 @@ jobs:
             echo
             echo '<details><summary>BENCHMARK_REPORT.json</summary>'
             echo
-            echo ```json
+            echo '```json'
             cat bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.json
-            echo ```
+            echo '```'
             echo
             echo '</details>'
             # echo
@@ -142,9 +142,9 @@ jobs:
             # echo
             # echo '<details><summary>BENCHMARK_REPORT.json</summary>'
             # echo
-            # echo ```json
+            # echo '```json'
             # cat bench-work-env/BENCHMARK_REPORT_CLEAN_INSTALL.json
-            # echo ```
+            # echo '```'
             # echo
             # echo '</details>'
           ) > bench-work-env/SUMMARY.md
