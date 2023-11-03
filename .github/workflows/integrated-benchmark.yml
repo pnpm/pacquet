@@ -109,12 +109,14 @@ jobs:
         run: |
           cargo run --bin=integrated-benchmark -- --scenario=frozen-lockfile --verdaccio HEAD main
           cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.md
+          cp bench-work-env/BENCHMARK_REPORT.json bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.json
 
       # - name: 'Benchmark: Clean Install'
       #   shell: bash
       #   run: |
       #     cargo run --bin=integrated-benchmark -- --scenario=clean-install --verdaccio HEAD main
       #     cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_CLEAN_INSTALL.md
+      #     cp bench-work-env/BENCHMARK_REPORT.json bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.json
 
       - name: Generate summary
         shell: bash
@@ -125,10 +127,26 @@ jobs:
             echo '### Scenario: Frozen Lockfile'
             echo
             cat bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.md
+            echo
+            echo '<details><summary>BENCHMARK_REPORT.json</summary>'
+            echo
+            echo ```json
+            cat bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.json
+            echo ```
+            echo
+            echo '</details>'
             # echo
             # echo '### Scenario: Clean Install'
             # echo
             # cat bench-work-env/BENCHMARK_REPORT_CLEAN_INSTALL.md
+            # echo
+            # echo '<details><summary>BENCHMARK_REPORT.json</summary>'
+            # echo
+            # echo ```json
+            # cat bench-work-env/BENCHMARK_REPORT_CLEAN_INSTALL.json
+            # echo ```
+            # echo
+            # echo '</details>'
           ) > bench-work-env/SUMMARY.md
 
       - name: Find Comment
