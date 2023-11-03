@@ -190,7 +190,6 @@ impl<'a> DownloadTarballToStore<'a> {
         // TODO: Cloning here is less than desirable, there are 2 possible solutions for this problem:
         // 1. Use an Arc and convert this line to Arc::clone.
         // 2. Replace ssri with base64 and serde magic (which supports Copy).
-        // 3. Use move somehow.
         let package_integrity = package_integrity.clone();
 
         #[derive(Debug, From)]
