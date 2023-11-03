@@ -57,17 +57,29 @@ impl<'a> CreateVirtualDirBySnapshot<'a> {
             }
         })?;
 
-        // 1. Install the files from `cas_paths`
-        let save_path =
-            virtual_node_modules_dir.join(dependency_path.package_specifier.name.to_string());
-        create_cas_files(import_method, &save_path, cas_paths)
-            .map_err(CreateVirtualDirError::CreateCasFiles)?;
+        let mut result1: Result<(), CreateVirtualDirError> = Ok(());
+        let mut result2: Result<(), CreateVirtualDirError> = Ok(());
+        rayon::scope(|scope| {
+            // 1. Install the files from `cas_paths`
+            scope.spawn(|_| {
+                let save_path = virtual_node_modules_dir
+                    .join(dependency_path.package_specifier.name.to_string());
+                result1 = create_cas_files(import_method, &save_path, cas_paths)
+                    .map_err(CreateVirtualDirError::CreateCasFiles);
+            });
 
-        // 2. Create the symlink layout
-        if let Some(dependencies) = &package_snapshot.dependencies {
-            create_symlink_layout(dependencies, virtual_store_dir, &virtual_node_modules_dir)
-        }
-
-        Ok(())
+            // 2. Create the symlink layout
+            scope.spawn(|_| {
+                if let Some(dependencies) = &package_snapshot.dependencies {
+                    create_symlink_layout(
+                        dependencies,
+                        virtual_store_dir,
+                        &virtual_node_modules_dir,
+                    );
+                    result2 = Ok(());
+                }
+            })
+        });
+        result1.and(result2)
     }
 }
