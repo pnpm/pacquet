@@ -173,7 +173,8 @@ impl<'a> DownloadTarballToStore<'a> {
         }
     }
 
-    async fn without_cache(&self) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
+    /// Execute the subroutine, but without using cache.
+    pub async fn without_cache(&self) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
         let &DownloadTarballToStore {
             http_client,
             store_dir,

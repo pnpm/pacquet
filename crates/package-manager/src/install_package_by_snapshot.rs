@@ -71,7 +71,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             package_unpacked_size: None,
             package_url: &tarball_url,
         }
-        .run()
+        .without_cache()
         .await
         .map_err(InstallPackageBySnapshotError::DownloadTarball)?;
 
