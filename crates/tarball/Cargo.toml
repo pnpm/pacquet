@@ -20,6 +20,7 @@ dashmap      = { workspace = true }
 derive_more  = { workspace = true }
 miette       = { workspace = true }
 pipe-trait   = { workspace = true }
+rayon        = { workspace = true }
 reqwest      = { workspace = true }
 serde        = { workspace = true }
 serde_json   = { workspace = true }
