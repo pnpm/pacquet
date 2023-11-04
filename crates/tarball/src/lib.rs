@@ -113,7 +113,6 @@ fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm,
 /// It returns a CAS map of files in the tarball.
 #[must_use]
 pub struct DownloadTarballToStore<'a> {
-    pub tarball_cache: &'a Cache,
     pub http_client: &'a Client,
     pub store_dir: &'static StoreDir,
     pub package_integrity: &'a Integrity,
@@ -122,9 +121,12 @@ pub struct DownloadTarballToStore<'a> {
 }
 
 impl<'a> DownloadTarballToStore<'a> {
-    /// Execute the subroutine.
-    pub async fn run(self) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
-        let &DownloadTarballToStore { tarball_cache, package_url, .. } = &self;
+    /// Execute the subroutine with cache.
+    pub async fn with_cache(
+        self,
+        tarball_cache: &'a Cache,
+    ) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
+        let &DownloadTarballToStore { package_url, .. } = &self;
 
         // QUESTION: I see no copying from existing store_dir, is there such mechanism?
         // TODO: If it's not implemented yet, implement it
@@ -319,14 +321,13 @@ mod tests {
     async fn packages_under_orgs_should_work() {
         let (store_dir, store_path) = tempdir_with_leaked_path();
         let cas_files = DownloadTarballToStore {
-            tarball_cache: &Default::default(),
             http_client: &Default::default(),
             store_dir: store_path,
             package_integrity: &integrity("sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w=="),
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz"
         }
-        .run()
+        .without_cache()
         .await
         .unwrap();
 
@@ -359,14 +360,13 @@ mod tests {
     async fn should_throw_error_on_checksum_mismatch() {
         let (store_dir, store_path) = tempdir_with_leaked_path();
         DownloadTarballToStore {
-            tarball_cache: &Default::default(),
             http_client: &Default::default(),
             store_dir: store_path,
             package_integrity: &integrity("sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w=="),
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
         }
-        .run()
+        .without_cache()
         .await
         .expect_err("checksum mismatch");
 

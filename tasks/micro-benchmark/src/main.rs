@@ -37,14 +37,13 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
             let http_client = Client::new();
 
             let cas_map = DownloadTarballToStore {
-                tarball_cache: &Default::default(),
                 http_client: &http_client,
                 store_dir,
                 package_integrity: &package_integrity,
                 package_unpacked_size: Some(16697),
                 package_url: url,
             }
-            .run()
+            .without_cache()
             .await
             .unwrap();
             cas_map.len()
