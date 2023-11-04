@@ -155,7 +155,7 @@ impl<'a> DownloadTarballToStore<'a> {
             if tarball_cache.insert(package_url.to_string(), Arc::clone(&cache_lock)).is_some() {
                 tracing::warn!(target: "pacquet::download", ?package_url, "Race condition detected when writing to cache");
             }
-            let cas_paths = self.without_cache().await?;
+            let cas_paths = self.without_cache().await?.pipe(Arc::new);
             let mut cache_write = cache_lock.write().await;
             *cache_write = CacheValue::Available(Arc::clone(&cas_paths));
             notify.notify_waiters();
@@ -164,7 +164,7 @@ impl<'a> DownloadTarballToStore<'a> {
     }
 
     /// Execute the subroutine, but without using cache.
-    pub async fn without_cache(&self) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
+    pub async fn without_cache(&self) -> Result<HashMap<OsString, PathBuf>, TarballError> {
         let &DownloadTarballToStore {
             http_client,
             store_dir,
@@ -274,7 +274,7 @@ impl<'a> DownloadTarballToStore<'a> {
 
         tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
 
-        let cas_paths = extract_tarball_task.await.expect("no join error")?.pipe(Arc::new);
+        let cas_paths = extract_tarball_task.await.expect("no join error")?;
 
         tracing::info!(target: "pacquet::download", ?package_url, "Tarball extracted");
 
