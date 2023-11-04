@@ -186,7 +186,8 @@ impl<'a> DownloadTarballToStore<'a> {
             .map_err(network_error)?
             .bytes()
             .await
-            .map_err(network_error)?;
+            .map_err(network_error)?
+            .pipe(Arc::new);
 
         tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
 
@@ -195,27 +196,24 @@ impl<'a> DownloadTarballToStore<'a> {
         // 2. Replace ssri with base64 and serde magic (which supports Copy).
         let package_integrity = package_integrity.clone();
 
-        #[derive(Debug, From)]
-        enum TaskError {
-            Checksum(ssri::Error),
-            Other(TarballError),
-        }
-        let cas_paths = tokio::task::spawn(async move {
-            verify_checksum(&response, package_integrity.clone()).map_err(TaskError::Checksum)?;
+        let verify_checksum_task = {
+            let response = Arc::clone(&response);
+            let package_integrity = package_integrity.clone();
+            tokio::task::spawn(async move { verify_checksum(&response, package_integrity) })
+        };
 
+        let extract_tarball_task = tokio::task::spawn(async move {
             // TODO: move tarball extraction to its own function
             // TODO: test it
             // TODO: test the duplication of entries
 
-            let mut archive = decompress_gzip(&response, package_unpacked_size)
-                .map_err(TaskError::Other)?
+            let mut archive = decompress_gzip(&response, package_unpacked_size)?
                 .pipe(Cursor::new)
                 .pipe(Archive::new);
 
             let entries = archive
                 .entries()
-                .map_err(TarballError::ReadTarballEntries)
-                .map_err(TaskError::Other)?
+                .map_err(TarballError::ReadTarballEntries)?
                 .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir());
 
             let ((_, Some(capacity)) | (capacity, None)) = entries.size_hint();
@@ -267,19 +265,16 @@ impl<'a> DownloadTarballToStore<'a> {
                 .write_index_file(&package_integrity, &pkg_files_idx)
                 .map_err(TarballError::WriteTarballIndexFile)?;
 
-            Ok(cas_paths)
-        })
-        .await
-        .expect("no join error")
-        .map_err(|error| match error {
-            TaskError::Checksum(error) => {
-                TarballError::Checksum(VerifyChecksumError { url: package_url.to_string(), error })
-            }
-            TaskError::Other(error) => error,
-        })?
-        .pipe(Arc::new);
+            Ok::<_, TarballError>(cas_paths)
+        });
+
+        verify_checksum_task.await.expect("no join error").map_err(|error| {
+            TarballError::Checksum(VerifyChecksumError { url: package_url.to_string(), error })
+        })?;
 
         tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
+
+        let cas_paths = extract_tarball_task.await.expect("no join error")?.pipe(Arc::new);
 
         Ok(cas_paths)
     }
