@@ -49,7 +49,7 @@ impl LockfileResolution {
     pub fn integrity(&self) -> Option<&'_ Integrity> {
         match self {
             LockfileResolution::Tarball(resolution) => resolution.integrity.as_ref(),
-            LockfileResolution::Registry(resolution) => resolution.integrity.pipe_ref(Some),
+            LockfileResolution::Registry(resolution) => Some(&resolution.integrity),
             LockfileResolution::Directory(_) | LockfileResolution::Git(_) => None,
         }
     }
