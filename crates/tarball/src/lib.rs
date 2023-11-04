@@ -276,6 +276,8 @@ impl<'a> DownloadTarballToStore<'a> {
 
         let cas_paths = extract_tarball_task.await.expect("no join error")?.pipe(Arc::new);
 
+        tracing::info!(target: "pacquet::download", ?package_url, "Tarball extracted");
+
         Ok(cas_paths)
     }
 }
