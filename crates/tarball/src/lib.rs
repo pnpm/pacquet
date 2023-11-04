@@ -17,7 +17,7 @@ use pacquet_store_dir::{
 };
 use pipe_trait::Pipe;
 use reqwest::Client;
-use ssri::{Integrity, IntegrityChecker};
+use ssri::Integrity;
 use tar::Archive;
 use tokio::sync::{Notify, RwLock};
 use tracing::instrument;
@@ -104,8 +104,8 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
 }
 
 #[instrument(skip(data), fields(data_len = data.len()))]
-fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm, ssri::Error> {
-    integrity.pipe(IntegrityChecker::new).chain(data).result()
+fn verify_checksum(data: &[u8], integrity: &Integrity) -> Result<ssri::Algorithm, ssri::Error> {
+    integrity.check(data)
 }
 
 /// This subroutine downloads and extracts a tarball to the store directory.
@@ -194,12 +194,12 @@ impl<'a> DownloadTarballToStore<'a> {
         // TODO: Cloning here is less than desirable, there are 2 possible solutions for this problem:
         // 1. Use an Arc and convert this line to Arc::clone.
         // 2. Replace ssri with base64 and serde magic (which supports Copy).
-        let package_integrity = package_integrity.clone();
+        let package_integrity = package_integrity.clone().pipe(Arc::new);
 
         let verify_checksum_task = {
             let response = Arc::clone(&response);
-            let package_integrity = package_integrity.clone();
-            tokio::task::spawn(async move { verify_checksum(&response, package_integrity) })
+            let package_integrity = Arc::clone(&package_integrity);
+            tokio::task::spawn(async move { verify_checksum(&response, &package_integrity) })
         };
 
         let extract_tarball_task = tokio::task::spawn(async move {
