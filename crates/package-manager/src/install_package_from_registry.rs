@@ -75,7 +75,6 @@ impl<'a> InstallPackageFromRegistry<'a> {
 
         // TODO: skip when it already exists in store?
         let cas_paths = DownloadTarballToStore {
-            tarball_cache,
             http_client,
             store_dir: &config.store_dir,
             package_integrity: package_version
@@ -86,7 +85,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
             package_unpacked_size: package_version.dist.unpacked_size,
             package_url: package_version.as_tarball_url(),
         }
-        .run()
+        .with_cache(tarball_cache)
         .await
         .map_err(InstallPackageFromRegistryError::DownloadTarballToStore)?;
 

@@ -58,7 +58,6 @@ where
                 assert_eq!(lockfile_version.major, 6); // compatibility check already happens at serde, but this still helps preventing programmer mistakes.
 
                 InstallFrozenLockfile {
-                    tarball_cache,
                     http_client,
                     config,
                     project_snapshot,
