@@ -107,14 +107,14 @@ jobs:
       - name: 'Benchmark: Frozen Lockfile'
         shell: bash
         run: |
-          cargo run --bin=integrated-benchmark -- --scenario=frozen-lockfile --verdaccio HEAD main
+          cargo run --bin=integrated-benchmark -- --scenario=frozen-lockfile --verdaccio HEAD main --with-pnpm
           cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.md
           cp bench-work-env/BENCHMARK_REPORT.json bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.json
 
       # - name: 'Benchmark: Clean Install'
       #   shell: bash
       #   run: |
-      #     cargo run --bin=integrated-benchmark -- --scenario=clean-install --verdaccio HEAD main
+      #     cargo run --bin=integrated-benchmark -- --scenario=clean-install --verdaccio HEAD main --with-pnpm
       #     cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_CLEAN_INSTALL.md
       #     cp bench-work-env/BENCHMARK_REPORT.json bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.json
 

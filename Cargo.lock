@@ -1508,6 +1508,7 @@ dependencies = [
  "pacquet-store-dir",
  "pipe-trait",
  "pretty_assertions",
+ "rayon",
  "reqwest",
  "serde",
  "serde_json",

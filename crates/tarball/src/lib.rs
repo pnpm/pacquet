@@ -16,8 +16,9 @@ use pacquet_store_dir::{
     PackageFileInfo, PackageFilesIndex, StoreDir, WriteCasFileError, WriteTarballIndexFileError,
 };
 use pipe_trait::Pipe;
+use rayon::prelude::*;
 use reqwest::Client;
-use ssri::{Integrity, IntegrityChecker};
+use ssri::Integrity;
 use tar::Archive;
 use tokio::sync::{Notify, RwLock};
 use tracing::instrument;
@@ -104,8 +105,8 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
 }
 
 #[instrument(skip(data), fields(data_len = data.len()))]
-fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm, ssri::Error> {
-    integrity.pipe(IntegrityChecker::new).chain(data).result()
+fn verify_checksum(data: &[u8], integrity: &Integrity) -> Result<ssri::Algorithm, ssri::Error> {
+    integrity.check(data)
 }
 
 /// This subroutine downloads and extracts a tarball to the store directory.
@@ -113,7 +114,6 @@ fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm,
 /// It returns a CAS map of files in the tarball.
 #[must_use]
 pub struct DownloadTarballToStore<'a> {
-    pub tarball_cache: &'a Cache,
     pub http_client: &'a Client,
     pub store_dir: &'static StoreDir,
     pub package_integrity: &'a Integrity,
@@ -122,9 +122,12 @@ pub struct DownloadTarballToStore<'a> {
 }
 
 impl<'a> DownloadTarballToStore<'a> {
-    /// Execute the subroutine.
-    pub async fn run(self) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
-        let &DownloadTarballToStore { tarball_cache, package_url, .. } = &self;
+    /// Execute the subroutine with cache.
+    pub async fn with_cache(
+        self,
+        tarball_cache: &'a Cache,
+    ) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
+        let &DownloadTarballToStore { package_url, .. } = &self;
 
         // QUESTION: I see no copying from existing store_dir, is there such mechanism?
         // TODO: If it's not implemented yet, implement it
@@ -153,7 +156,7 @@ impl<'a> DownloadTarballToStore<'a> {
             if tarball_cache.insert(package_url.to_string(), Arc::clone(&cache_lock)).is_some() {
                 tracing::warn!(target: "pacquet::download", ?package_url, "Race condition detected when writing to cache");
             }
-            let cas_paths = self.without_cache().await?;
+            let cas_paths = self.without_cache().await?.pipe(Arc::new);
             let mut cache_write = cache_lock.write().await;
             *cache_write = CacheValue::Available(Arc::clone(&cas_paths));
             notify.notify_waiters();
@@ -161,7 +164,8 @@ impl<'a> DownloadTarballToStore<'a> {
         }
     }
 
-    async fn without_cache(&self) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
+    /// Execute the subroutine without a cache.
+    pub async fn without_cache(&self) -> Result<HashMap<OsString, PathBuf>, TarballError> {
         let &DownloadTarballToStore {
             http_client,
             store_dir,
@@ -183,100 +187,102 @@ impl<'a> DownloadTarballToStore<'a> {
             .map_err(network_error)?
             .bytes()
             .await
-            .map_err(network_error)?;
+            .map_err(network_error)?
+            .pipe(Arc::new);
 
         tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
 
         // TODO: Cloning here is less than desirable, there are 2 possible solutions for this problem:
         // 1. Use an Arc and convert this line to Arc::clone.
         // 2. Replace ssri with base64 and serde magic (which supports Copy).
-        let package_integrity = package_integrity.clone();
+        let package_integrity = package_integrity.clone().pipe(Arc::new);
 
-        #[derive(Debug, From)]
-        enum TaskError {
-            Checksum(ssri::Error),
-            Other(TarballError),
-        }
-        let cas_paths = tokio::task::spawn(async move {
-            verify_checksum(&response, package_integrity.clone()).map_err(TaskError::Checksum)?;
+        let verify_checksum_task = {
+            let response = Arc::clone(&response);
+            let package_integrity = Arc::clone(&package_integrity);
+            tokio::task::spawn(async move { verify_checksum(&response, &package_integrity) })
+        };
 
+        let extract_tarball_task = tokio::task::spawn(async move {
             // TODO: move tarball extraction to its own function
             // TODO: test it
             // TODO: test the duplication of entries
 
-            let mut archive = decompress_gzip(&response, package_unpacked_size)
-                .map_err(TaskError::Other)?
+            let mut archive = decompress_gzip(&response, package_unpacked_size)?
                 .pipe(Cursor::new)
                 .pipe(Archive::new);
 
-            let entries = archive
-                .entries()
-                .map_err(TarballError::ReadTarballEntries)
-                .map_err(TaskError::Other)?
-                .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir());
-
-            let ((_, Some(capacity)) | (capacity, None)) = entries.size_hint();
-            let mut cas_paths = HashMap::<OsString, PathBuf>::with_capacity(capacity);
-            let mut pkg_files_idx = PackageFilesIndex { files: HashMap::with_capacity(capacity) };
-
-            for entry in entries {
-                let mut entry = entry.unwrap();
-
-                let file_mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
-                let file_is_executable = file_mode::is_all_exec(file_mode);
-
-                // Read the contents of the entry
-                let mut buffer = Vec::with_capacity(entry.size() as usize);
-                entry.read_to_end(&mut buffer).unwrap();
-
-                let entry_path = entry.path().unwrap();
-                let cleaned_entry_path =
-                    entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
-                let (file_path, file_hash) = store_dir
-                    .write_cas_file(&buffer, file_is_executable)
-                    .map_err(TarballError::WriteCasFile)?;
-
-                let tarball_index_key = cleaned_entry_path
-                    .to_str()
-                    .expect("entry path must be valid UTF-8") // TODO: propagate this error, provide more information
-                    .to_string(); // TODO: convert cleaned_entry_path to String too.
-
-                if let Some(previous) = cas_paths.insert(cleaned_entry_path, file_path) {
-                    tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
-                }
-
-                let checked_at = UNIX_EPOCH.elapsed().ok().map(|x| x.as_millis());
-                let file_size = entry.header().size().ok();
-                let file_integrity = format!("sha512-{}", BASE64_STD.encode(file_hash));
-                let file_attrs = PackageFileInfo {
-                    checked_at,
-                    integrity: file_integrity,
-                    mode: file_mode,
-                    size: file_size,
-                };
-
-                if let Some(previous) = pkg_files_idx.files.insert(tarball_index_key, file_attrs) {
-                    tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
-                }
+            struct FileInfo {
+                cleaned_entry_path: OsString,
+                file_mode: u32,
+                file_size: Option<u64>,
+                buffer: Vec<u8>,
             }
+            let (cas_paths, index_entries) = archive
+                .entries()
+                .map_err(TarballError::ReadTarballEntries)?
+                .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir())
+                .map(|entry| entry.expect("get entry"))
+                .map(|mut entry| {
+                    let cleaned_entry_path = entry
+                        .path()
+                        .expect("get path") // TODO: properly propagate this error
+                        .components()
+                        .skip(1)
+                        .collect::<PathBuf>()
+                        .into_os_string();
+                    let file_mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
+                    let file_size = entry.header().size().ok();
+                    let mut buffer = Vec::with_capacity(entry.size() as usize);
+                    entry.read_to_end(&mut buffer).expect("read content"); // TODO: properly propagate this error
+                    FileInfo { cleaned_entry_path, file_mode, file_size, buffer }
+                })
+                .collect::<Vec<FileInfo>>()
+                .into_par_iter()
+                .map(|file_info| -> Result<_, TarballError> {
+                    let FileInfo { cleaned_entry_path, file_mode, file_size, buffer } = file_info;
+                    let file_is_executable = file_mode::is_all_exec(file_mode);
+
+                    let (file_path, file_hash) = store_dir
+                        .write_cas_file(&buffer, file_is_executable)
+                        .map_err(TarballError::WriteCasFile)?;
+
+                    let index_key = cleaned_entry_path
+                        .to_str()
+                        .expect("entry path must be valid UTF-8") // TODO: propagate this error, provide more information
+                        .to_string(); // TODO: convert cleaned_entry_path to String too.
+
+                    let checked_at = UNIX_EPOCH.elapsed().ok().map(|x| x.as_millis());
+                    let file_integrity = format!("sha512-{}", BASE64_STD.encode(file_hash));
+                    let index_value = PackageFileInfo {
+                        checked_at,
+                        integrity: file_integrity,
+                        mode: file_mode,
+                        size: file_size,
+                    };
+
+                    Ok(((cleaned_entry_path, file_path), (index_key, index_value)))
+                })
+                .collect::<Result<(HashMap<_, _>, HashMap<_, _>), TarballError>>()?;
+
+            let pkg_files_idx = PackageFilesIndex { files: index_entries };
 
             store_dir
                 .write_index_file(&package_integrity, &pkg_files_idx)
                 .map_err(TarballError::WriteTarballIndexFile)?;
 
-            Ok(cas_paths)
-        })
-        .await
-        .expect("no join error")
-        .map_err(|error| match error {
-            TaskError::Checksum(error) => {
-                TarballError::Checksum(VerifyChecksumError { url: package_url.to_string(), error })
-            }
-            TaskError::Other(error) => error,
-        })?
-        .pipe(Arc::new);
+            Ok::<_, TarballError>(cas_paths)
+        });
+
+        verify_checksum_task.await.expect("no join error").map_err(|error| {
+            TarballError::Checksum(VerifyChecksumError { url: package_url.to_string(), error })
+        })?;
 
         tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
+
+        let cas_paths = extract_tarball_task.await.expect("no join error")?;
+
+        tracing::info!(target: "pacquet::download", ?package_url, "Tarball extracted");
 
         Ok(cas_paths)
     }
@@ -316,14 +322,13 @@ mod tests {
     async fn packages_under_orgs_should_work() {
         let (store_dir, store_path) = tempdir_with_leaked_path();
         let cas_files = DownloadTarballToStore {
-            tarball_cache: &Default::default(),
             http_client: &Default::default(),
             store_dir: store_path,
             package_integrity: &integrity("sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w=="),
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz"
         }
-        .run()
+        .without_cache()
         .await
         .unwrap();
 
@@ -356,14 +361,13 @@ mod tests {
     async fn should_throw_error_on_checksum_mismatch() {
         let (store_dir, store_path) = tempdir_with_leaked_path();
         DownloadTarballToStore {
-            tarball_cache: &Default::default(),
             http_client: &Default::default(),
             store_dir: store_path,
             package_integrity: &integrity("sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w=="),
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
         }
-        .run()
+        .without_cache()
         .await
         .expect_err("checksum mismatch");
 

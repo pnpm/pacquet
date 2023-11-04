@@ -3,7 +3,7 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::{DependencyPath, LockfileResolution, PackageSnapshot, PkgNameVerPeer};
 use pacquet_npmrc::Npmrc;
-use pacquet_tarball::{Cache, DownloadTarballToStore, TarballError};
+use pacquet_tarball::{DownloadTarballToStore, TarballError};
 use pipe_trait::Pipe;
 use reqwest::Client;
 use std::borrow::Cow;
@@ -12,7 +12,6 @@ use std::borrow::Cow;
 /// then creates the symlink layout for the package.
 #[must_use]
 pub struct InstallPackageBySnapshot<'a> {
-    pub tarball_cache: &'a Cache,
     pub http_client: &'a Client,
     pub config: &'static Npmrc,
     pub dependency_path: &'a DependencyPath,
@@ -29,13 +28,8 @@ pub enum InstallPackageBySnapshotError {
 impl<'a> InstallPackageBySnapshot<'a> {
     /// Execute the subroutine.
     pub async fn run(self) -> Result<(), InstallPackageBySnapshotError> {
-        let InstallPackageBySnapshot {
-            tarball_cache,
-            http_client,
-            config,
-            dependency_path,
-            package_snapshot,
-        } = self;
+        let InstallPackageBySnapshot { http_client, config, dependency_path, package_snapshot } =
+            self;
         let PackageSnapshot { resolution, .. } = package_snapshot;
         let DependencyPath { custom_registry, package_specifier } = dependency_path;
 
@@ -64,14 +58,13 @@ impl<'a> InstallPackageBySnapshot<'a> {
 
         // TODO: skip when already exists in store?
         let cas_paths = DownloadTarballToStore {
-            tarball_cache,
             http_client,
             store_dir: &config.store_dir,
             package_integrity: integrity,
             package_unpacked_size: None,
             package_url: &tarball_url,
         }
-        .run()
+        .without_cache()
         .await
         .map_err(InstallPackageBySnapshotError::DownloadTarball)?;
 
