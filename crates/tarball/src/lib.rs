@@ -31,15 +31,6 @@ pub struct NetworkError {
 }
 
 #[derive(Debug, Display, Error, Diagnostic)]
-#[display("Cannot parse {integrity:?} from {url} as an integrity: {error}")]
-pub struct ParseIntegrityError {
-    pub url: String,
-    pub integrity: String,
-    #[error(source)]
-    pub error: ssri::Error,
-}
-
-#[derive(Debug, Display, Error, Diagnostic)]
 #[display("Failed to verify the integrity of {url}: {error}")]
 pub struct VerifyChecksumError {
     pub url: String,
@@ -56,9 +47,6 @@ pub enum TarballError {
     #[from(ignore)]
     #[diagnostic(code(pacquet_tarball::io_error))]
     ReadTarballEntries(std::io::Error),
-
-    #[diagnostic(code(pacquet_tarball::parse_integrity_error))]
-    ParseIntegrity(ParseIntegrityError),
 
     #[diagnostic(code(pacquet_tarball::verify_checksum_error))]
     Checksum(VerifyChecksumError),
@@ -128,7 +116,7 @@ pub struct DownloadTarballToStore<'a> {
     pub tarball_cache: &'a Cache,
     pub http_client: &'a Client,
     pub store_dir: &'static StoreDir,
-    pub package_integrity: &'a str,
+    pub package_integrity: &'a Integrity,
     pub package_unpacked_size: Option<usize>,
     pub package_url: &'a str,
 }
@@ -202,12 +190,11 @@ impl<'a> DownloadTarballToStore<'a> {
 
         tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
 
-        let package_integrity: Integrity =
-            package_integrity.parse().map_err(|error| ParseIntegrityError {
-                url: package_url.to_string(),
-                integrity: package_integrity.to_string(),
-                error,
-            })?;
+        // TODO: Cloning here is less than desirable, there are 2 possible solutions for this problem:
+        // 1. Use an Arc and convert this line to Arc::clone.
+        // 2. Replace ssri with base64 and serde magic (which supports Copy).
+        let package_integrity = package_integrity.clone();
+
         #[derive(Debug, From)]
         enum TaskError {
             Checksum(ssri::Error),
@@ -306,6 +293,10 @@ mod tests {
 
     use super::*;
 
+    fn integrity(integrity_str: &str) -> Integrity {
+        integrity_str.parse().expect("parse integrity string")
+    }
+
     /// **Problem:**
     /// The tested function requires `'static` paths, leaking would prevent
     /// temporary files from being cleaned up.
@@ -331,7 +322,7 @@ mod tests {
             tarball_cache: &Default::default(),
             http_client: &Default::default(),
             store_dir: store_path,
-            package_integrity: "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
+            package_integrity: &integrity("sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w=="),
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz"
         }
@@ -371,7 +362,7 @@ mod tests {
             tarball_cache: &Default::default(),
             http_client: &Default::default(),
             store_dir: store_path,
-            package_integrity: "sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
+            package_integrity: &integrity("sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w=="),
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
         }

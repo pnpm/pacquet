@@ -8,6 +8,7 @@ use pacquet_tarball::DownloadTarballToStore;
 use pipe_trait::Pipe;
 use project_root::get_project_root;
 use reqwest::Client;
+use ssri::Integrity;
 use tempfile::tempdir;
 
 #[derive(Debug, Parser)]
@@ -24,24 +25,28 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
 
     let url = &format!("{0}/@fastify+error-3.3.0.tgz", server.url());
+    let package_integrity: Integrity = "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==".parse().expect("parse integrity string");
 
     group.throughput(Throughput::Bytes(file.len() as u64));
     group.bench_function("download_dependency", |b| {
         b.to_async(&rt).iter(|| async {
             // NOTE: the tempdir is being leaked, meaning the cleanup would be postponed until the end of the benchmark
             let dir = tempdir().unwrap();
-            let store_dir = dir.path().to_path_buf().pipe(StoreDir::from).pipe(Box::new).pipe(Box::leak);
+            let store_dir =
+                dir.path().to_path_buf().pipe(StoreDir::from).pipe(Box::new).pipe(Box::leak);
             let http_client = Client::new();
 
-            let cas_map =
-                DownloadTarballToStore{
-                    tarball_cache: &Default::default(),
-                    http_client: &http_client,
-                    store_dir,
-                    package_integrity: "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==",
-                    package_unpacked_size: Some(16697),
-                    package_url: url,
-                }.run().await.unwrap();
+            let cas_map = DownloadTarballToStore {
+                tarball_cache: &Default::default(),
+                http_client: &http_client,
+                store_dir,
+                package_integrity: &package_integrity,
+                package_unpacked_size: Some(16697),
+                package_url: url,
+            }
+            .run()
+            .await
+            .unwrap();
             cas_map.len()
         });
     });

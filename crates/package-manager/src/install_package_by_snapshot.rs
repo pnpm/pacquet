@@ -41,7 +41,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
 
         let (tarball_url, integrity) = match resolution {
             LockfileResolution::Tarball(tarball_resolution) => {
-                let integrity = tarball_resolution.integrity.as_deref().unwrap_or_else(|| {
+                let integrity = tarball_resolution.integrity.as_ref().unwrap_or_else(|| {
                     // TODO: how to handle the absent of integrity field?
                     panic!("Current implementation requires integrity, but {dependency_path} doesn't have it");
                 });
@@ -54,7 +54,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
                 let version = ver_peer.version();
                 let bare_name = name.bare.as_str();
                 let tarball_url = format!("{registry}/{name}/-/{bare_name}-{version}.tgz");
-                let integrity = registry_resolution.integrity.as_str();
+                let integrity = &registry_resolution.integrity;
                 (Cow::Owned(tarball_url), integrity)
             }
             LockfileResolution::Directory(_) | LockfileResolution::Git(_) => {

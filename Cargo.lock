@@ -1382,6 +1382,7 @@ dependencies = [
  "serde",
  "serde_yaml",
  "split-first-char",
+ "ssri",
  "text-block-macros",
 ]
 
@@ -1399,6 +1400,7 @@ dependencies = [
  "pipe-trait",
  "project-root",
  "reqwest",
+ "ssri",
  "tempfile",
  "tokio",
 ]
@@ -1473,6 +1475,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "ssri",
  "tempfile",
  "tokio",
 ]
