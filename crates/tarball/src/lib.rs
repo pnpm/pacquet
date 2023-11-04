@@ -223,7 +223,7 @@ impl<'a> DownloadTarballToStore<'a> {
                 .map_err(TarballError::ReadTarballEntries)?
                 .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir())
                 .map(|entry| entry.expect("get entry"))
-                .map(|entry| {
+                .map(|mut entry| {
                     let cleaned_entry_path = entry
                         .path()
                         .expect("get path") // TODO: properly propagate this error
@@ -233,7 +233,8 @@ impl<'a> DownloadTarballToStore<'a> {
                         .into_os_string();
                     let file_mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
                     let file_size = entry.header().size().ok();
-                    let buffer = entry.bytes().collect::<Result<_, _>>().expect("read content"); // TODO: properly propagate this error
+                    let mut buffer = Vec::with_capacity(entry.size() as usize);
+                    entry.read_to_end(&mut buffer).expect("read content"); // TODO: properly propagate this error
                     FileInfo { cleaned_entry_path, file_mode, file_size, buffer }
                 })
                 .collect::<Vec<FileInfo>>()
