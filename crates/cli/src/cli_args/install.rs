@@ -49,11 +49,11 @@ pub struct InstallArgs {
 
 impl InstallArgs {
     pub async fn run(self, state: State) -> miette::Result<()> {
-        let State { tarball_cache, http_client, config, manifest, lockfile } = &state;
+        let State { tarball_mem_cache, http_client, config, manifest, lockfile } = &state;
         let InstallArgs { dependency_options, frozen_lockfile } = self;
 
         Install {
-            tarball_cache,
+            tarball_mem_cache,
             http_client,
             config,
             manifest,

@@ -85,10 +85,10 @@ pub enum CacheValue {
     Available(Arc<HashMap<OsString, PathBuf>>),
 }
 
-/// Internal cache of tarballs.
+/// Internal in-memory cache of tarballs.
 ///
 /// The key of this hashmap is the url of each tarball.
-pub type Cache = DashMap<String, Arc<RwLock<CacheValue>>>;
+pub type MemCache = DashMap<String, Arc<RwLock<CacheValue>>>;
 
 #[instrument(skip(gz_data), fields(gz_data_len = gz_data.len()))]
 fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u8>, TarballError> {
@@ -113,7 +113,6 @@ fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm,
 /// It returns a CAS map of files in the tarball.
 #[must_use]
 pub struct DownloadTarballToStore<'a> {
-    pub tarball_cache: &'a Cache,
     pub http_client: &'a Client,
     pub store_dir: &'static StoreDir,
     pub package_integrity: &'a Integrity,
@@ -122,14 +121,17 @@ pub struct DownloadTarballToStore<'a> {
 }
 
 impl<'a> DownloadTarballToStore<'a> {
-    /// Execute the subroutine.
-    pub async fn run(self) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
-        let &DownloadTarballToStore { tarball_cache, package_url, .. } = &self;
+    /// Execute the subroutine with an in-memory cache.
+    pub async fn run_with_mem_cache(
+        self,
+        mem_cache: &'a MemCache,
+    ) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
+        let &DownloadTarballToStore { package_url, .. } = &self;
 
         // QUESTION: I see no copying from existing store_dir, is there such mechanism?
         // TODO: If it's not implemented yet, implement it
 
-        if let Some(cache_lock) = tarball_cache.get(package_url) {
+        if let Some(cache_lock) = mem_cache.get(package_url) {
             let notify = match &*cache_lock.write().await {
                 CacheValue::Available(cas_paths) => {
                     return Ok(Arc::clone(cas_paths));
@@ -150,10 +152,10 @@ impl<'a> DownloadTarballToStore<'a> {
                 .pipe(CacheValue::InProgress)
                 .pipe(RwLock::new)
                 .pipe(Arc::new);
-            if tarball_cache.insert(package_url.to_string(), Arc::clone(&cache_lock)).is_some() {
+            if mem_cache.insert(package_url.to_string(), Arc::clone(&cache_lock)).is_some() {
                 tracing::warn!(target: "pacquet::download", ?package_url, "Race condition detected when writing to cache");
             }
-            let cas_paths = self.without_cache().await?;
+            let cas_paths = self.run_without_mem_cache().await?.pipe(Arc::new);
             let mut cache_write = cache_lock.write().await;
             *cache_write = CacheValue::Available(Arc::clone(&cas_paths));
             notify.notify_waiters();
@@ -161,7 +163,8 @@ impl<'a> DownloadTarballToStore<'a> {
         }
     }
 
-    async fn without_cache(&self) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
+    /// Execute the subroutine without an in-memory cache.
+    pub async fn run_without_mem_cache(&self) -> Result<HashMap<OsString, PathBuf>, TarballError> {
         let &DownloadTarballToStore {
             http_client,
             store_dir,
@@ -273,8 +276,7 @@ impl<'a> DownloadTarballToStore<'a> {
                 TarballError::Checksum(VerifyChecksumError { url: package_url.to_string(), error })
             }
             TaskError::Other(error) => error,
-        })?
-        .pipe(Arc::new);
+        })?;
 
         tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
 
@@ -316,14 +318,13 @@ mod tests {
     async fn packages_under_orgs_should_work() {
         let (store_dir, store_path) = tempdir_with_leaked_path();
         let cas_files = DownloadTarballToStore {
-            tarball_cache: &Default::default(),
             http_client: &Default::default(),
             store_dir: store_path,
             package_integrity: &integrity("sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w=="),
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz"
         }
-        .run()
+        .run_without_mem_cache()
         .await
         .unwrap();
 
@@ -356,14 +357,13 @@ mod tests {
     async fn should_throw_error_on_checksum_mismatch() {
         let (store_dir, store_path) = tempdir_with_leaked_path();
         DownloadTarballToStore {
-            tarball_cache: &Default::default(),
             http_client: &Default::default(),
             store_dir: store_path,
             package_integrity: &integrity("sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w=="),
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
         }
-        .run()
+        .run_without_mem_cache()
         .await
         .expect_err("checksum mismatch");
 

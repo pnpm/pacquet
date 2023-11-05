@@ -2,7 +2,7 @@ use crate::{InstallFrozenLockfile, InstallWithoutLockfile};
 use pacquet_lockfile::Lockfile;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
-use pacquet_tarball::Cache;
+use pacquet_tarball::MemCache;
 use reqwest::Client;
 
 /// This subroutine does everything `pacquet install` is supposed to do.
@@ -11,7 +11,7 @@ pub struct Install<'a, DependencyGroupList>
 where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
-    pub tarball_cache: &'a Cache,
+    pub tarball_mem_cache: &'a MemCache,
     pub http_client: &'a Client,
     pub config: &'static Npmrc,
     pub manifest: &'a PackageManifest,
@@ -27,7 +27,7 @@ where
     /// Execute the subroutine.
     pub async fn run(self) {
         let Install {
-            tarball_cache,
+            tarball_mem_cache,
             http_client,
             config,
             manifest,
@@ -41,7 +41,7 @@ where
         match (config.lockfile, frozen_lockfile, lockfile) {
             (false, _, _) => {
                 InstallWithoutLockfile {
-                    tarball_cache,
+                    tarball_mem_cache,
                     http_client,
                     config,
                     manifest,
@@ -58,7 +58,6 @@ where
                 assert_eq!(lockfile_version.major, 6); // compatibility check already happens at serde, but this still helps preventing programmer mistakes.
 
                 InstallFrozenLockfile {
-                    tarball_cache,
                     http_client,
                     config,
                     project_snapshot,
@@ -108,7 +107,7 @@ mod tests {
         let config = config.leak();
 
         Install {
-            tarball_cache: &Default::default(),
+            tarball_mem_cache: &Default::default(),
             http_client: &Default::default(),
             config,
             manifest: &manifest,
