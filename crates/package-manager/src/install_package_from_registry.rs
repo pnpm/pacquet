@@ -3,7 +3,7 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageTag, PackageVersion, RegistryError};
-use pacquet_tarball::{Cache, DownloadTarballToStore, TarballError};
+use pacquet_tarball::{DownloadTarballToStore, MemCache, TarballError};
 use reqwest::Client;
 use std::{path::Path, str::FromStr};
 
@@ -17,7 +17,7 @@ use std::{path::Path, str::FromStr};
 /// `node_modules/.pacquet/fastify@1.0.0/node_modules`.
 #[must_use]
 pub struct InstallPackageFromRegistry<'a> {
-    pub tarball_cache: &'a Cache,
+    pub tarball_mem_cache: &'a MemCache,
     pub http_client: &'a Client,
     pub config: &'static Npmrc,
     pub node_modules_dir: &'a Path,
@@ -68,7 +68,11 @@ impl<'a> InstallPackageFromRegistry<'a> {
         package_version: &PackageVersion,
     ) -> Result<(), InstallPackageFromRegistryError> {
         let InstallPackageFromRegistry {
-            tarball_cache, http_client, config, node_modules_dir, ..
+            tarball_mem_cache,
+            http_client,
+            config,
+            node_modules_dir,
+            ..
         } = self;
 
         let store_folder_name = package_version.to_virtual_store_name();
@@ -85,7 +89,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
             package_unpacked_size: package_version.dist.unpacked_size,
             package_url: package_version.as_tarball_url(),
         }
-        .with_cache(tarball_cache)
+        .run_with_mem_cache(tarball_mem_cache)
         .await
         .map_err(InstallPackageFromRegistryError::DownloadTarballToStore)?;
 
@@ -156,7 +160,7 @@ mod tests {
                 .pipe(Box::leak);
         let http_client = reqwest::Client::new();
         let package = InstallPackageFromRegistry {
-            tarball_cache: &Default::default(),
+            tarball_mem_cache: &Default::default(),
             config,
             http_client: &http_client,
             name: "fast-querystring",

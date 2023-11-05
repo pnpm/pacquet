@@ -6,7 +6,7 @@ use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::PackageManifestError;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::{PackageTag, PackageVersion};
-use pacquet_tarball::Cache;
+use pacquet_tarball::MemCache;
 use reqwest::Client;
 
 /// This subroutine does everything `pacquet add` is supposed to do.
@@ -16,7 +16,7 @@ where
     ListDependencyGroups: Fn() -> DependencyGroupList,
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
-    pub tarball_cache: &'a Cache,
+    pub tarball_mem_cache: &'a MemCache,
     pub http_client: &'a Client,
     pub config: &'static Npmrc,
     pub manifest: &'a mut PackageManifest,
@@ -43,7 +43,7 @@ where
 {
     pub async fn run(self) -> Result<(), AddError> {
         let Add {
-            tarball_cache,
+            tarball_mem_cache,
             http_client,
             config,
             manifest,
@@ -70,7 +70,7 @@ where
         }
 
         Install {
-            tarball_cache,
+            tarball_mem_cache,
             http_client,
             config,
             manifest,

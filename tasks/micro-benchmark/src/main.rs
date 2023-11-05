@@ -43,7 +43,7 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
                 package_unpacked_size: Some(16697),
                 package_url: url,
             }
-            .without_cache()
+            .run_without_mem_cache()
             .await
             .unwrap();
             cas_map.len()
