@@ -39,7 +39,7 @@ pub struct PackageFileInfo {
 
 /// Error type of [`StoreDir::write_index_file`].
 #[derive(Debug, Display, Error, Diagnostic)]
-pub enum WriteTarballIndexFileError {
+pub enum WriteIndexFileError {
     WriteFile(EnsureFileError),
 }
 
@@ -47,14 +47,14 @@ impl StoreDir {
     /// Write a JSON file that indexes files in a tarball to the store directory.
     pub fn write_index_file(
         &self,
-        tarball_integrity: &Integrity,
+        integrity: &Integrity,
         index_content: &PackageFilesIndex,
-    ) -> Result<(), WriteTarballIndexFileError> {
-        let file_path = self.index_file_path(tarball_integrity);
+    ) -> Result<(), WriteIndexFileError> {
+        let file_path = self.index_file_path(integrity);
         let index_content =
             serde_json::to_string(&index_content).expect("convert a TarballIndex to JSON");
         ensure_file(&file_path, index_content.as_bytes(), Some(0o666))
-            .map_err(WriteTarballIndexFileError::WriteFile)
+            .map_err(WriteIndexFileError::WriteFile)
     }
 }
 
@@ -66,9 +66,9 @@ mod tests {
     #[test]
     fn index_file_path() {
         let store_dir = StoreDir::new("STORE_DIR");
-        let tarball_integrity =
+        let integrity =
             IntegrityOpts::new().algorithm(Algorithm::Sha512).chain(b"TARBALL CONTENT").result();
-        let received = store_dir.index_file_path(&tarball_integrity);
+        let received = store_dir.index_file_path(&integrity);
         let expected = "STORE_DIR/v3/files/bc/d60799116ebef60071b9f2c7dafd7e2a4e1b366e341f750b2de52dd6995ab409b530f31b2b0a56c168a808a977156c3f5f13b026fb117d36314d8077f8733f-index.json";
         let expected: PathBuf = expected.split('/').collect();
         assert_eq!(&received, &expected);
