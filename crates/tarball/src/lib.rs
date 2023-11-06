@@ -262,13 +262,15 @@ impl<'a> DownloadTarballToStore<'a> {
 
                 Ok::<_, TarballError>(((cleaned_entry_path, file_path), (index_key, index_value)))
             })
+            .map(tokio::task::spawn)
             .pipe(futures_util::future::join_all)
             .await;
 
         let mut cas_paths = HashMap::<OsString, PathBuf>::with_capacity(entries.len());
         let mut pkg_files_idx = PackageFilesIndex { files: HashMap::with_capacity(entries.len()) };
         for entry in entries {
-            let ((cleaned_entry_path, file_path), (index_key, index_value)) = entry?;
+            let ((cleaned_entry_path, file_path), (index_key, index_value)) =
+                entry.expect("no join error")?;
 
             if let Some(previous) = cas_paths.insert(cleaned_entry_path, file_path) {
                 tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
