@@ -22,16 +22,23 @@ pub enum WriteCasFileError {
 
 impl StoreDir {
     /// Write a file from an npm package to the store directory.
-    pub fn write_cas_file(
+    pub async fn write_cas_file<Buffer>(
         &self,
-        buffer: &[u8],
+        buffer: Buffer,
         executable: bool,
-    ) -> Result<(PathBuf, FileHash), WriteCasFileError> {
-        let file_hash = Sha512::digest(buffer);
+    ) -> Result<(PathBuf, FileHash), WriteCasFileError>
+    where
+        Buffer: AsRef<[u8]> + Send + 'static,
+    {
+        let file_hash = Sha512::digest(buffer.as_ref());
         let file_path = self.cas_file_path(file_hash, executable);
         let mode = executable.then_some(EXEC_MODE);
-        ensure_file(&file_path, buffer, mode).map_err(WriteCasFileError::WriteFile)?;
-        Ok((file_path, file_hash))
+        tokio::task::spawn_blocking(move || {
+            ensure_file(&file_path, buffer.as_ref(), mode).map_err(WriteCasFileError::WriteFile)?;
+            Ok((file_path, file_hash))
+        })
+        .await
+        .expect("no join error")
     }
 }
 

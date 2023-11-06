@@ -1493,6 +1493,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "ssri",
+ "tokio",
 ]
 
 [[package]]
