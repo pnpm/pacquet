@@ -5,7 +5,7 @@ use node_semver::Version;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::PackageVersion;
-use pacquet_tarball::Cache;
+use pacquet_tarball::MemCache;
 use pipe_trait::Pipe;
 use reqwest::Client;
 
@@ -20,7 +20,7 @@ use reqwest::Client;
 /// * Repeat the process for the dependencies of the package.
 #[must_use]
 pub struct InstallWithoutLockfile<'a, DependencyGroupList> {
-    pub tarball_cache: &'a Cache,
+    pub tarball_mem_cache: &'a MemCache,
     pub http_client: &'a Client,
     pub config: &'static Npmrc,
     pub manifest: &'a PackageManifest,
@@ -34,7 +34,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
         DependencyGroupList: IntoIterator<Item = DependencyGroup>,
     {
         let InstallWithoutLockfile {
-            tarball_cache,
+            tarball_mem_cache,
             http_client,
             config,
             manifest,
@@ -45,7 +45,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
             .dependencies(dependency_groups.into_iter())
             .map(|(name, version_range)| async move {
                 let dependency = InstallPackageFromRegistry {
-                    tarball_cache,
+                    tarball_mem_cache,
                     http_client,
                     config,
                     node_modules_dir: &config.modules_dir,
@@ -57,7 +57,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                 .unwrap();
 
                 InstallWithoutLockfile {
-                    tarball_cache,
+                    tarball_mem_cache,
                     http_client,
                     config,
                     manifest,
@@ -75,7 +75,7 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
     /// Install dependencies of a dependency.
     #[async_recursion]
     async fn install_dependencies_from_registry(&self, package: &PackageVersion) {
-        let InstallWithoutLockfile { tarball_cache, http_client, config, .. } = self;
+        let InstallWithoutLockfile { tarball_mem_cache, http_client, config, .. } = self;
 
         let node_modules_path = self
             .config
@@ -89,7 +89,7 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
             .dependencies(self.config.auto_install_peers)
             .map(|(name, version_range)| async {
                 let dependency = InstallPackageFromRegistry {
-                    tarball_cache,
+                    tarball_mem_cache,
                     http_client,
                     config,
                     node_modules_dir: &node_modules_path,
