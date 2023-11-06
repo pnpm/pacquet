@@ -13,7 +13,7 @@ use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use pacquet_fs::file_mode;
 use pacquet_store_dir::{
-    PackageFileInfo, PackageFilesIndex, StoreDir, WriteCasFileError, WriteTarballIndexFileError,
+    PackageFileInfo, PackageFilesIndex, StoreDir, WriteCasFileError, WriteIndexFileError,
 };
 use pipe_trait::Pipe;
 use reqwest::Client;
@@ -69,7 +69,7 @@ pub enum TarballError {
     #[from(ignore)]
     #[display("Failed to write tarball index: {_0}")]
     #[diagnostic(transparent)]
-    WriteTarballIndexFile(WriteTarballIndexFileError),
+    WriteTarballIndexFile(WriteIndexFileError),
 
     #[from(ignore)]
     #[diagnostic(code(pacquet_tarball::task_join_error))]
