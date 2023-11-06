@@ -4,7 +4,12 @@ use miette::Diagnostic;
 use pacquet_fs::{ensure_file, EnsureFileError};
 use serde::{Deserialize, Serialize};
 use ssri::{Algorithm, Integrity};
-use std::{collections::HashMap, fs::File, io, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{self, ErrorKind},
+    path::{Path, PathBuf},
+};
 
 impl StoreDir {
     /// Path to an index file of a tarball.
@@ -80,16 +85,31 @@ impl StoreDir {
     pub fn read_index_file(
         &self,
         integrity: &Integrity,
-    ) -> Result<Option<PackageFilesIndex>, ReadIndexFileError> {
+    ) -> Result<PackageFilesIndex, ReadIndexFileError> {
         let file_path = self.index_file_path(integrity);
         let file = match File::open(&file_path) {
             Ok(file) => file,
             Err(error) => return Err(ReadIndexFileError::OpenFile { file_path, error }),
         };
         match serde_json::from_reader(file) {
-            Ok(content) => Ok(Some(content)),
-            Err(error) if error.io_error_kind() == Some(io::ErrorKind::NotFound) => Ok(None),
+            Ok(content) => Ok(content),
             Err(error) => Err(ReadIndexFileError::ParseFile { file_path, error }),
+        }
+    }
+}
+
+impl ReadIndexFileError {
+    pub fn file_path(&self) -> &Path {
+        match self {
+            ReadIndexFileError::OpenFile { file_path, .. } => file_path,
+            ReadIndexFileError::ParseFile { file_path, .. } => file_path,
+        }
+    }
+
+    pub fn io_error_kind(&self) -> Option<ErrorKind> {
+        match self {
+            ReadIndexFileError::OpenFile { error, .. } => Some(error.kind()),
+            ReadIndexFileError::ParseFile { error, .. } => error.io_error_kind(),
         }
     }
 }
