@@ -74,36 +74,37 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
 impl<'a> InstallWithoutLockfile<'a, ()> {
     /// Install dependencies of a dependency.
     #[async_recursion]
-    async fn install_dependencies_from_registry(&self, package: &PackageVersion) {
-        let InstallWithoutLockfile { tarball_mem_cache, http_client, config, .. } = self;
+    async fn install_dependencies_from_registry(&self, _: &PackageVersion) {
+        todo!("fix this later");
+        // let InstallWithoutLockfile { tarball_mem_cache, http_client, config, .. } = self;
 
-        let node_modules_path = self
-            .config
-            .virtual_store_dir
-            .join(package.to_virtual_store_name())
-            .join("node_modules");
+        // let node_modules_path = self
+        //     .config
+        //     .virtual_store_dir
+        //     .join(package.to_virtual_store_name())
+        //     .join("node_modules");
 
-        tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Start subset");
+        // tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Start subset");
 
-        package
-            .dependencies(self.config.auto_install_peers)
-            .map(|(name, version_range)| async {
-                let dependency = InstallPackageFromRegistry {
-                    tarball_mem_cache,
-                    http_client,
-                    config,
-                    node_modules_dir: &node_modules_path,
-                    name,
-                    version_range,
-                }
-                .run::<Version>()
-                .await
-                .unwrap(); // TODO: proper error propagation
-                self.install_dependencies_from_registry(&dependency).await;
-            })
-            .pipe(future::join_all)
-            .await;
+        // package
+        //     .dependencies(self.config.auto_install_peers)
+        //     .map(|(name, version_range)| async {
+        //         let dependency = InstallPackageFromRegistry {
+        //             tarball_mem_cache,
+        //             http_client,
+        //             config,
+        //             node_modules_dir: &node_modules_path,
+        //             name,
+        //             version_range,
+        //         }
+        //         .run::<Version>()
+        //         .await
+        //         .unwrap(); // TODO: proper error propagation
+        //         self.install_dependencies_from_registry(&dependency).await;
+        //     })
+        //     .pipe(future::join_all)
+        //     .await;
 
-        tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Complete subset");
+        // tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Complete subset");
     }
 }
