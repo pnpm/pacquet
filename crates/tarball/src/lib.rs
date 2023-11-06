@@ -1,15 +1,11 @@
 use std::{
-    collections::HashMap,
-    ffi::OsString,
-    io::{Cursor, Read},
-    path::PathBuf,
-    sync::Arc,
-    time::UNIX_EPOCH,
+    collections::HashMap, ffi::OsString, io::Cursor, path::PathBuf, sync::Arc, time::UNIX_EPOCH,
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STD, Engine};
 use dashmap::DashMap;
 use derive_more::{Display, Error, From};
+use futures_util::StreamExt;
 use miette::Diagnostic;
 use pacquet_fs::file_mode;
 use pacquet_store_dir::{
@@ -18,8 +14,11 @@ use pacquet_store_dir::{
 use pipe_trait::Pipe;
 use reqwest::Client;
 use ssri::Integrity;
-use tar::Archive;
-use tokio::sync::{Notify, RwLock};
+use tokio::{
+    io::AsyncReadExt,
+    sync::{Notify, RwLock},
+};
+use tokio_tar::Archive;
 use tracing::instrument;
 use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
 
@@ -212,24 +211,25 @@ impl<'a> DownloadTarballToStore<'a> {
         let mut archive =
             decompress_gzip(&response, package_unpacked_size)?.pipe(Cursor::new).pipe(Archive::new);
 
-        let entries = archive
-            .entries()
-            .map_err(TarballError::ReadTarballEntries)?
-            .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir());
+        let mut entries = archive.entries().map_err(TarballError::ReadTarballEntries)?;
 
-        let ((_, Some(capacity)) | (capacity, None)) = entries.size_hint();
-        let mut cas_paths = HashMap::<OsString, PathBuf>::with_capacity(capacity);
-        let mut pkg_files_idx = PackageFilesIndex { files: HashMap::with_capacity(capacity) };
+        let mut cas_paths = HashMap::<OsString, PathBuf>::new();
+        let mut pkg_files_idx = PackageFilesIndex { files: HashMap::new() };
 
-        for entry in entries {
+        while let Some(entry) = entries.next().await {
             let mut entry = entry.unwrap();
+
+            if entry.header().entry_type().is_dir() {
+                continue;
+            }
 
             let file_mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
             let file_is_executable = file_mode::is_all_exec(file_mode);
+            let file_size = entry.header().size().ok();
 
             // Read the contents of the entry
-            let mut buffer = Vec::with_capacity(entry.size() as usize);
-            entry.read_to_end(&mut buffer).unwrap();
+            let mut buffer = Vec::with_capacity(file_size.unwrap_or(0) as usize);
+            entry.read_to_end(&mut buffer).await.unwrap();
 
             let entry_path = entry.path().unwrap();
             let cleaned_entry_path =
@@ -249,7 +249,6 @@ impl<'a> DownloadTarballToStore<'a> {
             }
 
             let checked_at = UNIX_EPOCH.elapsed().ok().map(|x| x.as_millis());
-            let file_size = entry.header().size().ok();
             let file_integrity = format!("sha512-{}", BASE64_STD.encode(file_hash));
             let file_attrs = PackageFileInfo {
                 checked_at,
