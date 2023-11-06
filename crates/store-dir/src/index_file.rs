@@ -45,7 +45,7 @@ pub enum WriteTarballIndexFileError {
 
 impl StoreDir {
     /// Write a JSON file that indexes files in a tarball to the store directory.
-    pub fn write_index_file(
+    pub async fn write_index_file(
         &self,
         tarball_integrity: &Integrity,
         index_content: &PackageFilesIndex,
@@ -53,8 +53,12 @@ impl StoreDir {
         let file_path = self.index_file_path(tarball_integrity);
         let index_content =
             serde_json::to_string(&index_content).expect("convert a TarballIndex to JSON");
-        ensure_file(&file_path, index_content.as_bytes(), Some(0o666))
-            .map_err(WriteTarballIndexFileError::WriteFile)
+        tokio::task::spawn_blocking(move || {
+            ensure_file(&file_path, index_content.as_bytes(), Some(0o666))
+                .map_err(WriteTarballIndexFileError::WriteFile)
+        })
+        .await
+        .expect("no join error")
     }
 }
 

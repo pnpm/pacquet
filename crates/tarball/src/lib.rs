@@ -264,6 +264,7 @@ impl<'a> DownloadTarballToStore<'a> {
 
         store_dir
             .write_index_file(&package_integrity, &pkg_files_idx)
+            .await
             .map_err(TarballError::WriteTarballIndexFile)?;
 
         tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
