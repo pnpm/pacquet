@@ -27,8 +27,8 @@ impl StoreDir {
                 .expect("parse integrity") // TODO: parse integrity before this
                 .to_hex();
             assert!(
-                matches!(algorithm, Algorithm::Sha512 | Algorithm::Sha1),
-                "Only Sha1 and Sha512 are supported. {algorithm} isn't",
+                matches!(algorithm, Algorithm::Sha512),
+                "Only Sha512 is supported. {algorithm} isn't",
             ); // TODO: write a custom parser and remove this
             let suffix = if file_mode::is_all_exec(info.mode) { "-exec" } else { "" };
             let cas_path = self.file_path_by_hex_str(&hex, suffix);
