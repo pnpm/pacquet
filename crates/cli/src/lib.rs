@@ -11,6 +11,10 @@ use state::State;
 
 pub async fn main() -> miette::Result<()> {
     // We use rayon only for blocking syscalls, so we multiply the number of threads by 3.
+    //
+    // If we are going to use rayon for CPU-bound tasks,
+    // we should create an extra threadpool for IO-bound tasks,
+    // and use the global theadpool for CPU-bound tasks.
     rayon::ThreadPoolBuilder::new()
         .num_threads(num_cpus::get() * 3)
         .build_global()
