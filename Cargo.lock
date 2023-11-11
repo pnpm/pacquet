@@ -1348,6 +1348,7 @@ dependencies = [
  "pacquet-testing-utils",
  "pipe-trait",
  "pretty_assertions",
+ "rayon",
  "reqwest",
  "serde_json",
  "swc_malloc",
