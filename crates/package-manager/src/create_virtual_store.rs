@@ -3,6 +3,7 @@ use futures_util::future;
 use pacquet_lockfile::{DependencyPath, PackageSnapshot, RootProjectSnapshot};
 use pacquet_npmrc::Npmrc;
 use pipe_trait::Pipe;
+use rayon::prelude::*;
 use reqwest::Client;
 use std::collections::HashMap;
 
@@ -26,13 +27,14 @@ impl<'a> CreateVirtualStore<'a> {
         });
 
         packages
-            .iter()
+            .par_iter()
             .map(|(dependency_path, package_snapshot)| async move {
                 InstallPackageBySnapshot { http_client, config, dependency_path, package_snapshot }
                     .run()
                     .await
                     .unwrap(); // TODO: properly propagate this error
             })
+            .collect::<Vec<_>>()
             .pipe(future::join_all)
             .await;
     }
