@@ -201,73 +201,85 @@ impl<'a> DownloadTarballToStore<'a> {
             Other(TarballError),
         }
         let cas_paths = tokio::task::spawn(async move {
-            verify_checksum(&response, package_integrity.clone()).map_err(TaskError::Checksum)?;
+            rayon::scope(|scope| {
+                verify_checksum(&response, package_integrity.clone())
+                    .map_err(TaskError::Checksum)?;
 
-            // TODO: move tarball extraction to its own function
-            // TODO: test it
-            // TODO: test the duplication of entries
+                // TODO: move tarball extraction to its own function
+                // TODO: test it
+                // TODO: test the duplication of entries
 
-            let mut archive = decompress_gzip(&response, package_unpacked_size)
-                .map_err(TaskError::Other)?
-                .pipe(Cursor::new)
-                .pipe(Archive::new);
+                let mut archive = decompress_gzip(&response, package_unpacked_size)
+                    .map_err(TaskError::Other)?
+                    .pipe(Cursor::new)
+                    .pipe(Archive::new);
 
-            let entries = archive
-                .entries()
-                .map_err(TarballError::ReadTarballEntries)
-                .map_err(TaskError::Other)?
-                .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir());
+                let entries = archive
+                    .entries()
+                    .map_err(TarballError::ReadTarballEntries)
+                    .map_err(TaskError::Other)?
+                    .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir());
 
-            let ((_, Some(capacity)) | (capacity, None)) = entries.size_hint();
-            let mut cas_paths = HashMap::<OsString, PathBuf>::with_capacity(capacity);
-            let mut pkg_files_idx = PackageFilesIndex { files: HashMap::with_capacity(capacity) };
+                let ((_, Some(capacity)) | (capacity, None)) = entries.size_hint();
+                let mut cas_paths = HashMap::<OsString, PathBuf>::with_capacity(capacity);
+                let mut pkg_files_idx =
+                    PackageFilesIndex { files: HashMap::with_capacity(capacity) };
 
-            for entry in entries {
-                let mut entry = entry.unwrap();
+                for entry in entries {
+                    let mut entry = entry.unwrap();
 
-                let file_mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
-                let file_is_executable = file_mode::is_all_exec(file_mode);
+                    let file_mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
+                    let file_is_executable = file_mode::is_all_exec(file_mode);
 
-                // Read the contents of the entry
-                let mut buffer = Vec::with_capacity(entry.size() as usize);
-                entry.read_to_end(&mut buffer).unwrap();
+                    // Read the contents of the entry
+                    let mut buffer = Vec::with_capacity(entry.size() as usize);
+                    entry.read_to_end(&mut buffer).unwrap();
 
-                let entry_path = entry.path().unwrap();
-                let cleaned_entry_path =
-                    entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
-                let (file_path, file_hash) = store_dir
-                    .write_cas_file(&buffer, file_is_executable)
-                    .map_err(TarballError::WriteCasFile)?;
+                    let entry_path = entry.path().unwrap();
+                    let cleaned_entry_path =
+                        entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
+                    let (file_path, file_hash) = store_dir
+                        .write_cas_file(scope, buffer, file_is_executable)
+                        .map_err(TarballError::WriteCasFile)?;
 
-                let tarball_index_key = cleaned_entry_path
-                    .to_str()
-                    .expect("entry path must be valid UTF-8") // TODO: propagate this error, provide more information
-                    .to_string(); // TODO: convert cleaned_entry_path to String too.
+                    let tarball_index_key = cleaned_entry_path
+                        .to_str()
+                        .expect("entry path must be valid UTF-8") // TODO: propagate this error, provide more information
+                        .to_string(); // TODO: convert cleaned_entry_path to String too.
 
-                if let Some(previous) = cas_paths.insert(cleaned_entry_path, file_path) {
-                    tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
+                    if let Some(previous) = cas_paths.insert(cleaned_entry_path, file_path) {
+                        tracing::warn!(
+                            ?previous,
+                            "Duplication detected. Old entry has been ejected"
+                        );
+                    }
+
+                    let checked_at = UNIX_EPOCH.elapsed().ok().map(|x| x.as_millis());
+                    let file_size = entry.header().size().ok();
+                    let file_integrity = format!("sha512-{}", BASE64_STD.encode(file_hash));
+                    let file_attrs = PackageFileInfo {
+                        checked_at,
+                        integrity: file_integrity,
+                        mode: file_mode,
+                        size: file_size,
+                    };
+
+                    if let Some(previous) =
+                        pkg_files_idx.files.insert(tarball_index_key, file_attrs)
+                    {
+                        tracing::warn!(
+                            ?previous,
+                            "Duplication detected. Old entry has been ejected"
+                        );
+                    }
                 }
 
-                let checked_at = UNIX_EPOCH.elapsed().ok().map(|x| x.as_millis());
-                let file_size = entry.header().size().ok();
-                let file_integrity = format!("sha512-{}", BASE64_STD.encode(file_hash));
-                let file_attrs = PackageFileInfo {
-                    checked_at,
-                    integrity: file_integrity,
-                    mode: file_mode,
-                    size: file_size,
-                };
+                store_dir
+                    .write_index_file(&package_integrity, &pkg_files_idx)
+                    .map_err(TarballError::WriteTarballIndexFile)?;
 
-                if let Some(previous) = pkg_files_idx.files.insert(tarball_index_key, file_attrs) {
-                    tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
-                }
-            }
-
-            store_dir
-                .write_index_file(&package_integrity, &pkg_files_idx)
-                .map_err(TarballError::WriteTarballIndexFile)?;
-
-            Ok(cas_paths)
+                Ok(cas_paths)
+            })
         })
         .await
         .expect("no join error")

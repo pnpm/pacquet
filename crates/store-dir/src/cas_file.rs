@@ -22,15 +22,25 @@ pub enum WriteCasFileError {
 
 impl StoreDir {
     /// Write a file from an npm package to the store directory.
-    pub fn write_cas_file(
+    pub fn write_cas_file<'a>(
         &self,
-        buffer: &[u8],
+        scope: &rayon::Scope<'a>,
+        buffer: Vec<u8>,
         executable: bool,
     ) -> Result<(PathBuf, FileHash), WriteCasFileError> {
-        let file_hash = Sha512::digest(buffer);
+        let file_hash = Sha512::digest(&buffer);
         let file_path = self.cas_file_path(file_hash, executable);
         let mode = executable.then_some(EXEC_MODE);
-        ensure_file(&file_path, buffer, mode).map_err(WriteCasFileError::WriteFile)?;
+
+        scope.spawn({
+            let file_path = file_path.clone();
+            move |_| {
+                ensure_file(&file_path, &buffer, mode)
+                    .map_err(WriteCasFileError::WriteFile)
+                    .expect("todo: handle ensure_file error");
+            }
+        });
+
         Ok((file_path, file_hash))
     }
 }
