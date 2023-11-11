@@ -274,9 +274,12 @@ impl<'a> DownloadTarballToStore<'a> {
                     }
                 }
 
-                store_dir
-                    .write_index_file(&package_integrity, &pkg_files_idx)
-                    .map_err(TarballError::WriteTarballIndexFile)?;
+                scope.spawn(move |_| {
+                    store_dir
+                        .write_index_file(&package_integrity, &pkg_files_idx)
+                        .map_err(TarballError::WriteTarballIndexFile)
+                        .expect("todo: handle this error");
+                });
 
                 Ok(cas_paths)
             })
