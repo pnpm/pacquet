@@ -33,6 +33,7 @@ reqwest     = { workspace = true }
 pipe-trait  = { workspace = true }
 tokio       = { workspace = true }
 swc_malloc  = { workspace = true }
+rayon       = { workspace = true }
 
 [dev-dependencies]
 pacquet-store-dir     = { workspace = true }
