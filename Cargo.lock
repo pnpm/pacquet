@@ -1335,6 +1335,7 @@ dependencies = [
  "home",
  "insta",
  "miette",
+ "num_cpus",
  "pacquet-diagnostics",
  "pacquet-executor",
  "pacquet-fs",
