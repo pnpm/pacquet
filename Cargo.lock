@@ -1518,6 +1518,7 @@ dependencies = [
  "pacquet-fs",
  "pipe-trait",
  "pretty_assertions",
+ "rayon",
  "serde",
  "serde_json",
  "sha2",
