@@ -32,7 +32,7 @@ miette      = { workspace = true }
 reqwest     = { workspace = true }
 pipe-trait  = { workspace = true }
 tokio       = { workspace = true }
-dudy-malloc = { workspace = true }
+swc_malloc  = { workspace = true }
 
 [dev-dependencies]
 pacquet-store-dir     = { workspace = true }

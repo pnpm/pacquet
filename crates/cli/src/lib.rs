@@ -1,4 +1,4 @@
-extern crate dudy_malloc;
+extern crate swc_malloc;
 
 mod cli_args;
 mod state;
