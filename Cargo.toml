@@ -33,6 +33,7 @@ command-extra      = { version = "1.0.0" }
 base64             = { version = "0.21.5" }
 dashmap            = { version = "5.5.3" }
 derive_more        = { version = "1.0.0-beta.3", features = ["full"] }
+dudy-malloc       = { version = "0.1.0" }
 dunce              = { version = "1.0.4" }
 home               = { version = "0.5.5" }
 insta              = { version = "1.32.0", features = ["yaml", "glob", "walkdir"] }
@@ -78,8 +79,8 @@ allow_branch = "main"
 opt-level     = 3
 lto           = "fat"
 codegen-units = 1
-strip         = "symbols"
-debug         = false
+# strip         = "symbols"
+# debug         = false
 panic         = "abort"   # Let it crash and force ourselves to write safe Rust.
 
 # Use the `--profile release-debug` flag to show symbols in release mode.

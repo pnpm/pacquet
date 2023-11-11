@@ -1,3 +1,5 @@
+extern crate dudy_malloc;
+
 mod cli_args;
 mod state;
 
