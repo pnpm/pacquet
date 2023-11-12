@@ -1,0 +1,19 @@
+name: 📚 Documentation or README.md issue report
+description: Report an issue in the project's documentation or README.md file.
+title: "[Docs]: "
+labels: ["💾 Type: Docs"]
+body:
+  - type: textarea
+    id: describe-the-bug
+    attributes:
+      label: What happened?
+      description: Describe the issue here.
+      value: "A bug happened!"
+    validations:
+      required: true
+  - type: textarea
+    validations:
+      required: true
+    attributes:
+      label: "Expected behavior"
+      description: "A clear and concise description of what you expected to happened (or code)"

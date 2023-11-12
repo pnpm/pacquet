@@ -7,12 +7,13 @@ use crate::State;
 use add::AddArgs;
 use clap::{Parser, Subcommand};
 use install::InstallArgs;
-use miette::Context;
+use miette::{Context, Diagnostic};
 use pacquet_executor::execute_shell;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::PackageManifest;
 use run::RunArgs;
 use std::{env, path::PathBuf};
+use derive_more::{Display, Error};
 use store::StoreCommand;
 
 /// Experimental package manager for node.js written in rust.
@@ -49,6 +50,12 @@ pub enum CliCommand {
     Store(StoreCommand),
 }
 
+#[derive(Debug, Display, Error, Diagnostic)]
+pub enum CmdError {
+    #[display("Count not find script in package.json nor server.js exists")]
+    RunScriptError,
+}
+
 impl CliArgs {
     /// Execute the command
     pub async fn run(self) -> miette::Result<()> {
@@ -82,7 +89,12 @@ impl CliArgs {
                 let command = if let Some(script) = manifest.script("start", true)? {
                     script
                 } else {
-                    "node server.js"
+                    let server_js = dir.join("server.js");
+                    if server_js.exists() {
+                        "node server.js"
+                    } else {
+                        return Err(CmdError::RunScriptError.into());
+                    }
                 };
                 execute_shell(command).wrap_err(format!("executing command: \"{0}\"", command))?;
             }

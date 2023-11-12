@@ -1,0 +1,44 @@
+name: ⭐ Enhancement
+description: Suggest an enhancement for this project. Improve an existing feature.
+title: "[Feature Request]: "
+labels: ["⭐ Type: Enhancement"]
+body:
+  - type: checkboxes
+    attributes:
+      label: "Is there an existing issue for this?"
+      description: "Please search [here](../issues?q=is%3Aissue) to see if an issue already exists for the bug you encountered"
+      options:
+        - label: "I have searched the existing issues"
+          required: true
+  - type: textarea
+    id: related-to-issue
+    attributes:
+      label: Related to issue?
+      description: Is your feature request related to a problem? Please describe.
+      value: "..."
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Describe the solution
+      description: Describe the solution you'd like to see implemented.
+      value: "..."
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Describe alternatives you've considered
+      description: Describe any alternative solutions or features you've considered.
+      value: "..."
+    validations:
+      required: false
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add any other context about the feature request here.
+      value: "..."
+    validations:
+      required: true
