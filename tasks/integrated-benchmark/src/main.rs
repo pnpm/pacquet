@@ -11,7 +11,7 @@ async fn main() {
         registry,
         verdaccio,
         repository,
-        package_json,
+        fixture_dir,
         hyperfine_options,
         work_env,
         with_pnpm,
@@ -52,7 +52,7 @@ async fn main() {
         repository,
         scenario,
         hyperfine_options,
-        package_json,
+        fixture_dir,
     }
     .run();
     drop(verdaccio); // terminate verdaccio if exists
