@@ -1,0 +1,5 @@
+{
+	"devDependencies": {
+		"@pnpm/registry-mock": "^3.16.0"
+	}
+}
