@@ -1485,10 +1485,11 @@ name = "pacquet-registry-mock"
 version = "0.0.0"
 dependencies = [
  "assert_cmd",
- "derive_more",
  "pipe-trait",
  "portpicker",
  "reqwest",
+ "serde",
+ "serde_json",
  "tokio",
  "which",
 ]

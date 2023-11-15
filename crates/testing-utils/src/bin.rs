@@ -70,6 +70,8 @@ pub struct AddMockedRegistry {
     pub store_dir: PathBuf,
     /// Absolute path to the cache directory as defined by the `.npmrc` file.
     pub cache_dir: PathBuf,
+    /// Anchor to a mocked registry instance. The server will be stop when [dropped](Drop).
+    pub mock_instance: AutoMockInstance,
 }
 
 impl CommandTempCwd<()> {
@@ -82,10 +84,11 @@ impl CommandTempCwd<()> {
             "store-dir=../pacquet-store"
             "cache-dir=../pacquet-cache"
         };
-        let mocked_registry = AutoMockInstance::get_or_init().listen();
+        let mock_instance = AutoMockInstance::load_or_init();
+        let mocked_registry = mock_instance.listen();
         let npmrc_text = format!("registry={mocked_registry}\n{npmrc_text}");
         fs::write(&npmrc_path, npmrc_text).expect("write to .npmrc");
-        let npmrc_info = AddMockedRegistry { npmrc_path, store_dir, cache_dir };
+        let npmrc_info = AddMockedRegistry { npmrc_path, store_dir, cache_dir, mock_instance };
         let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info: () } = self;
         CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info }
     }

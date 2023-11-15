@@ -12,9 +12,10 @@ repository.workspace = true
 
 [dependencies]
 assert_cmd  = { workspace = true }
-derive_more = { workspace = true }
 pipe-trait  = { workspace = true }
 portpicker  = { workspace = true }
 reqwest     = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
 tokio       = { workspace = true }
 which       = { workspace = true }

@@ -1,13 +1,14 @@
 use crate::{node_registry_mock, registry_mock};
 use assert_cmd::prelude::*;
-use derive_more::Deref;
 use pipe_trait::Pipe;
 use portpicker::pick_unused_port;
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use std::{
     env::temp_dir,
     fmt::Display,
     fs::{self, File},
+    io::ErrorKind,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::OnceLock,
@@ -159,68 +160,143 @@ impl<'a> MockInstanceOptions<'a> {
     }
 }
 
-#[derive(Debug, Deref)]
+#[derive(Debug)]
 pub struct AutoMockInstance {
-    #[deref]
-    mock_instance: MockInstance,
-    #[deref(ignore)]
-    port_lock_file: PathBuf,
-    #[deref(ignore)]
-    listen: String,
-}
-
-impl Drop for AutoMockInstance {
-    fn drop(&mut self) {
-        let AutoMockInstance { port_lock_file, .. } = &self;
-        if let Err(error) = fs::remove_file(port_lock_file) {
-            eprintln!("warning: Failed to remove port lock file at {port_lock_file:?}: {error}");
-        }
-    }
+    anchor: RegistryAnchor,
 }
 
 impl AutoMockInstance {
-    async fn init() -> Self {
-        let port_lock_dir = temp_dir().join("pacquet-registry-mock.lock");
-        fs::create_dir_all(&port_lock_dir).expect("create port lock dir");
-
-        loop {
+    pub fn load_or_init() -> Self {
+        let anchor = RegistryAnchor::load_or_init(|| {
             let port = pick_unused_port().expect("pick an unused port");
             let port_str = port.to_string();
-            let port_lock_file = port_lock_dir.join(&port_str);
-            if port_lock_file.exists() {
-                continue;
-            }
 
-            fs::write(&port_lock_file, format!("mocked registry for pacquet at port {port}"))
-                .expect("create port lock file");
-
-            let mock_instance = MockInstanceOptions {
-                client: &Client::new(),
-                port: &port_str,
-                stdout: None,
-                stderr: None,
-                max_retries: 5,
-                retry_delay: Duration::from_millis(500),
-            }
-            .spawn()
-            .await;
-            let listen = port_to_url(port);
-            return AutoMockInstance { mock_instance, port_lock_file, listen };
-        }
-    }
-
-    pub fn listen(&self) -> &'_ str {
-        &self.listen
-    }
-
-    pub fn get_or_init() -> &'static Self {
-        static SINGLE_INSTANCE: OnceLock<AutoMockInstance> = OnceLock::new();
-        SINGLE_INSTANCE.get_or_init(|| {
-            Builder::new_current_thread()
+            let mock_instance = Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .expect("build tokio runtime")
-                .block_on(AutoMockInstance::init())
-        })
+                .block_on({
+                    MockInstanceOptions {
+                        client: &Client::new(),
+                        port: &port_str,
+                        stdout: None,
+                        stderr: None,
+                        max_retries: 5,
+                        retry_delay: Duration::from_millis(500),
+                    }
+                    .spawn()
+                })
+                .pipe(Box::new)
+                .pipe(Box::leak);
+
+            let listen = port_to_url(port);
+            let pid = mock_instance.process.id();
+
+            RegistryInfo { port, listen, pid }
+        });
+
+        AutoMockInstance { anchor }
+    }
+
+    pub fn listen(&self) -> &'_ str {
+        &self.anchor.info.listen
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct RegistryInfo {
+    port: u16,
+    listen: String,
+    pid: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct RegistryAnchor {
+    user_count: u32,
+    info: RegistryInfo,
+}
+
+impl Drop for RegistryAnchor {
+    fn drop(&mut self) {
+        // information from self is outdated, do not use it.
+
+        // load an up-to-date anchor, it is leaked to prevent dropping (again).
+        let anchor =
+            RegistryAnchor::load().expect("load an existing anchor").pipe(Box::new).pipe(Box::leak);
+        assert_eq!(&self.info, &anchor.info);
+
+        anchor.user_count.checked_sub(1).expect("decrement user_count");
+        if anchor.user_count > 0 {
+            eprintln!(
+                "info: The mocked server is still used by {} users. Skip.",
+                anchor.user_count
+            );
+            return;
+        }
+
+        let pid = anchor.info.pid;
+        eprintln!("info: There are no more users that use the mocked server");
+        eprintln!("info: Terminating mocked registry with the kill command (kill {pid})...");
+
+        match Command::new("kill").arg(pid.to_string()).output() {
+            Err(error) => {
+                eprintln!(
+                    "warn: Failed to terminate mocked registry with the kill command: {error}"
+                );
+            }
+            Ok(output) => {
+                if output.status.success() {
+                    eprintln!("info: Mocked registry terminated");
+                    return;
+                }
+
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                eprintln!(
+                    "warn: Failed to terminate mocked registry with the kill command: {stderr}"
+                );
+            }
+        }
+
+        RegistryAnchor::delete()
+    }
+}
+
+impl RegistryAnchor {
+    fn path() -> &'static Path {
+        static PATH: OnceLock<PathBuf> = OnceLock::new();
+        PATH.get_or_init(|| temp_dir().join("pacquet-registry-mock-anchor.json"))
+    }
+
+    fn load() -> Option<Self> {
+        match fs::read_to_string(RegistryAnchor::path()) {
+            Ok(text) => text
+                .pipe_as_ref(serde_json::from_str::<RegistryAnchor>)
+                .expect("parse anchor text")
+                .pipe(Some),
+            Err(error) if error.kind() == ErrorKind::NotFound => None,
+            Err(error) => panic!("Failed to load anchor: {error}"),
+        }
+    }
+
+    fn save(&self) {
+        let text = serde_json::to_string_pretty(self).expect("convert anchor to JSON");
+        fs::write(RegistryAnchor::path(), text).expect("write to anchor");
+    }
+
+    fn load_or_init<Init>(init: Init) -> Self
+    where
+        Init: FnOnce() -> RegistryInfo,
+    {
+        if let Some(anchor) = RegistryAnchor::load() {
+            return anchor;
+        }
+        let info = init();
+        let anchor = RegistryAnchor { user_count: 1, info };
+        anchor.save();
+        anchor
+    }
+
+    fn delete() {
+        fs::remove_file(RegistryAnchor::path()).expect("delete the anchor file");
     }
 }
