@@ -11,7 +11,10 @@ use std::{
     process::{Child, Command, Stdio},
     sync::OnceLock,
 };
-use tokio::time::{sleep, Duration};
+use tokio::{
+    runtime::Builder,
+    time::{sleep, Duration},
+};
 use which::which;
 
 fn port_to_url(port: impl Display) -> String {
@@ -215,7 +218,7 @@ impl AutoMockInstance {
     pub fn get_or_init() -> &'static Self {
         static SINGLE_INSTANCE: OnceLock<AutoMockInstance> = OnceLock::new();
         SINGLE_INSTANCE.get_or_init(|| {
-            tokio::runtime::Builder::new_current_thread()
+            Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .expect("build tokio runtime")
