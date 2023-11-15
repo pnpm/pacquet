@@ -177,7 +177,7 @@ impl Drop for AutoMockInstance {
 impl AutoMockInstance {
     const STARTING_PORT: u32 = 4873;
 
-    async fn new() -> Self {
+    async fn init() -> Self {
         let port_lock_dir = temp_dir().join("pacquet-registry-mock.lock");
         fs::create_dir_all(&port_lock_dir).expect("create port lock dir");
 
@@ -218,7 +218,7 @@ impl AutoMockInstance {
             tokio::runtime::Builder::new_current_thread()
                 .build()
                 .expect("build tokio runtime")
-                .block_on(AutoMockInstance::new())
+                .block_on(AutoMockInstance::init())
         })
     }
 }
