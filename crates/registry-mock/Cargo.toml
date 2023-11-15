@@ -14,6 +14,7 @@ repository.workspace = true
 assert_cmd  = { workspace = true }
 derive_more = { workspace = true }
 pipe-trait  = { workspace = true }
+portpicker  = { workspace = true }
 reqwest     = { workspace = true }
 tokio       = { workspace = true }
 which       = { workspace = true }

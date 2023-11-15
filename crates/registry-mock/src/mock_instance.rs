@@ -2,6 +2,7 @@ use crate::{node_registry_mock, registry_mock};
 use assert_cmd::prelude::*;
 use derive_more::Deref;
 use pipe_trait::Pipe;
+use portpicker::pick_unused_port;
 use reqwest::Client;
 use std::{
     env::temp_dir,
@@ -178,13 +179,12 @@ impl Drop for AutoMockInstance {
 }
 
 impl AutoMockInstance {
-    const STARTING_PORT: u32 = 4873;
-
     async fn init() -> Self {
         let port_lock_dir = temp_dir().join("pacquet-registry-mock.lock");
         fs::create_dir_all(&port_lock_dir).expect("create port lock dir");
 
-        for port in AutoMockInstance::STARTING_PORT.. {
+        loop {
+            let port = pick_unused_port().expect("pick an unused port");
             let port_str = port.to_string();
             let port_lock_file = port_lock_dir.join(&port_str);
             if port_lock_file.exists() {
@@ -207,8 +207,6 @@ impl AutoMockInstance {
             let listen = port_to_url(port);
             return AutoMockInstance { mock_instance, port_lock_file, listen };
         }
-
-        panic!("Cannot find suitable port");
     }
 
     pub fn listen(&self) -> &'_ str {
