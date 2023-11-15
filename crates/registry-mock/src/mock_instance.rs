@@ -9,6 +9,7 @@ use std::{
     fs::{self, File},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
+    sync::OnceLock,
 };
 use tokio::time::{sleep, Duration};
 use which::which;
@@ -176,7 +177,7 @@ impl Drop for AutoMockInstance {
 impl AutoMockInstance {
     const STARTING_PORT: u32 = 4873;
 
-    pub async fn new() -> Self {
+    async fn new() -> Self {
         let port_lock_dir = temp_dir().join("pacquet-registry-mock.lock");
         fs::create_dir_all(&port_lock_dir).expect("create port lock dir");
 
@@ -209,5 +210,15 @@ impl AutoMockInstance {
 
     pub fn listen(&self) -> &'_ str {
         &self.listen
+    }
+
+    pub fn get_or_init() -> &'static Self {
+        static SINGLE_INSTANCE: OnceLock<AutoMockInstance> = OnceLock::new();
+        SINGLE_INSTANCE.get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("build tokio runtime")
+                .block_on(AutoMockInstance::new())
+        })
     }
 }
