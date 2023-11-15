@@ -11,6 +11,8 @@ license.workspace    = true
 repository.workspace = true
 
 [dependencies]
+pacquet-registry-mock = { workspace = true }
+
 assert_cmd        = { workspace = true }
 command-extra     = { workspace = true }
 tempfile          = { workspace = true }

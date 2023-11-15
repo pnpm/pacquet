@@ -1538,6 +1538,7 @@ dependencies = [
  "assert_cmd",
  "command-extra",
  "junction",
+ "pacquet-registry-mock",
  "tempfile",
  "text-block-macros",
  "walkdir",

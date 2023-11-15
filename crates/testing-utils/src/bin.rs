@@ -1,5 +1,6 @@
 use assert_cmd::prelude::*;
 use command_extra::CommandExtra;
+use pacquet_registry_mock::AutoMockInstance;
 use std::{fs, path::PathBuf, process::Command};
 use tempfile::{tempdir, TempDir};
 use text_block_macros::text_block_fnl;
@@ -56,6 +57,35 @@ impl CommandTempCwd<()> {
         };
         fs::write(&npmrc_path, npmrc_text).expect("write to .npmrc");
         let npmrc_info = AddDefaultNpmrcInfo { npmrc_path, store_dir, cache_dir };
+        let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info: () } = self;
+        CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info }
+    }
+}
+
+/// Information after the creation of an `.npmrc` file from assets provided by [`CommandTempCwd`].
+pub struct AddMockedRegistry {
+    /// Path to the created `.npmrc` file.
+    pub npmrc_path: PathBuf,
+    /// Absolute path to the store directory as defined by the `.npmrc` file.
+    pub store_dir: PathBuf,
+    /// Absolute path to the cache directory as defined by the `.npmrc` file.
+    pub cache_dir: PathBuf,
+}
+
+impl CommandTempCwd<()> {
+    /// Create a `.npmrc` file that defines `store-dir` and `cache-dir`.
+    pub fn add_mocked_registry(self) -> CommandTempCwd<AddMockedRegistry> {
+        let store_dir = self.root.path().join("pacquet-store");
+        let cache_dir = self.root.path().join("pacquet-cache");
+        let npmrc_path = self.workspace.join(".npmrc");
+        let npmrc_text = text_block_fnl! {
+            "store-dir=../pacquet-store"
+            "cache-dir=../pacquet-cache"
+        };
+        let mocked_registry = AutoMockInstance::get_or_init().listen();
+        let npmrc_text = format!("registry={mocked_registry}\n{npmrc_text}");
+        fs::write(&npmrc_path, npmrc_text).expect("write to .npmrc");
+        let npmrc_info = AddMockedRegistry { npmrc_path, store_dir, cache_dir };
         let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info: () } = self;
         CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info }
     }
