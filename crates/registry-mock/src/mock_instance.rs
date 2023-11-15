@@ -227,6 +227,7 @@ impl Drop for RegistryAnchor {
 
         anchor.user_count.checked_sub(1).expect("decrement user_count");
         if anchor.user_count > 0 {
+            anchor.save();
             eprintln!(
                 "info: The mocked server is still used by {} users. Skip.",
                 anchor.user_count
