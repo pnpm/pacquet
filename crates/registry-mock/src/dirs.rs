@@ -5,8 +5,8 @@ use std::{
     sync::OnceLock,
 };
 
-static WORKSPACE_ROOT: OnceLock<PathBuf> = OnceLock::new();
 pub fn workspace_root() -> &'static Path {
+    static WORKSPACE_ROOT: OnceLock<PathBuf> = OnceLock::new();
     WORKSPACE_ROOT.get_or_init(|| {
         let output = env!("CARGO")
             .pipe(Command::new)
@@ -31,7 +31,7 @@ pub fn workspace_root() -> &'static Path {
     })
 }
 
-static REGISTRY_MOCK: OnceLock<PathBuf> = OnceLock::new();
 pub fn registry_mock() -> &'static Path {
+    static REGISTRY_MOCK: OnceLock<PathBuf> = OnceLock::new();
     REGISTRY_MOCK.get_or_init(|| workspace_root().join("crates").join("registry-mock"))
 }
