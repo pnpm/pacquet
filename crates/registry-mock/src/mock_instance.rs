@@ -18,7 +18,7 @@ use tokio::{
 use which::which;
 
 fn port_to_url(port: impl Display) -> String {
-    format!("http://127.0.0.1:{port}")
+    format!("http://127.0.0.1:{port}/")
 }
 
 #[derive(Debug)]
