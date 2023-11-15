@@ -44,6 +44,7 @@ reflink-copy       = { version = "0.1.9" }
 junction           = { version = "1.0.0" }
 reqwest            = { version = "0.11", default-features = false, features = ["json", "native-tls-vendored"] }
 node-semver        = { version = "2.1.0" }
+num_cpus           = { version = "1.16.0" }
 pipe-trait         = { version = "0.4.0" }
 rayon              = { version = "1.8.0" }
 serde              = { version = "1.0.188", features = ["derive"] }
@@ -54,6 +55,7 @@ sha2               = { version = "0.10.8" }
 split-first-char   = { version = "0.0.0" }
 ssri               = { version = "9.0.0" }
 strum              = { version = "0.25.0", features = ["derive"] }
+swc_malloc         = { version = "0.5.9" }
 tar                = { version = "0.4.40" }
 text-block-macros  = { version = "0.1.1" }
 tracing            = { version = "0.1.37" }
@@ -78,9 +80,9 @@ allow_branch = "main"
 opt-level     = 3
 lto           = "fat"
 codegen-units = 1
-strip         = "symbols"
-debug         = false
-panic         = "abort"   # Let it crash and force ourselves to write safe Rust.
+# strip         = "symbols"
+# debug         = false
+panic = "abort" # Let it crash and force ourselves to write safe Rust.
 
 # Use the `--profile release-debug` flag to show symbols in release mode.
 # e.g. `cargo build --profile release-debug`
