@@ -216,6 +216,7 @@ impl AutoMockInstance {
         static SINGLE_INSTANCE: OnceLock<AutoMockInstance> = OnceLock::new();
         SINGLE_INSTANCE.get_or_init(|| {
             tokio::runtime::Builder::new_current_thread()
+                .enable_all()
                 .build()
                 .expect("build tokio runtime")
                 .block_on(AutoMockInstance::init())
