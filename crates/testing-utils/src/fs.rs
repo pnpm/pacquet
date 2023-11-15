@@ -38,7 +38,6 @@ pub fn get_all_files(root: &Path) -> Vec<String> {
         .filter(|entry| !entry.file_type().is_dir())
         .map(|entry| normalized_suffix(entry.path(), root))
         .filter(|suffix| !suffix.is_empty())
-        .filter(|suffix| !suffix.ends_with("-index.json")) // until we have a stable fake registry, this is necessary for now
         .collect()
 }
 
