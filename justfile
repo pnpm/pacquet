@@ -45,7 +45,6 @@ check:
 
 # Run all the tests
 test:
-  pnpm install --frozen-lockfile --prefer-offline
   cargo nextest run
 
 # Lint the whole project

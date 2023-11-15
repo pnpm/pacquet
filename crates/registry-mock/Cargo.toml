@@ -1,0 +1,19 @@
+[package]
+name                 = "pacquet-registry-mock"
+version              = "0.0.0"
+description          = "Wrapper of @pnpm/registry-mock"
+publish              = false
+authors.workspace    = true
+edition.workspace    = true
+homepage.workspace   = true
+keywords.workspace   = true
+license.workspace    = true
+repository.workspace = true
+
+[dependencies]
+assert_cmd  = { workspace = true }
+derive_more = { workspace = true }
+pipe-trait  = { workspace = true }
+reqwest     = { workspace = true }
+tokio       = { workspace = true }
+which       = { workspace = true }

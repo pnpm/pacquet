@@ -1481,6 +1481,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pacquet-registry-mock"
+version = "0.0.0"
+dependencies = [
+ "assert_cmd",
+ "derive_more",
+ "pipe-trait",
+ "reqwest",
+ "tokio",
+ "which",
+]
+
+[[package]]
 name = "pacquet-store-dir"
 version = "0.0.1"
 dependencies = [
