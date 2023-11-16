@@ -9,7 +9,6 @@ use std::{
     env::temp_dir,
     fmt::Display,
     fs::{self, File, OpenOptions},
-    io::{ErrorKind, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::OnceLock,
@@ -221,23 +220,14 @@ impl Drop for RegistryAnchor {
     fn drop(&mut self) {
         // information from self is outdated, do not use it.
 
-        let mut lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(RegistryAnchor::path())
-            .expect("open the anchor file");
-        lock.lock(FileLockMode::Exclusive).expect("acquire anchor lock");
+        RegistryAnchor::unlock();
 
         // load an up-to-date anchor, it is leaked to prevent dropping (again).
-        let anchor = lock
-            .pipe_mut(serde_json::from_reader::<_, RegistryAnchor>)
-            .expect("load an existing anchor")
-            .pipe(Box::new)
-            .pipe(Box::leak);
+        let anchor = RegistryAnchor::load().pipe(Box::new).pipe(Box::leak);
         assert_eq!(&self.info, &anchor.info);
 
         anchor.user_count = anchor.user_count.checked_sub(1).expect("decrement user_count");
-        anchor.save(&mut lock);
+        anchor.save();
         if anchor.user_count > 0 {
             eprintln!(
                 "info: The mocked server is still used by {} users. Skip.",
@@ -269,63 +259,75 @@ impl Drop for RegistryAnchor {
             }
         }
 
-        drop(lock);
         RegistryAnchor::delete();
+        RegistryAnchor::unlock();
     }
 }
 
 impl RegistryAnchor {
+    fn guard_file() -> &'static File {
+        static PATH: OnceLock<File> = OnceLock::new();
+        PATH.get_or_init(|| {
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(temp_dir().join("pacquet-registry-mock-anchor.lock"))
+                .expect("open the guard file")
+        })
+    }
+
+    fn lock() {
+        RegistryAnchor::guard_file().lock(FileLockMode::Exclusive).expect("acquire file guard")
+    }
+
+    fn try_lock() -> bool {
+        match RegistryAnchor::guard_file().try_lock(FileLockMode::Exclusive) {
+            Ok(()) => true,
+            Err(FileLockError::AlreadyLocked) => false,
+            Err(FileLockError::Io(error)) => panic!("Failed to acquire the file guard: {error}"),
+        }
+    }
+
+    fn unlock() {
+        RegistryAnchor::guard_file().unlock().expect("release file guard")
+    }
+
     fn path() -> &'static Path {
         static PATH: OnceLock<PathBuf> = OnceLock::new();
         PATH.get_or_init(|| temp_dir().join("pacquet-registry-mock-anchor.json"))
     }
 
-    fn save(&self, lock: &mut File) {
+    fn load() -> Self {
+        RegistryAnchor::path()
+            .pipe(fs::read_to_string)
+            .expect("read the anchor")
+            .pipe_as_ref(serde_json::from_str)
+            .expect("parse anchor")
+    }
+
+    fn save(&self) {
         let text = serde_json::to_string_pretty(self).expect("convert anchor to JSON");
-        lock.set_len(0).expect("truncate the anchor");
-        lock.write_all(text.as_bytes()).expect("write to anchor");
+        fs::write(RegistryAnchor::path(), text).expect("write to anchor");
     }
 
     fn load_or_init<Init>(init: Init) -> Self
     where
         Init: FnOnce() -> RegistryInfo,
     {
-        let load_existing = || -> Self {
-            let mut file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(RegistryAnchor::path())
-                .expect("open the anchor file");
-            file.lock(FileLockMode::Exclusive).expect("acquire anchor lock");
-            let mut anchor: RegistryAnchor =
-                serde_json::from_reader(&mut file).expect("load anchor");
-            anchor.user_count = anchor.user_count.checked_add(1).expect("increment user_count");
-            anchor.save(&mut file);
-            drop(file);
+        if RegistryAnchor::try_lock() {
+            let info = init();
+            let anchor = RegistryAnchor { user_count: 1, info };
+            anchor.save();
+            RegistryAnchor::unlock();
             anchor
-        };
-
-        match OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(RegistryAnchor::path())
-            .map(|file| file.try_lock(FileLockMode::Exclusive).map(|()| file))
-        {
-            Ok(Ok(mut file)) => {
-                file.lock(FileLockMode::Exclusive).expect("acquire anchor lock");
-                let info = init();
-                let anchor = RegistryAnchor { user_count: 1, info };
-                anchor.save(&mut file);
-                drop(file);
-                anchor
-            }
-            Ok(Err(FileLockError::AlreadyLocked)) => load_existing(),
-            Ok(Err(FileLockError::Io(error))) => {
-                panic!("Failed to acquire lock on anchor file: {error}")
-            }
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => load_existing(),
-            Err(error) => panic!("Failed to open the anchor file: {error}"),
+        } else {
+            RegistryAnchor::lock();
+            let mut anchor = RegistryAnchor::load();
+            anchor.user_count = anchor.user_count.checked_add(1).expect("increment user_count");
+            anchor.save();
+            RegistryAnchor::unlock();
+            anchor
         }
     }
 
