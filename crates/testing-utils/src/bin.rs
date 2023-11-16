@@ -35,7 +35,7 @@ impl CommandTempCwd<()> {
     }
 }
 
-/// Information after the creation of an `.npmrc` file from assets provided by [`CommandTempCwd`].
+/// Information after the creation of an `.npmrc` file and a mocked registry from assets provided by [`CommandTempCwd`].
 #[must_use]
 pub struct AddMockedRegistry {
     /// Path to the created `.npmrc` file.
@@ -49,7 +49,7 @@ pub struct AddMockedRegistry {
 }
 
 impl CommandTempCwd<()> {
-    /// Create a `.npmrc` file that defines `store-dir` and `cache-dir`.
+    /// Create a mock registry and a `.npmrc` file that defines `store-dir`, `cache-dir`, and `registry`.
     pub fn add_mocked_registry(self) -> CommandTempCwd<AddMockedRegistry> {
         let store_dir = self.root.path().join("pacquet-store");
         let cache_dir = self.root.path().join("pacquet-cache");
