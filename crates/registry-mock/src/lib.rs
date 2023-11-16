@@ -1,4 +1,5 @@
 mod dirs;
+mod kill_verdaccio;
 mod mock_instance;
 mod node_registry_mock;
 

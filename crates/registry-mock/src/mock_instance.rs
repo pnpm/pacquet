@@ -1,4 +1,4 @@
-use crate::{node_registry_mock, registry_mock};
+use crate::{kill_verdaccio::kill_verdaccio_recursive_by_pid, node_registry_mock, registry_mock};
 use advisory_lock::{AdvisoryFileLock, FileLockError, FileLockMode};
 use assert_cmd::prelude::*;
 use pipe_trait::Pipe;
@@ -13,6 +13,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::OnceLock,
 };
+use sysinfo::{Pid, PidExt, Signal};
 use tokio::{
     runtime::Builder,
     time::{sleep, Duration},
@@ -32,33 +33,9 @@ impl Drop for MockInstance {
     fn drop(&mut self) {
         let MockInstance { process, .. } = self;
         let pid = process.id();
-
-        eprintln!("info: Terminating mocked registry with the kill command (kill {pid})...");
-        match Command::new("kill").arg(pid.to_string()).output() {
-            Err(error) => {
-                eprintln!(
-                    "warn: Failed to terminate mocked registry with the kill command: {error}"
-                );
-            }
-            Ok(output) => {
-                if output.status.success() {
-                    eprintln!("info: Mocked registry terminated");
-                    return;
-                }
-
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                eprintln!(
-                    "warn: Failed to terminate mocked registry with the kill command: {stderr}"
-                );
-            }
-        }
-
-        eprintln!("info: Terminating mocked registry with SIGKILL...");
-        if let Err(error) = process.kill() {
-            eprintln!("warn: Failed to terminate mocked registry with SIGKILL: {error}");
-        } else {
-            eprintln!("info: mocked registry terminated");
-        }
+        eprintln!("info: Terminating all verdaccio instances below {pid}...");
+        let kill_count = kill_verdaccio_recursive_by_pid(Pid::from_u32(pid), Signal::Interrupt);
+        eprintln!("info: Terminated {kill_count} verdaccio instances");
     }
 }
 
@@ -237,26 +214,9 @@ impl Drop for RegistryAnchor {
 
         let pid = anchor.info.pid;
         eprintln!("info: There are no more users that use the mocked server");
-        eprintln!("info: Terminating mocked registry with the kill command (kill {pid})...");
-
-        match Command::new("kill").arg(pid.to_string()).output() {
-            Err(error) => {
-                eprintln!(
-                    "warn: Failed to terminate mocked registry with the kill command: {error}"
-                );
-            }
-            Ok(output) => {
-                if output.status.success() {
-                    eprintln!("info: Mocked registry terminated");
-                    return;
-                }
-
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                eprintln!(
-                    "warn: Failed to terminate mocked registry with the kill command: {stderr}"
-                );
-            }
-        }
+        eprintln!("info: Terminating all verdaccio instances below {pid}...");
+        let kill_count = kill_verdaccio_recursive_by_pid(Pid::from_u32(pid), Signal::Interrupt);
+        eprintln!("info: Terminated {kill_count} verdaccio instances");
 
         RegistryAnchor::delete();
         guard.unlock();
