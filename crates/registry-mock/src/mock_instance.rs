@@ -138,6 +138,7 @@ impl<'a> MockInstanceOptions<'a> {
 }
 
 #[derive(Debug)]
+#[must_use]
 pub struct AutoMockInstance {
     anchor: RegistryAnchor,
 }

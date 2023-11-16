@@ -63,6 +63,7 @@ impl CommandTempCwd<()> {
 }
 
 /// Information after the creation of an `.npmrc` file from assets provided by [`CommandTempCwd`].
+#[must_use]
 pub struct AddMockedRegistry {
     /// Path to the created `.npmrc` file.
     pub npmrc_path: PathBuf,
