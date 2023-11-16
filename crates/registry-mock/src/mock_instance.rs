@@ -31,10 +31,10 @@ pub struct MockInstance {
 impl Drop for MockInstance {
     fn drop(&mut self) {
         let MockInstance { process, .. } = self;
-        let gid = format!("-{}", process.id());
+        let pid = process.id();
 
-        eprintln!("info: Terminating mocked registry with the kill command (kill {gid})...");
-        match Command::new("kill").arg(&gid).output() {
+        eprintln!("info: Terminating mocked registry with the kill command (kill {pid})...");
+        match Command::new("kill").arg(pid.to_string()).output() {
             Err(error) => {
                 eprintln!(
                     "warn: Failed to terminate mocked registry with the kill command: {error}"
@@ -235,11 +235,11 @@ impl Drop for RegistryAnchor {
             }
         }
 
-        let gid = format!("-{}", anchor.info.pid);
+        let pid = anchor.info.pid;
         eprintln!("info: There are no more users that use the mocked server");
-        eprintln!("info: Terminating mocked registry with the kill command (kill {gid})...");
+        eprintln!("info: Terminating mocked registry with the kill command (kill {pid})...");
 
-        match Command::new("kill").arg(&gid).output() {
+        match Command::new("kill").arg(pid.to_string()).output() {
             Err(error) => {
                 eprintln!(
                     "warn: Failed to terminate mocked registry with the kill command: {error}"
