@@ -268,8 +268,8 @@ impl Drop for RegistryAnchor {
             }
         }
 
+        drop(lock);
         RegistryAnchor::delete();
-        drop(lock)
     }
 }
 
