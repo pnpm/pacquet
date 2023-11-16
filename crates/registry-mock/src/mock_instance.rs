@@ -189,6 +189,10 @@ impl Drop for RegistryAnchor {
 
         // load an up-to-date anchor, it is leaked to prevent dropping (again).
         let anchor = RegistryAnchor::load().pipe(Box::new).pipe(Box::leak);
+        if self.info != anchor.info {
+            eprintln!("info: {:?} is outdated. Skip.", &self.info);
+            return;
+        }
 
         if let Some(ref_count) = anchor.ref_count.checked_sub(1) {
             anchor.ref_count = ref_count;
@@ -199,22 +203,11 @@ impl Drop for RegistryAnchor {
             }
         }
 
+        let pid = anchor.info.pid;
         eprintln!("info: There are no more users that use the mocked server");
-
-        fn kill(pid: u32) {
-            eprintln!("info: Terminating all verdaccio instances below {pid}...");
-            let kill_count = kill_all_verdaccio_children(Pid::from_u32(pid), Signal::Interrupt);
-            eprintln!("info: Terminated {kill_count} verdaccio instances");
-        }
-
-        let latest_pid = anchor.info.pid;
-        let current_pid = self.info.pid;
-        kill(latest_pid);
-
-        if latest_pid != current_pid {
-            eprintln!("info: Left-over detected (pid = {current_pid})");
-            kill(current_pid);
-        }
+        eprintln!("info: Terminating all verdaccio instances below {pid}...");
+        let kill_count = kill_all_verdaccio_children(Pid::from_u32(pid), Signal::Interrupt);
+        eprintln!("info: Terminated {kill_count} verdaccio instances");
 
         RegistryAnchor::delete();
         guard.unlock();
