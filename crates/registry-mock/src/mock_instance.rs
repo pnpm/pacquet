@@ -1,5 +1,5 @@
 use crate::{node_registry_mock, registry_mock};
-use advisory_lock::{AdvisoryFileLock, FileLockMode};
+use advisory_lock::{AdvisoryFileLock, FileLockError, FileLockMode};
 use assert_cmd::prelude::*;
 use pipe_trait::Pipe;
 use portpicker::pick_unused_port;
@@ -290,13 +290,29 @@ impl RegistryAnchor {
     where
         Init: FnOnce() -> RegistryInfo,
     {
+        let load_existing = || -> Self {
+            let mut file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(RegistryAnchor::path())
+                .expect("open the anchor file");
+            file.lock(FileLockMode::Exclusive).expect("acquire anchor lock");
+            let mut anchor: RegistryAnchor =
+                serde_json::from_reader(&mut file).expect("load anchor");
+            anchor.user_count = anchor.user_count.checked_add(1).expect("increment user_count");
+            anchor.save(&mut file);
+            drop(file);
+            anchor
+        };
+
         match OpenOptions::new()
             .read(true)
             .write(true)
             .create_new(true)
             .open(RegistryAnchor::path())
+            .map(|file| file.try_lock(FileLockMode::Exclusive).map(|()| file))
         {
-            Ok(mut file) => {
+            Ok(Ok(mut file)) => {
                 file.lock(FileLockMode::Exclusive).expect("acquire anchor lock");
                 let info = init();
                 let anchor = RegistryAnchor { user_count: 1, info };
@@ -304,20 +320,11 @@ impl RegistryAnchor {
                 drop(file);
                 anchor
             }
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-                let mut file = OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .open(RegistryAnchor::path())
-                    .expect("open the anchor file");
-                file.lock(FileLockMode::Exclusive).expect("acquire anchor lock");
-                let mut anchor: RegistryAnchor =
-                    serde_json::from_reader(&mut file).expect("load anchor");
-                anchor.user_count = anchor.user_count.checked_add(1).expect("increment user_count");
-                anchor.save(&mut file);
-                drop(file);
-                anchor
+            Ok(Err(FileLockError::AlreadyLocked)) => load_existing(),
+            Ok(Err(FileLockError::Io(error))) => {
+                panic!("Failed to acquire lock on anchor file: {error}")
             }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => load_existing(),
             Err(error) => panic!("Failed to open the anchor file: {error}"),
         }
     }
