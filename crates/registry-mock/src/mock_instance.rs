@@ -1,4 +1,4 @@
-use crate::{kill_verdaccio::kill_verdaccio_recursive_by_pid, node_registry_mock, registry_mock};
+use crate::{kill_verdaccio::kill_all_verdaccio_children, node_registry_mock, registry_mock};
 use advisory_lock::{AdvisoryFileLock, FileLockError, FileLockMode};
 use assert_cmd::prelude::*;
 use pipe_trait::Pipe;
@@ -34,7 +34,7 @@ impl Drop for MockInstance {
         let MockInstance { process, .. } = self;
         let pid = process.id();
         eprintln!("info: Terminating all verdaccio instances below {pid}...");
-        let kill_count = kill_verdaccio_recursive_by_pid(Pid::from_u32(pid), Signal::Interrupt);
+        let kill_count = kill_all_verdaccio_children(Pid::from_u32(pid), Signal::Interrupt);
         eprintln!("info: Terminated {kill_count} verdaccio instances");
     }
 }
@@ -215,7 +215,7 @@ impl Drop for RegistryAnchor {
         let pid = anchor.info.pid;
         eprintln!("info: There are no more users that use the mocked server");
         eprintln!("info: Terminating all verdaccio instances below {pid}...");
-        let kill_count = kill_verdaccio_recursive_by_pid(Pid::from_u32(pid), Signal::Interrupt);
+        let kill_count = kill_all_verdaccio_children(Pid::from_u32(pid), Signal::Interrupt);
         eprintln!("info: Terminated {kill_count} verdaccio instances");
 
         RegistryAnchor::delete();
