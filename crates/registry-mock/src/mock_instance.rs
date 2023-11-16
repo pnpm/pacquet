@@ -9,7 +9,7 @@ use std::{
     env::temp_dir,
     fmt::Display,
     fs::{self, File, OpenOptions},
-    io::{ErrorKind, Read, Write},
+    io::{ErrorKind, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::OnceLock,
