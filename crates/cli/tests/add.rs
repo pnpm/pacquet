@@ -1,6 +1,3 @@
-pub mod _utils;
-pub use _utils::*;
-
 use assert_cmd::prelude::*;
 use command_extra::CommandExtra;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
