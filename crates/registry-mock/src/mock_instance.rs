@@ -212,7 +212,7 @@ struct RegistryInfo {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct RegistryAnchor {
-    user_count: u32,
+    ref_count: u32,
     info: RegistryInfo,
 }
 
@@ -226,11 +226,11 @@ impl Drop for RegistryAnchor {
         let anchor = RegistryAnchor::load().pipe(Box::new).pipe(Box::leak);
         assert_eq!(&self.info, &anchor.info);
 
-        if let Some(user_count) = anchor.user_count.checked_sub(1) {
-            anchor.user_count = user_count;
+        if let Some(ref_count) = anchor.ref_count.checked_sub(1) {
+            anchor.ref_count = ref_count;
             anchor.save();
-            if user_count > 0 {
-                eprintln!("info: The mocked server is still used by {user_count} users. Skip.");
+            if ref_count > 0 {
+                eprintln!("info: The mocked server is still used by {ref_count} users. Skip.");
                 return;
             }
         }
@@ -288,14 +288,14 @@ impl RegistryAnchor {
     {
         if let Some(guard) = GuardFile::try_lock() {
             let info = init();
-            let anchor = RegistryAnchor { user_count: 0, info };
+            let anchor = RegistryAnchor { ref_count: 0, info };
             anchor.save();
             guard.unlock();
             anchor
         } else {
             let guard = GuardFile::lock();
             let mut anchor = RegistryAnchor::load();
-            anchor.user_count = anchor.user_count.checked_add(1).expect("increment user_count");
+            anchor.ref_count = anchor.ref_count.checked_add(1).expect("increment ref_count");
             anchor.save();
             guard.unlock();
             anchor
