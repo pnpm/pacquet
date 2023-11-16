@@ -220,7 +220,7 @@ impl Drop for RegistryAnchor {
     fn drop(&mut self) {
         // information from self is outdated, do not use it.
 
-        RegistryAnchor::unlock();
+        let guard = GuardFile::lock();
 
         // load an up-to-date anchor, it is leaked to prevent dropping (again).
         let anchor = RegistryAnchor::load().pipe(Box::new).pipe(Box::leak);
@@ -260,39 +260,11 @@ impl Drop for RegistryAnchor {
         }
 
         RegistryAnchor::delete();
-        RegistryAnchor::unlock();
+        guard.unlock();
     }
 }
 
 impl RegistryAnchor {
-    fn guard_file() -> &'static File {
-        static PATH: OnceLock<File> = OnceLock::new();
-        PATH.get_or_init(|| {
-            OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .open(temp_dir().join("pacquet-registry-mock-anchor.lock"))
-                .expect("open the guard file")
-        })
-    }
-
-    fn lock() {
-        RegistryAnchor::guard_file().lock(FileLockMode::Exclusive).expect("acquire file guard")
-    }
-
-    fn try_lock() -> bool {
-        match RegistryAnchor::guard_file().try_lock(FileLockMode::Exclusive) {
-            Ok(()) => true,
-            Err(FileLockError::AlreadyLocked) => false,
-            Err(FileLockError::Io(error)) => panic!("Failed to acquire the file guard: {error}"),
-        }
-    }
-
-    fn unlock() {
-        RegistryAnchor::guard_file().unlock().expect("release file guard")
-    }
-
     fn path() -> &'static Path {
         static PATH: OnceLock<PathBuf> = OnceLock::new();
         PATH.get_or_init(|| temp_dir().join("pacquet-registry-mock-anchor.json"))
@@ -315,23 +287,63 @@ impl RegistryAnchor {
     where
         Init: FnOnce() -> RegistryInfo,
     {
-        if RegistryAnchor::try_lock() {
+        if let Some(guard) = GuardFile::try_lock() {
             let info = init();
             let anchor = RegistryAnchor { user_count: 1, info };
             anchor.save();
-            RegistryAnchor::unlock();
+            guard.unlock();
             anchor
         } else {
-            RegistryAnchor::lock();
+            let guard = GuardFile::lock();
             let mut anchor = RegistryAnchor::load();
             anchor.user_count = anchor.user_count.checked_add(1).expect("increment user_count");
             anchor.save();
-            RegistryAnchor::unlock();
+            guard.unlock();
             anchor
         }
     }
 
     fn delete() {
         fs::remove_file(RegistryAnchor::path()).expect("delete the anchor file");
+    }
+}
+
+#[must_use]
+struct GuardFile;
+
+impl Drop for GuardFile {
+    fn drop(&mut self) {
+        GuardFile::path().unlock().expect("release file guard");
+    }
+}
+
+impl GuardFile {
+    fn path() -> &'static File {
+        static PATH: OnceLock<File> = OnceLock::new();
+        PATH.get_or_init(|| {
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(temp_dir().join("pacquet-registry-mock-anchor.lock"))
+                .expect("open the guard file")
+        })
+    }
+
+    fn lock() -> Self {
+        GuardFile::path().lock(FileLockMode::Exclusive).expect("acquire file guard");
+        GuardFile
+    }
+
+    fn try_lock() -> Option<Self> {
+        match GuardFile::path().try_lock(FileLockMode::Exclusive) {
+            Ok(()) => Some(GuardFile),
+            Err(FileLockError::AlreadyLocked) => None,
+            Err(FileLockError::Io(error)) => panic!("Failed to acquire the file guard: {error}"),
+        }
+    }
+
+    fn unlock(self) {
+        drop(self)
     }
 }
