@@ -226,14 +226,13 @@ impl Drop for RegistryAnchor {
         let anchor = RegistryAnchor::load().pipe(Box::new).pipe(Box::leak);
         assert_eq!(&self.info, &anchor.info);
 
-        anchor.user_count = anchor.user_count.checked_sub(1).expect("decrement user_count");
-        anchor.save();
-        if anchor.user_count > 0 {
-            eprintln!(
-                "info: The mocked server is still used by {} users. Skip.",
-                anchor.user_count
-            );
-            return;
+        if let Some(user_count) = anchor.user_count.checked_sub(1) {
+            anchor.user_count = user_count;
+            anchor.save();
+            if user_count > 0 {
+                eprintln!("info: The mocked server is still used by {user_count} users. Skip.");
+                return;
+            }
         }
 
         let pid = anchor.info.pid;
@@ -289,7 +288,7 @@ impl RegistryAnchor {
     {
         if let Some(guard) = GuardFile::try_lock() {
             let info = init();
-            let anchor = RegistryAnchor { user_count: 1, info };
+            let anchor = RegistryAnchor { user_count: 0, info };
             anchor.save();
             guard.unlock();
             anchor
