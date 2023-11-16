@@ -62,6 +62,9 @@ jobs:
           RUSTDOCFLAGS: '-D warnings'
         run: cargo doc
 
+      - name: Install just
+        uses: taiki-e/install-action@just
+
       - name: Install dependencies
         run: just install
 
