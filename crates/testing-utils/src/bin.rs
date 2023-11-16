@@ -36,33 +36,6 @@ impl CommandTempCwd<()> {
 }
 
 /// Information after the creation of an `.npmrc` file from assets provided by [`CommandTempCwd`].
-pub struct AddDefaultNpmrcInfo {
-    /// Path to the created `.npmrc` file.
-    pub npmrc_path: PathBuf,
-    /// Absolute path to the store directory as defined by the `.npmrc` file.
-    pub store_dir: PathBuf,
-    /// Absolute path to the cache directory as defined by the `.npmrc` file.
-    pub cache_dir: PathBuf,
-}
-
-impl CommandTempCwd<()> {
-    /// Create a `.npmrc` file that defines `store-dir` and `cache-dir`.
-    pub fn add_default_npmrc(self) -> CommandTempCwd<AddDefaultNpmrcInfo> {
-        let store_dir = self.root.path().join("pacquet-store");
-        let cache_dir = self.root.path().join("pacquet-cache");
-        let npmrc_path = self.workspace.join(".npmrc");
-        let npmrc_text = text_block_fnl! {
-            "store-dir=../pacquet-store"
-            "cache-dir=../pacquet-cache"
-        };
-        fs::write(&npmrc_path, npmrc_text).expect("write to .npmrc");
-        let npmrc_info = AddDefaultNpmrcInfo { npmrc_path, store_dir, cache_dir };
-        let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info: () } = self;
-        CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info }
-    }
-}
-
-/// Information after the creation of an `.npmrc` file from assets provided by [`CommandTempCwd`].
 #[must_use]
 pub struct AddMockedRegistry {
     /// Path to the created `.npmrc` file.
