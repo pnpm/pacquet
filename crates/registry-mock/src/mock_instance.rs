@@ -282,6 +282,7 @@ impl RegistryAnchor {
 
     fn save(&self, lock: &mut File) {
         let text = serde_json::to_string_pretty(self).expect("convert anchor to JSON");
+        lock.set_len(0).expect("truncate the anchor");
         lock.write_all(text.as_bytes()).expect("write to anchor");
     }
 
