@@ -261,7 +261,9 @@ impl RegistryAnchor {
     }
 
     fn delete() {
-        fs::remove_file(RegistryAnchor::path()).expect("delete the anchor file");
+        if let Err(error) = fs::remove_file(RegistryAnchor::path()) {
+            eprintln!("warn: Failed to delete the anchor file: {error}");
+        }
     }
 }
 
