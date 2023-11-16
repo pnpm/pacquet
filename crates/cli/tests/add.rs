@@ -1,14 +1,31 @@
 pub mod _utils;
 pub use _utils::*;
 
+use assert_cmd::prelude::*;
+use command_extra::CommandExtra;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
-use pacquet_testing_utils::fs::{get_all_folders, get_filenames_in_folder};
+use pacquet_testing_utils::{
+    bin::CommandTempCwd,
+    fs::{get_all_folders, get_filenames_in_folder},
+};
 use pretty_assertions::assert_eq;
-use std::{env, fs};
+use std::{env, ffi::OsStr, fs, path::PathBuf};
+use tempfile::TempDir;
+
+fn exec_pacquet_in_temp_cwd<Args>(args: Args) -> (TempDir, PathBuf)
+where
+    Args: IntoIterator,
+    Args::Item: AsRef<OsStr>,
+{
+    let CommandTempCwd { pacquet, root, workspace, .. } =
+        CommandTempCwd::init().add_default_npmrc();
+    pacquet.with_args(args).assert().success();
+    (root, workspace)
+}
 
 #[test]
 fn should_install_all_dependencies() {
-    let (root, workspace) = exec_pacquet_in_temp_cwd(true, ["add", "is-even"]);
+    let (root, workspace) = exec_pacquet_in_temp_cwd(["add", "is-even"]);
 
     eprintln!("Directory list");
     insta::assert_debug_snapshot!(get_all_folders(&workspace));
@@ -41,7 +58,7 @@ fn should_install_all_dependencies() {
 #[test]
 #[cfg(unix)]
 pub fn should_symlink_correctly() {
-    let (root, workspace) = exec_pacquet_in_temp_cwd(true, ["add", "is-odd"]);
+    let (root, workspace) = exec_pacquet_in_temp_cwd(["add", "is-odd"]);
 
     eprintln!("Directory list");
     insta::assert_debug_snapshot!(get_all_folders(&workspace));
@@ -67,7 +84,7 @@ pub fn should_symlink_correctly() {
 
 #[test]
 fn should_add_to_package_json() {
-    let (root, dir) = exec_pacquet_in_temp_cwd(true, ["add", "is-odd"]);
+    let (root, dir) = exec_pacquet_in_temp_cwd(["add", "is-odd"]);
     let file = PackageManifest::from_path(dir.join("package.json")).unwrap();
     eprintln!("Ensure is-odd is added to package.json#dependencies");
     assert!(file.dependencies([DependencyGroup::Prod]).any(|(k, _)| k == "is-odd"));
@@ -76,7 +93,7 @@ fn should_add_to_package_json() {
 
 #[test]
 fn should_add_dev_dependency() {
-    let (root, dir) = exec_pacquet_in_temp_cwd(true, ["add", "is-odd", "--save-dev"]);
+    let (root, dir) = exec_pacquet_in_temp_cwd(["add", "is-odd", "--save-dev"]);
     let file = PackageManifest::from_path(dir.join("package.json")).unwrap();
     eprintln!("Ensure is-odd is added to package.json#devDependencies");
     assert!(file.dependencies([DependencyGroup::Dev]).any(|(k, _)| k == "is-odd"));
@@ -85,7 +102,7 @@ fn should_add_dev_dependency() {
 
 #[test]
 fn should_add_peer_dependency() {
-    let (root, dir) = exec_pacquet_in_temp_cwd(true, ["add", "is-odd", "--save-peer"]);
+    let (root, dir) = exec_pacquet_in_temp_cwd(["add", "is-odd", "--save-peer"]);
     let file = PackageManifest::from_path(dir.join("package.json")).unwrap();
     eprintln!("Ensure is-odd is added to package.json#devDependencies");
     assert!(file.dependencies([DependencyGroup::Dev]).any(|(k, _)| k == "is-odd"));

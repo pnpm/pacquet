@@ -1,14 +1,16 @@
 pub mod _utils;
 pub use _utils::*;
 
+use assert_cmd::prelude::*;
 use command_extra::CommandExtra;
 use pacquet_testing_utils::{bin::CommandTempCwd, fs::get_filenames_in_folder};
 use pretty_assertions::assert_eq;
-use std::{env, fs};
+use std::fs;
 
 #[test]
 fn should_create_package_json() {
-    let (root, workspace) = exec_pacquet_in_temp_cwd(false, ["init"]);
+    let CommandTempCwd { pacquet, root, workspace, .. } = CommandTempCwd::init();
+    pacquet.with_arg("init").assert().success();
 
     let manifest_path = workspace.join("package.json");
     dbg!(&manifest_path);
