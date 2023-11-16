@@ -4,16 +4,17 @@ use sysinfo::{
 };
 
 pub fn kill_verdaccio_recursive_by_process(process: &Process, signal: Signal) -> u64 {
-    let kill = |process: &Process| -> u64 {
-        if !process.name().to_lowercase().contains("verdaccio") {
-            kill_verdaccio_recursive_by_process(process, signal)
-        } else if process.kill_with(signal).unwrap_or_else(|| process.kill()) {
-            1
-        } else {
-            0
-        }
-    };
-    process.tasks.values().map(kill).sum()
+    if !process.name().to_lowercase().contains("verdaccio") {
+        process
+            .tasks
+            .values()
+            .map(|process| kill_verdaccio_recursive_by_process(process, signal))
+            .sum()
+    } else if process.kill_with(signal).unwrap_or_else(|| process.kill()) {
+        1
+    } else {
+        0
+    }
 }
 
 pub fn kill_verdaccio_recursive_by_pid_in(system: &System, pid: Pid, signal: Signal) -> u64 {
