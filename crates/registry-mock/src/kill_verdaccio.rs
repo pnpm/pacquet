@@ -4,16 +4,17 @@ use sysinfo::{
 };
 
 pub fn kill_verdaccio_recursive_by_process(process: &Process, signal: Signal) -> u64 {
-    if !process.name().to_lowercase().contains("verdaccio") {
-        process
-            .tasks
-            .values()
-            .map(|process| kill_verdaccio_recursive_by_process(process, signal))
-            .sum()
-    } else if process.kill_with(signal).unwrap_or_else(|| process.kill()) {
-        1
+    let kill_count = process
+        .tasks
+        .values()
+        .map(|process| kill_verdaccio_recursive_by_process(process, signal))
+        .sum();
+    if process.name().to_lowercase().contains("verdaccio")
+        && process.kill_with(signal).unwrap_or_else(|| process.kill())
+    {
+        kill_count + 1
     } else {
-        0
+        kill_count
     }
 }
 
