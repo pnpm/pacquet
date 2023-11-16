@@ -288,7 +288,7 @@ impl RegistryAnchor {
     {
         if let Some(guard) = GuardFile::try_lock() {
             let info = init();
-            let anchor = RegistryAnchor { ref_count: 0, info };
+            let anchor = RegistryAnchor { ref_count: 1, info };
             anchor.save();
             guard.unlock();
             anchor
