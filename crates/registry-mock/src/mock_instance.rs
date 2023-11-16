@@ -202,7 +202,10 @@ impl Drop for RegistryAnchor {
 
         // load an up-to-date anchor, it is leaked to prevent dropping (again).
         let anchor = RegistryAnchor::load().pipe(Box::new).pipe(Box::leak);
-        assert_eq!(&self.info, &anchor.info);
+        if self.info != anchor.info {
+            eprintln!("info: {:?} is outdated. Skip.", &self.info);
+            return;
+        }
 
         if let Some(ref_count) = anchor.ref_count.checked_sub(1) {
             anchor.ref_count = ref_count;
