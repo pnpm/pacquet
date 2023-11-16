@@ -288,7 +288,9 @@ impl RegistryAnchor {
     where
         Init: FnOnce() -> RegistryInfo,
     {
-        if let Some(anchor) = RegistryAnchor::load() {
+        if let Some(mut anchor) = RegistryAnchor::load() {
+            anchor.user_count = anchor.user_count.checked_add(1).expect("increment user_count");
+            anchor.save();
             return anchor;
         }
         let info = init();
