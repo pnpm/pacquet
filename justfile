@@ -28,6 +28,10 @@ update:
   git pull
   git submodule update --init
 
+# Install necessary dependencies
+install:
+  cd crates/registry-mock/ && pnpm install --frozen-lockfile --prefer-offline
+
 # Run `cargo watch`
 # --no-vcs-ignores: cargo-watch has a bug loading all .gitignores, including the ones listed in .gitignore
 # use .ignore file getting the ignore list

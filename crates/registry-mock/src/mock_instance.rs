@@ -1,4 +1,4 @@
-use crate::{kill_verdaccio::kill_all_verdaccio_children, node_registry_mock, registry_mock};
+use crate::{kill_verdaccio::kill_all_verdaccio_children, node_registry_mock};
 use advisory_lock::{AdvisoryFileLock, FileLockError, FileLockMode};
 use assert_cmd::prelude::*;
 use pipe_trait::Pipe;
@@ -18,7 +18,6 @@ use tokio::{
     runtime::Builder,
     time::{sleep, Duration},
 };
-use which::which;
 
 fn port_to_url(port: impl Display) -> String {
     format!("http://localhost:{port}/")
@@ -81,18 +80,6 @@ impl<'a> MockInstanceOptions<'a> {
 
     async fn spawn(self) -> MockInstance {
         let MockInstanceOptions { port, stdout, stderr, .. } = self;
-
-        eprintln!("Installing pnpm packages...");
-        which("pnpm")
-            .expect("find pnpm command")
-            .pipe(Command::new)
-            .args(["install", "--frozen-lockfile", "--prefer-offline"])
-            .current_dir(registry_mock())
-            .stdin(Stdio::null())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .assert()
-            .success();
 
         eprintln!("Preparing...");
         node_registry_mock()

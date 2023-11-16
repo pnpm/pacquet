@@ -52,6 +52,9 @@ jobs:
           RUSTDOCFLAGS: '-D warnings'
         run: cargo doc
 
+      - name: Install dependencies
+        run: just install
+
       - name: Install cargo-nextest
         uses: taiki-e/install-action@cargo-nextest
 
