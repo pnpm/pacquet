@@ -225,7 +225,7 @@ impl Drop for RegistryAnchor {
             RegistryAnchor::load().expect("load an existing anchor").pipe(Box::new).pipe(Box::leak);
         assert_eq!(&self.info, &anchor.info);
 
-        anchor.user_count.checked_sub(1).expect("decrement user_count");
+        anchor.user_count = anchor.user_count.checked_sub(1).expect("decrement user_count");
         if anchor.user_count > 0 {
             anchor.save();
             eprintln!(
