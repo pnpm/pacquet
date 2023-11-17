@@ -1,12 +1,12 @@
 use crate::{
-    kill_verdaccio::kill_all_verdaccio_children, node_registry_mock, RegistryAnchor, RegistryInfo,
+    kill_verdaccio::kill_all_verdaccio_children, node_registry_mock, port_to_url::port_to_url,
+    RegistryAnchor, RegistryInfo,
 };
 use assert_cmd::prelude::*;
 use pipe_trait::Pipe;
 use portpicker::pick_unused_port;
 use reqwest::Client;
 use std::{
-    fmt::Display,
     fs::File,
     path::Path,
     process::{Child, Command, Stdio},
@@ -16,10 +16,6 @@ use tokio::{
     runtime::Builder,
     time::{sleep, Duration},
 };
-
-fn port_to_url(port: impl Display) -> String {
-    format!("http://localhost:{port}/")
-}
 
 #[derive(Debug)]
 pub struct MockInstance {
