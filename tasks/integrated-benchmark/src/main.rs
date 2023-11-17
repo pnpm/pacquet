@@ -5,6 +5,8 @@ mod work_env;
 
 #[tokio::main]
 async fn main() {
+    use pipe_trait::Pipe;
+
     let cli_args::CliArgs {
         scenario,
         registry_port,
@@ -23,6 +25,7 @@ async fn main() {
     let work_env = std::fs::canonicalize(work_env).expect("get absolute path to work env");
     let registry = format!("http://localhost:{registry_port}/");
     let verdaccio = if verdaccio {
+        verify::ensure_program("just").arg("install").pipe(verify::executor("just install"));
         let stdout = work_env.join("verdaccio.stdout.log");
         let stderr = work_env.join("verdaccio.stderr.log");
         pacquet_registry_mock::MockInstanceOptions {
