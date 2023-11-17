@@ -5,7 +5,7 @@ use assert_cmd::prelude::*;
 use command_extra::CommandExtra;
 use pacquet_testing_utils::{
     bin::{AddMockedRegistry, CommandTempCwd},
-    fs::{get_all_files, get_all_folders, is_symlink_or_junction}, 
+    fs::{get_all_files, get_all_folders, is_symlink_or_junction},
     panic_after,
 };
 use pipe_trait::Pipe;
@@ -136,7 +136,7 @@ fn should_install_index_files() {
 #[test]
 fn should_install_duplicated_dependencies() {
     let CommandTempCwd { pacquet, root, workspace, .. } =
-        CommandTempCwd::init().add_default_npmrc();
+        CommandTempCwd::init().add_mocked_registry();
 
     eprintln!("Creating package.json...");
     let manifest_path = workspace.join("package.json");

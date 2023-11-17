@@ -1,4 +1,4 @@
-use std::{ thread, sync::mpsc, time::Duration};
+use std::{sync::mpsc, thread, time::Duration};
 pub mod bin;
 pub mod fs;
 
