@@ -148,16 +148,15 @@ impl AutoMockInstance {
                 .pipe(Box::new)
                 .pipe(Box::leak);
 
-            let listen = port_to_url(port);
             let pid = mock_instance.process.id();
 
-            RegistryInfo { port, listen, pid }
+            RegistryInfo { port, pid }
         });
 
         AutoMockInstance { anchor }
     }
 
-    pub fn listen(&self) -> &'_ str {
-        &self.anchor.info.listen
+    pub fn listen(&self) -> String {
+        self.anchor.info.listen()
     }
 }
