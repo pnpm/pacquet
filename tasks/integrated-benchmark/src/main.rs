@@ -26,13 +26,11 @@ async fn main() {
     let registry = format!("http://localhost:{registry_port}/");
     let verdaccio = if verdaccio {
         verify::ensure_program("just").arg("install").pipe(verify::executor("just install"));
-        let stdout = work_env.join("verdaccio.stdout.log");
-        let stderr = work_env.join("verdaccio.stderr.log");
         pacquet_registry_mock::MockInstanceOptions {
             client: &Default::default(),
             port: registry_port,
-            stdout: Some(&stdout),
-            stderr: Some(&stderr),
+            stdout: work_env.join("verdaccio.stdout.log").pipe(Some).as_deref(),
+            stderr: work_env.join("verdaccio.stderr.log").pipe(Some).as_deref(),
             max_retries: 10,
             retry_delay: tokio::time::Duration::from_millis(500),
         }
