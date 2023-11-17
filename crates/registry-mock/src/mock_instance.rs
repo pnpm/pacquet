@@ -1,6 +1,6 @@
 use crate::{
     kill_verdaccio::kill_all_verdaccio_children, node_registry_mock, port_to_url::port_to_url,
-    RegistryAnchor, RegistryInfo,
+    PreparedRegistryInfo, RegistryAnchor, RegistryInfo,
 };
 use assert_cmd::prelude::*;
 use pipe_trait::Pipe;
@@ -16,7 +16,7 @@ use tokio::time::{sleep, Duration};
 
 #[derive(Debug)]
 pub struct MockInstance {
-    process: Child,
+    pub(crate) process: Child,
 }
 
 impl Drop for MockInstance {
@@ -69,7 +69,7 @@ impl<'a> MockInstanceOptions<'a> {
         }
     }
 
-    async fn spawn(self) -> MockInstance {
+    pub(crate) async fn spawn(self) -> MockInstance {
         let MockInstanceOptions { port, stdout, stderr, .. } = self;
         let port = port.to_string();
 
@@ -118,12 +118,17 @@ impl<'a> MockInstanceOptions<'a> {
 
 #[derive(Debug)]
 #[must_use]
-pub struct AutoMockInstance {
-    anchor: RegistryAnchor,
+pub enum AutoMockInstance {
+    Prepared(PreparedRegistryInfo),
+    RefCount(RegistryAnchor),
 }
 
 impl AutoMockInstance {
     pub fn load_or_init() -> Self {
+        if let Some(prepared) = PreparedRegistryInfo::try_load() {
+            return AutoMockInstance::Prepared(prepared);
+        }
+
         let anchor = RegistryAnchor::load_or_init(|| {
             let port = pick_unused_port().expect("pick an unused port");
 
@@ -150,10 +155,17 @@ impl AutoMockInstance {
             RegistryInfo { port, pid }
         });
 
-        AutoMockInstance { anchor }
+        AutoMockInstance::RefCount(anchor)
+    }
+
+    fn info(&self) -> &'_ RegistryInfo {
+        match self {
+            AutoMockInstance::Prepared(prepared) => &prepared.info,
+            AutoMockInstance::RefCount(anchor) => &anchor.info,
+        }
     }
 
     pub fn url(&self) -> String {
-        self.anchor.info.url()
+        self.info().url()
     }
 }
