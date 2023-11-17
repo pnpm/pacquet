@@ -156,7 +156,7 @@ impl AutoMockInstance {
         AutoMockInstance { anchor }
     }
 
-    pub fn listen(&self) -> String {
-        self.anchor.info.listen()
+    pub fn url(&self) -> String {
+        self.anchor.info.url()
     }
 }

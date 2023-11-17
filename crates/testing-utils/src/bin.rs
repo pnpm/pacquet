@@ -59,7 +59,7 @@ impl CommandTempCwd<()> {
             "cache-dir=../pacquet-cache"
         };
         let mock_instance = AutoMockInstance::load_or_init();
-        let mocked_registry = mock_instance.listen();
+        let mocked_registry = mock_instance.url();
         let npmrc_text = format!("registry={mocked_registry}\n{npmrc_text}");
         fs::write(&npmrc_path, npmrc_text).expect("write to .npmrc");
         let npmrc_info = AddMockedRegistry { npmrc_path, store_dir, cache_dir, mock_instance };

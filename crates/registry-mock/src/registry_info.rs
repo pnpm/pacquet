@@ -8,7 +8,7 @@ pub struct RegistryInfo {
 }
 
 impl RegistryInfo {
-    pub fn listen(&self) -> String {
+    pub fn url(&self) -> String {
         port_to_url(self.port)
     }
 }
