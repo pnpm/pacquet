@@ -14,6 +14,9 @@ use std::{
 use sysinfo::{Pid, PidExt, Signal};
 use tokio::time::{sleep, Duration};
 
+/// Handler of a mocked registry server instance.
+///
+/// The internal process will be killed on [drop](Drop).
 #[derive(Debug)]
 pub struct MockInstance {
     pub(crate) process: Child,
@@ -29,6 +32,7 @@ impl Drop for MockInstance {
     }
 }
 
+/// Launch options for a [`MockInstance`].
 #[derive(Debug, Clone, Copy)]
 pub struct MockInstanceOptions<'a> {
     pub client: &'a Client,
@@ -116,10 +120,16 @@ impl<'a> MockInstanceOptions<'a> {
     }
 }
 
+/// Manage a single mocked registry server instance that is shared between multiple different tests.
+///
+/// This instance can either be automatically be spawned by the first test and tracked by a reference counter
+/// or be prepared by the CLI command.
 #[derive(Debug)]
 #[must_use]
 pub enum AutoMockInstance {
+    /// The instance is created by the CLI command and managed manually.
     Prepared(PreparedRegistryInfo),
+    /// The instance is automatically spawned by the first test to run and managed automatically by counting references.
     RefCount(RegistryAnchor),
 }
 

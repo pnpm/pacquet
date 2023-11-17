@@ -11,6 +11,10 @@ use std::{
 };
 use sysinfo::{Pid, PidExt, Signal};
 
+/// Count references and automatically manage a single shared mocked registry server instance that is spawn
+/// by the first test to run.
+///
+/// The reference counter increases on [load](RegistryAnchor::load_or_init) and decreases on [drop](Drop).
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RegistryAnchor {
     pub ref_count: u32,
@@ -101,6 +105,7 @@ impl RegistryAnchor {
     }
 }
 
+/// Prevent race condition between multiple tests.
 #[must_use]
 struct GuardFile;
 
