@@ -1,30 +1,20 @@
 ---
 source: crates/cli/tests/add.rs
-assertion_line: 14
+assertion_line: 29
 expression: get_all_folders(&workspace)
 ---
 [
     "node_modules",
     "node_modules/.pnpm",
-    "node_modules/.pnpm/is-buffer@1.1.6",
-    "node_modules/.pnpm/is-buffer@1.1.6/node_modules",
-    "node_modules/.pnpm/is-buffer@1.1.6/node_modules/is-buffer",
-    "node_modules/.pnpm/is-buffer@1.1.6/node_modules/is-buffer/test",
-    "node_modules/.pnpm/is-even@1.0.0",
-    "node_modules/.pnpm/is-even@1.0.0/node_modules",
-    "node_modules/.pnpm/is-even@1.0.0/node_modules/is-even",
-    "node_modules/.pnpm/is-even@1.0.0/node_modules/is-odd",
-    "node_modules/.pnpm/is-number@3.0.0",
-    "node_modules/.pnpm/is-number@3.0.0/node_modules",
-    "node_modules/.pnpm/is-number@3.0.0/node_modules/is-number",
-    "node_modules/.pnpm/is-number@3.0.0/node_modules/kind-of",
-    "node_modules/.pnpm/is-odd@0.1.2",
-    "node_modules/.pnpm/is-odd@0.1.2/node_modules",
-    "node_modules/.pnpm/is-odd@0.1.2/node_modules/is-number",
-    "node_modules/.pnpm/is-odd@0.1.2/node_modules/is-odd",
-    "node_modules/.pnpm/kind-of@3.2.2",
-    "node_modules/.pnpm/kind-of@3.2.2/node_modules",
-    "node_modules/.pnpm/kind-of@3.2.2/node_modules/is-buffer",
-    "node_modules/.pnpm/kind-of@3.2.2/node_modules/kind-of",
-    "node_modules/is-even",
+    "node_modules/.pnpm/@pnpm.e2e+hello-world-js-bin-parent@1.0.0",
+    "node_modules/.pnpm/@pnpm.e2e+hello-world-js-bin-parent@1.0.0/node_modules",
+    "node_modules/.pnpm/@pnpm.e2e+hello-world-js-bin-parent@1.0.0/node_modules/@pnpm.e2e",
+    "node_modules/.pnpm/@pnpm.e2e+hello-world-js-bin-parent@1.0.0/node_modules/@pnpm.e2e/hello-world-js-bin",
+    "node_modules/.pnpm/@pnpm.e2e+hello-world-js-bin-parent@1.0.0/node_modules/@pnpm.e2e/hello-world-js-bin-parent",
+    "node_modules/.pnpm/@pnpm.e2e+hello-world-js-bin@1.0.0",
+    "node_modules/.pnpm/@pnpm.e2e+hello-world-js-bin@1.0.0/node_modules",
+    "node_modules/.pnpm/@pnpm.e2e+hello-world-js-bin@1.0.0/node_modules/@pnpm.e2e",
+    "node_modules/.pnpm/@pnpm.e2e+hello-world-js-bin@1.0.0/node_modules/@pnpm.e2e/hello-world-js-bin",
+    "node_modules/@pnpm.e2e",
+    "node_modules/@pnpm.e2e/hello-world-js-bin-parent",
 ]

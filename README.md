@@ -22,6 +22,19 @@ Experimental package manager for node.js written in rust.
 TRACE=pacquet_tarball just cli add fastify
 ```
 
+## Testing
+
+```sh
+# Install necessary dependencies
+just install
+
+# Start a mocked registry server (optional)
+just registry-mock launch
+
+# Run test
+just test
+```
+
 ## Benchmarking
 
 ### Install between multiple revisions

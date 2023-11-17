@@ -103,11 +103,13 @@ unlicensed = "deny"
 # [possible values: any SPDX 3.11 short identifier (+ optional exception)].
 allow = [
   "MIT",
+  "MPL-2.0", # required by mockito, which is used by tasks/micro-benchmark
   "Apache-2.0",
   "Unicode-DFS-2016",
   "BSD-3-Clause",
   "BSL-1.0",
   "ISC",
+  "Unlicense", # required by portpicker, which is used by crates/registry-mock
   #"Apache-2.0 WITH LLVM-exception",
 ]
 # List of explicitly disallowed licenses

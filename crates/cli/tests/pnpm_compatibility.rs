@@ -5,7 +5,7 @@ pub use _utils::*;
 use assert_cmd::prelude::*;
 use command_extra::CommandExtra;
 use pacquet_testing_utils::{
-    bin::{AddDefaultNpmrcInfo, CommandTempCwd},
+    bin::{AddMockedRegistry, CommandTempCwd},
     fs::get_all_files,
 };
 use pipe_trait::Pipe;
@@ -15,17 +15,15 @@ use std::fs;
 #[test]
 #[ignore = "requires metadata cache feature which pacquet doesn't yet have"]
 fn store_usable_by_pnpm_offline() {
-    let CommandTempCwd { pacquet, pnpm, root, workspace, .. } =
-        CommandTempCwd::init().add_default_npmrc();
+    let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info, .. } =
+        CommandTempCwd::init().add_mocked_registry();
+    let AddMockedRegistry { mock_instance, .. } = npmrc_info;
 
     eprintln!("Creating package.json...");
     let manifest_path = workspace.join("package.json");
     let package_json_content = serde_json::json!({
         "dependencies": {
-            "is-odd": "3.0.1",
-        },
-        "devDependencies": {
-            "pretty-exec": "0.3.10",
+            "@pnpm.e2e/hello-world-js-bin-parent": "1.0.0",
         },
     });
     fs::write(manifest_path, package_json_content.to_string()).expect("write to package.json");
@@ -37,14 +35,14 @@ fn store_usable_by_pnpm_offline() {
     eprintln!("pnpm install --offline --ignore-scripts");
     pnpm.with_args(["install", "--offline", "--ignore-scripts"]).assert().success();
 
-    drop(root); // cleanup
+    drop((root, mock_instance)); // cleanup
 }
 
 #[test]
 fn same_file_structure() {
     let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info } =
-        CommandTempCwd::init().add_default_npmrc();
-    let AddDefaultNpmrcInfo { store_dir, .. } = npmrc_info;
+        CommandTempCwd::init().add_mocked_registry();
+    let AddMockedRegistry { store_dir, mock_instance, .. } = npmrc_info;
 
     let modules_dir = workspace.join("node_modules");
     let cleanup = || {
@@ -57,10 +55,7 @@ fn same_file_structure() {
     let manifest_path = workspace.join("package.json");
     let package_json_content = serde_json::json!({
         "dependencies": {
-            "is-odd": "3.0.1",
-        },
-        "devDependencies": {
-            "pretty-exec": "0.3.10",
+            "@pnpm.e2e/hello-world-js-bin-parent": "1.0.0",
         },
     });
     fs::write(manifest_path, package_json_content.to_string()).expect("write to package.json");
@@ -80,14 +75,14 @@ fn same_file_structure() {
     eprintln!("Produce the same store dir structure");
     assert_eq!(&pacquet_store_files, &pnpm_store_files);
 
-    drop(root); // cleanup
+    drop((root, mock_instance)); // cleanup
 }
 
 #[test]
 fn same_index_file_contents() {
     let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info } =
-        CommandTempCwd::init().add_default_npmrc();
-    let AddDefaultNpmrcInfo { store_dir, .. } = npmrc_info;
+        CommandTempCwd::init().add_mocked_registry();
+    let AddMockedRegistry { store_dir, mock_instance, .. } = npmrc_info;
 
     let modules_dir = workspace.join("node_modules");
     let cleanup = || {
@@ -100,10 +95,7 @@ fn same_index_file_contents() {
     let manifest_path = workspace.join("package.json");
     let package_json_content = serde_json::json!({
         "dependencies": {
-            "is-odd": "3.0.1",
-        },
-        "devDependencies": {
-            "fast-decode-uri-component": "1.0.1",
+            "@pnpm.e2e/hello-world-js-bin-parent": "1.0.0",
         },
     });
     fs::write(manifest_path, package_json_content.to_string()).expect("write to package.json");
@@ -129,5 +121,5 @@ fn same_index_file_contents() {
     eprintln!("Produce the same store dir structure");
     assert_eq!(&pacquet_index_file_contents, &pnpm_index_file_contents);
 
-    drop(root); // cleanup
+    drop((root, mock_instance)); // cleanup
 }
