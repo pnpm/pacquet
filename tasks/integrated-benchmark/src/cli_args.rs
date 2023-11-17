@@ -8,9 +8,9 @@ pub struct CliArgs {
     #[clap(long, short)]
     pub scenario: BenchmarkScenario,
 
-    /// URL to the local virtual registry.
-    #[clap(long, short, default_value = "http://localhost:4873")]
-    pub registry: String,
+    /// Port of the local virtual registry.
+    #[clap(long, short = 'p', default_value_t = 4873)]
+    pub registry_port: u16,
 
     /// Automatically launch verdaccio if local registry doesn't response.
     #[clap(long, short = 'V')]
