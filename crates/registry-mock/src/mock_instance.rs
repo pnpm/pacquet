@@ -32,7 +32,7 @@ impl Drop for MockInstance {
 #[derive(Debug, Clone, Copy)]
 pub struct MockInstanceOptions<'a> {
     pub client: &'a Client,
-    pub port: &'a str,
+    pub port: u16,
     pub stdout: Option<&'a Path>,
     pub stderr: Option<&'a Path>,
     pub max_retries: usize,
@@ -71,12 +71,13 @@ impl<'a> MockInstanceOptions<'a> {
 
     async fn spawn(self) -> MockInstance {
         let MockInstanceOptions { port, stdout, stderr, .. } = self;
+        let port = port.to_string();
 
         eprintln!("Preparing...");
         node_registry_mock()
             .pipe(Command::new)
             .arg("prepare")
-            .env("PNPM_REGISTRY_MOCK_PORT", port)
+            .env("PNPM_REGISTRY_MOCK_PORT", &port)
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
@@ -91,7 +92,7 @@ impl<'a> MockInstanceOptions<'a> {
         });
         let process = node_registry_mock()
             .pipe(Command::new)
-            .env("PNPM_REGISTRY_MOCK_PORT", port)
+            .env("PNPM_REGISTRY_MOCK_PORT", &port)
             .stdin(Stdio::null())
             .stdout(stdout)
             .stderr(stderr)
@@ -125,7 +126,6 @@ impl AutoMockInstance {
     pub fn load_or_init() -> Self {
         let anchor = RegistryAnchor::load_or_init(|| {
             let port = pick_unused_port().expect("pick an unused port");
-            let port_str = port.to_string();
 
             let mock_instance = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -134,7 +134,7 @@ impl AutoMockInstance {
                 .block_on({
                     MockInstanceOptions {
                         client: &Client::new(),
-                        port: &port_str,
+                        port,
                         stdout: None,
                         stderr: None,
                         max_retries: 5,
