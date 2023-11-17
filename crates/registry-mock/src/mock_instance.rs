@@ -12,10 +12,7 @@ use std::{
     process::{Child, Command, Stdio},
 };
 use sysinfo::{Pid, PidExt, Signal};
-use tokio::{
-    runtime::Builder,
-    time::{sleep, Duration},
-};
+use tokio::time::{sleep, Duration};
 
 #[derive(Debug)]
 pub struct MockInstance {
@@ -130,7 +127,7 @@ impl AutoMockInstance {
             let port = pick_unused_port().expect("pick an unused port");
             let port_str = port.to_string();
 
-            let mock_instance = Builder::new_current_thread()
+            let mock_instance = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .expect("build tokio runtime")
