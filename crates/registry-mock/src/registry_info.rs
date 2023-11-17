@@ -57,6 +57,11 @@ impl PreparedRegistryInfo {
     }
 
     pub async fn launch(options: MockInstanceOptions<'_>) -> Self {
+        if let Some(prepared) = PreparedRegistryInfo::try_load() {
+            eprintln!("warn: Already launched. Skip.");
+            return prepared;
+        }
+
         let port = options.port;
         let mock_instance = options.spawn().await;
         let pid = mock_instance.process.id();
