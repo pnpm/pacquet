@@ -67,7 +67,7 @@ impl PreparedRegistryInfo {
         prepared
     }
 
-    pub async fn end() -> Option<Self> {
+    pub fn end() -> Option<Self> {
         let prepared = PreparedRegistryInfo::try_load()?;
         let pid = prepared.info.pid;
 
