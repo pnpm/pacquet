@@ -79,7 +79,7 @@ jobs:
           unset PNPM_HOME
           unset XDG_DATA_HOME
 
-          cargo nextest run
+          just test
 
   typos:
     name: Spell Check
