@@ -6,9 +6,14 @@ use portpicker::pick_unused_port;
 use reqwest::Client;
 use tokio::time::Duration;
 
+/// Launch a single mocked registry server to be used in tests.
+///
+/// This step is optional, but would help in machine with few CPU cores.
 #[derive(Debug, Parser)]
 enum Cli {
+    /// Start a single mocked registry server.
     Launch,
+    /// Terminate the launched mocked registry server.
     End,
 }
 
