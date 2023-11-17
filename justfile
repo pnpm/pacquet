@@ -63,6 +63,10 @@ codecov:
 micro-benchmark:
   cargo run --bin=micro-benchmark --release
 
+# Manage registry-mock
+registry-mock +args:
+  cargo run --bin=pacquet-registry-mock -- {{args}}
+
 integrated-benchmark +args:
   cargo run --bin=integrated-benchmark -- {{args}}
 

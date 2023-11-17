@@ -1505,6 +1505,7 @@ version = "0.0.0"
 dependencies = [
  "advisory-lock",
  "assert_cmd",
+ "clap",
  "pipe-trait",
  "portpicker",
  "reqwest",

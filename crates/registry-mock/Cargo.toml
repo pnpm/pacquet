@@ -14,9 +14,14 @@ repository.workspace = true
 name = "pacquet_registry_mock"
 path = "src/lib.rs"
 
+[[bin]]
+name = "pacquet-registry-mock"
+path = "src/main.rs"
+
 [dependencies]
 advisory-lock = { workspace = true }
 assert_cmd    = { workspace = true }
+clap          = { workspace = true }
 pipe-trait    = { workspace = true }
 portpicker    = { workspace = true }
 reqwest       = { workspace = true }
