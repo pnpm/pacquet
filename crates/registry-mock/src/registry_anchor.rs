@@ -1,10 +1,11 @@
-use crate::{kill_verdaccio::kill_all_verdaccio_children, RegistryInfo};
+use crate::{kill_verdaccio::kill_all_verdaccio_children, MockInstanceOptions, RegistryInfo};
 use advisory_lock::{AdvisoryFileLock, FileLockError, FileLockMode};
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 use std::{
     env::temp_dir,
     fs::{self, File, OpenOptions},
+    mem::forget,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
@@ -68,15 +69,20 @@ impl RegistryAnchor {
         fs::write(RegistryAnchor::path(), text).expect("write to anchor");
     }
 
-    pub fn load_or_init<Init>(init: Init) -> Self
-    where
-        Init: FnOnce() -> RegistryInfo,
-    {
+    pub fn load_or_init(init_options: MockInstanceOptions<'_>) -> Self {
         if let Some(guard) = GuardFile::try_lock() {
-            let info = init();
+            let mock_instance = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build tokio runtime")
+                .block_on(init_options.spawn());
+            let port = init_options.port;
+            let pid = mock_instance.process.id();
+            let info = RegistryInfo { port, pid };
             let anchor = RegistryAnchor { ref_count: 1, info };
             anchor.save();
             guard.unlock();
+            forget(mock_instance); // prevent this process from killing itself on drop
             anchor
         } else {
             let guard = GuardFile::lock();

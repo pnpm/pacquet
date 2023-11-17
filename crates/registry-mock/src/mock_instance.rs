@@ -129,30 +129,15 @@ impl AutoMockInstance {
             return AutoMockInstance::Prepared(prepared);
         }
 
-        let anchor = RegistryAnchor::load_or_init(|| {
-            let port = pick_unused_port().expect("pick an unused port");
-
-            let mock_instance = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("build tokio runtime")
-                .block_on({
-                    MockInstanceOptions {
-                        client: &Client::new(),
-                        port,
-                        stdout: None,
-                        stderr: None,
-                        max_retries: 5,
-                        retry_delay: Duration::from_millis(500),
-                    }
-                    .spawn()
-                })
-                .pipe(Box::new)
-                .pipe(Box::leak);
-
-            let pid = mock_instance.process.id();
-
-            RegistryInfo { port, pid }
+        let anchor = RegistryAnchor::load_or_init({
+            MockInstanceOptions {
+                client: &Client::new(),
+                port: pick_unused_port().expect("pick an unused port"),
+                stdout: None,
+                stderr: None,
+                max_retries: 5,
+                retry_delay: Duration::from_millis(500),
+            }
         });
 
         AutoMockInstance::RefCount(anchor)
