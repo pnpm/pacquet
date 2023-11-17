@@ -93,13 +93,16 @@ jobs:
         timeout-minutes: 1
         continue-on-error: true
 
-      - name: Install verdaccio
-        run: pnpm install --global verdaccio
-
       - name: Install hyperfine
         uses: ./.github/actions/binstall
         with:
           packages: hyperfine@1.18.0
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      - name: Install dependencies
+        run: just install
 
       - name: Build the benchmark executor
         run: cargo build --bin=integrated-benchmark
