@@ -13,12 +13,12 @@ repository.workspace = true
 [lib]
 name = "pacquet_registry_mock"
 path = "src/lib.rs"
-doc = true
+doc  = true
 
 [[bin]]
 name = "pacquet-registry-mock"
 path = "src/main.rs"
-doc = false
+doc  = false
 
 [dependencies]
 advisory-lock = { workspace = true }
