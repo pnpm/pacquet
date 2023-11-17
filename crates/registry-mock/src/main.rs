@@ -37,7 +37,7 @@ async fn launch() {
         retry_delay: Duration::from_millis(500),
     };
     let saved_info = PreparedRegistryInfo::launch(options).await;
-    dbg!(&saved_info);
+    dbg!(&saved_info, &stdout, &stderr);
 }
 
 fn end() {
