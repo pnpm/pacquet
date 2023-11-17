@@ -2,13 +2,13 @@ use std::{
     collections::HashMap,
     ffi::OsString,
     io::{Cursor, Read},
+    mem::drop,
     path::PathBuf,
     sync::Arc,
     time::UNIX_EPOCH,
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STD, Engine};
-use dashmap::DashMap;
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use pacquet_fs::file_mode;
@@ -88,7 +88,7 @@ pub enum CacheValue {
 /// Internal in-memory cache of tarballs.
 ///
 /// The key of this hashmap is the url of each tarball.
-pub type MemCache = DashMap<String, Arc<RwLock<CacheValue>>>;
+pub type MemCache = RwLock<HashMap<String, Arc<RwLock<CacheValue>>>>;
 
 #[instrument(skip(gz_data), fields(gz_data_len = gz_data.len()))]
 fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u8>, TarballError> {
@@ -130,9 +130,9 @@ impl<'a> DownloadTarballToStore<'a> {
 
         // QUESTION: I see no copying from existing store_dir, is there such mechanism?
         // TODO: If it's not implemented yet, implement it
-
-        if let Some(cache_lock) = mem_cache.get(package_url) {
-            let notify = match &*cache_lock.write().await {
+        let mem_cache_reader = mem_cache.read().await;
+        if let Some(cache_lock) = mem_cache_reader.get(package_url) {
+            let notify = match &*cache_lock.read().await {
                 CacheValue::Available(cas_paths) => {
                     return Ok(Arc::clone(cas_paths));
                 }
@@ -146,13 +146,19 @@ impl<'a> DownloadTarballToStore<'a> {
             }
             unreachable!("Failed to get or compute tarball data for {package_url:?}");
         } else {
+            drop(mem_cache_reader);
             let notify = Arc::new(Notify::new());
             let cache_lock = notify
                 .pipe_ref(Arc::clone)
                 .pipe(CacheValue::InProgress)
                 .pipe(RwLock::new)
                 .pipe(Arc::new);
-            if mem_cache.insert(package_url.to_string(), Arc::clone(&cache_lock)).is_some() {
+            if mem_cache
+                .write()
+                .await
+                .insert(package_url.to_string(), Arc::clone(&cache_lock))
+                .is_some()
+            {
                 tracing::warn!(target: "pacquet::download", ?package_url, "Race condition detected when writing to cache");
             }
             let cas_paths = self.run_without_mem_cache().await?.pipe(Arc::new);
