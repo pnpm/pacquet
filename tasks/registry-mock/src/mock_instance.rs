@@ -145,7 +145,7 @@ impl AutoMockInstance {
                 port: pick_unused_port().expect("pick an unused port"),
                 stdout: None,
                 stderr: None,
-                max_retries: 5,
+                max_retries: 20,
                 retry_delay: Duration::from_millis(500),
             }
         });
