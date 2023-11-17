@@ -16,7 +16,6 @@ repository  = "https://github.com/anonrig/pacquet"
 pacquet-cli              = { path = "crates/cli" }
 pacquet-fs               = { path = "crates/fs" }
 pacquet-registry         = { path = "crates/registry" }
-pacquet-registry-mock    = { path = "crates/registry-mock" }
 pacquet-tarball          = { path = "crates/tarball" }
 pacquet-testing-utils    = { path = "crates/testing-utils" }
 pacquet-package-manifest = { path = "crates/package-manifest" }
@@ -26,6 +25,9 @@ pacquet-npmrc            = { path = "crates/npmrc" }
 pacquet-executor         = { path = "crates/executor" }
 pacquet-diagnostics      = { path = "crates/diagnostics" }
 pacquet-store-dir        = { path = "crates/store-dir" }
+
+# Tasks
+pacquet-registry-mock = { path = "tasks/registry-mock" }
 
 # Dependencies
 advisory-lock      = { version = "0.3.0" }
