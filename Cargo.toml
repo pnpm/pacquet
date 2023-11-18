@@ -39,7 +39,7 @@ dashmap            = { version = "5.5.3" }
 derive_more        = { version = "1.0.0-beta.3", features = ["full"] }
 dunce              = { version = "1.0.4" }
 home               = { version = "0.5.5" }
-insta              = { version = "1.32.0", features = ["yaml", "glob", "walkdir"] }
+insta              = { version = "1.34.0", features = ["yaml", "glob", "walkdir"] }
 itertools          = { version = "0.11.0" }
 futures-util       = { version = "0.3.28" }
 miette             = { version = "5.9.0", features = ["fancy"] }
