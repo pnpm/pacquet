@@ -1,14 +1,15 @@
 mod cli_args;
 mod fixtures;
-mod verdaccio;
 mod verify;
 mod work_env;
 
 #[tokio::main]
 async fn main() {
+    use pipe_trait::Pipe;
+
     let cli_args::CliArgs {
         scenario,
-        registry,
+        registry_port,
         verdaccio,
         repository,
         fixture_dir,
@@ -22,12 +23,14 @@ async fn main() {
         std::fs::create_dir_all(&work_env).expect("create work env");
     }
     let work_env = std::fs::canonicalize(work_env).expect("get absolute path to work env");
+    let registry = format!("http://localhost:{registry_port}/");
     let verdaccio = if verdaccio {
-        verdaccio::VerdaccioOptions {
+        verify::ensure_program("just").arg("install").pipe(verify::executor("just install"));
+        pacquet_registry_mock::MockInstanceOptions {
             client: &Default::default(),
-            listen: &registry,
-            stdout: &work_env.join("verdaccio.stdout.log"),
-            stderr: &work_env.join("verdaccio.stderr.log"),
+            port: registry_port,
+            stdout: work_env.join("verdaccio.stdout.log").pipe(Some).as_deref(),
+            stderr: work_env.join("verdaccio.stderr.log").pipe(Some).as_deref(),
             max_retries: 10,
             retry_delay: tokio::time::Duration::from_millis(500),
         }

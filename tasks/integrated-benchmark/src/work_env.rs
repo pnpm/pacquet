@@ -1,6 +1,7 @@
 use crate::{
     cli_args::{BenchmarkScenario, HyperfineOptions},
     fixtures::{LOCKFILE, PACKAGE_JSON},
+    verify::executor,
 };
 use itertools::Itertools;
 use os_display::Quotable;
@@ -262,18 +263,6 @@ fn create_install_script(dir: &Path, scenario: BenchmarkScenario, for_pnpm: bool
     writeln!(file).unwrap();
 
     make_file_executable(&file).expect("make the script executable");
-}
-
-fn executor<'a>(message: &'a str) -> impl FnOnce(&'a mut Command) {
-    move |command| {
-        let output = command
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .output()
-            .expect(message);
-        assert!(output.status.success(), "Process exits with non-zero status: {message}");
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
