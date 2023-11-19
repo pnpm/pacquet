@@ -78,12 +78,15 @@ mod tests {
     use super::*;
     use pacquet_npmrc::Npmrc;
     use pacquet_package_manifest::{DependencyGroup, PackageManifest};
+    use pacquet_registry_mock::AutoMockInstance;
     use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
     use std::env;
     use tempfile::tempdir;
 
     #[tokio::test]
     async fn should_install_dependencies() {
+        let mock_instance = AutoMockInstance::load_or_init();
+
         let dir = tempdir().unwrap();
         let store_dir = dir.path().join("pacquet-store");
         let project_root = dir.path().join("project");
@@ -104,6 +107,7 @@ mod tests {
         config.store_dir = store_dir.into();
         config.modules_dir = modules_dir.to_path_buf();
         config.virtual_store_dir = virtual_store_dir.to_path_buf();
+        config.registry = mock_instance.url();
         let config = config.leak();
 
         Install {
@@ -138,5 +142,7 @@ mod tests {
             .is_dir());
 
         insta::assert_debug_snapshot!(get_all_folders(&project_root));
+
+        drop((dir, mock_instance)); // cleanup
     }
 }
