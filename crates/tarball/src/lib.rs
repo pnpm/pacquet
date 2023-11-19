@@ -200,7 +200,7 @@ impl<'a> DownloadTarballToStore<'a> {
             Checksum(ssri::Error),
             Other(TarballError),
         }
-        let cas_paths = tokio::task::spawn(async move {
+        let cas_paths = tokio::task::spawn_blocking(move || {
             verify_checksum(&response, package_integrity.clone()).map_err(TaskError::Checksum)?;
 
             // TODO: move tarball extraction to its own function
