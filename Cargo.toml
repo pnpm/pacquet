@@ -41,7 +41,7 @@ dunce              = { version = "1.0.4" }
 home               = { version = "0.5.5" }
 insta              = { version = "1.34.0", features = ["yaml", "glob", "walkdir"] }
 itertools          = { version = "0.11.0" }
-futures-util       = { version = "0.3.28" }
+futures-util       = { version = "0.3.29" }
 miette             = { version = "5.9.0", features = ["fancy"] }
 os_display         = { version = "0.1.3" }
 reflink-copy       = { version = "0.1.9" }
