@@ -135,8 +135,9 @@ fn should_install_index_files() {
 
 #[test]
 fn should_install_duplicated_dependencies() {
-    let CommandTempCwd { pacquet, root, workspace, .. } =
+    let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
         CommandTempCwd::init().add_mocked_registry();
+    let AddMockedRegistry { mock_instance, .. } = npmrc_info;
 
     eprintln!("Creating package.json...");
     let manifest_path = workspace.join("package.json");
@@ -158,6 +159,5 @@ fn should_install_duplicated_dependencies() {
         assert!(is_symlink_or_junction(&workspace.join("node_modules/express")).unwrap());
         assert!(workspace.join("node_modules/.pnpm/express@4.18.2").exists());
     });
-
-    drop(root); // cleanup
+    drop((root, mock_instance)); // cleanup
 }

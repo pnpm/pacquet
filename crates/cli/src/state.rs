@@ -6,7 +6,6 @@ use pacquet_package_manifest::{PackageManifest, PackageManifestError};
 use pacquet_tarball::MemCache;
 use pipe_trait::Pipe;
 use reqwest::Client;
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Application state when running `pacquet run` or `pacquet install`.
@@ -45,7 +44,7 @@ impl State {
             lockfile: call_load_lockfile(config.lockfile, Lockfile::load_from_current_dir)
                 .map_err(InitStateError::LoadLockfile)?,
             http_client: Client::new(),
-            tarball_mem_cache: MemCache::new(HashMap::new()),
+            tarball_mem_cache: MemCache::default(),
         })
     }
 }

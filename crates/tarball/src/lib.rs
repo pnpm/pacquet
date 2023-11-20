@@ -2,7 +2,6 @@ use std::{
     collections::HashMap,
     ffi::OsString,
     io::{Cursor, Read},
-    mem::drop,
     path::PathBuf,
     sync::Arc,
     time::UNIX_EPOCH,
