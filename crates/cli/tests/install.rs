@@ -6,7 +6,7 @@ use command_extra::CommandExtra;
 use pacquet_testing_utils::{
     bin::{AddMockedRegistry, CommandTempCwd},
     fs::{get_all_files, get_all_folders, is_symlink_or_junction},
-    panic_after,
+    misc::panic_after,
 };
 use pipe_trait::Pipe;
 use std::{fs, thread, time::Duration};
