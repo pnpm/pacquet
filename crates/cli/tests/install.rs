@@ -6,9 +6,10 @@ use command_extra::CommandExtra;
 use pacquet_testing_utils::{
     bin::{AddMockedRegistry, CommandTempCwd},
     fs::{get_all_files, get_all_folders, is_symlink_or_junction},
+    misc::panic_after,
 };
 use pipe_trait::Pipe;
-use std::fs;
+use std::{fs, thread, time::Duration};
 
 #[test]
 fn should_install_dependencies() {
@@ -129,5 +130,34 @@ fn should_install_index_files() {
     let index_file_contents = index_file_contents(&store_dir);
     insta::assert_yaml_snapshot!(index_file_contents);
 
+    drop((root, mock_instance)); // cleanup
+}
+
+#[test]
+fn should_install_duplicated_dependencies() {
+    let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
+        CommandTempCwd::init().add_mocked_registry();
+    let AddMockedRegistry { mock_instance, .. } = npmrc_info;
+
+    eprintln!("Creating package.json...");
+    let manifest_path = workspace.join("package.json");
+    let package_json_content = serde_json::json!({
+        "dependencies": {
+            "express": "4.18.2",
+        },
+        "devDependencies": {
+            "express": "4.18.2",
+        },
+    });
+    fs::write(manifest_path, package_json_content.to_string()).expect("write to package.json");
+
+    panic_after(Duration::from_secs(30), move || {
+        thread::sleep(Duration::from_millis(200));
+        eprintln!("Executing command...");
+        pacquet.with_arg("install").assert().success();
+        eprintln!("Make sure the package is installed");
+        assert!(is_symlink_or_junction(&workspace.join("node_modules/express")).unwrap());
+        assert!(workspace.join("node_modules/.pnpm/express@4.18.2").exists());
+    });
     drop((root, mock_instance)); // cleanup
 }

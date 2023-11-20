@@ -44,7 +44,7 @@ impl State {
             lockfile: call_load_lockfile(config.lockfile, Lockfile::load_from_current_dir)
                 .map_err(InitStateError::LoadLockfile)?,
             http_client: Client::new(),
-            tarball_mem_cache: MemCache::new(),
+            tarball_mem_cache: MemCache::default(),
         })
     }
 }

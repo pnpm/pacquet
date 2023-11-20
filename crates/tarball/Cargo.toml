@@ -16,7 +16,6 @@ pacquet-fs          = { workspace = true }
 pacquet-store-dir   = { workspace = true }
 
 base64       = { workspace = true }
-dashmap      = { workspace = true }
 derive_more  = { workspace = true }
 miette       = { workspace = true }
 pipe-trait   = { workspace = true }
