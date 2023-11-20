@@ -6,7 +6,7 @@ use pacquet_npmrc::Npmrc;
 use pacquet_tarball::{DownloadTarballToStore, TarballError};
 use pipe_trait::Pipe;
 use reqwest::Client;
-use std::borrow::Cow;
+use std::{borrow::Cow, ffi::OsString, io::ErrorKind};
 
 /// This subroutine downloads a package tarball, extracts it, installs it to a virtual dir,
 /// then creates the symlink layout for the package.
@@ -56,17 +56,34 @@ impl<'a> InstallPackageBySnapshot<'a> {
             }
         };
 
-        // TODO: skip when already exists in store?
-        let cas_paths = DownloadTarballToStore {
-            http_client,
-            store_dir: &config.store_dir,
-            package_integrity: integrity,
-            package_unpacked_size: None,
-            package_url: &tarball_url,
-        }
-        .run_without_mem_cache()
-        .await
-        .map_err(InstallPackageBySnapshotError::DownloadTarball)?;
+        let store_dir = &config.store_dir;
+        let cas_paths = match store_dir.read_index_file(integrity) {
+            Ok(index) => store_dir
+                .cas_file_paths_by_index(&index)
+                .map(|(entry_path, store_path)| (OsString::from(entry_path), store_path))
+                .collect(),
+            Err(error) => {
+                if error.io_error_kind() != Some(ErrorKind::NotFound) {
+                    let path = error.file_path();
+                    tracing::warn!(
+                        target: "pacquet::read_store",
+                        ?error,
+                        ?path,
+                        "Failed to read index from store",
+                    );
+                }
+                DownloadTarballToStore {
+                    http_client,
+                    store_dir,
+                    package_integrity: integrity,
+                    package_unpacked_size: None,
+                    package_url: &tarball_url,
+                }
+                .run_without_mem_cache()
+                .await
+                .map_err(InstallPackageBySnapshotError::DownloadTarball)?
+            }
+        };
 
         CreateVirtualDirBySnapshot {
             virtual_store_dir: &config.virtual_store_dir,
