@@ -20,6 +20,7 @@ pacquet-registry         = { workspace = true }
 pacquet-tarball          = { workspace = true }
 
 async-recursion = { workspace = true }
+memo-map        = { workspace = true }
 derive_more     = { workspace = true }
 futures-util    = { workspace = true }
 node-semver     = { workspace = true }

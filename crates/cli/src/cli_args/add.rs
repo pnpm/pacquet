@@ -85,7 +85,8 @@ impl AddArgs {
     pub async fn run(self, mut state: State) -> miette::Result<()> {
         // TODO: if a package already exists in another dependency group, don't remove the existing entry.
 
-        let State { tarball_mem_cache, http_client, config, manifest, lockfile } = &mut state;
+        let State { tarball_mem_cache, http_client, config, manifest, lockfile, resolved_packages } =
+            &mut state;
 
         Add {
             tarball_mem_cache,
@@ -96,6 +97,7 @@ impl AddArgs {
             list_dependency_groups: || self.dependency_options.dependency_groups(),
             package_name: &self.package_name,
             save_exact: self.save_exact,
+            resolved_packages,
         }
         .run()
         .await

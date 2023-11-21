@@ -1,0 +1,40 @@
+---
+source: crates/cli/tests/install.rs
+assertion_line: 155
+expression: index_file_contents
+---
+v3/files/0d/920a93eb75934e4697e71f74e145832cba488947632806be7dd444871f575dae1acdf77ce06eab4653efa8b540d499baf374cc2783e153e68f68ec561dbff2-index.json:
+  dependency.js:
+    integrity: sha512-7/zrEcP4pbUxDUUXew2jxrJXssc/fT9Ioi+m/PpMBx7IOe1uTLaKdsPgdrSOdvfYVdayelgJyadaffSkeGpk+Q==
+    mode: 420
+    size: 59
+  index.js:
+    integrity: sha512-WyOuCJv5Gp2GVcdhsN759SYpgzGGCJSGSBnrN+vX1orAcy3PADNmOx2QYH13XUNtrML1klOSz/MuGOoPpKypjA==
+    mode: 420
+    size: 54
+  mirror.js:
+    integrity: sha512-xCuOztCcd9NCuMiCd2uz8gVggQnLPy6ck7cfCvzeM7ECofNMB1FoPYcADaOaquGH/3auJc/4U/xyJqDQyMpQIA==
+    mode: 420
+    size: 70
+  package.json:
+    integrity: sha512-lPjrGKy0dv4Mvtnp2BsqEYNxFGnOeHzpGvsRKK/UyQz4zGSXR4BoscLNMlK3mnVTt363x1tbIearrJH5DPBCFg==
+    mode: 420
+    size: 366
+v3/files/9b/576e04418c866f0707ddb06734c8143ab825eaf283bae715282ad19acb540c27a8eb7f443cb3cb25c46043526824c11fd8d6516f27476ae9a0895f27af295b-index.json:
+  dependency.js:
+    integrity: sha512-As3lsS+ApUPQRjHQyIvNe0fHPXucVRl9eY2HJOLr6k/beGOnmdc+BOsj0woBa333z4jC6/3vuKwgvOo3UzX8mg==
+    mode: 420
+    size: 59
+  index.js:
+    integrity: sha512-WyOuCJv5Gp2GVcdhsN759SYpgzGGCJSGSBnrN+vX1orAcy3PADNmOx2QYH13XUNtrML1klOSz/MuGOoPpKypjA==
+    mode: 420
+    size: 54
+  mirror.js:
+    integrity: sha512-ytgA9GF21kB0lylGaZPPyxxe9OAuFfK9FoG9xzT9ICyBNruPFlYvi8Nd83XxnyYgu1TM+RodaELGnfmy9RwrUg==
+    mode: 420
+    size: 70
+  package.json:
+    integrity: sha512-vOF6vj7Excyek9Mf8e9hM5AeUrd0e02enYHPqY4Vfx7TyltI8QkoQDje0uSSfUt7T0LuXdd61pxDm/idaOsB5Q==
+    mode: 420
+    size: 366
+
