@@ -2,12 +2,12 @@ use crate::Install;
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::Lockfile;
+use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::PackageManifestError;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::{PackageTag, PackageVersion};
 use pacquet_tarball::MemCache;
-use reqwest::Client;
 
 /// This subroutine does everything `pacquet add` is supposed to do.
 #[must_use]
@@ -17,7 +17,7 @@ where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
     pub tarball_mem_cache: &'a MemCache,
-    pub http_client: &'a Client,
+    pub http_client: &'a ThrottledClient,
     pub config: &'static Npmrc,
     pub manifest: &'a mut PackageManifest,
     pub lockfile: Option<&'a Lockfile>,

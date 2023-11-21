@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use pacquet_network::ThrottledClient;
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 
@@ -26,16 +27,16 @@ impl PackageVersion {
     pub async fn fetch_from_registry(
         name: &str,
         tag: PackageTag,
-        http_client: &reqwest::Client,
+        http_client: &ThrottledClient,
         registry: &str,
     ) -> Result<Self, RegistryError> {
         let url = || format!("{registry}{name}/{tag}");
         let network_error = |error| NetworkError { error, url: url() };
 
         http_client
-            .get(url())
-            .header("content-type", "application/json")
-            .send()
+            .run_with_permit(|client| {
+                client.get(url()).header("content-type", "application/json").send()
+            })
             .await
             .map_err(network_error)?
             .json::<PackageVersion>()

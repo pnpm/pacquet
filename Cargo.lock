@@ -1332,6 +1332,7 @@ dependencies = [
  "pacquet-executor",
  "pacquet-fs",
  "pacquet-lockfile",
+ "pacquet-network",
  "pacquet-npmrc",
  "pacquet-package-manager",
  "pacquet-package-manifest",
@@ -1341,7 +1342,6 @@ dependencies = [
  "pacquet-testing-utils",
  "pipe-trait",
  "pretty_assertions",
- "reqwest",
  "serde_json",
  "tempfile",
  "tokio",
@@ -1414,14 +1414,24 @@ dependencies = [
  "criterion",
  "mockito",
  "node-semver",
+ "pacquet-network",
  "pacquet-registry",
  "pacquet-store-dir",
  "pacquet-tarball",
  "pipe-trait",
  "project-root",
- "reqwest",
  "ssri",
  "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "pacquet-network"
+version = "0.0.1"
+dependencies = [
+ "num_cpus",
+ "pipe-trait",
+ "reqwest",
  "tokio",
 ]
 
@@ -1450,6 +1460,7 @@ dependencies = [
  "node-semver",
  "pacquet-fs",
  "pacquet-lockfile",
+ "pacquet-network",
  "pacquet-npmrc",
  "pacquet-package-manifest",
  "pacquet-registry",
@@ -1461,7 +1472,6 @@ dependencies = [
  "pretty_assertions",
  "rayon",
  "reflink-copy",
- "reqwest",
  "tempfile",
  "tokio",
  "tracing",
@@ -1491,6 +1501,7 @@ dependencies = [
  "miette",
  "node-semver",
  "pacquet-diagnostics",
+ "pacquet-network",
  "pipe-trait",
  "pretty_assertions",
  "reqwest",
@@ -1543,6 +1554,7 @@ dependencies = [
  "miette",
  "pacquet-diagnostics",
  "pacquet-fs",
+ "pacquet-network",
  "pacquet-store-dir",
  "pipe-trait",
  "pretty_assertions",

@@ -2,12 +2,12 @@ use crate::InstallPackageFromRegistry;
 use async_recursion::async_recursion;
 use futures_util::future;
 use node_semver::Version;
+use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::PackageVersion;
 use pacquet_tarball::MemCache;
 use pipe_trait::Pipe;
-use reqwest::Client;
 
 /// This subroutine install packages from a `package.json` without reading or writing a lockfile.
 ///
@@ -21,7 +21,7 @@ use reqwest::Client;
 #[must_use]
 pub struct InstallWithoutLockfile<'a, DependencyGroupList> {
     pub tarball_mem_cache: &'a MemCache,
-    pub http_client: &'a Client,
+    pub http_client: &'a ThrottledClient,
     pub config: &'static Npmrc,
     pub manifest: &'a PackageManifest,
     pub dependency_groups: DependencyGroupList,
