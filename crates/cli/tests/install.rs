@@ -5,10 +5,14 @@ use assert_cmd::prelude::*;
 use command_extra::CommandExtra;
 use pacquet_testing_utils::{
     bin::{AddMockedRegistry, CommandTempCwd},
+    fixtures::{BIG_LOCKFILE, BIG_MANIFEST},
     fs::{get_all_files, get_all_folders, is_symlink_or_junction},
 };
 use pipe_trait::Pipe;
-use std::fs;
+use std::{
+    fs::{self, OpenOptions},
+    io::Write,
+};
 
 #[test]
 fn should_install_dependencies() {
@@ -128,6 +132,36 @@ fn should_install_index_files() {
     eprintln!("Snapshot");
     let index_file_contents = index_file_contents(&store_dir);
     insta::assert_yaml_snapshot!(index_file_contents);
+
+    drop((root, mock_instance)); // cleanup
+}
+
+#[test]
+fn frozen_lockfile_should_be_able_to_handle_big_lockfile() {
+    let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
+        CommandTempCwd::init().add_mocked_registry();
+    let AddMockedRegistry { mock_instance, .. } = npmrc_info;
+
+    eprintln!("Creating package.json...");
+    let manifest_path = workspace.join("package.json");
+    fs::write(manifest_path, BIG_MANIFEST).expect("write to package.json");
+
+    eprintln!("Creating pnpm-lock.yaml...");
+    let lockfile_path = workspace.join("pnpm-lock.yaml");
+    fs::write(lockfile_path, BIG_LOCKFILE).expect("write to pnpm-lock.yaml");
+
+    eprintln!("Patching .npmrc...");
+    let npmrc_path = workspace.join(".npmrc");
+    OpenOptions::new()
+        .append(true)
+        .write(true)
+        .open(npmrc_path)
+        .expect("open .npmrc to append")
+        .write_all(b"\nlockfile=true\n")
+        .expect("append to .npmrc");
+
+    eprintln!("Executing command...");
+    pacquet.with_args(["install", "--frozen-lockfile"]).assert().success();
 
     drop((root, mock_instance)); // cleanup
 }
