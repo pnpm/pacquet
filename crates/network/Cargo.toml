@@ -11,7 +11,7 @@ license.workspace    = true
 repository.workspace = true
 
 [dependencies]
-num_cpus    = { workspace = true }
-pipe-trait  = { workspace = true }
-reqwest     = { workspace = true }
-tokio       = { workspace = true }
+num_cpus   = { workspace = true }
+pipe-trait = { workspace = true }
+reqwest    = { workspace = true }
+tokio      = { workspace = true }
