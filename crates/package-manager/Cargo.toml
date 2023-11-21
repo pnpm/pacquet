@@ -26,7 +26,6 @@ node-semver     = { workspace = true }
 pipe-trait      = { workspace = true }
 rayon           = { workspace = true }
 reflink-copy    = { workspace = true }
-reqwest         = { workspace = true }
 tracing         = { workspace = true }
 miette          = { workspace = true }
 

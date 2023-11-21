@@ -30,7 +30,6 @@ clap        = { workspace = true }
 derive_more = { workspace = true }
 home        = { workspace = true }
 miette      = { workspace = true }
-reqwest     = { workspace = true }
 pipe-trait  = { workspace = true }
 tokio       = { workspace = true }
 
