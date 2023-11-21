@@ -1,8 +1,8 @@
 use crate::{CreateVirtualStore, SymlinkDirectDependencies};
 use pacquet_lockfile::{DependencyPath, PackageSnapshot, RootProjectSnapshot};
+use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::DependencyGroup;
-use reqwest::Client;
 use std::collections::HashMap;
 
 /// This subroutine installs dependencies from a frozen lockfile.
@@ -19,7 +19,7 @@ pub struct InstallFrozenLockfile<'a, DependencyGroupList>
 where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
-    pub http_client: &'a Client,
+    pub http_client: &'a ThrottledClient,
     pub config: &'static Npmrc,
     pub project_snapshot: &'a RootProjectSnapshot,
     pub packages: Option<&'a HashMap<DependencyPath, PackageSnapshot>>,

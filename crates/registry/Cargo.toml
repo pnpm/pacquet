@@ -12,6 +12,7 @@ repository.workspace  = true
 
 [dependencies]
 pacquet-diagnostics = { workspace = true }
+pacquet-network     = { workspace = true }
 
 derive_more = { workspace = true }
 reqwest     = { workspace = true }

@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 pacquet-registry  = { workspace = true }
+pacquet-network   = { workspace = true }
 pacquet-store-dir = { workspace = true }
 pacquet-tarball   = { workspace = true }
 
@@ -26,6 +27,5 @@ tokio        = { workspace = true }
 tempfile     = { workspace = true }
 pipe-trait   = { workspace = true }
 project-root = { workspace = true }
-reqwest      = { workspace = true }
 ssri         = { workspace = true }
 node-semver  = { workspace = true }
