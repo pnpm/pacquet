@@ -18,6 +18,7 @@ path = "src/bin/main.rs"
 pacquet-executor         = { workspace = true }
 pacquet-fs               = { workspace = true }
 pacquet-lockfile         = { workspace = true }
+pacquet-network          = { workspace = true }
 pacquet-npmrc            = { workspace = true }
 pacquet-package-manifest = { workspace = true }
 pacquet-package-manager  = { workspace = true }

@@ -2,17 +2,17 @@ use crate::{CreateVirtualDirBySnapshot, CreateVirtualDirError};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::{DependencyPath, LockfileResolution, PackageSnapshot, PkgNameVerPeer};
+use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_tarball::{DownloadTarballToStore, TarballError};
 use pipe_trait::Pipe;
-use reqwest::Client;
 use std::borrow::Cow;
 
 /// This subroutine downloads a package tarball, extracts it, installs it to a virtual dir,
 /// then creates the symlink layout for the package.
 #[must_use]
 pub struct InstallPackageBySnapshot<'a> {
-    pub http_client: &'a Client,
+    pub http_client: &'a ThrottledClient,
     pub config: &'static Npmrc,
     pub dependency_path: &'a DependencyPath,
     pub package_snapshot: &'a PackageSnapshot,

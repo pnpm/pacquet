@@ -12,11 +12,11 @@ use dashmap::DashMap;
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use pacquet_fs::file_mode;
+use pacquet_network::ThrottledClient;
 use pacquet_store_dir::{
     PackageFileInfo, PackageFilesIndex, StoreDir, WriteCasFileError, WriteIndexFileError,
 };
 use pipe_trait::Pipe;
-use reqwest::Client;
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
 use tokio::sync::{Notify, RwLock};
@@ -113,7 +113,7 @@ fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm,
 /// It returns a CAS map of files in the tarball.
 #[must_use]
 pub struct DownloadTarballToStore<'a> {
-    pub http_client: &'a Client,
+    pub http_client: &'a ThrottledClient,
     pub store_dir: &'static StoreDir,
     pub package_integrity: &'a Integrity,
     pub package_unpacked_size: Option<usize>,
@@ -180,8 +180,7 @@ impl<'a> DownloadTarballToStore<'a> {
             TarballError::FetchTarball(NetworkError { url: package_url.to_string(), error })
         };
         let response = http_client
-            .get(package_url)
-            .send()
+            .run_with_permit(|client| client.get(package_url).send())
             .await
             .map_err(network_error)?
             .bytes()
