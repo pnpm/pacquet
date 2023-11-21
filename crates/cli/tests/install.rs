@@ -136,6 +136,8 @@ fn should_install_index_files() {
     drop((root, mock_instance)); // cleanup
 }
 
+#[cfg(not(target_os = "windows"))] // It causes ConnectionAborted on CI
+#[cfg(not(target_os = "macos"))] // It causes ConnectionReset on CI
 #[test]
 fn frozen_lockfile_should_be_able_to_handle_big_lockfile() {
     let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
