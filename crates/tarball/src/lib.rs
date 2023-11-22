@@ -187,7 +187,9 @@ impl<'a> DownloadTarballToStore<'a> {
         // 2. Replace ssri with base64 and serde magic (which supports Copy).
         let package_integrity = package_integrity.clone();
 
-        package_integrity.check(&response).map_err(TarballError::Integrity)?;
+        package_integrity
+            .check(&response)
+            .map_err(|error| VerifyChecksumError { url: package_url.to_string(), error })?;
 
         // TODO: move tarball extraction to its own function
         // TODO: test it
