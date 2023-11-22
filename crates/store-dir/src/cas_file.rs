@@ -22,9 +22,9 @@ pub enum WriteCasFileError {
 
 impl StoreDir {
     /// Write a file from an npm package to the store directory.
-    pub fn write_cas_file<'a>(
+    pub fn write_cas_file(
         &self,
-        scope: &rayon::Scope<'a>,
+        scope: &rayon::Scope<'_>,
         buffer: Vec<u8>,
         executable: bool,
     ) -> Result<(PathBuf, FileHash), WriteCasFileError> {
