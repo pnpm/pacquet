@@ -13,7 +13,7 @@ use pipe_trait::Pipe;
 /// In-memory cache for packages that have started resolving dependencies.
 ///
 /// The contents of set is the package's virtual_store_name.
-/// e.g. @pnpm.e2e/dep-1@1.0.0 ->  @pnpm.e2e+dep-1@1.0.0
+/// e.g. `@pnpm.e2e/dep-1@1.0.0` →  `@pnpm.e2e+dep-1@1.0.0`
 pub type ResolvedPackages = DashSet<String>;
 
 /// This subroutine install packages from a `package.json` without reading or writing a lockfile.
