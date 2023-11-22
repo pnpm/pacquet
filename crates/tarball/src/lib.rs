@@ -17,7 +17,7 @@ use pacquet_store_dir::{
     PackageFileInfo, PackageFilesIndex, StoreDir, WriteCasFileError, WriteIndexFileError,
 };
 use pipe_trait::Pipe;
-use ssri::{Integrity, IntegrityChecker};
+use ssri::Integrity;
 use tar::Archive;
 use tokio::sync::{Notify, RwLock};
 use tracing::instrument;
@@ -101,11 +101,6 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
     DeflateDecoder::new_with_options(gz_data, options)
         .decode_gzip()
         .map_err(TarballError::DecodeGzip)
-}
-
-#[instrument(skip(data), fields(data_len = data.len()))]
-fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm, ssri::Error> {
-    integrity.pipe(IntegrityChecker::new).chain(data).result()
 }
 
 /// This subroutine downloads and extracts a tarball to the store directory.
@@ -200,7 +195,7 @@ impl<'a> DownloadTarballToStore<'a> {
             Other(TarballError),
         }
         let cas_paths = tokio::task::spawn(async move {
-            verify_checksum(&response, package_integrity.clone()).map_err(TaskError::Checksum)?;
+            package_integrity.check(&response).map_err(TaskError::Checksum)?;
 
             // TODO: move tarball extraction to its own function
             // TODO: test it
