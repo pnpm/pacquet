@@ -11,6 +11,15 @@ use tokio::{
 /// Value to sent in the command channel.
 type Command<Task> = (Task, oneshot::Sender<<Task as self::Task>::Output>);
 
+/// Value to receive when it succeeds in sending a task.
+pub type SendValue<Task> = oneshot::Receiver<<Task as self::Task>::Output>;
+
+/// Error to receive when it fails to send a task.
+pub type SendError<Task> = MpscSendError<Command<Task>>;
+
+/// Result to receive when it attempts to send a task.
+pub type SendResult<Task> = Result<SendValue<Task>, SendError<Task>>;
+
 /// Handle of a blocking task queue.
 #[derive(Debug)]
 pub struct TaskQueue<Task: self::Task> {
@@ -35,10 +44,7 @@ where
     }
 
     /// Send a task to the task queue, get a oneshot receiver that listens to the return value of the sent task.
-    pub fn send_and_listen(
-        &self,
-        task: Task,
-    ) -> Result<oneshot::Receiver<Task::Output>, MpscSendError<Command<Task>>> {
+    pub fn send_and_listen(&self, task: Task) -> SendResult<Task> {
         let (response_sender, response_receiver) = oneshot::channel::<Task::Output>();
         self.command_sender.send((task, response_sender))?;
         Ok(response_receiver)
