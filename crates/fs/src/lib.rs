@@ -1,3 +1,5 @@
+pub mod io_thread;
+
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use std::{
