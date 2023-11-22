@@ -1,5 +1,6 @@
 use crate::{ensure_file, EnsureFileError};
 use derive_more::{Display, Error};
+use miette::Diagnostic;
 use pacquet_task_queue::{SendError, SendResult, SendValue, Task, TaskQueue};
 use std::path::PathBuf;
 
@@ -23,7 +24,7 @@ pub enum IoTask {
 }
 
 /// Error type of [`IoTask`].
-#[derive(Debug, Display, Error)]
+#[derive(Debug, Display, Error, Diagnostic)]
 #[non_exhaustive]
 pub enum IoTaskError {
     EnsureFile(EnsureFileError),
