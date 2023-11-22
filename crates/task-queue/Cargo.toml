@@ -1,0 +1,14 @@
+[package]
+name                 = "pacquet-task-queue"
+description          = "Dedicated blocking thread used by pacquet for I/O operations"
+version              = "0.0.1"
+publish              = false
+authors.workspace    = true
+edition.workspace    = true
+homepage.workspace   = true
+keywords.workspace   = true
+license.workspace    = true
+repository.workspace = true
+
+[dependencies]
+tokio = { workspace = true }

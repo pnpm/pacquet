@@ -15,6 +15,7 @@ repository  = "https://github.com/anonrig/pacquet"
 # Crates
 pacquet-cli              = { path = "crates/cli" }
 pacquet-fs               = { path = "crates/fs" }
+pacquet-task-queue       = { path = "crates/task-queue" }
 pacquet-registry         = { path = "crates/registry" }
 pacquet-tarball          = { path = "crates/tarball" }
 pacquet-testing-utils    = { path = "crates/testing-utils" }

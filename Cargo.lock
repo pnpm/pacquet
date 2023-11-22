@@ -1570,6 +1570,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pacquet-task-queue"
+version = "0.0.1"
+dependencies = [
+ "tokio",
+]
+
+[[package]]
 name = "pacquet-testing-utils"
 version = "0.0.0"
 dependencies = [
