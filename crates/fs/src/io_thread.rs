@@ -13,6 +13,7 @@ pub enum IoTask {
     EnsureFile { file_path: PathBuf, content: Vec<u8>, mode: Option<u32> },
 }
 
+/// Error type of [`IoTask`].
 #[derive(Debug, Display, Error)]
 #[non_exhaustive]
 pub enum IoTaskError {
