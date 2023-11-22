@@ -1,7 +1,7 @@
 use crate::InstallPackageFromRegistry;
 use async_recursion::async_recursion;
 use futures_util::future;
-use memo_map::MemoMap;
+use dashmap::DashSet;
 use node_semver::Version;
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
@@ -10,7 +10,11 @@ use pacquet_registry::PackageVersion;
 use pacquet_tarball::MemCache;
 use pipe_trait::Pipe;
 
-pub type ResolvedPackages = MemoMap<String, bool>;
+/// In-memory cache for packages that have started resolving dependencies.
+/// 
+/// The contents of set is the package's virtual_store_name.
+/// e.g. @pnpm.e2e/dep-1@1.0.0 ->  @pnpm.e2e+dep-1@1.0.0
+pub type ResolvedPackages = DashSet<String>;
 
 /// This subroutine install packages from a `package.json` without reading or writing a lockfile.
 ///
@@ -89,7 +93,8 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
             ..
         } = self;
 
-        if !resolved_packages.insert(package.to_virtual_store_name(), true) {
+        // This package has already resolved, there is no need to reinstall again.
+        if !resolved_packages.insert(package.to_virtual_store_name()) {
             tracing::info!(target: "pacquet::install", package = ?package.to_virtual_store_name(), "Skip subset");
             return;
         }

@@ -21,7 +21,7 @@ pub struct State {
     pub manifest: PackageManifest,
     /// Data from the `pnpm-lock.yaml` file.
     pub lockfile: Option<Lockfile>,
-    /// resolved packages
+    /// In-memory cache for packages that have started resolving dependencies.
     pub resolved_packages: ResolvedPackages,
 }
 

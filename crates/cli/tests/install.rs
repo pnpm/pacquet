@@ -11,7 +11,7 @@ use pacquet_testing_utils::{
 use pipe_trait::Pipe;
 use std::{
     fs::{self, OpenOptions},
-    io::Write,
+    io::Write, path::Path,
 };
 
 #[test]
@@ -170,7 +170,7 @@ fn frozen_lockfile_should_be_able_to_handle_big_lockfile() {
 fn should_install_circular_dependencies() {
     let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
         CommandTempCwd::init().add_mocked_registry();
-    let AddMockedRegistry { store_dir, mock_instance, .. } = npmrc_info;
+    let AddMockedRegistry { mock_instance, .. } = npmrc_info;
 
     eprintln!("Creating package.json...");
     let manifest_path = workspace.join("package.json");
@@ -179,14 +179,14 @@ fn should_install_circular_dependencies() {
             "@pnpm.e2e/circular-deps-1-of-2": "1.0.2",
         },
     });
-    fs::write(&manifest_path, package_json_content.to_string()).expect("write to package.json");
+    fs::write(manifest_path, package_json_content.to_string()).expect("write to package.json");
 
     eprintln!("Executing command...");
     pacquet.with_arg("install").assert().success();
-
-    eprintln!("Snapshot");
-    let index_file_contents = index_file_contents(&store_dir);
-    insta::assert_yaml_snapshot!(index_file_contents);
+    
+    assert!(workspace.join("./node_modules/@pnpm.e2e/circular-deps-1-of-2").exists());
+    assert!(workspace.join("./node_modules/.pnpm/@pnpm.e2e+circular-deps-1-of-2@1.0.2").exists());
+    assert!(workspace.join("./node_modules/.pnpm/@pnpm.e2e+circular-deps-2-of-2@1.0.2").exists());
 
     drop((root, mock_instance)); // cleanup
 }
