@@ -1415,6 +1415,7 @@ dependencies = [
  "criterion",
  "mockito",
  "node-semver",
+ "pacquet-fs",
  "pacquet-network",
  "pacquet-registry",
  "pacquet-store-dir",

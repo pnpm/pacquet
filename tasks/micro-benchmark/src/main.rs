@@ -3,6 +3,7 @@ use std::{fs, path::Path};
 use clap::Parser;
 use criterion::{Criterion, Throughput};
 use mockito::ServerGuard;
+use pacquet_fs::IoThread;
 use pacquet_network::ThrottledClient;
 use pacquet_store_dir::StoreDir;
 use pacquet_tarball::DownloadTarballToStore;
@@ -35,9 +36,11 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
             let store_dir =
                 dir.path().to_path_buf().pipe(StoreDir::from).pipe(Box::new).pipe(Box::leak);
             let http_client = ThrottledClient::new_from_cpu_count();
+            let io_thread = IoThread::spawn();
 
             let cas_map = DownloadTarballToStore {
                 http_client: &http_client,
+                io_thread: &io_thread,
                 store_dir,
                 package_integrity: &package_integrity,
                 package_unpacked_size: Some(16697),
