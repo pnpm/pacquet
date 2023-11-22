@@ -29,7 +29,7 @@ tar          = { workspace = true }
 tokio        = { workspace = true }
 zune-inflate = { workspace = true }
 tracing      = { workspace = true }
-rayon = { workspace = true }
+rayon        = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
