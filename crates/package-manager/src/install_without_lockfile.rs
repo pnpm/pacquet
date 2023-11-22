@@ -1,7 +1,7 @@
 use crate::InstallPackageFromRegistry;
 use async_recursion::async_recursion;
-use futures_util::future;
 use dashmap::DashSet;
+use futures_util::future;
 use node_semver::Version;
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
@@ -11,7 +11,7 @@ use pacquet_tarball::MemCache;
 use pipe_trait::Pipe;
 
 /// In-memory cache for packages that have started resolving dependencies.
-/// 
+///
 /// The contents of set is the package's virtual_store_name.
 /// e.g. @pnpm.e2e/dep-1@1.0.0 ->  @pnpm.e2e+dep-1@1.0.0
 pub type ResolvedPackages = DashSet<String>;

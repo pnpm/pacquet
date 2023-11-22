@@ -11,7 +11,8 @@ use pacquet_testing_utils::{
 use pipe_trait::Pipe;
 use std::{
     fs::{self, OpenOptions},
-    io::Write, path::Path,
+    io::Write,
+    path::Path,
 };
 
 #[test]
@@ -183,7 +184,7 @@ fn should_install_circular_dependencies() {
 
     eprintln!("Executing command...");
     pacquet.with_arg("install").assert().success();
-    
+
     assert!(workspace.join("./node_modules/@pnpm.e2e/circular-deps-1-of-2").exists());
     assert!(workspace.join("./node_modules/.pnpm/@pnpm.e2e+circular-deps-1-of-2@1.0.2").exists());
     assert!(workspace.join("./node_modules/.pnpm/@pnpm.e2e+circular-deps-2-of-2@1.0.2").exists());
