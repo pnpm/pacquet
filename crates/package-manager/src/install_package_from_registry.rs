@@ -1,6 +1,7 @@
 use crate::{create_cas_files, symlink_package, CreateCasFilesError, SymlinkPackageError};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
+use pacquet_fs::IoThread;
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageTag, PackageVersion, RegistryError};
@@ -19,6 +20,7 @@ use std::{path::Path, str::FromStr};
 pub struct InstallPackageFromRegistry<'a> {
     pub tarball_mem_cache: &'a MemCache,
     pub http_client: &'a ThrottledClient,
+    pub io_thread: &'a IoThread,
     pub config: &'static Npmrc,
     pub node_modules_dir: &'a Path,
     pub name: &'a str,
@@ -70,6 +72,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
         let InstallPackageFromRegistry {
             tarball_mem_cache,
             http_client,
+            io_thread,
             config,
             node_modules_dir,
             ..
@@ -80,6 +83,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
         // TODO: skip when it already exists in store?
         let cas_paths = DownloadTarballToStore {
             http_client,
+            io_thread,
             store_dir: &config.store_dir,
             package_integrity: package_version
                 .dist
@@ -161,6 +165,7 @@ mod tests {
         let http_client = ThrottledClient::new_from_cpu_count();
         let package = InstallPackageFromRegistry {
             tarball_mem_cache: &Default::default(),
+            io_thread: &IoThread::spawn(),
             config,
             http_client: &http_client,
             name: "fast-querystring",

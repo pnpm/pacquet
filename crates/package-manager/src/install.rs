@@ -1,4 +1,5 @@
 use crate::{InstallFrozenLockfile, InstallWithoutLockfile};
+use pacquet_fs::IoThread;
 use pacquet_lockfile::Lockfile;
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
@@ -43,6 +44,7 @@ where
                 InstallWithoutLockfile {
                     tarball_mem_cache,
                     http_client,
+                    io_thread: &IoThread::spawn(),
                     config,
                     manifest,
                     dependency_groups,

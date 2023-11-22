@@ -1,7 +1,9 @@
 use crate::{FileHash, StoreDir};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_fs::{ensure_file, file_mode::EXEC_MODE, EnsureFileError};
+use pacquet_fs::{
+    ensure_file, file_mode::EXEC_MODE, EnsureFileError, IoSendError, IoSendValue, IoTask, IoThread,
+};
 use sha2::{Digest, Sha512};
 use std::path::PathBuf;
 
@@ -14,24 +16,43 @@ impl StoreDir {
     }
 }
 
-/// Error type of [`StoreDir::write_cas_file`].
+/// Error type of [`StoreDir::write_cas_file_sync`].
 #[derive(Debug, Display, Error, Diagnostic)]
-pub enum WriteCasFileError {
+pub enum WriteCasFileSyncError {
     WriteFile(EnsureFileError),
 }
 
 impl StoreDir {
     /// Write a file from an npm package to the store directory.
-    pub fn write_cas_file(
+    pub fn write_cas_file_sync(
         &self,
         buffer: &[u8],
         executable: bool,
-    ) -> Result<(PathBuf, FileHash), WriteCasFileError> {
+    ) -> Result<(PathBuf, FileHash), WriteCasFileSyncError> {
         let file_hash = Sha512::digest(buffer);
         let file_path = self.cas_file_path(file_hash, executable);
         let mode = executable.then_some(EXEC_MODE);
-        ensure_file(&file_path, buffer, mode).map_err(WriteCasFileError::WriteFile)?;
+        ensure_file(&file_path, buffer, mode).map_err(WriteCasFileSyncError::WriteFile)?;
         Ok((file_path, file_hash))
+    }
+}
+
+impl StoreDir {
+    pub fn write_cas_file_thread(
+        &self,
+        thread: &IoThread,
+        content: Vec<u8>,
+        executable: bool,
+    ) -> Result<(PathBuf, FileHash, IoSendValue), IoSendError> {
+        let file_hash = Sha512::digest(&content);
+        let file_path = self.cas_file_path(file_hash, executable);
+        let mode = executable.then_some(EXEC_MODE);
+        let receiver = thread.send_and_listen(IoTask::EnsureFile {
+            file_path: file_path.clone(),
+            content,
+            mode,
+        })?;
+        Ok((file_path, file_hash, receiver))
     }
 }
 

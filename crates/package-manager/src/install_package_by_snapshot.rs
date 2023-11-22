@@ -1,6 +1,7 @@
 use crate::{CreateVirtualDirBySnapshot, CreateVirtualDirError};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
+use pacquet_fs::IoThread;
 use pacquet_lockfile::{DependencyPath, LockfileResolution, PackageSnapshot, PkgNameVerPeer};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
@@ -59,6 +60,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
         // TODO: skip when already exists in store?
         let cas_paths = DownloadTarballToStore {
             http_client,
+            io_thread: &IoThread::spawn(), // TODO: should this be move to the top?
             store_dir: &config.store_dir,
             package_integrity: integrity,
             package_unpacked_size: None,
