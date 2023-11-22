@@ -1,5 +1,5 @@
+use derive_more::{Display, Error};
 use pacquet_task_queue::{Task, TaskQueue};
-use std::io;
 
 /// Dedicated thread for I/O operations.
 pub type IoThread = TaskQueue<IoTask>;
@@ -9,8 +9,12 @@ pub type IoThread = TaskQueue<IoTask>;
 #[non_exhaustive]
 pub enum IoTask {}
 
+#[derive(Debug, Display, Error)]
+#[non_exhaustive]
+pub enum IoTaskError {}
+
 impl Task for IoTask {
-    type Output = io::Result<()>;
+    type Output = Result<(), IoTaskError>;
     fn run(self) -> Self::Output {
         match self {}
     }
