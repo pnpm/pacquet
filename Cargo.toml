@@ -21,31 +21,37 @@ pacquet-testing-utils    = { path = "crates/testing-utils" }
 pacquet-package-manifest = { path = "crates/package-manifest" }
 pacquet-package-manager  = { path = "crates/package-manager" }
 pacquet-lockfile         = { path = "crates/lockfile" }
+pacquet-network          = { path = "crates/network" }
 pacquet-npmrc            = { path = "crates/npmrc" }
 pacquet-executor         = { path = "crates/executor" }
 pacquet-diagnostics      = { path = "crates/diagnostics" }
 pacquet-store-dir        = { path = "crates/store-dir" }
 
+# Tasks
+pacquet-registry-mock = { path = "tasks/registry-mock" }
+
 # Dependencies
+advisory-lock      = { version = "0.3.0" }
 async-recursion    = { version = "1.0.5" }
 clap               = { version = "4", features = ["derive", "string"] }
 command-extra      = { version = "1.0.0" }
 base64             = { version = "0.21.5" }
 dashmap            = { version = "5.5.3" }
-derive_more        = { version = "1.0.0-beta.3", features = ["full"] }
+derive_more        = { version = "1.0.0-beta.6", features = ["full"] }
 dunce              = { version = "1.0.4" }
 home               = { version = "0.5.5" }
-insta              = { version = "1.32.0", features = ["yaml", "glob", "walkdir"] }
+insta              = { version = "1.34.0", features = ["yaml", "glob", "walkdir"] }
 itertools          = { version = "0.11.0" }
-futures-util       = { version = "0.3.28" }
+futures-util       = { version = "0.3.29" }
 miette             = { version = "5.9.0", features = ["fancy"] }
+num_cpus           = { version = "1.16.0" }
 os_display         = { version = "0.1.3" }
 reflink-copy       = { version = "0.1.9" }
 junction           = { version = "1.0.0" }
 reqwest            = { version = "0.11", default-features = false, features = ["json", "native-tls-vendored"] }
 node-semver        = { version = "2.1.0" }
-num_cpus           = { version = "1.16.0" }
 pipe-trait         = { version = "0.4.0" }
+portpicker         = { version = "0.1.1" }
 rayon              = { version = "1.8.0" }
 serde              = { version = "1.0.188", features = ["derive"] }
 serde_ini          = { version = "0.2.0" }
@@ -56,10 +62,11 @@ split-first-char   = { version = "0.0.0" }
 ssri               = { version = "9.0.0" }
 strum              = { version = "0.25.0", features = ["derive"] }
 swc_malloc         = { version = "0.5.9" }
+sysinfo            = { version = "0.29.10" }
 tar                = { version = "0.4.40" }
 text-block-macros  = { version = "0.1.1" }
-tracing            = { version = "0.1.37" }
-tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+tracing            = { version = "0.1.40" }
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 tokio              = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 walkdir            = { version = "2.4.0" }
 which              = { version = "4.4.2" }
@@ -70,7 +77,7 @@ assert_cmd        = { version = "2.0.12" }
 criterion         = { version = "0.5.1", features = ["async_tokio"] }
 pretty_assertions = { version = "1.4.0" }
 project-root      = { version = "0.2.2" }
-tempfile          = { version = "3.8.0" }
+tempfile          = { version = "3.8.1" }
 mockito           = { version = "1.2.0" }
 
 [workspace.metadata.workspaces]

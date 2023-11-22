@@ -18,6 +18,7 @@ path = "src/bin/main.rs"
 pacquet-executor         = { workspace = true }
 pacquet-fs               = { workspace = true }
 pacquet-lockfile         = { workspace = true }
+pacquet-network          = { workspace = true }
 pacquet-npmrc            = { workspace = true }
 pacquet-package-manifest = { workspace = true }
 pacquet-package-manager  = { workspace = true }
@@ -29,7 +30,6 @@ clap        = { workspace = true }
 derive_more = { workspace = true }
 home        = { workspace = true }
 miette      = { workspace = true }
-reqwest     = { workspace = true }
 pipe-trait  = { workspace = true }
 tokio       = { workspace = true }
 swc_malloc  = { workspace = true }

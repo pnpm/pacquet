@@ -1,4 +1,7 @@
-use std::{path::Path, process::Command};
+use std::{
+    path::Path,
+    process::{Command, Stdio},
+};
 use which::which;
 
 pub async fn ensure_virtual_registry(registry: &str) {
@@ -40,5 +43,17 @@ where
             eprintln!("Revision {revision:?} is invalid");
             panic!("Invalid character: {char:?}");
         }
+    }
+}
+
+pub fn executor<'a>(message: &'a str) -> impl FnOnce(&'a mut Command) {
+    move |command| {
+        let output = command
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .output()
+            .expect(message);
+        assert!(output.status.success(), "Process exits with non-zero status: {message}");
     }
 }

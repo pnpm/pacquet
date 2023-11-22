@@ -1,9 +1,9 @@
 use crate::{InstallFrozenLockfile, InstallWithoutLockfile};
 use pacquet_lockfile::Lockfile;
+use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_tarball::MemCache;
-use reqwest::Client;
 
 /// This subroutine does everything `pacquet install` is supposed to do.
 #[must_use]
@@ -12,7 +12,7 @@ where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
     pub tarball_mem_cache: &'a MemCache,
-    pub http_client: &'a Client,
+    pub http_client: &'a ThrottledClient,
     pub config: &'static Npmrc,
     pub manifest: &'a PackageManifest,
     pub lockfile: Option<&'a Lockfile>,
@@ -78,12 +78,15 @@ mod tests {
     use super::*;
     use pacquet_npmrc::Npmrc;
     use pacquet_package_manifest::{DependencyGroup, PackageManifest};
+    use pacquet_registry_mock::AutoMockInstance;
     use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
     use std::env;
     use tempfile::tempdir;
 
     #[tokio::test]
     async fn should_install_dependencies() {
+        let mock_instance = AutoMockInstance::load_or_init();
+
         let dir = tempdir().unwrap();
         let store_dir = dir.path().join("pacquet-store");
         let project_root = dir.path().join("project");
@@ -93,10 +96,10 @@ mod tests {
         let manifest_path = dir.path().join("package.json");
         let mut manifest = PackageManifest::create_if_needed(manifest_path.clone()).unwrap();
 
-        manifest.add_dependency("is-odd", "3.0.1", DependencyGroup::Prod).unwrap();
         manifest
-            .add_dependency("fast-decode-uri-component", "1.0.1", DependencyGroup::Dev)
+            .add_dependency("@pnpm.e2e/hello-world-js-bin", "1.0.0", DependencyGroup::Prod)
             .unwrap();
+        manifest.add_dependency("@pnpm/xyz", "1.0.0", DependencyGroup::Dev).unwrap();
 
         manifest.save().unwrap();
 
@@ -104,6 +107,7 @@ mod tests {
         config.store_dir = store_dir.into();
         config.modules_dir = modules_dir.to_path_buf();
         config.virtual_store_dir = virtual_store_dir.to_path_buf();
+        config.registry = mock_instance.url();
         let config = config.leak();
 
         Install {
@@ -123,20 +127,18 @@ mod tests {
         .await;
 
         // Make sure the package is installed
-        assert!(is_symlink_or_junction(&project_root.join("node_modules/is-odd")).unwrap());
-        assert!(project_root.join("node_modules/.pacquet/is-odd@3.0.1").exists());
-        // Make sure it installs direct dependencies
-        assert!(!project_root.join("node_modules/is-number").exists());
-        assert!(project_root.join("node_modules/.pacquet/is-number@6.0.0").exists());
+        let path = project_root.join("node_modules/@pnpm.e2e/hello-world-js-bin");
+        assert!(is_symlink_or_junction(&path).unwrap());
+        let path = project_root.join("node_modules/.pacquet/@pnpm.e2e+hello-world-js-bin@1.0.0");
+        assert!(path.exists());
         // Make sure we install dev-dependencies as well
-        assert!(is_symlink_or_junction(
-            &project_root.join("node_modules/fast-decode-uri-component")
-        )
-        .unwrap());
-        assert!(project_root
-            .join("node_modules/.pacquet/fast-decode-uri-component@1.0.1")
-            .is_dir());
+        let path = project_root.join("node_modules/@pnpm/xyz");
+        assert!(is_symlink_or_junction(&path).unwrap());
+        let path = project_root.join("node_modules/.pacquet/@pnpm+xyz@1.0.0");
+        assert!(path.is_dir());
 
         insta::assert_debug_snapshot!(get_all_folders(&project_root));
+
+        drop((dir, mock_instance)); // cleanup
     }
 }

@@ -1,12 +1,14 @@
 use crate::{
     cli_args::{BenchmarkScenario, HyperfineOptions},
-    fixtures::PACKAGE_JSON,
+    fixtures::{LOCKFILE, PACKAGE_JSON},
+    verify::executor,
 };
 use itertools::Itertools;
 use os_display::Quotable;
 use pacquet_fs::make_file_executable;
 use pipe_trait::Pipe;
 use std::{
+    borrow::Cow,
     fmt,
     fs::{self, File},
     io::Write,
@@ -24,7 +26,7 @@ pub struct WorkEnv {
     pub repository: PathBuf,
     pub scenario: BenchmarkScenario,
     pub hyperfine_options: HyperfineOptions,
-    pub package_json: Option<PathBuf>,
+    pub fixture_dir: Option<PathBuf>,
 }
 
 impl WorkEnv {
@@ -99,10 +101,10 @@ impl WorkEnv {
             let dir = self.bench_dir(id);
             let for_pnpm = matches!(id, BenchId::Static(_));
             fs::create_dir_all(&dir).expect("create directory for the revision");
-            create_package_json(&dir, self.package_json.as_deref());
+            create_package_json(&dir, self.fixture_dir.as_deref());
             create_install_script(&dir, self.scenario, for_pnpm);
             create_npmrc(&dir, self.registry(), self.scenario);
-            may_create_lockfile(&dir, self.scenario);
+            may_create_lockfile(&dir, self.scenario, self.fixture_dir.as_deref());
         }
 
         eprintln!("Populating proxy registry cache...");
@@ -203,9 +205,10 @@ impl WorkEnv {
     }
 }
 
-fn create_package_json(dir: &Path, src: Option<&Path>) {
-    let dst = dir.join("package.json");
-    if let Some(src) = src {
+fn create_package_json(dst_dir: &Path, src_dir: Option<&Path>) {
+    let dst = dst_dir.join("package.json");
+    if let Some(src_dir) = src_dir {
+        let src = src_dir.join("package.json");
         assert!(src.is_file(), "{src:?} must be a file");
         assert_ne!(src, dst);
         fs::copy(src, dst).expect("copy package.json for the revision");
@@ -227,9 +230,17 @@ fn create_npmrc(dir: &Path, registry: &str, scenario: BenchmarkScenario) {
     writeln!(file, "{}", scenario.npmrc_lockfile_setting()).unwrap();
 }
 
-fn may_create_lockfile(dir: &Path, scenario: BenchmarkScenario) {
-    if let Some(lockfile) = scenario.lockfile() {
-        let path = dir.join("pnpm-lock.yaml");
+fn may_create_lockfile(dst_dir: &Path, scenario: BenchmarkScenario, src_dir: Option<&Path>) {
+    let load_lockfile = || -> Cow<'_, str> {
+        let Some(src_dir) = src_dir else { return Cow::Borrowed(LOCKFILE) };
+        src_dir
+            .join("pnpm-lock.yaml")
+            .pipe(fs::read_to_string)
+            .expect("read fixture lockfile")
+            .pipe(Cow::Owned)
+    };
+    if let Some(lockfile) = scenario.lockfile(load_lockfile) {
+        let path = dst_dir.join("pnpm-lock.yaml");
         fs::write(path, lockfile).expect("write pnpm-lock.yaml for the revision");
     }
 }
@@ -252,18 +263,6 @@ fn create_install_script(dir: &Path, scenario: BenchmarkScenario, for_pnpm: bool
     writeln!(file).unwrap();
 
     make_file_executable(&file).expect("make the script executable");
-}
-
-fn executor<'a>(message: &'a str) -> impl FnOnce(&'a mut Command) {
-    move |command| {
-        let output = command
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .output()
-            .expect(message);
-        assert!(output.status.success(), "Process exits with non-zero status: {message}");
-    }
 }
 
 #[derive(Debug, Clone, Copy)]

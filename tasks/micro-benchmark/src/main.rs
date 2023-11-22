@@ -3,11 +3,11 @@ use std::{fs, path::Path};
 use clap::Parser;
 use criterion::{Criterion, Throughput};
 use mockito::ServerGuard;
+use pacquet_network::ThrottledClient;
 use pacquet_store_dir::StoreDir;
 use pacquet_tarball::DownloadTarballToStore;
 use pipe_trait::Pipe;
 use project_root::get_project_root;
-use reqwest::Client;
 use ssri::Integrity;
 use tempfile::tempdir;
 
@@ -34,7 +34,7 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
             let dir = tempdir().unwrap();
             let store_dir =
                 dir.path().to_path_buf().pipe(StoreDir::from).pipe(Box::new).pipe(Box::leak);
-            let http_client = Client::new();
+            let http_client = ThrottledClient::new_from_cpu_count();
 
             let cas_map = DownloadTarballToStore {
                 http_client: &http_client,

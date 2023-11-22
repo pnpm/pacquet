@@ -1,32 +1,7 @@
-use assert_cmd::prelude::*;
-use command_extra::CommandExtra;
 use pacquet_store_dir::{PackageFileInfo, PackageFilesIndex};
-use pacquet_testing_utils::bin::CommandTempCwd;
 use pipe_trait::Pipe;
-use std::{
-    collections::BTreeMap,
-    ffi::OsStr,
-    fs::File,
-    path::{Path, PathBuf},
-};
-use tempfile::TempDir;
+use std::{collections::BTreeMap, fs::File, path::Path};
 use walkdir::{DirEntry, WalkDir};
-
-pub fn exec_pacquet_in_temp_cwd<Args>(create_npmrc: bool, args: Args) -> (TempDir, PathBuf)
-where
-    Args: IntoIterator,
-    Args::Item: AsRef<OsStr>,
-{
-    let env = CommandTempCwd::init();
-    let (command, root, workspace) = if create_npmrc {
-        let env = env.add_default_npmrc();
-        (env.pacquet, env.root, env.workspace)
-    } else {
-        (env.pacquet, env.root, env.workspace)
-    };
-    command.with_args(args).assert().success();
-    (root, workspace)
-}
 
 pub fn index_file_contents(
     store_dir: &Path,

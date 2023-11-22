@@ -28,6 +28,10 @@ update:
   git pull
   git submodule update --init
 
+# Install necessary dependencies
+install:
+  cd tasks/registry-mock/ && pnpm install --frozen-lockfile --prefer-offline
+
 # Run `cargo watch`
 # --no-vcs-ignores: cargo-watch has a bug loading all .gitignores, including the ones listed in .gitignore
 # use .ignore file getting the ignore list
@@ -58,6 +62,10 @@ codecov:
 # Run the benchmarks. See `tasks/benchmark`
 micro-benchmark:
   cargo run --bin=micro-benchmark --release
+
+# Manage registry-mock
+registry-mock +args:
+  cargo run --bin=pacquet-registry-mock -- {{args}}
 
 integrated-benchmark +args:
   cargo run --bin=integrated-benchmark -- {{args}}

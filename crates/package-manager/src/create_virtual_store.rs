@@ -1,15 +1,15 @@
 use crate::InstallPackageBySnapshot;
 use futures_util::future;
 use pacquet_lockfile::{DependencyPath, PackageSnapshot, RootProjectSnapshot};
+use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pipe_trait::Pipe;
-use reqwest::Client;
 use std::collections::HashMap;
 
 /// This subroutine generates filesystem layout for the virtual store at `node_modules/.pacquet`.
 #[must_use]
 pub struct CreateVirtualStore<'a> {
-    pub http_client: &'a Client,
+    pub http_client: &'a ThrottledClient,
     pub config: &'static Npmrc,
     pub packages: Option<&'a HashMap<DependencyPath, PackageSnapshot>>,
     pub project_snapshot: &'a RootProjectSnapshot,

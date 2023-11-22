@@ -1,10 +1,10 @@
 use crate::{create_cas_files, symlink_package, CreateCasFilesError, SymlinkPackageError};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
+use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageTag, PackageVersion, RegistryError};
 use pacquet_tarball::{DownloadTarballToStore, MemCache, TarballError};
-use reqwest::Client;
 use std::{path::Path, str::FromStr};
 
 /// This subroutine executes the following and returns the package
@@ -18,7 +18,7 @@ use std::{path::Path, str::FromStr};
 #[must_use]
 pub struct InstallPackageFromRegistry<'a> {
     pub tarball_mem_cache: &'a MemCache,
-    pub http_client: &'a Client,
+    pub http_client: &'a ThrottledClient,
     pub config: &'static Npmrc,
     pub node_modules_dir: &'a Path,
     pub name: &'a str,
@@ -158,7 +158,7 @@ mod tests {
             create_config(store_dir.path(), modules_dir.path(), virtual_store_dir.path())
                 .pipe(Box::new)
                 .pipe(Box::leak);
-        let http_client = reqwest::Client::new();
+        let http_client = ThrottledClient::new_from_cpu_count();
         let package = InstallPackageFromRegistry {
             tarball_mem_cache: &Default::default(),
             config,

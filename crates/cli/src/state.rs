@@ -1,11 +1,11 @@
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::{LoadLockfileError, Lockfile};
+use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{PackageManifest, PackageManifestError};
 use pacquet_tarball::MemCache;
 use pipe_trait::Pipe;
-use reqwest::Client;
 use std::path::PathBuf;
 
 /// Application state when running `pacquet run` or `pacquet install`.
@@ -13,7 +13,7 @@ pub struct State {
     /// Shared cache that store downloaded tarballs.
     pub tarball_mem_cache: MemCache,
     /// HTTP client to make HTTP requests.
-    pub http_client: Client,
+    pub http_client: ThrottledClient,
     /// Configuration read from `.npmrc`
     pub config: &'static Npmrc,
     /// Data from the `package.json` file.
@@ -43,7 +43,7 @@ impl State {
                 .map_err(InitStateError::LoadManifest)?,
             lockfile: call_load_lockfile(config.lockfile, Lockfile::load_from_current_dir)
                 .map_err(InitStateError::LoadLockfile)?,
-            http_client: Client::new(),
+            http_client: ThrottledClient::new_from_cpu_count(),
             tarball_mem_cache: MemCache::new(),
         })
     }

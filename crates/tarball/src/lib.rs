@@ -12,12 +12,12 @@ use dashmap::DashMap;
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use pacquet_fs::file_mode;
+use pacquet_network::ThrottledClient;
 use pacquet_store_dir::{
     PackageFileInfo, PackageFilesIndex, StoreDir, WriteCasFileError, WriteIndexFileError,
 };
 use pipe_trait::Pipe;
-use reqwest::Client;
-use ssri::{Integrity, IntegrityChecker};
+use ssri::Integrity;
 use tar::Archive;
 use tokio::sync::{Notify, RwLock};
 use tracing::instrument;
@@ -103,17 +103,12 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
         .map_err(TarballError::DecodeGzip)
 }
 
-#[instrument(skip(data), fields(data_len = data.len()))]
-fn verify_checksum(data: &[u8], integrity: Integrity) -> Result<ssri::Algorithm, ssri::Error> {
-    integrity.pipe(IntegrityChecker::new).chain(data).result()
-}
-
 /// This subroutine downloads and extracts a tarball to the store directory.
 ///
 /// It returns a CAS map of files in the tarball.
 #[must_use]
 pub struct DownloadTarballToStore<'a> {
-    pub http_client: &'a Client,
+    pub http_client: &'a ThrottledClient,
     pub store_dir: &'static StoreDir,
     pub package_integrity: &'a Integrity,
     pub package_unpacked_size: Option<usize>,
@@ -180,8 +175,7 @@ impl<'a> DownloadTarballToStore<'a> {
             TarballError::FetchTarball(NetworkError { url: package_url.to_string(), error })
         };
         let response = http_client
-            .get(package_url)
-            .send()
+            .run_with_permit(|client| client.get(package_url).send())
             .await
             .map_err(network_error)?
             .bytes()
@@ -202,8 +196,7 @@ impl<'a> DownloadTarballToStore<'a> {
         }
         let cas_paths = tokio::task::spawn(async move {
             rayon::scope(|scope| {
-                verify_checksum(&response, package_integrity.clone())
-                    .map_err(TaskError::Checksum)?;
+                package_integrity.check(&response).map_err(TaskError::Checksum)?;
 
                 // TODO: move tarball extraction to its own function
                 // TODO: test it
