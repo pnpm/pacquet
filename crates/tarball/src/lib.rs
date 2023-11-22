@@ -52,11 +52,6 @@ pub enum TarballError {
     Checksum(VerifyChecksumError),
 
     #[from(ignore)]
-    #[display("Integrity creation failed: {_0}")]
-    #[diagnostic(code(pacquet_tarball::integrity_error))]
-    Integrity(ssri::Error),
-
-    #[from(ignore)]
     #[display("Failed to decode gzip: {_0}")]
     #[diagnostic(code(pacquet_tarball::decode_gzip))]
     DecodeGzip(InflateDecodeErrors),
