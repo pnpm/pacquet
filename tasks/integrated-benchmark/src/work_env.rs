@@ -5,7 +5,7 @@ use crate::{
 };
 use itertools::Itertools;
 use os_display::Quotable;
-use pacquet_fs::make_file_executable;
+use pacquet_fs::file_mode::make_file_executable;
 use pipe_trait::Pipe;
 use std::{
     borrow::Cow,
