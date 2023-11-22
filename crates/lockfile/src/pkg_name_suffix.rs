@@ -10,8 +10,8 @@ use std::str::FromStr;
 /// * `ts-node@10.9.1`, `@types/node@18.7.19`, `typescript@5.1.6`
 /// * `react-json-view@1.21.3(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)`
 #[derive(Debug, Display, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
-#[display("{name}@{suffix}")]
 #[display(bound(Suffix: Display))]
+#[display("{name}@{suffix}")]
 #[serde(try_from = "&'de str", into = "String")]
 #[serde(bound(
     deserialize = "Suffix: FromStr, Suffix::Err: Display",
