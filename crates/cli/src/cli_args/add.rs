@@ -25,10 +25,11 @@ impl AddDependencyOptions {
     /// Whether to add entry to `"dependencies"`.
     ///
     /// **NOTE:** no `--save-*` flags implies save as prod.
+    /// `--save-prod` with `--save-dev` implies save as dev.
     #[inline(always)]
     fn save_prod(&self) -> bool {
         let &AddDependencyOptions { save_prod, save_dev, save_optional, save_peer } = self;
-        save_prod || (!save_dev && !save_optional && !save_peer)
+        (save_prod && !save_dev) || (!save_dev && !save_optional && !save_peer)
     }
 
     /// Whether to add entry to `"devDependencies"`.
@@ -200,6 +201,17 @@ mod tests {
                 save_peer: true
             }),
             [Optional, Peer]
+        );
+
+        // --save-dev --save-prod -> dev
+        assert_eq!(
+            create_list(AddDependencyOptions {
+                save_prod: true,
+                save_dev: true,
+                save_optional: false,
+                save_peer: false
+            }),
+            [Dev]
         );
     }
 }
