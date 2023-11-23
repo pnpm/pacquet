@@ -13,8 +13,9 @@ repository.workspace = true
 [dependencies]
 pacquet-task-queue = { workspace = true }
 
-derive_more = { workspace = true }
-miette      = { workspace = true }
+derive_more  = { workspace = true }
+miette       = { workspace = true }
+reflink-copy = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 junction = { workspace = true }

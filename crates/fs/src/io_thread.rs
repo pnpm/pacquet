@@ -2,7 +2,7 @@ use crate::{ensure_file, EnsureFileError};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_task_queue::{SendError, SendResult, SendValue, Task, TaskQueue};
-use std::path::PathBuf;
+use std::{fs, io, path::PathBuf};
 
 /// Dedicated thread for I/O operations.
 pub type IoThread = TaskQueue<IoTask>;
@@ -21,6 +21,8 @@ pub type IoSendResult = SendResult<IoTask>;
 #[non_exhaustive]
 pub enum IoTask {
     EnsureFile { file_path: PathBuf, content: Vec<u8>, mode: Option<u32> },
+    CreateDirAll { dir_path: PathBuf },
+    ReflinkOrCopy { source_file: PathBuf, target_link: PathBuf },
 }
 
 /// Error type of [`IoTask`].
@@ -28,6 +30,8 @@ pub enum IoTask {
 #[non_exhaustive]
 pub enum IoTaskError {
     EnsureFile(EnsureFileError),
+    CreateDirAll(io::Error),
+    ReflinkOrCopy(io::Error),
 }
 
 impl Task for IoTask {
@@ -36,6 +40,14 @@ impl Task for IoTask {
         match self {
             IoTask::EnsureFile { file_path, content, mode } => {
                 ensure_file(&file_path, &content, mode).map_err(IoTaskError::EnsureFile)
+            }
+            IoTask::CreateDirAll { dir_path } => {
+                fs::create_dir_all(dir_path).map_err(IoTaskError::CreateDirAll)
+            }
+            IoTask::ReflinkOrCopy { source_file, target_link } => {
+                reflink_copy::reflink_or_copy(source_file, target_link)
+                    .map(drop)
+                    .map_err(IoTaskError::ReflinkOrCopy)
             }
         }
     }

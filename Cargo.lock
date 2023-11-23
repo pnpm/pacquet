@@ -1373,6 +1373,7 @@ dependencies = [
  "junction",
  "miette",
  "pacquet-task-queue",
+ "reflink-copy",
 ]
 
 [[package]]

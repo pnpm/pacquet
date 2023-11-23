@@ -57,10 +57,12 @@ impl<'a> InstallPackageBySnapshot<'a> {
             }
         };
 
+        let io_thread = IoThread::spawn(); // TODO: should this be move to the top?
+
         // TODO: skip when already exists in store?
         let cas_paths = DownloadTarballToStore {
             http_client,
-            io_thread: &IoThread::spawn(), // TODO: should this be move to the top?
+            io_thread: &io_thread,
             store_dir: &config.store_dir,
             package_integrity: integrity,
             package_unpacked_size: None,
@@ -71,6 +73,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
         .map_err(InstallPackageBySnapshotError::DownloadTarball)?;
 
         CreateVirtualDirBySnapshot {
+            io_thread: &io_thread,
             virtual_store_dir: &config.virtual_store_dir,
             cas_paths: &cas_paths,
             import_method: config.package_import_method,
@@ -78,7 +81,8 @@ impl<'a> InstallPackageBySnapshot<'a> {
             package_snapshot,
         }
         .run()
-        .map_err(InstallPackageBySnapshotError::CreateVirtualDir)?;
+        .map_err(InstallPackageBySnapshotError::CreateVirtualDir)?
+        .for_each(|_| {});
 
         Ok(())
     }
