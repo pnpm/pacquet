@@ -1,4 +1,4 @@
-use crate::Install;
+use crate::{Install, ResolvedPackages};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::Lockfile;
@@ -17,6 +17,7 @@ where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
     pub tarball_mem_cache: &'a MemCache,
+    pub resolved_packages: &'a ResolvedPackages,
     pub http_client: &'a ThrottledClient,
     pub config: &'static Npmrc,
     pub manifest: &'a mut PackageManifest,
@@ -51,6 +52,7 @@ where
             list_dependency_groups,
             package_name,
             save_exact,
+            resolved_packages,
         } = self;
 
         let latest_version = PackageVersion::fetch_from_registry(
@@ -77,6 +79,7 @@ where
             lockfile,
             dependency_groups: list_dependency_groups(),
             frozen_lockfile: false,
+            resolved_packages,
         }
         .run()
         .await;

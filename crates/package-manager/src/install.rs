@@ -1,4 +1,4 @@
-use crate::{InstallFrozenLockfile, InstallWithoutLockfile};
+use crate::{InstallFrozenLockfile, InstallWithoutLockfile, ResolvedPackages};
 use pacquet_lockfile::Lockfile;
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
@@ -12,6 +12,7 @@ where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
     pub tarball_mem_cache: &'a MemCache,
+    pub resolved_packages: &'a ResolvedPackages,
     pub http_client: &'a ThrottledClient,
     pub config: &'static Npmrc,
     pub manifest: &'a PackageManifest,
@@ -28,6 +29,7 @@ where
     pub async fn run(self) {
         let Install {
             tarball_mem_cache,
+            resolved_packages,
             http_client,
             config,
             manifest,
@@ -42,6 +44,7 @@ where
             (false, _, _) => {
                 InstallWithoutLockfile {
                     tarball_mem_cache,
+                    resolved_packages,
                     http_client,
                     config,
                     manifest,
@@ -122,6 +125,7 @@ mod tests {
                 DependencyGroup::Optional,
             ],
             frozen_lockfile: false,
+            resolved_packages: &Default::default(),
         }
         .run()
         .await;

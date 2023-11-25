@@ -1,5 +1,6 @@
 use crate::InstallPackageFromRegistry;
 use async_recursion::async_recursion;
+use dashmap::DashSet;
 use futures_util::future;
 use node_semver::Version;
 use pacquet_network::ThrottledClient;
@@ -8,6 +9,12 @@ use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::PackageVersion;
 use pacquet_tarball::MemCache;
 use pipe_trait::Pipe;
+
+/// In-memory cache for packages that have started resolving dependencies.
+///
+/// The contents of set is the package's virtual_store_name.
+/// e.g. `@pnpm.e2e/dep-1@1.0.0` →  `@pnpm.e2e+dep-1@1.0.0`
+pub type ResolvedPackages = DashSet<String>;
 
 /// This subroutine install packages from a `package.json` without reading or writing a lockfile.
 ///
@@ -21,6 +28,7 @@ use pipe_trait::Pipe;
 #[must_use]
 pub struct InstallWithoutLockfile<'a, DependencyGroupList> {
     pub tarball_mem_cache: &'a MemCache,
+    pub resolved_packages: &'a ResolvedPackages,
     pub http_client: &'a ThrottledClient,
     pub config: &'static Npmrc,
     pub manifest: &'a PackageManifest,
@@ -39,6 +47,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
             config,
             manifest,
             dependency_groups,
+            resolved_packages,
         } = self;
 
         let _: Vec<()> = manifest
@@ -62,6 +71,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                     config,
                     manifest,
                     dependency_groups: (),
+                    resolved_packages,
                 }
                 .install_dependencies_from_registry(&dependency)
                 .await;
@@ -75,7 +85,19 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
     /// Install dependencies of a dependency.
     #[async_recursion]
     async fn install_dependencies_from_registry(&self, package: &PackageVersion) {
-        let InstallWithoutLockfile { tarball_mem_cache, http_client, config, .. } = self;
+        let InstallWithoutLockfile {
+            tarball_mem_cache,
+            http_client,
+            config,
+            resolved_packages,
+            ..
+        } = self;
+
+        // This package has already resolved, there is no need to reinstall again.
+        if !resolved_packages.insert(package.to_virtual_store_name()) {
+            tracing::info!(target: "pacquet::install", package = ?package.to_virtual_store_name(), "Skip subset");
+            return;
+        }
 
         let node_modules_path = self
             .config

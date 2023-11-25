@@ -12,6 +12,7 @@ use pipe_trait::Pipe;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
+    path::Path,
 };
 
 #[test]
@@ -164,6 +165,29 @@ fn frozen_lockfile_should_be_able_to_handle_big_lockfile() {
 
     eprintln!("Executing command...");
     pacquet.with_args(["install", "--frozen-lockfile"]).assert().success();
+}
+
+#[test]
+fn should_install_circular_dependencies() {
+    let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
+        CommandTempCwd::init().add_mocked_registry();
+    let AddMockedRegistry { mock_instance, .. } = npmrc_info;
+
+    eprintln!("Creating package.json...");
+    let manifest_path = workspace.join("package.json");
+    let package_json_content = serde_json::json!({
+        "dependencies": {
+            "@pnpm.e2e/circular-deps-1-of-2": "1.0.2",
+        },
+    });
+    fs::write(manifest_path, package_json_content.to_string()).expect("write to package.json");
+
+    eprintln!("Executing command...");
+    pacquet.with_arg("install").assert().success();
+
+    assert!(workspace.join("./node_modules/@pnpm.e2e/circular-deps-1-of-2").exists());
+    assert!(workspace.join("./node_modules/.pnpm/@pnpm.e2e+circular-deps-1-of-2@1.0.2").exists());
+    assert!(workspace.join("./node_modules/.pnpm/@pnpm.e2e+circular-deps-2-of-2@1.0.2").exists());
 
     drop((root, mock_instance)); // cleanup
 }

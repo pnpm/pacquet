@@ -3,6 +3,7 @@ use miette::Diagnostic;
 use pacquet_lockfile::{LoadLockfileError, Lockfile};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
+use pacquet_package_manager::ResolvedPackages;
 use pacquet_package_manifest::{PackageManifest, PackageManifestError};
 use pacquet_tarball::MemCache;
 use pipe_trait::Pipe;
@@ -20,6 +21,8 @@ pub struct State {
     pub manifest: PackageManifest,
     /// Data from the `pnpm-lock.yaml` file.
     pub lockfile: Option<Lockfile>,
+    /// In-memory cache for packages that have started resolving dependencies.
+    pub resolved_packages: ResolvedPackages,
 }
 
 /// Error type of [`State::init`].
@@ -45,6 +48,7 @@ impl State {
                 .map_err(InitStateError::LoadLockfile)?,
             http_client: ThrottledClient::new_from_cpu_count(),
             tarball_mem_cache: MemCache::new(),
+            resolved_packages: ResolvedPackages::new(),
         })
     }
 }
