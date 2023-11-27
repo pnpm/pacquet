@@ -5,7 +5,6 @@ use pacquet_npmrc::PackageImportMethod;
 use rayon::prelude::*;
 use std::{
     collections::HashMap,
-    ffi::OsString,
     path::{Path, PathBuf},
 };
 
@@ -22,7 +21,7 @@ pub enum CreateCasFilesError {
 pub fn create_cas_files(
     import_method: PackageImportMethod,
     dir_path: &Path,
-    cas_paths: &HashMap<OsString, PathBuf>,
+    cas_paths: &HashMap<String, PathBuf>,
 ) -> Result<(), CreateCasFilesError> {
     assert_eq!(
         import_method,

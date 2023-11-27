@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    ffi::OsString,
     io::{Cursor, Read},
     path::PathBuf,
     sync::Arc,
@@ -77,7 +76,7 @@ pub enum CacheValue {
     /// The package is being processed.
     InProgress(Arc<Notify>),
     /// The package is saved.
-    Available(Arc<HashMap<OsString, PathBuf>>),
+    Available(Arc<HashMap<String, PathBuf>>),
 }
 
 /// Internal in-memory cache of tarballs.
@@ -115,7 +114,7 @@ impl<'a> DownloadTarballToStore<'a> {
     pub async fn run_with_mem_cache(
         self,
         mem_cache: &'a MemCache,
-    ) -> Result<Arc<HashMap<OsString, PathBuf>>, TarballError> {
+    ) -> Result<Arc<HashMap<String, PathBuf>>, TarballError> {
         let &DownloadTarballToStore { package_url, .. } = &self;
 
         // QUESTION: I see no copying from existing store_dir, is there such mechanism?
@@ -154,7 +153,7 @@ impl<'a> DownloadTarballToStore<'a> {
     }
 
     /// Execute the subroutine without an in-memory cache.
-    pub async fn run_without_mem_cache(&self) -> Result<HashMap<OsString, PathBuf>, TarballError> {
+    pub async fn run_without_mem_cache(&self) -> Result<HashMap<String, PathBuf>, TarballError> {
         let &DownloadTarballToStore {
             http_client,
             store_dir,
@@ -208,7 +207,7 @@ impl<'a> DownloadTarballToStore<'a> {
                 .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir());
 
             let ((_, Some(capacity)) | (capacity, None)) = entries.size_hint();
-            let mut cas_paths = HashMap::<OsString, PathBuf>::with_capacity(capacity);
+            let mut cas_paths = HashMap::<String, PathBuf>::with_capacity(capacity);
             let mut pkg_files_idx = PackageFilesIndex { files: HashMap::with_capacity(capacity) };
 
             for entry in entries {
@@ -222,18 +221,18 @@ impl<'a> DownloadTarballToStore<'a> {
                 entry.read_to_end(&mut buffer).unwrap();
 
                 let entry_path = entry.path().unwrap();
-                let cleaned_entry_path =
-                    entry_path.components().skip(1).collect::<PathBuf>().into_os_string();
+                let cleaned_entry_path = entry_path
+                    .components()
+                    .skip(1)
+                    .collect::<PathBuf>()
+                    .into_os_string()
+                    .into_string()
+                    .expect("entry path must be valid UTF-8");
                 let (file_path, file_hash) = store_dir
                     .write_cas_file(&buffer, file_is_executable)
                     .map_err(TarballError::WriteCasFile)?;
 
-                let tarball_index_key = cleaned_entry_path
-                    .to_str()
-                    .expect("entry path must be valid UTF-8") // TODO: propagate this error, provide more information
-                    .to_string(); // TODO: convert cleaned_entry_path to String too.
-
-                if let Some(previous) = cas_paths.insert(cleaned_entry_path, file_path) {
+                if let Some(previous) = cas_paths.insert(cleaned_entry_path.clone(), file_path) {
                     tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
                 }
 
@@ -247,7 +246,7 @@ impl<'a> DownloadTarballToStore<'a> {
                     size: file_size,
                 };
 
-                if let Some(previous) = pkg_files_idx.files.insert(tarball_index_key, file_attrs) {
+                if let Some(previous) = pkg_files_idx.files.insert(cleaned_entry_path, file_attrs) {
                     tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
                 }
             }

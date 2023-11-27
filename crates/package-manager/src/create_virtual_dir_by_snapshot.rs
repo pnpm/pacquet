@@ -5,7 +5,6 @@ use pacquet_lockfile::{DependencyPath, PackageSnapshot};
 use pacquet_npmrc::PackageImportMethod;
 use std::{
     collections::HashMap,
-    ffi::OsString,
     fs, io,
     path::{Path, PathBuf},
 };
@@ -14,7 +13,7 @@ use std::{
 #[must_use]
 pub struct CreateVirtualDirBySnapshot<'a> {
     pub virtual_store_dir: &'a Path,
-    pub cas_paths: &'a HashMap<OsString, PathBuf>,
+    pub cas_paths: &'a HashMap<String, PathBuf>,
     pub import_method: PackageImportMethod,
     pub dependency_path: &'a DependencyPath,
     pub package_snapshot: &'a PackageSnapshot,
