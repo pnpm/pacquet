@@ -12,7 +12,6 @@ use pipe_trait::Pipe;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
-    path::Path,
 };
 
 #[test]
@@ -165,6 +164,8 @@ fn frozen_lockfile_should_be_able_to_handle_big_lockfile() {
 
     eprintln!("Executing command...");
     pacquet.with_args(["install", "--frozen-lockfile"]).assert().success();
+
+    drop((root, mock_instance)); // cleanup
 }
 
 #[test]
