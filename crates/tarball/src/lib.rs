@@ -237,9 +237,7 @@ impl<'a> DownloadTarballToStore<'a> {
                     .write_cas_file(&buffer, file_is_executable)
                     .map_err(TarballError::WriteCasFile)?;
 
-                let tarball_index_key = cleaned_entry_path.clone();
-
-                if let Some(previous) = cas_paths.insert(cleaned_entry_path, file_path) {
+                if let Some(previous) = cas_paths.insert(cleaned_entry_path.clone(), file_path) {
                     tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
                 }
 
@@ -253,7 +251,7 @@ impl<'a> DownloadTarballToStore<'a> {
                     size: file_size,
                 };
 
-                if let Some(previous) = pkg_files_idx.files.insert(tarball_index_key, file_attrs) {
+                if let Some(previous) = pkg_files_idx.files.insert(cleaned_entry_path, file_attrs) {
                     tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
                 }
             }
