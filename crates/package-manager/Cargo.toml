@@ -29,6 +29,7 @@ rayon           = { workspace = true }
 reflink-copy    = { workspace = true }
 tracing         = { workspace = true }
 miette          = { workspace = true }
+tokio           = { workspace = true }
 
 [dev-dependencies]
 pacquet-store-dir     = { workspace = true }
@@ -39,5 +40,4 @@ node-semver       = { workspace = true }
 insta             = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile          = { workspace = true }
-tokio             = { workspace = true }
 walkdir           = { workspace = true }

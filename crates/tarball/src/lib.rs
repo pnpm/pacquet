@@ -13,7 +13,7 @@ use miette::Diagnostic;
 use pacquet_fs::file_mode;
 use pacquet_network::ThrottledClient;
 use pacquet_store_dir::{
-    PackageFileInfo, PackageFilesIndex, StoreDir, WriteCasFileError, WriteIndexFileError,
+    PackageFileInfo, PackageFilesIndex, StoreDir, WriteCasFileJoinHandle, WriteIndexFileError,
 };
 use pipe_trait::Pipe;
 use ssri::Integrity;
@@ -56,11 +56,6 @@ pub enum TarballError {
     DecodeGzip(InflateDecodeErrors),
 
     #[from(ignore)]
-    #[display("Failed to write cafs: {_0}")]
-    #[diagnostic(transparent)]
-    WriteCasFile(WriteCasFileError),
-
-    #[from(ignore)]
     #[display("Failed to write tarball index: {_0}")]
     #[diagnostic(transparent)]
     WriteTarballIndexFile(WriteIndexFileError),
@@ -70,13 +65,15 @@ pub enum TarballError {
     TaskJoin(tokio::task::JoinError),
 }
 
+pub type CasMap = HashMap<String, WriteCasFileJoinHandle>;
+
 /// Value of the cache.
 #[derive(Debug, Clone)]
 pub enum CacheValue {
     /// The package is being processed.
     InProgress(Arc<Notify>),
     /// The package is saved.
-    Available(Arc<HashMap<String, PathBuf>>),
+    Available(Arc<CasMap>),
 }
 
 /// Internal in-memory cache of tarballs.
@@ -114,7 +111,7 @@ impl<'a> DownloadTarballToStore<'a> {
     pub async fn run_with_mem_cache(
         self,
         mem_cache: &'a MemCache,
-    ) -> Result<Arc<HashMap<String, PathBuf>>, TarballError> {
+    ) -> Result<Arc<HashMap<String, WriteCasFileJoinHandle>>, TarballError> {
         let &DownloadTarballToStore { package_url, .. } = &self;
 
         // QUESTION: I see no copying from existing store_dir, is there such mechanism?
@@ -153,7 +150,9 @@ impl<'a> DownloadTarballToStore<'a> {
     }
 
     /// Execute the subroutine without an in-memory cache.
-    pub async fn run_without_mem_cache(&self) -> Result<HashMap<String, PathBuf>, TarballError> {
+    pub async fn run_without_mem_cache(
+        &self,
+    ) -> Result<HashMap<String, WriteCasFileJoinHandle>, TarballError> {
         let &DownloadTarballToStore {
             http_client,
             store_dir,
@@ -207,7 +206,7 @@ impl<'a> DownloadTarballToStore<'a> {
                 .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir());
 
             let ((_, Some(capacity)) | (capacity, None)) = entries.size_hint();
-            let mut cas_paths = HashMap::<String, PathBuf>::with_capacity(capacity);
+            let mut cas_paths = HashMap::<String, WriteCasFileJoinHandle>::with_capacity(capacity);
             let mut pkg_files_idx = PackageFilesIndex { files: HashMap::with_capacity(capacity) };
 
             for entry in entries {
@@ -228,11 +227,12 @@ impl<'a> DownloadTarballToStore<'a> {
                     .into_os_string()
                     .into_string()
                     .expect("entry path must be valid UTF-8");
-                let (file_path, file_hash) = store_dir
-                    .write_cas_file(&buffer, file_is_executable)
-                    .map_err(TarballError::WriteCasFile)?;
+                let (cas_file_handle, file_hash) =
+                    store_dir.write_cas_file(buffer, file_is_executable);
 
-                if let Some(previous) = cas_paths.insert(cleaned_entry_path.clone(), file_path) {
+                if let Some(previous) =
+                    cas_paths.insert(cleaned_entry_path.clone(), cas_file_handle)
+                {
                     tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
                 }
 

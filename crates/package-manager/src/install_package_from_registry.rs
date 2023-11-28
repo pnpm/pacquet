@@ -103,8 +103,8 @@ impl<'a> InstallPackageFromRegistry<'a> {
 
         tracing::info!(target: "pacquet::import", ?save_path, ?symlink_path, "Import package");
 
-        create_cas_files(config.package_import_method, &save_path, &cas_paths)
-            .map_err(InstallPackageFromRegistryError::CreateCasFiles)?;
+        // create_cas_files(config.package_import_method, &save_path, cas_paths)
+        //     .map_err(InstallPackageFromRegistryError::CreateCasFiles)?;
 
         symlink_package(&save_path, &symlink_path)
             .map_err(InstallPackageFromRegistryError::SymlinkPackage)?;

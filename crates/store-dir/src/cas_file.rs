@@ -1,9 +1,8 @@
 use crate::{FileHash, StoreDir};
-use derive_more::{Display, Error};
-use miette::Diagnostic;
 use pacquet_fs::{ensure_file, file_mode::EXEC_MODE, EnsureFileError};
 use sha2::{Digest, Sha512};
 use std::path::PathBuf;
+use tokio::task::{spawn_blocking, JoinHandle};
 
 impl StoreDir {
     /// Path to a file in the store directory.
@@ -14,24 +13,22 @@ impl StoreDir {
     }
 }
 
-/// Error type of [`StoreDir::write_cas_file`].
-#[derive(Debug, Display, Error, Diagnostic)]
-pub enum WriteCasFileError {
-    WriteFile(EnsureFileError),
-}
+/// Join handle of [`StoreDir::write_cas_file`].
+pub type WriteCasFileJoinHandle = JoinHandle<Result<PathBuf, EnsureFileError>>;
 
 impl StoreDir {
     /// Write a file from an npm package to the store directory.
     pub fn write_cas_file(
         &self,
-        buffer: &[u8],
+        buffer: Vec<u8>,
         executable: bool,
-    ) -> Result<(PathBuf, FileHash), WriteCasFileError> {
-        let file_hash = Sha512::digest(buffer);
+    ) -> (WriteCasFileJoinHandle, FileHash) {
+        let file_hash = Sha512::digest(&buffer);
         let file_path = self.cas_file_path(file_hash, executable);
         let mode = executable.then_some(EXEC_MODE);
-        ensure_file(&file_path, buffer, mode).map_err(WriteCasFileError::WriteFile)?;
-        Ok((file_path, file_hash))
+        let handle =
+            spawn_blocking(move || ensure_file(&file_path, &buffer, mode).map(|()| file_path));
+        (handle, file_hash)
     }
 }
 

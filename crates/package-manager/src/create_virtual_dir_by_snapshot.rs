@@ -3,8 +3,8 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::{DependencyPath, PackageSnapshot};
 use pacquet_npmrc::PackageImportMethod;
+use pacquet_tarball::CasMap;
 use std::{
-    collections::HashMap,
     fs, io,
     path::{Path, PathBuf},
 };
@@ -13,7 +13,7 @@ use std::{
 #[must_use]
 pub struct CreateVirtualDirBySnapshot<'a> {
     pub virtual_store_dir: &'a Path,
-    pub cas_paths: &'a HashMap<String, PathBuf>,
+    pub cas_paths: CasMap,
     pub import_method: PackageImportMethod,
     pub dependency_path: &'a DependencyPath,
     pub package_snapshot: &'a PackageSnapshot,
@@ -36,7 +36,7 @@ pub enum CreateVirtualDirError {
 
 impl<'a> CreateVirtualDirBySnapshot<'a> {
     /// Execute the subroutine.
-    pub fn run(self) -> Result<(), CreateVirtualDirError> {
+    pub async fn run(self) -> Result<(), CreateVirtualDirError> {
         let CreateVirtualDirBySnapshot {
             virtual_store_dir,
             cas_paths,
@@ -60,6 +60,7 @@ impl<'a> CreateVirtualDirBySnapshot<'a> {
         let save_path =
             virtual_node_modules_dir.join(dependency_path.package_specifier.name.to_string());
         create_cas_files(import_method, &save_path, cas_paths)
+            .await
             .map_err(CreateVirtualDirError::CreateCasFiles)?;
 
         // 2. Create the symlink layout

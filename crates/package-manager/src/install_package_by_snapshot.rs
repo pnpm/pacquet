@@ -70,12 +70,13 @@ impl<'a> InstallPackageBySnapshot<'a> {
 
         CreateVirtualDirBySnapshot {
             virtual_store_dir: &config.virtual_store_dir,
-            cas_paths: &cas_paths,
+            cas_paths,
             import_method: config.package_import_method,
             dependency_path,
             package_snapshot,
         }
         .run()
+        .await
         .map_err(InstallPackageBySnapshotError::CreateVirtualDir)?;
 
         Ok(())
