@@ -61,7 +61,7 @@ sha2               = { version = "0.10.8" }
 split-first-char   = { version = "0.0.0" }
 ssri               = { version = "9.0.0" }
 strum              = { version = "0.25.0", features = ["derive"] }
-sysinfo            = { version = "0.29.10" }
+sysinfo            = { version = "0.29.11" }
 tar                = { version = "0.4.40" }
 text-block-macros  = { version = "0.1.1" }
 tracing            = { version = "0.1.40" }
