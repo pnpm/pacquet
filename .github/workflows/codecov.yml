@@ -48,7 +48,7 @@ jobs:
           standalone: true
 
       - name: Cache pnpm
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           key: codecov-pnpm-${{ matrix.os }}
           path: |

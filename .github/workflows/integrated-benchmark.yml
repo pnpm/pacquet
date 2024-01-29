@@ -50,7 +50,7 @@ jobs:
           git branch
 
       - name: Cache verdaccio
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           key: integrated-benchmark-verdaccio
           path: |
@@ -59,7 +59,7 @@ jobs:
         continue-on-error: true
 
       - name: Cache Rust builds
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           key: integrated-benchmark-builds-${{ matrix.os }}
           path: |
@@ -85,7 +85,7 @@ jobs:
           standalone: true
 
       - name: Cache pnpm
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           key: integrated-benchmark-pnpm
           path: |
