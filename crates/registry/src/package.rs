@@ -36,7 +36,13 @@ impl Package {
         let network_error = |error| NetworkError { error, url: url() };
         http_client
             .run_with_permit(|client| {
-                client.get(url()).header("content-type", "application/json").send()
+                client
+                    .get(url())
+                    .header(
+                        "accept",
+                        "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+                    )
+                    .send()
             })
             .await
             .map_err(network_error)?
