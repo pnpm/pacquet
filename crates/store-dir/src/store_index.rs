@@ -153,12 +153,15 @@ impl StoreIndex {
     /// Look up a package-files index by key. Returns `Ok(None)` if no row exists.
     ///
     /// pacquet-written rows are plain `rmp_serde` msgpack maps (via
-    /// `to_vec_named`). pnpm-written rows use msgpackr's records extension
-    /// — a shape we route through [`transcode_to_plain_msgpack`][crate::msgpackr_records::transcode_to_plain_msgpack]
-    /// so `rmp_serde` never has to know about slot bytes or ext type 0x72.
-    /// We sniff the leading two bytes (`d4 72` == fixext1 + records ext
-    /// type) to avoid transcoding pacquet's own rows, which don't need
-    /// it and would otherwise pay an extra allocation per read.
+    /// `to_vec_named`). pnpm-written rows use msgpackr's records extension.
+    /// Both shapes are normalised through
+    /// [`transcode_to_plain_msgpack`][crate::msgpackr_records::transcode_to_plain_msgpack]
+    /// before `rmp_serde` sees them — the transcoder tracks records
+    /// mode internally, so passing plain msgpack through is safe and
+    /// also lets it narrow the integer-valued `float 64` encoding we
+    /// use for `checkedAt` back into `uint 64` for deserialization.
+    /// The cost is one extra `Vec<u8>` allocation + memcpy per read,
+    /// which is dwarfed by the SQLite and disk costs.
     pub fn get(&self, key: &str) -> Result<Option<PackageFilesIndex>, StoreIndexError> {
         let row: Option<Vec<u8>> = self
             .conn

@@ -82,11 +82,35 @@ pub enum DecodeError {
     UnknownSlot { slot: u8, offset: usize },
 
     #[display(
-        "Expected record-definition header ({count} field-name strings in a \
-         msgpack array) at offset {offset}, got byte 0x{byte:02x}"
+        "Record definition at offset {offset} has slot 0x{slot:02x}, which \
+         is outside the valid reference range 0x40..=0x7f — any reference \
+         written for this slot would be unreachable"
     )]
-    #[diagnostic(code(pacquet_store_dir::msgpackr::bad_record_def))]
-    BadRecordDef { byte: u8, offset: usize, count: usize },
+    #[diagnostic(code(pacquet_store_dir::msgpackr::slot_out_of_range))]
+    SlotOutOfRange { slot: u8, offset: usize },
+
+    #[display(
+        "Expected a msgpack array header (fixarray, array16, or array32) \
+         for a record-definition field-name list at offset {offset}, got \
+         byte 0x{byte:02x}"
+    )]
+    #[diagnostic(code(pacquet_store_dir::msgpackr::expected_array_header))]
+    ExpectedArrayHeader { byte: u8, offset: usize },
+
+    #[display(
+        "Expected a msgpack string header (fixstr, str8, str16, or str32) \
+         for a record-definition field name at offset {offset}, got byte \
+         0x{byte:02x}"
+    )]
+    #[diagnostic(code(pacquet_store_dir::msgpackr::expected_string_header))]
+    ExpectedStringHeader { byte: u8, offset: usize },
+
+    #[display(
+        "Field name in a record definition at offset {offset} contains \
+         invalid UTF-8"
+    )]
+    #[diagnostic(code(pacquet_store_dir::msgpackr::invalid_field_name_utf8))]
+    InvalidFieldNameUtf8 { offset: usize },
 
     #[display("Unsupported msgpack header byte 0x{byte:02x} at offset {offset}")]
     #[diagnostic(code(pacquet_store_dir::msgpackr::unsupported))]
@@ -206,7 +230,15 @@ fn transcode_value(
     if head == 0xd4 && r.peek(1)? == RECORD_DEF_EXT_TYPE {
         r.read_u8()?; // 0xd4
         r.read_u8()?; // 0x72
+        let slot_offset = r.pos;
         let slot = r.read_u8()?;
+        // msgpackr only ever emits slot bytes in 0x40..=0x7f — any value
+        // outside that range is either malformed input or a payload we
+        // don't understand. Reject rather than silently registering a
+        // slot that nothing could ever reference.
+        if !(SLOT_LO..=SLOT_HI).contains(&slot) {
+            return Err(DecodeError::SlotOutOfRange { slot, offset: slot_offset });
+        }
         let fields = read_string_array(r)?;
         state.slots.insert(slot, fields.clone());
         state.records_mode = true;
@@ -338,27 +370,23 @@ fn transcode_value(
         // array 16 / 32 — emit header, recurse N times.
         0xdc => {
             let n = u16::from_be_bytes([r.peek(1)?, r.peek(2)?]) as usize;
-            let header = r.read_bytes(3)?.to_vec();
-            w.extend_from_slice(&header);
+            w.extend_from_slice(r.read_bytes(3)?);
             transcode_array(r, w, state, n)
         }
         0xdd => {
             let n = u32::from_be_bytes([r.peek(1)?, r.peek(2)?, r.peek(3)?, r.peek(4)?]) as usize;
-            let header = r.read_bytes(5)?.to_vec();
-            w.extend_from_slice(&header);
+            w.extend_from_slice(r.read_bytes(5)?);
             transcode_array(r, w, state, n)
         }
         // map 16 / 32
         0xde => {
             let n = u16::from_be_bytes([r.peek(1)?, r.peek(2)?]) as usize;
-            let header = r.read_bytes(3)?.to_vec();
-            w.extend_from_slice(&header);
+            w.extend_from_slice(r.read_bytes(3)?);
             transcode_pairs(r, w, state, n)
         }
         0xdf => {
             let n = u32::from_be_bytes([r.peek(1)?, r.peek(2)?, r.peek(3)?, r.peek(4)?]) as usize;
-            let header = r.read_bytes(5)?.to_vec();
-            w.extend_from_slice(&header);
+            w.extend_from_slice(r.read_bytes(5)?);
             transcode_pairs(r, w, state, n)
         }
 
@@ -410,7 +438,7 @@ fn read_string_array(r: &mut Reader<'_>) -> Result<Vec<String>, DecodeError> {
         0x90..=0x9f => (head & 0x0f) as usize,
         0xdc => r.read_u16()? as usize,
         0xdd => r.read_u32()? as usize,
-        _ => return Err(DecodeError::BadRecordDef { byte: head, offset: start, count: 0 }),
+        _ => return Err(DecodeError::ExpectedArrayHeader { byte: head, offset: start }),
     };
     let mut out = Vec::with_capacity(len);
     for _ in 0..len {
@@ -427,10 +455,10 @@ fn read_string(r: &mut Reader<'_>) -> Result<String, DecodeError> {
         0xd9 => r.read_u8()? as usize,
         0xda => r.read_u16()? as usize,
         0xdb => r.read_u32()? as usize,
-        _ => return Err(DecodeError::BadRecordDef { byte: head, offset: start, count: 1 }),
+        _ => return Err(DecodeError::ExpectedStringHeader { byte: head, offset: start }),
     };
     let bytes = r.read_bytes(len)?.to_vec();
-    String::from_utf8(bytes).map_err(|_| DecodeError::Unsupported { byte: head, offset: start })
+    String::from_utf8(bytes).map_err(|_| DecodeError::InvalidFieldNameUtf8 { offset: start })
 }
 
 /// Exactly 2^64 as f64 — the smallest `f64` value that does **not** fit
@@ -582,7 +610,7 @@ mod tests {
 
     /// Fixture: "no checkedAt" — proves msgpackr emits a *different* record
     /// shape (3 fields instead of 4) when an optional field is absent, and
-    /// our `Option<u128>` deserializer copes.
+    /// our `Option<u64>` deserializer copes.
     #[test]
     fn decodes_file_without_checked_at() {
         let bytes: [u8; 57] = [
