@@ -5,14 +5,15 @@ use assert_cmd::prelude::*;
 use command_extra::CommandExtra;
 use pacquet_testing_utils::{
     bin::{AddMockedRegistry, CommandTempCwd},
-    fixtures::{BIG_LOCKFILE, BIG_MANIFEST},
     fs::{get_all_files, get_all_folders, is_symlink_or_junction},
 };
 use pipe_trait::Pipe;
-use std::{
-    fs::{self, OpenOptions},
-    io::Write,
-};
+use std::fs;
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+use pacquet_testing_utils::fixtures::{BIG_LOCKFILE, BIG_MANIFEST};
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+use std::{fs::OpenOptions, io::Write};
 
 #[test]
 fn should_install_dependencies() {

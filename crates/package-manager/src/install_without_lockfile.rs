@@ -60,7 +60,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
         } = self;
 
         manifest
-            .dependencies(dependency_groups.into_iter())
+            .dependencies(dependency_groups)
             .map(|(name, version_range)| async move {
                 let dependency = InstallPackageFromRegistry {
                     tarball_mem_cache,

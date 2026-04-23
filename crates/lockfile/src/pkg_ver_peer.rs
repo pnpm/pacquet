@@ -48,7 +48,7 @@ impl FromStr for PkgVerPeer {
     type Err = ParsePkgVerPeerError;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         if !value.ends_with(')') {
-            if value.find(|char| char == '(' || char == ')').is_some() {
+            if value.find(['(', ')']).is_some() {
                 return Err(ParsePkgVerPeerError::MismatchParenthesis);
             }
 

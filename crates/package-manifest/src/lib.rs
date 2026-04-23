@@ -161,7 +161,7 @@ impl PackageManifest {
         self.value
             .get("bundleDependencies")
             .or_else(|| self.value.get("bundledDependencies"))
-            .map(serde_json::Value::clone)
+            .cloned()
             .map(serde_json::from_value)
             .transpose()
     }

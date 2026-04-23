@@ -28,7 +28,7 @@ impl StoreDir {
     }
 
     /// Create an object that [displays](std::fmt::Display) the root of the store directory.
-    pub fn display(&self) -> path::Display {
+    pub fn display(&self) -> path::Display<'_> {
         self.root.display()
     }
 

@@ -77,7 +77,7 @@ jobs:
           just registry-mock end
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: codecov
           path: lcov.info
