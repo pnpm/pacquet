@@ -19,11 +19,14 @@ fn canonicalize(path: &Path) -> PathBuf {
 }
 
 #[test]
-fn store_path_should_return_store_dir_from_npmrc() {
+fn store_path_should_return_store_dir_from_pnpm_workspace_yaml() {
+    // `storeDir` is a project-structural setting — in pnpm 11 (and now
+    // pacquet) it's only honoured from `pnpm-workspace.yaml`, not `.npmrc`.
     let CommandTempCwd { pacquet, root, workspace, .. } = CommandTempCwd::init();
 
-    eprintln!("Creating .npmrc...");
-    fs::write(workspace.join(".npmrc"), "store-dir=foo/bar").expect("write to .npmrc");
+    eprintln!("Creating pnpm-workspace.yaml...");
+    fs::write(workspace.join("pnpm-workspace.yaml"), "storeDir: foo/bar\n")
+        .expect("write to pnpm-workspace.yaml");
 
     eprintln!("Executing pacquet store path...");
     let output = pacquet.with_args(["store", "path"]).output().expect("run pacquet store path");
