@@ -64,11 +64,11 @@ pub enum StoreIndexError {
         source: rusqlite::Error,
     },
 
-    #[display("Failed to encode PackageFilesIndex as msgpack: {source}")]
-    #[diagnostic(code(pacquet_store_dir::store_index::encode))]
+    #[display("Failed to encode PackageFilesIndex as msgpackr records: {source}")]
+    #[diagnostic(transparent)]
     Encode {
         #[error(source)]
-        source: rmp_serde::encode::Error,
+        source: crate::msgpackr_records::EncodeError,
     },
 
     #[display("Failed to decode PackageFilesIndex from msgpack: {source}")]
@@ -152,25 +152,22 @@ impl StoreIndex {
 
     /// Look up a package-files index by key. Returns `Ok(None)` if no row exists.
     ///
-    /// pacquet-written rows are plain `rmp_serde` msgpack maps (via
-    /// `to_vec_named`). pnpm-written rows use msgpackr's records extension.
-    /// Both shapes are normalised through
+    /// Both pnpm- and pacquet-written rows are msgpackr-records streams
+    /// (pacquet now writes records via
+    /// [`encode_package_files_index`][crate::msgpackr_records::encode_package_files_index]
+    /// for pnpm-interop reasons, matching what pnpm's `Packr({useRecords:
+    /// true, …})` emits). Both run through
     /// [`transcode_to_plain_msgpack`][crate::msgpackr_records::transcode_to_plain_msgpack]
-    /// before `rmp_serde` sees them — the transcoder tracks records
-    /// mode internally, so passing plain msgpack through is safe and
-    /// also lets it narrow the integer-valued `float 64` encoding we
-    /// use for `checkedAt` back into `uint 64` for deserialization.
+    /// to unpack the records and narrow the integer-valued `float 64`
+    /// encoding of `checkedAt` back to `uint 64`, then `rmp_serde`
+    /// deserializes into [`PackageFilesIndex`]. The transcoder also
+    /// tolerates legacy plain-msgpack rows pacquet may have left behind
+    /// before this change — they contain no record headers, so the
+    /// `records_mode` flag never flips and those bytes pass through
+    /// with only the float-narrowing applied.
     ///
-    /// There's no bypass fast-path for pacquet-written rows because
-    /// they carry `checkedAt` as `float 64` on purpose (see
-    /// [`CafsFileInfo::checked_at`] for why — msgpackr reads `uint 64`
-    /// as a JS `BigInt`, and pnpm's integrity check does
-    /// `mtimeMs - (checkedAt ?? 0)` which crashes on Number/BigInt
-    /// mixing). Any real tarball has at least one file with
-    /// `checkedAt: Some(…)`, so every row needs float-narrowing and
-    /// the transcoder ends up running. The cost is one extra
-    /// `Vec<u8>` allocation + memcpy per read, dwarfed by the SQLite
-    /// and disk costs.
+    /// Cost is one `Vec<u8>` allocation + memcpy per read, dwarfed by
+    /// the SQLite query and disk I/O.
     pub fn get(&self, key: &str) -> Result<Option<PackageFilesIndex>, StoreIndexError> {
         let row: Option<Vec<u8>> = self
             .conn
@@ -188,12 +185,18 @@ impl StoreIndex {
     }
 
     /// Insert or replace a package-files index.
+    ///
+    /// Uses the [`encode_package_files_index`][crate::msgpackr_records::encode_package_files_index]
+    /// encoder, which emits msgpackr-records bytes that pnpm's
+    /// `Packr({useRecords: true, moreTypes: true}).unpack(…)` reads as
+    /// the same shape it produces itself. A naive
+    /// `rmp_serde::to_vec_named` here produced bytes that pnpm's reader
+    /// interpreted as a top-level JS `Map`, making `pkgIndex.files` a
+    /// property-access miss and crashing with `files is not iterable`
+    /// inside pnpm's CAFS layer.
     pub fn set(&self, key: &str, value: &PackageFilesIndex) -> Result<(), StoreIndexError> {
-        // `to_vec_named` writes structs as string-keyed maps rather than
-        // positional arrays — required for pnpm-interop, since pnpm's
-        // msgpackr reads/writes named-field records.
-        let buf =
-            rmp_serde::to_vec_named(value).map_err(|source| StoreIndexError::Encode { source })?;
+        let buf = crate::msgpackr_records::encode_package_files_index(value)
+            .map_err(|source| StoreIndexError::Encode { source })?;
         self.conn
             .execute(
                 "INSERT OR REPLACE INTO package_index (key, data) VALUES (?1, ?2)",

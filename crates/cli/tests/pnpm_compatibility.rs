@@ -154,3 +154,53 @@ fn same_index_file_contents() {
 
     drop((root, mock_instance)); // cleanup
 }
+
+// Regression: pacquet-written `index.db` rows must be readable by
+// pnpm's msgpackr-based reader.
+//
+// Earlier builds of pacquet encoded `PackageFilesIndex` via
+// `rmp_serde::to_vec_named`, which produces plain MessagePack maps.
+// pnpm's `Packr({useRecords: true, moreTypes: true}).unpack(…)` then
+// decoded the whole row as a JS `Map` (because every msgpack map at
+// any nesting level becomes a `Map` in that mode — records are the
+// escape hatch to "decode as an object"). Downstream pnpm code does
+// `pkgIndex.files` — a property access — and got `undefined`, which
+// made its `for (const [f, fstat] of pkgIndex.files)` throw
+// `files is not iterable`. The failure surfaced in CI as
+// `ERR_PNPM_READ_FROM_STORE` when a later run's cached pnpm v11 store
+// contained pacquet-written rows.
+//
+// The flow below reproduces the path the benchmark took: pacquet
+// populates the store (writing rows with the new msgpackr-records
+// encoder), `node_modules` is wiped, then pnpm installs against the
+// same store. If pnpm hits a pacquet-written row while building the
+// dependency tree and can't decode it, this test fails with the same
+// `ERR_PNPM_READ_FROM_STORE` the benchmark did. Leaving the store
+// intact (unlike `same_file_structure`) is what makes pnpm actually
+// *read* from it.
+#[test]
+fn pnpm_reads_pacquet_written_rows() {
+    let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info } =
+        CommandTempCwd::init().add_mocked_registry();
+    let AddMockedRegistry { mock_instance, .. } = npmrc_info;
+
+    eprintln!("Creating package.json...");
+    let manifest_path = workspace.join("package.json");
+    let package_json_content = serde_json::json!({
+        "dependencies": {
+            "@pnpm.e2e/hello-world-js-bin-parent": "1.0.0",
+        },
+    });
+    fs::write(manifest_path, package_json_content.to_string()).expect("write to package.json");
+
+    eprintln!("pacquet install (populates store with msgpackr records)...");
+    pacquet.with_arg("install").assert().success();
+
+    eprintln!("Removing node_modules; store is kept so pnpm has to read pacquet's rows...");
+    fs::remove_dir_all(workspace.join("node_modules")).expect("delete node_modules");
+
+    eprintln!("pnpm install --ignore-scripts (reads pacquet's index.db rows)...");
+    pnpm.with_args(["install", "--ignore-scripts"]).assert().success();
+
+    drop((root, mock_instance)); // cleanup
+}
