@@ -586,9 +586,13 @@ fn write_str(w: &mut Vec<u8>, s: &str) {
 /// the record-compression win records exist for.
 ///
 /// This is what msgpackr itself does for the same traversal and shape
-/// set, so pacquet's output is byte-identical to what msgpackr would
-/// emit for the same logical input — keeps bytes easy to diff against
-/// pnpm's output while debugging.
+/// set, so pacquet's output is **wire-compatible** with msgpackr (same
+/// record schemas, same slot numbers, same value encodings) — pnpm's
+/// reader reconstructs the same JS shape from both. Exact bytes can
+/// still differ when Rust's `HashMap` iterates `files` / `sideEffects`
+/// / `added` entries in a different order than msgpackr's JS `Map`
+/// iteration, which is fine for correctness but worth keeping in mind
+/// when diffing bytes against a pnpm-written reference row.
 ///
 /// ## Optional-field handling
 ///

@@ -104,11 +104,13 @@ fn same_file_structure() {
     drop((root, mock_instance)); // cleanup
 }
 
-// pnpm writes `index.db` values with msgpackr `useRecords: true`; pacquet
-// writes plain msgpack via `rmp_serde::to_vec_named`. `StoreIndex::get`
-// now transcodes msgpackr rows to plain msgpack before deserializing, so
-// both encodings decode to the same `PackageFilesIndex` — the snapshot
-// assertion below compares the decoded shape, not the on-disk bytes.
+// Both pnpm and pacquet now write `index.db` values as msgpackr
+// records (pnpm via `Packr({useRecords: true})`, pacquet via
+// `encode_package_files_index`). `StoreIndex::get` decodes both through
+// the shared transcoder, so this test just asserts the two tools'
+// decoded `PackageFilesIndex` shapes match for the same install — not
+// byte-identical rows, because `HashMap` iteration order can differ
+// from msgpackr's, but the post-decode structs compare equal.
 #[test]
 fn same_index_file_contents() {
     let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info } =
