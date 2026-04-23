@@ -43,6 +43,8 @@ jobs:
       - name: Install pnpm (for compatibility check)
         uses: pnpm/action-setup@v6
         with:
+          # Pacquet needs a pnpm that writes lockfile v9. Stable pnpm 11 isn't released yet,
+          # so pin the latest RC; switch to `11` once stable ships.
           version: 11.0.0-rc.5
           run_install: false
           standalone: true
@@ -50,7 +52,7 @@ jobs:
       - name: Cache pnpm
         uses: actions/cache@v4
         with:
-          key: codecov-pnpm-v11-${{ matrix.os }}
+          key: codecov-pnpm-v11-${{ runner.os }}
           path: |
             ${{ env.PNPM_HOME }}/store/v11
             ${{ env.HOME }}/.local/share/pnpm/store/v11
