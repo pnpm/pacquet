@@ -99,10 +99,12 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
 
 /// Try to reconstruct the `{filename → CAFS path}` map for a package from
 /// the SQLite store index, without going to the network. Returns `None` if
-/// anything looks off — no db, no row, unreadable row, or any referenced
-/// CAFS file missing from disk — so the caller falls through to a fresh
-/// download. Every error path is silent because the index is a cache hint,
-/// not a source of truth.
+/// anything looks off — no db, no row, unreadable row, malformed digest,
+/// or any referenced CAFS file missing from disk — so the caller falls
+/// through to a fresh download. Error paths are treated as cache misses
+/// because the index is a cache hint, not a source of truth; only the
+/// missing-blob case emits a `debug!` log to note a stale entry before
+/// re-fetching.
 async fn load_cached_cas_paths(
     store_dir: &'static StoreDir,
     cache_key: &str,
@@ -114,7 +116,10 @@ async fn load_cached_cas_paths(
 
         let mut cas_paths = HashMap::with_capacity(entry.files.len());
         for (filename, info) in &entry.files {
-            let path = store_dir.cas_file_path_by_mode(&info.digest, info.mode);
+            // `?` on `cas_file_path_by_mode` handles corrupt digests (empty,
+            // too short, or non-hex) as a cache miss. Without it the
+            // `hex[..2]` slice inside `file_path_by_hex_str` would panic.
+            let path = store_dir.cas_file_path_by_mode(&info.digest, info.mode)?;
             if !path.exists() {
                 // A CAFS blob has been pruned or deleted out from under us.
                 // Treat the whole entry as invalid and re-fetch — partial
@@ -210,7 +215,7 @@ impl<'a> DownloadTarballToStore<'a> {
         // Before hitting the network, check the SQLite store index: if the
         // tarball is already in the CAFS we can reuse its per-file paths
         // and skip the download entirely. This is the payoff of the v11
-        // store migration (#247) — pnpm and pacquet share `index.db`, so a
+        // store migration (#244) — pnpm and pacquet share `index.db`, so a
         // previous install of the same (integrity, pkg_id) pair leaves an
         // entry we can read back here.
         //
@@ -584,6 +589,56 @@ mod tests {
         .run_without_mem_cache()
         .await
         .expect_err("stale index entry must not resolve to a cache hit");
+        assert!(
+            matches!(err, TarballError::FetchTarball(_)),
+            "expected fall-through to network fetch, got: {err:?}"
+        );
+
+        drop(store_dir);
+    }
+
+    /// A corrupt row whose digest is empty (or too short / non-hex) used
+    /// to panic inside `StoreDir::file_path_by_hex_str` (`hex[..2]`). The
+    /// validation in `cas_file_path_by_mode` now rejects such rows, and
+    /// `load_cached_cas_paths` treats that as a cache miss.
+    #[tokio::test]
+    async fn falls_through_when_digest_is_malformed() {
+        let (store_dir, store_path) = tempdir_with_leaked_path();
+
+        let pkg_integrity =
+            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_id = "fake@1.0.0";
+        let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
+
+        let mut files = HashMap::new();
+        files.insert(
+            "package.json".to_string(),
+            // Empty digest — pre-fix this would panic in the spawn_blocking
+            // task during `hex[..2]`.
+            CafsFileInfo { digest: String::new(), mode: 0o644, size: 0, checked_at: None },
+        );
+        let entry = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let index = StoreIndex::open_in(store_path).unwrap();
+        index.set(&index_key, &entry).unwrap();
+        drop(index);
+
+        let err = DownloadTarballToStore {
+            http_client: &Default::default(),
+            store_dir: store_path,
+            package_integrity: &pkg_integrity,
+            package_unpacked_size: None,
+            package_url: "http://127.0.0.1:1/unreachable.tgz",
+            package_id: pkg_id,
+        }
+        .run_without_mem_cache()
+        .await
+        .expect_err("corrupt digest must not resolve to a cache hit");
         assert!(
             matches!(err, TarballError::FetchTarball(_)),
             "expected fall-through to network fetch, got: {err:?}"

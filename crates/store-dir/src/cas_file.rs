@@ -17,9 +17,18 @@ impl StoreDir {
     /// (from the SQLite store index) and its POSIX mode. Matches pnpm's
     /// [`getFilePathByModeInCafs`](https://github.com/pnpm/pnpm/blob/main/store/cafs/src/getFilePathInCafs.ts)
     /// so index entries written by either tool resolve to the same path.
-    pub fn cas_file_path_by_mode(&self, hex: &str, mode: u32) -> PathBuf {
+    ///
+    /// Returns `None` when `hex` is too short or not ASCII-hex — the
+    /// underlying split slices `hex[..2]` and would otherwise panic on a
+    /// corrupt / partially-interop row. Callers treat `None` as "cache
+    /// miss" so a bad index entry falls through to a fresh download
+    /// instead of aborting the install.
+    pub fn cas_file_path_by_mode(&self, hex: &str, mode: u32) -> Option<PathBuf> {
+        if hex.len() < 2 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
         let suffix = if (mode & 0o111) != 0 { "-exec" } else { "" };
-        self.file_path_by_hex_str(hex, suffix)
+        Some(self.file_path_by_hex_str(hex, suffix))
     }
 }
 
@@ -71,5 +80,16 @@ mod tests {
             true,
             "STORE_DIR/v11/files/30/9ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f-exec",
         );
+    }
+
+    #[test]
+    fn cas_file_path_by_mode_rejects_invalid_hex() {
+        let store_dir = StoreDir::new("STORE_DIR");
+        assert_eq!(store_dir.cas_file_path_by_mode("", 0o644), None);
+        assert_eq!(store_dir.cas_file_path_by_mode("a", 0o644), None);
+        assert_eq!(store_dir.cas_file_path_by_mode("zz", 0o644), None);
+        assert_eq!(store_dir.cas_file_path_by_mode("Ab\tcd", 0o644), None);
+        assert!(store_dir.cas_file_path_by_mode("ab", 0o644).is_some());
+        assert!(store_dir.cas_file_path_by_mode("abcdef", 0o755).is_some());
     }
 }
