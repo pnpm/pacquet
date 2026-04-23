@@ -160,8 +160,17 @@ impl StoreIndex {
     /// mode internally, so passing plain msgpack through is safe and
     /// also lets it narrow the integer-valued `float 64` encoding we
     /// use for `checkedAt` back into `uint 64` for deserialization.
-    /// The cost is one extra `Vec<u8>` allocation + memcpy per read,
-    /// which is dwarfed by the SQLite and disk costs.
+    ///
+    /// There's no bypass fast-path for pacquet-written rows because
+    /// they carry `checkedAt` as `float 64` on purpose (see
+    /// [`CafsFileInfo::checked_at`] for why — msgpackr reads `uint 64`
+    /// as a JS `BigInt`, and pnpm's integrity check does
+    /// `mtimeMs - (checkedAt ?? 0)` which crashes on Number/BigInt
+    /// mixing). Any real tarball has at least one file with
+    /// `checkedAt: Some(…)`, so every row needs float-narrowing and
+    /// the transcoder ends up running. The cost is one extra
+    /// `Vec<u8>` allocation + memcpy per read, dwarfed by the SQLite
+    /// and disk costs.
     pub fn get(&self, key: &str) -> Result<Option<PackageFilesIndex>, StoreIndexError> {
         let row: Option<Vec<u8>> = self
             .conn

@@ -51,7 +51,7 @@
 
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 /// Extension type code msgpackr assigns to record-definition markers.
 /// ASCII 'r'. See msgpackr's README under "Records Extension".
@@ -149,9 +149,15 @@ pub fn transcode_to_plain_msgpack(bytes: &[u8]) -> Result<Vec<u8>, DecodeError> 
 /// starts off and flips on the first record definition — msgpackr
 /// doesn't re-emit positive fixints in the slot-byte range once records
 /// mode is on, so the flip is one-way for any real stream.
+///
+/// Slot schemas live under `Rc<[String]>` so reference-path decoding
+/// can bump a refcount instead of deep-cloning the field-name vector
+/// on every record instance. A row with 200 files used to allocate
+/// 200 `Vec<String>`s plus one `String` per field name per clone; now
+/// it allocates once at definition time.
 #[derive(Default)]
 struct TranscodeState {
-    slots: HashMap<u8, Vec<String>>,
+    slots: HashMap<u8, Rc<[String]>>,
     records_mode: bool,
 }
 
@@ -211,13 +217,14 @@ fn transcode_value(
     // in plain MessagePack the same bytes are positive fixints 64–127.
     if state.records_mode && (SLOT_LO..=SLOT_HI).contains(&head) {
         r.read_u8()?;
-        let fields = state
-            .slots
-            .get(&head)
-            .cloned()
-            .ok_or(DecodeError::UnknownSlot { slot: head, offset: start })?;
+        // `Rc::clone` is a refcount bump — the `Vec<String>` of field
+        // names isn't duplicated. We clone instead of borrowing so the
+        // recursive `transcode_value` call below can take `&mut state`.
+        let fields = Rc::clone(
+            state.slots.get(&head).ok_or(DecodeError::UnknownSlot { slot: head, offset: start })?,
+        );
         write_map_header(w, fields.len());
-        for name in &fields {
+        for name in fields.iter() {
             write_str(w, name);
             transcode_value(r, w, state)?;
         }
@@ -239,11 +246,11 @@ fn transcode_value(
         if !(SLOT_LO..=SLOT_HI).contains(&slot) {
             return Err(DecodeError::SlotOutOfRange { slot, offset: slot_offset });
         }
-        let fields = read_string_array(r)?;
-        state.slots.insert(slot, fields.clone());
+        let fields: Rc<[String]> = read_string_array(r)?.into();
+        state.slots.insert(slot, Rc::clone(&fields));
         state.records_mode = true;
         write_map_header(w, fields.len());
-        for name in &fields {
+        for name in fields.iter() {
             write_str(w, name);
             transcode_value(r, w, state)?;
         }
