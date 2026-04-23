@@ -80,12 +80,14 @@ impl<'a> InstallPackageBySnapshot<'a> {
         };
 
         // TODO: skip when already exists in store?
+        let package_id = package_key.without_peer().to_string();
         let cas_paths = DownloadTarballToStore {
             http_client,
             store_dir: &config.store_dir,
             package_integrity: integrity,
             package_unpacked_size: None,
             package_url: &tarball_url,
+            package_id: &package_id,
         }
         .run_without_mem_cache()
         .await

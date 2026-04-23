@@ -42,6 +42,7 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
                 package_integrity: &package_integrity,
                 package_unpacked_size: Some(16697),
                 package_url: url,
+                package_id: "fast-querystring@1.0.0",
             }
             .run_without_mem_cache()
             .await

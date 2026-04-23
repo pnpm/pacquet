@@ -6,14 +6,14 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-use base64::{engine::general_purpose::STANDARD as BASE64_STD, Engine};
 use dashmap::DashMap;
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use pacquet_fs::file_mode;
 use pacquet_network::ThrottledClient;
 use pacquet_store_dir::{
-    PackageFileInfo, PackageFilesIndex, StoreDir, WriteCasFileError, WriteIndexFileError,
+    store_index_key, CafsFileInfo, PackageFilesIndex, StoreDir, StoreIndex, StoreIndexError,
+    WriteCasFileError,
 };
 use pipe_trait::Pipe;
 use ssri::Integrity;
@@ -63,7 +63,7 @@ pub enum TarballError {
     #[from(ignore)]
     #[display("Failed to write tarball index: {_0}")]
     #[diagnostic(transparent)]
-    WriteTarballIndexFile(WriteIndexFileError),
+    WriteStoreIndex(StoreIndexError),
 
     #[from(ignore)]
     #[diagnostic(code(pacquet_tarball::task_join_error))]
@@ -107,6 +107,10 @@ pub struct DownloadTarballToStore<'a> {
     pub package_integrity: &'a Integrity,
     pub package_unpacked_size: Option<usize>,
     pub package_url: &'a str,
+    /// Stable identifier for the package, e.g. `"{name}@{version}"`. Paired
+    /// with `package_integrity` to form the SQLite index key per pnpm v11's
+    /// `storeIndexKey`.
+    pub package_id: &'a str,
 }
 
 impl<'a> DownloadTarballToStore<'a> {
@@ -160,7 +164,7 @@ impl<'a> DownloadTarballToStore<'a> {
             package_integrity,
             package_unpacked_size,
             package_url,
-            ..
+            package_id,
         } = self;
 
         tracing::info!(target: "pacquet::download", ?package_url, "New cache");
@@ -182,6 +186,7 @@ impl<'a> DownloadTarballToStore<'a> {
         // 1. Use an Arc and convert this line to Arc::clone.
         // 2. Replace ssri with base64 and serde magic (which supports Copy).
         let package_integrity = package_integrity.clone();
+        let package_id = package_id.to_string();
 
         #[derive(Debug, From)]
         enum TaskError {
@@ -208,7 +213,13 @@ impl<'a> DownloadTarballToStore<'a> {
 
             let ((_, Some(capacity)) | (capacity, None)) = entries.size_hint();
             let mut cas_paths = HashMap::<String, PathBuf>::with_capacity(capacity);
-            let mut pkg_files_idx = PackageFilesIndex { files: HashMap::with_capacity(capacity) };
+            let mut pkg_files_idx = PackageFilesIndex {
+                manifest: None,
+                requires_build: None,
+                algo: "sha512".to_string(),
+                files: HashMap::with_capacity(capacity),
+                side_effects: None,
+            };
 
             for entry in entries {
                 let mut entry = entry.unwrap();
@@ -237,13 +248,12 @@ impl<'a> DownloadTarballToStore<'a> {
                 }
 
                 let checked_at = UNIX_EPOCH.elapsed().ok().map(|x| x.as_millis());
-                let file_size = entry.header().size().ok();
-                let file_integrity = format!("sha512-{}", BASE64_STD.encode(file_hash));
-                let file_attrs = PackageFileInfo {
-                    checked_at,
-                    integrity: file_integrity,
+                let file_size = entry.header().size().unwrap_or(0);
+                let file_attrs = CafsFileInfo {
+                    digest: format!("{file_hash:x}"),
                     mode: file_mode,
                     size: file_size,
+                    checked_at,
                 };
 
                 if let Some(previous) = pkg_files_idx.files.insert(cleaned_entry_path, file_attrs) {
@@ -251,9 +261,18 @@ impl<'a> DownloadTarballToStore<'a> {
                 }
             }
 
-            store_dir
-                .write_index_file(&package_integrity, &pkg_files_idx)
-                .map_err(TarballError::WriteTarballIndexFile)?;
+            // Record the per-tarball file index in the shared SQLite index so
+            // other pacquet / pnpm processes can find these files on disk.
+            // One StoreIndex per spawned task keeps the code lock-free; SQLite
+            // serializes concurrent writers via its busy_timeout.
+            let store_index = StoreIndex::open(&store_dir.v11())
+                .map_err(TarballError::WriteStoreIndex)
+                .map_err(TaskError::Other)?;
+            let index_key = store_index_key(&package_integrity.to_string(), &package_id);
+            store_index
+                .set(&index_key, &pkg_files_idx)
+                .map_err(TarballError::WriteStoreIndex)
+                .map_err(TaskError::Other)?;
 
             Ok(cas_paths)
         })
@@ -310,7 +329,8 @@ mod tests {
             store_dir: store_path,
             package_integrity: &integrity("sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w=="),
             package_unpacked_size: Some(16697),
-            package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz"
+            package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
+            package_id: "@fastify/error@3.3.0",
         }
         .run_without_mem_cache()
         .await
@@ -350,6 +370,7 @@ mod tests {
             package_integrity: &integrity("sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w=="),
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
+            package_id: "@fastify/error@3.3.0",
         }
         .run_without_mem_cache()
         .await
