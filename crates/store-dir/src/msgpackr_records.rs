@@ -736,16 +736,20 @@ fn encode_pkg_files_index_value(
         return Err(EncodeError::ManifestNotSupported);
     }
 
-    // Build the record schema from the fields we're going to emit.
-    // `algo` and `files` are always present. The two optional fields are
-    // included only when `Some`, matching msgpackr's own behaviour when
-    // packing a plain JS object with missing properties.
+    // Field order matches pnpm's `PackageFilesIndex` TypeScript
+    // declaration (`manifest?`, `requiresBuild?`, `algo`, `files`,
+    // `sideEffects?`) which is the insertion order msgpackr picks up
+    // when packing pnpm's own struct — keeps bytes byte-close to
+    // pnpm's output for wire-level diffing. Optional fields are
+    // omitted from the schema when `None`. `manifest` stays out of
+    // the schema entirely until pacquet starts populating it (the
+    // `Some` check above bails before here).
     let mut fields: Vec<&str> = Vec::with_capacity(4);
-    fields.push("algo");
-    fields.push("files");
     if idx.requires_build.is_some() {
         fields.push("requiresBuild");
     }
+    fields.push("algo");
+    fields.push("files");
     if idx.side_effects.is_some() {
         fields.push("sideEffects");
     }
@@ -753,14 +757,14 @@ fn encode_pkg_files_index_value(
     write_record_def_header(w, PKG_FILES_INDEX_SLOT, &fields);
 
     // Values in the same order as `fields` above.
+    if let Some(rb) = idx.requires_build {
+        write_bool(w, rb);
+    }
     write_str(w, &idx.algo);
     write_map_header(w, idx.files.len());
     for (name, info) in &idx.files {
         write_str(w, name);
         encode_cafs_file_info(w, state, info)?;
-    }
-    if let Some(rb) = idx.requires_build {
-        write_bool(w, rb);
     }
     if let Some(se) = &idx.side_effects {
         write_map_header(w, se.len());
@@ -1353,6 +1357,44 @@ mod tests {
         };
         let roundtripped = roundtrip(&original);
         assert_eq!(roundtripped.requires_build, Some(true));
+    }
+
+    #[test]
+    fn encode_outer_field_order_matches_msgpackr() {
+        // Field order in the outer record must match what pnpm's
+        // msgpackr emits, because wire-level diffing against pnpm-
+        // written rows is a routine debugging exercise. Ground truth
+        // comes from the `decodes_requires_build_true` fixture
+        // captured from msgpackr 1.11.8, where the schema reads
+        // `[algo, requiresBuild, files]` — i.e. optional fields slot
+        // in at pnpm's TypeScript-declared position, not tacked onto
+        // the end.
+        let mut files = HashMap::new();
+        files.insert("a.js".to_string(), sample_cafs(10, true));
+        let idx = PackageFilesIndex {
+            manifest: None,
+            requires_build: Some(true),
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let bytes = encode_package_files_index(&idx).unwrap();
+        // Find the outer schema bytes: after `d4 72 40` (fixext1 +
+        // ext-type + slot) comes `93` (fixarray of 3 fields), then
+        // the field-name fixstrs.
+        assert_eq!(&bytes[0..4], &[0xd4, RECORD_DEF_EXT_TYPE, PKG_FILES_INDEX_SLOT, 0x93]);
+        // Re-decode the field names from offset 4 onwards.
+        let mut pos = 4;
+        let mut names = Vec::new();
+        for _ in 0..3 {
+            let hdr = bytes[pos];
+            assert!(matches!(hdr, 0xa0..=0xbf), "expected fixstr at {pos}, got {hdr:02x}");
+            let len = (hdr & 0x1f) as usize;
+            pos += 1;
+            names.push(std::str::from_utf8(&bytes[pos..pos + len]).unwrap().to_string());
+            pos += len;
+        }
+        assert_eq!(names, vec!["requiresBuild", "algo", "files"]);
     }
 
     #[test]
