@@ -38,6 +38,14 @@ fn store_usable_by_pnpm_offline() {
     drop((root, mock_instance)); // cleanup
 }
 
+// Ignored until pacquet adopts the pnpm v11 store format (SQLite + `store/v11/`
+// directory layout). See https://github.com/pnpm/pacquet/issues/244. Until then
+// pacquet writes `store/v3/files/XX/…-index.json` and pnpm 11 writes
+// `store/v11/files/XX/…` + `index.db`, so the two stores can never have the same
+// file structure. Also, pnpm 11 moved `store-dir` out of `.npmrc` into
+// `pnpm-workspace.yaml`, so the current test setup's `.npmrc`-based store-dir
+// config is ignored by pnpm 11 entirely.
+#[ignore = "requires pnpm v11 store format in pacquet (#244)"]
 #[test]
 fn same_file_structure() {
     let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info } =
@@ -78,6 +86,7 @@ fn same_file_structure() {
     drop((root, mock_instance)); // cleanup
 }
 
+#[ignore = "requires pnpm v11 store format in pacquet (#244)"]
 #[test]
 fn same_index_file_contents() {
     let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info } =

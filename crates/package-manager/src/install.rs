@@ -115,7 +115,6 @@ mod tests {
     use pacquet_package_manifest::{DependencyGroup, PackageManifest};
     use pacquet_registry_mock::AutoMockInstance;
     use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
-    use std::env;
     use tempfile::tempdir;
 
     #[tokio::test]

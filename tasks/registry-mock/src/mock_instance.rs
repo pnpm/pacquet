@@ -11,7 +11,7 @@ use std::{
     path::Path,
     process::{Child, Command, Stdio},
 };
-use sysinfo::{Pid, PidExt, Signal};
+use sysinfo::{Pid, Signal};
 use tokio::time::{sleep, Duration};
 
 /// Handler of a mocked registry server instance.

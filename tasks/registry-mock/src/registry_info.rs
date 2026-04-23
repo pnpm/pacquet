@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::OnceLock,
 };
-use sysinfo::{Pid, PidExt, Signal};
+use sysinfo::{Pid, Signal};
 
 /// Information of a spawned mocked registry server instance.
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]

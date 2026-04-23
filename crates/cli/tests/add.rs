@@ -6,7 +6,7 @@ use pacquet_testing_utils::{
     fs::{get_all_folders, get_filenames_in_folder},
 };
 use pretty_assertions::assert_eq;
-use std::{env, ffi::OsStr, fs, path::PathBuf};
+use std::{ffi::OsStr, fs, path::PathBuf};
 use tempfile::TempDir;
 
 fn exec_pacquet_in_temp_cwd<Args>(args: Args) -> (TempDir, PathBuf, AddMockedRegistry)
