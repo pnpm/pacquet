@@ -243,10 +243,14 @@ registry: https://reg.example
         let yaml = "storeDir: ../shared-store\n";
         let settings: WorkspaceSettings = serde_yaml::from_str(yaml).unwrap();
         let mut npmrc = Npmrc::new();
+        let base = Path::new("/workspace/root");
 
-        settings.apply_to(&mut npmrc, Path::new("/workspace/root"));
+        settings.apply_to(&mut npmrc, base);
 
-        assert_eq!(npmrc.store_dir.display().to_string(), "/workspace/root/../shared-store");
+        // Build the expected path via the same join machinery the code
+        // under test uses so the component separator matches on every
+        // platform (Windows uses `\` between joined components).
+        assert_eq!(npmrc.store_dir, StoreDir::from(base.join("../shared-store")));
     }
 
     #[test]
