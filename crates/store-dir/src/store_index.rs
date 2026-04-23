@@ -1,14 +1,18 @@
 use crate::StoreDir;
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
 
-/// SQLite-backed per-package index that pnpm v11 stores at `<store_dir>/index.db`.
+/// SQLite-backed per-package index that pnpm v11 stores alongside the CAFS
+/// blobs. In the pacquet layout the file lives at
+/// `<store-root>/v11/index.db` — call [`StoreIndex::open_in`] with a
+/// [`StoreDir`] to hit that path, or [`StoreIndex::open`] with any directory
+/// to drop `index.db` right inside it (used by tests and tools).
 ///
 /// Each row keys a package by its tarball integrity plus a package identifier
 /// and stores a msgpack-encoded [`PackageFilesIndex`]. The schema and PRAGMAs
@@ -113,6 +117,22 @@ impl StoreIndex {
     /// Open the `index.db` that lives under a [`StoreDir`]'s `v11` subdirectory.
     pub fn open_in(store_dir: &StoreDir) -> Result<Self, StoreIndexError> {
         StoreIndex::open(&store_dir.v11())
+    }
+
+    /// Open an existing `index.db` read-only. Does not run any PRAGMAs or
+    /// `CREATE TABLE IF NOT EXISTS`, so it will not create WAL / SHM sidecar
+    /// files or otherwise mutate the store. Suitable for tests and tooling
+    /// that only need to inspect the current index state.
+    pub fn open_readonly(store_dir: &Path) -> Result<Self, StoreIndexError> {
+        let db_path = store_dir.join("index.db");
+        let conn = Connection::open_with_flags(&db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|source| StoreIndexError::Open { path: db_path, source })?;
+        Ok(StoreIndex { conn })
+    }
+
+    /// Read-only counterpart to [`StoreIndex::open_in`].
+    pub fn open_readonly_in(store_dir: &StoreDir) -> Result<Self, StoreIndexError> {
+        StoreIndex::open_readonly(&store_dir.v11())
     }
 
     /// Look up a package-files index by key. Returns `Ok(None)` if no row exists.

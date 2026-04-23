@@ -8,7 +8,9 @@ use std::{collections::BTreeMap, path::Path};
 /// `checked_at` is scrubbed because its value depends on install time.
 pub fn index_file_contents(store_dir: &Path) -> BTreeMap<String, BTreeMap<String, CafsFileInfo>> {
     let store = StoreDir::new(store_dir);
-    let index = StoreIndex::open_in(&store).expect("open v11 index.db");
+    // open_readonly: we're just reading for snapshot assertions, so don't
+    // create WAL sidecars or otherwise mutate the store.
+    let index = StoreIndex::open_readonly_in(&store).expect("open v11 index.db");
 
     let mut out = BTreeMap::new();
     for key in index.keys().expect("list index keys") {

@@ -61,7 +61,7 @@ pub enum TarballError {
     WriteCasFile(WriteCasFileError),
 
     #[from(ignore)]
-    #[display("Failed to write tarball index: {_0}")]
+    #[display("Failed to write store index (SQLite index): {_0}")]
     #[diagnostic(transparent)]
     WriteStoreIndex(StoreIndexError),
 
@@ -200,79 +200,106 @@ impl<'a> DownloadTarballToStore<'a> {
             // TODO: test it
             // TODO: test the duplication of entries
 
-            let mut archive = decompress_gzip(&response, package_unpacked_size)
-                .map_err(TaskError::Other)?
-                .pipe(Cursor::new)
-                .pipe(Archive::new);
+            // Extract the tarball in a scope so the `!Send` `tar::Archive`
+            // (it holds `RefCell<_>` / `Cell<_>`) is dropped before the
+            // `spawn_blocking` await below.
+            let (cas_paths, pkg_files_idx) = {
+                let mut archive = decompress_gzip(&response, package_unpacked_size)
+                    .map_err(TaskError::Other)?
+                    .pipe(Cursor::new)
+                    .pipe(Archive::new);
 
-            let entries = archive
-                .entries()
-                .map_err(TarballError::ReadTarballEntries)
-                .map_err(TaskError::Other)?
-                .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir());
+                let entries = archive
+                    .entries()
+                    .map_err(TarballError::ReadTarballEntries)
+                    .map_err(TaskError::Other)?
+                    .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir());
 
-            let ((_, Some(capacity)) | (capacity, None)) = entries.size_hint();
-            let mut cas_paths = HashMap::<String, PathBuf>::with_capacity(capacity);
-            let mut pkg_files_idx = PackageFilesIndex {
-                manifest: None,
-                requires_build: None,
-                algo: "sha512".to_string(),
-                files: HashMap::with_capacity(capacity),
-                side_effects: None,
-            };
-
-            for entry in entries {
-                let mut entry = entry.unwrap();
-
-                let file_mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
-                let file_is_executable = file_mode::is_all_exec(file_mode);
-
-                // Read the contents of the entry
-                let mut buffer = Vec::with_capacity(entry.size() as usize);
-                entry.read_to_end(&mut buffer).unwrap();
-
-                let entry_path = entry.path().unwrap();
-                let cleaned_entry_path = entry_path
-                    .components()
-                    .skip(1)
-                    .collect::<PathBuf>()
-                    .into_os_string()
-                    .into_string()
-                    .expect("entry path must be valid UTF-8");
-                let (file_path, file_hash) = store_dir
-                    .write_cas_file(&buffer, file_is_executable)
-                    .map_err(TarballError::WriteCasFile)?;
-
-                if let Some(previous) = cas_paths.insert(cleaned_entry_path.clone(), file_path) {
-                    tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
-                }
-
-                let checked_at = UNIX_EPOCH.elapsed().ok().map(|x| x.as_millis());
-                let file_size = entry.header().size().unwrap_or(0);
-                let file_attrs = CafsFileInfo {
-                    digest: format!("{file_hash:x}"),
-                    mode: file_mode,
-                    size: file_size,
-                    checked_at,
+                let ((_, Some(capacity)) | (capacity, None)) = entries.size_hint();
+                let mut cas_paths = HashMap::<String, PathBuf>::with_capacity(capacity);
+                let mut pkg_files_idx = PackageFilesIndex {
+                    manifest: None,
+                    requires_build: None,
+                    algo: "sha512".to_string(),
+                    files: HashMap::with_capacity(capacity),
+                    side_effects: None,
                 };
 
-                if let Some(previous) = pkg_files_idx.files.insert(cleaned_entry_path, file_attrs) {
-                    tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
+                for entry in entries {
+                    let mut entry = entry.unwrap();
+
+                    let file_mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
+                    let file_is_executable = file_mode::is_all_exec(file_mode);
+
+                    // Read the contents of the entry
+                    let mut buffer = Vec::with_capacity(entry.size() as usize);
+                    entry.read_to_end(&mut buffer).unwrap();
+
+                    let entry_path = entry.path().unwrap();
+                    let cleaned_entry_path = entry_path
+                        .components()
+                        .skip(1)
+                        .collect::<PathBuf>()
+                        .into_os_string()
+                        .into_string()
+                        .expect("entry path must be valid UTF-8");
+                    let (file_path, file_hash) = store_dir
+                        .write_cas_file(&buffer, file_is_executable)
+                        .map_err(TarballError::WriteCasFile)?;
+
+                    if let Some(previous) = cas_paths.insert(cleaned_entry_path.clone(), file_path)
+                    {
+                        tracing::warn!(
+                            ?previous,
+                            "Duplication detected. Old entry has been ejected"
+                        );
+                    }
+
+                    let checked_at = UNIX_EPOCH.elapsed().ok().map(|x| x.as_millis());
+                    let file_size = entry
+                        .header()
+                        .size()
+                        .map_err(TarballError::ReadTarballEntries)
+                        .map_err(TaskError::Other)?;
+                    let file_attrs = CafsFileInfo {
+                        digest: format!("{file_hash:x}"),
+                        mode: file_mode,
+                        size: file_size,
+                        checked_at,
+                    };
+
+                    if let Some(previous) =
+                        pkg_files_idx.files.insert(cleaned_entry_path, file_attrs)
+                    {
+                        tracing::warn!(
+                            ?previous,
+                            "Duplication detected. Old entry has been ejected"
+                        );
+                    }
                 }
-            }
+
+                (cas_paths, pkg_files_idx)
+            };
 
             // Record the per-tarball file index in the shared SQLite index so
             // other pacquet / pnpm processes can find these files on disk.
-            // One StoreIndex per spawned task keeps the code lock-free; SQLite
-            // serializes concurrent writers via its busy_timeout.
-            let store_index = StoreIndex::open(&store_dir.v11())
-                .map_err(TarballError::WriteStoreIndex)
-                .map_err(TaskError::Other)?;
+            // SQLite open + PRAGMA + INSERT are blocking (and can stall for up
+            // to `busy_timeout=5000` ms when contending with a concurrent
+            // writer), so run them on the blocking pool rather than the
+            // tokio reactor. One StoreIndex per spawned task keeps the code
+            // lock-free; SQLite serializes concurrent writers via its
+            // busy_timeout.
             let index_key = store_index_key(&package_integrity.to_string(), &package_id);
-            store_index
-                .set(&index_key, &pkg_files_idx)
-                .map_err(TarballError::WriteStoreIndex)
-                .map_err(TaskError::Other)?;
+            let v11_dir = store_dir.v11();
+            tokio::task::spawn_blocking(move || -> Result<(), StoreIndexError> {
+                let store_index = StoreIndex::open(&v11_dir)?;
+                store_index.set(&index_key, &pkg_files_idx)?;
+                Ok(())
+            })
+            .await
+            .expect("store-index writer task panicked")
+            .map_err(TarballError::WriteStoreIndex)
+            .map_err(TaskError::Other)?;
 
             Ok(cas_paths)
         })
