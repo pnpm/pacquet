@@ -86,9 +86,7 @@ where
                 return Err(InstallError::UnsupportedLockfileMode);
             }
             (true, true, Some(lockfile)) => {
-                let Lockfile {
-                    lockfile_version, importers, packages, snapshots, ..
-                } = lockfile;
+                let Lockfile { lockfile_version, importers, packages, snapshots, .. } = lockfile;
                 assert_eq!(lockfile_version.major, 9); // compatibility check already happens at serde, but this still helps preventing programmer mistakes.
 
                 InstallFrozenLockfile {
