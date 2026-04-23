@@ -10,9 +10,7 @@ use pacquet_testing_utils::{
 use pipe_trait::Pipe;
 use std::fs;
 
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 use pacquet_testing_utils::fixtures::{BIG_LOCKFILE, BIG_MANIFEST};
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 use std::{fs::OpenOptions, io::Write};
 
 #[test]
@@ -137,12 +135,12 @@ fn should_install_index_files() {
     drop((root, mock_instance)); // cleanup
 }
 
-// The test is gated off of CI entirely: it drives the mocked verdaccio with
-// hundreds of concurrent tarball fetches, and the mock reliably reports
-// ConnectionAborted (Windows) / ConnectionReset (macOS) / ConnectionClosed
-// (Ubuntu) on hosted runners. Run manually with `just registry-mock launch`
-// + `cargo test --test install frozen_lockfile_should_be_able_to_handle_big_lockfile`.
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+// Ignored on CI: the test drives the mocked verdaccio with hundreds of
+// concurrent tarball fetches and reliably reports ConnectionAborted (Windows) /
+// ConnectionReset (macOS) / ConnectionClosed (Ubuntu) on hosted runners. Run
+// manually with `just registry-mock launch` + `cargo test --test install -- --ignored
+// frozen_lockfile_should_be_able_to_handle_big_lockfile`.
+#[ignore = "flaky on CI: mocked verdaccio drops connections under concurrent load"]
 #[test]
 fn frozen_lockfile_should_be_able_to_handle_big_lockfile() {
     let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
@@ -161,7 +159,6 @@ fn frozen_lockfile_should_be_able_to_handle_big_lockfile() {
     let npmrc_path = workspace.join(".npmrc");
     OpenOptions::new()
         .append(true)
-        .write(true)
         .open(npmrc_path)
         .expect("open .npmrc to append")
         .write_all(b"\nlockfile=true\n")

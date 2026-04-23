@@ -1,4 +1,6 @@
 use crate::symlink_package;
+use derive_more::{Display, Error};
+use miette::Diagnostic;
 use pacquet_lockfile::{Lockfile, PkgName, PkgNameVerPeer, ProjectSnapshot};
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::DependencyGroup;
@@ -21,17 +23,29 @@ where
     pub dependency_groups: DependencyGroupList,
 }
 
+/// Error type of [`SymlinkDirectDependencies`].
+#[derive(Debug, Display, Error, Diagnostic)]
+pub enum SymlinkDirectDependenciesError {
+    #[display(
+        "Lockfile has no `importers.{root_key:?}` entry for the root project; pacquet cannot decide which direct dependencies to symlink into `node_modules`."
+    )]
+    #[diagnostic(code(pacquet_package_manager::missing_root_importer))]
+    MissingRootImporter { root_key: String },
+}
+
 impl<'a, DependencyGroupList> SymlinkDirectDependencies<'a, DependencyGroupList>
 where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
     /// Execute the subroutine.
-    pub fn run(self) {
+    pub fn run(self) -> Result<(), SymlinkDirectDependenciesError> {
         let SymlinkDirectDependencies { config, importers, dependency_groups } = self;
 
-        let Some(project_snapshot) = importers.get(Lockfile::ROOT_IMPORTER_KEY) else {
-            return;
-        };
+        let project_snapshot = importers.get(Lockfile::ROOT_IMPORTER_KEY).ok_or_else(|| {
+            SymlinkDirectDependenciesError::MissingRootImporter {
+                root_key: Lockfile::ROOT_IMPORTER_KEY.to_string(),
+            }
+        })?;
 
         project_snapshot
             .dependencies_by_groups(dependency_groups)
@@ -54,5 +68,7 @@ where
                 )
                 .expect("symlink pkg"); // TODO: properly propagate this error
             });
+
+        Ok(())
     }
 }

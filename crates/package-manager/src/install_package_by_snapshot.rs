@@ -22,8 +22,23 @@ pub struct InstallPackageBySnapshot<'a> {
 /// Error type of [`InstallPackageBySnapshot`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum InstallPackageBySnapshotError {
-    DownloadTarball(TarballError),
-    CreateVirtualDir(CreateVirtualDirError),
+    #[diagnostic(transparent)]
+    DownloadTarball(#[error(source)] TarballError),
+
+    #[diagnostic(transparent)]
+    CreateVirtualDir(#[error(source)] CreateVirtualDirError),
+
+    #[display(
+        "Package `{package_key}` has a tarball resolution without an `integrity` field; pacquet cannot verify the download and refuses to install it."
+    )]
+    #[diagnostic(code(pacquet_package_manager::missing_tarball_integrity))]
+    MissingTarballIntegrity { package_key: String },
+
+    #[display(
+        "Package `{package_key}` uses a `{resolution_kind}` resolution, which pacquet does not yet support."
+    )]
+    #[diagnostic(code(pacquet_package_manager::unsupported_resolution))]
+    UnsupportedResolution { package_key: String, resolution_kind: &'static str },
 }
 
 impl<'a> InstallPackageBySnapshot<'a> {
@@ -34,11 +49,11 @@ impl<'a> InstallPackageBySnapshot<'a> {
 
         let (tarball_url, integrity) = match &metadata.resolution {
             LockfileResolution::Tarball(tarball_resolution) => {
-                let integrity = tarball_resolution.integrity.as_ref().unwrap_or_else(|| {
-                    panic!(
-                        "Current implementation requires integrity, but {package_key} doesn't have it"
-                    );
-                });
+                let integrity = tarball_resolution.integrity.as_ref().ok_or_else(|| {
+                    InstallPackageBySnapshotError::MissingTarballIntegrity {
+                        package_key: package_key.to_string(),
+                    }
+                })?;
                 (tarball_resolution.tarball.as_str().pipe(Cow::Borrowed), integrity)
             }
             LockfileResolution::Registry(registry_resolution) => {
@@ -50,11 +65,17 @@ impl<'a> InstallPackageBySnapshot<'a> {
                 let integrity = &registry_resolution.integrity;
                 (Cow::Owned(tarball_url), integrity)
             }
-            LockfileResolution::Directory(_) | LockfileResolution::Git(_) => {
-                panic!(
-                    "Only TarballResolution and RegistryResolution is supported at the moment, but {package_key} requires {:?}",
-                    metadata.resolution
-                );
+            LockfileResolution::Directory(_) => {
+                return Err(InstallPackageBySnapshotError::UnsupportedResolution {
+                    package_key: package_key.to_string(),
+                    resolution_kind: "directory",
+                });
+            }
+            LockfileResolution::Git(_) => {
+                return Err(InstallPackageBySnapshotError::UnsupportedResolution {
+                    package_key: package_key.to_string(),
+                    resolution_kind: "git",
+                });
             }
         };
 

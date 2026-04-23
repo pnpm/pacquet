@@ -26,6 +26,12 @@ pub enum CreateVirtualStoreError {
     #[display("Lockfile has a snapshot entry `{snapshot_key}` with no matching metadata entry (`{metadata_key}`) in `packages:`.")]
     #[diagnostic(code(pacquet_package_manager::missing_package_metadata))]
     MissingPackageMetadata { snapshot_key: String, metadata_key: String },
+
+    #[display(
+        "Lockfile has a `snapshots:` section but no `packages:` section; every entry in `snapshots:` must have a matching metadata entry. The lockfile is malformed."
+    )]
+    #[diagnostic(code(pacquet_package_manager::missing_packages_section))]
+    MissingPackagesSection,
 }
 
 impl<'a> CreateVirtualStore<'a> {
@@ -39,9 +45,7 @@ impl<'a> CreateVirtualStore<'a> {
             // `snapshots`, so bailing out here is safe enough for v9.
             return Ok(());
         };
-        let packages = packages.unwrap_or_else(|| {
-            panic!("lockfile has `snapshots:` but no `packages:`; this violates the v9 spec")
-        });
+        let packages = packages.ok_or(CreateVirtualStoreError::MissingPackagesSection)?;
 
         snapshots
             .iter()

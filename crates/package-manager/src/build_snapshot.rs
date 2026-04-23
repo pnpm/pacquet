@@ -1,8 +1,8 @@
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::{
-    LockfileResolution, PackageKey, PackageMetadata, PkgName, PkgNameVerPeer, PkgVerPeer,
-    RegistryResolution, SnapshotEntry,
+    LockfileResolution, PackageKey, PackageMetadata, ParsePkgVerPeerError, PkgName, PkgNameVerPeer,
+    PkgVerPeer, RegistryResolution, SnapshotEntry,
 };
 use pacquet_registry::PackageVersion;
 use std::collections::HashMap;
@@ -33,6 +33,17 @@ pub enum BuildSnapshotError {
         #[error(source)]
         source: pacquet_lockfile::ParsePkgNameError,
     },
+
+    #[display(
+        "Package `{name}` reported version `{version}` that cannot be parsed as a PkgVerPeer: {source}"
+    )]
+    #[diagnostic(code(pacquet_package_manager::build_snapshot::parse_version))]
+    ParseVersion {
+        name: String,
+        version: String,
+        #[error(source)]
+        source: ParsePkgVerPeerError,
+    },
 }
 
 /// Build the v9 lockfile `PackageKey` (name@version, no peer suffix) for a
@@ -40,11 +51,14 @@ pub enum BuildSnapshotError {
 pub fn registry_package_key(package: &PackageVersion) -> Result<PackageKey, BuildSnapshotError> {
     let name = PkgName::parse(package.name.as_str())
         .map_err(|source| BuildSnapshotError::ParseName { name: package.name.clone(), source })?;
-    let peer = package
-        .version
-        .to_string()
-        .parse::<PkgVerPeer>()
-        .expect("PackageVersion.version always serializes to a valid PkgVerPeer");
+    let version_string = package.version.to_string();
+    let peer = version_string.parse::<PkgVerPeer>().map_err(|source| {
+        BuildSnapshotError::ParseVersion {
+            name: package.name.clone(),
+            version: version_string,
+            source,
+        }
+    })?;
     Ok(PkgNameVerPeer::new(name, peer))
 }
 
