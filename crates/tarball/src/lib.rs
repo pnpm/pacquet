@@ -97,6 +97,46 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
         .map_err(TarballError::DecodeGzip)
 }
 
+/// Try to reconstruct the `{filename → CAFS path}` map for a package from
+/// the SQLite store index, without going to the network. Returns `None` if
+/// anything looks off — no db, no row, unreadable row, or any referenced
+/// CAFS file missing from disk — so the caller falls through to a fresh
+/// download. Every error path is silent because the index is a cache hint,
+/// not a source of truth.
+async fn load_cached_cas_paths(
+    store_dir: &'static StoreDir,
+    cache_key: &str,
+) -> Option<HashMap<String, PathBuf>> {
+    let cache_key = cache_key.to_string();
+    tokio::task::spawn_blocking(move || -> Option<HashMap<String, PathBuf>> {
+        let index = StoreIndex::open_readonly_in(store_dir).ok()?;
+        let entry = index.get(&cache_key).ok()??;
+
+        let mut cas_paths = HashMap::with_capacity(entry.files.len());
+        for (filename, info) in &entry.files {
+            let path = store_dir.cas_file_path_by_mode(&info.digest, info.mode);
+            if !path.exists() {
+                // A CAFS blob has been pruned or deleted out from under us.
+                // Treat the whole entry as invalid and re-fetch — partial
+                // reuse would give the caller a broken layout.
+                tracing::debug!(
+                    target: "pacquet::download",
+                    ?cache_key,
+                    ?filename,
+                    ?path,
+                    "CAFS file missing; index entry is stale, re-fetching"
+                );
+                return None;
+            }
+            cas_paths.insert(filename.clone(), path);
+        }
+        Some(cas_paths)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 /// This subroutine downloads and extracts a tarball to the store directory.
 ///
 /// It returns a CAS map of files in the tarball.
@@ -166,6 +206,24 @@ impl<'a> DownloadTarballToStore<'a> {
             package_url,
             package_id,
         } = self;
+
+        // Before hitting the network, check the SQLite store index: if the
+        // tarball is already in the CAFS we can reuse its per-file paths
+        // and skip the download entirely. This is the payoff of the v11
+        // store migration (#247) — pnpm and pacquet share `index.db`, so a
+        // previous install of the same (integrity, pkg_id) pair leaves an
+        // entry we can read back here.
+        //
+        // The lookup is best-effort. A missing `index.db`, a missing row,
+        // an unreadable entry (e.g. written by pnpm's msgpackr record
+        // encoding — decoding support for that is a follow-up), or any
+        // CAFS file that has gone missing from disk all fall through to
+        // the download path below.
+        let cache_key = store_index_key(&package_integrity.to_string(), package_id);
+        if let Some(cas_paths) = load_cached_cas_paths(store_dir, &cache_key).await {
+            tracing::info!(target: "pacquet::download", ?package_url, ?cache_key, "Reusing cached CAFS entry — skipping download");
+            return Ok(cas_paths);
+        }
 
         tracing::info!(target: "pacquet::download", ?package_url, "New cache");
 
@@ -402,6 +460,134 @@ mod tests {
         .run_without_mem_cache()
         .await
         .expect_err("checksum mismatch");
+
+        drop(store_dir);
+    }
+
+    /// When the SQLite index already has an entry for this
+    /// `(integrity, pkg_id)` pair and every referenced CAFS file is on
+    /// disk, `run_without_mem_cache` must return the cached layout
+    /// without issuing an HTTP request. We prove the "no network"
+    /// property by pointing `package_url` at an address that would
+    /// fail-fast if dialed.
+    #[tokio::test]
+    async fn reuses_cached_cas_paths_when_index_entry_is_live() {
+        let (store_dir, store_path) = tempdir_with_leaked_path();
+
+        let (pkg_json_path, pkg_json_hash) =
+            store_path.write_cas_file(b"{\"name\":\"fake\"}", false).unwrap();
+        let (bin_path, bin_hash) =
+            store_path.write_cas_file(b"#!/usr/bin/env node\nconsole.log('hi');\n", true).unwrap();
+
+        let pkg_integrity =
+            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_id = "fake@1.0.0";
+        let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
+
+        let mut files = HashMap::new();
+        files.insert(
+            "package.json".to_string(),
+            CafsFileInfo {
+                digest: format!("{pkg_json_hash:x}"),
+                mode: 0o644,
+                size: 15,
+                checked_at: None,
+            },
+        );
+        files.insert(
+            "bin/cli.js".to_string(),
+            CafsFileInfo {
+                digest: format!("{bin_hash:x}"),
+                mode: 0o755,
+                size: 39,
+                checked_at: None,
+            },
+        );
+
+        let entry = PackageFilesIndex {
+            manifest: None,
+            requires_build: Some(false),
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+
+        let index = StoreIndex::open_in(store_path).unwrap();
+        index.set(&index_key, &entry).unwrap();
+        drop(index);
+
+        let cas_paths = DownloadTarballToStore {
+            http_client: &Default::default(),
+            store_dir: store_path,
+            package_integrity: &pkg_integrity,
+            package_unpacked_size: None,
+            // Any request that reaches the network here would fail the
+            // test by blowing up or hanging; the cache lookup must
+            // short-circuit before we get near it.
+            package_url: "http://127.0.0.1:1/unreachable.tgz",
+            package_id: pkg_id,
+        }
+        .run_without_mem_cache()
+        .await
+        .expect("cache hit should succeed without network");
+
+        assert_eq!(cas_paths.len(), 2);
+        assert_eq!(cas_paths.get("package.json"), Some(&pkg_json_path));
+        assert_eq!(cas_paths.get("bin/cli.js"), Some(&bin_path));
+
+        drop(store_dir);
+    }
+
+    /// If the index row points at a CAFS blob that no longer exists on
+    /// disk (pruned out-of-band, say), the cache lookup must reject the
+    /// entry and fall through to a download. We don't want to do the
+    /// download for real in a unit test, so assert that we got a
+    /// `FetchTarball` error from the unreachable URL rather than the
+    /// cache-hit's `Ok`.
+    #[tokio::test]
+    async fn falls_through_when_cafs_file_missing() {
+        let (store_dir, store_path) = tempdir_with_leaked_path();
+
+        let pkg_integrity =
+            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_id = "fake@1.0.0";
+        let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
+
+        let mut files = HashMap::new();
+        // A digest that matches no file on disk. `load_cached_cas_paths`
+        // should see the missing path, reject the entry, and let
+        // `run_without_mem_cache` proceed to the network fetch.
+        files.insert(
+            "package.json".to_string(),
+            CafsFileInfo { digest: "0".repeat(128), mode: 0o644, size: 0, checked_at: None },
+        );
+
+        let entry = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let index = StoreIndex::open_in(store_path).unwrap();
+        index.set(&index_key, &entry).unwrap();
+        drop(index);
+
+        let err = DownloadTarballToStore {
+            http_client: &Default::default(),
+            store_dir: store_path,
+            package_integrity: &pkg_integrity,
+            package_unpacked_size: None,
+            package_url: "http://127.0.0.1:1/unreachable.tgz",
+            package_id: pkg_id,
+        }
+        .run_without_mem_cache()
+        .await
+        .expect_err("stale index entry must not resolve to a cache hit");
+        assert!(
+            matches!(err, TarballError::FetchTarball(_)),
+            "expected fall-through to network fetch, got: {err:?}"
+        );
 
         drop(store_dir);
     }

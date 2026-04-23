@@ -12,6 +12,15 @@ impl StoreDir {
         let suffix = if executable { "-exec" } else { "" };
         self.file_path_by_hex_str(&hex, suffix)
     }
+
+    /// Path to a content-addressed file given its pre-computed hex digest
+    /// (from the SQLite store index) and its POSIX mode. Matches pnpm's
+    /// [`getFilePathByModeInCafs`](https://github.com/pnpm/pnpm/blob/main/store/cafs/src/getFilePathInCafs.ts)
+    /// so index entries written by either tool resolve to the same path.
+    pub fn cas_file_path_by_mode(&self, hex: &str, mode: u32) -> PathBuf {
+        let suffix = if (mode & 0o111) != 0 { "-exec" } else { "" };
+        self.file_path_by_hex_str(hex, suffix)
+    }
 }
 
 /// Error type of [`StoreDir::write_cas_file`].
