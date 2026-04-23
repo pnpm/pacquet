@@ -1,5 +1,13 @@
 {
 	"devDependencies": {
 		"@pnpm/registry-mock": "^3.16.0"
+	},
+	"pnpm": {
+		"onlyBuiltDependencies": [
+			"esbuild"
+		],
+		"ignoredBuiltDependencies": [
+			"core-js"
+		]
 	}
 }
