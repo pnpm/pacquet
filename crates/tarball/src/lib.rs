@@ -408,6 +408,20 @@ mod tests {
         integrity_str.parse().expect("parse integrity string")
     }
 
+    /// HTTP client for the fall-through tests. A default `ThrottledClient`
+    /// uses `Client::new()` with no connect / request timeout, so on a
+    /// firewalled runner the unreachable `http://127.0.0.1:1/...` URL
+    /// could stall for minutes of TCP retry. One-second bounds are
+    /// plenty for loopback and keep the failure mode deterministic.
+    fn fast_fail_client() -> ThrottledClient {
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(1))
+            .timeout(std::time::Duration::from_secs(1))
+            .build()
+            .expect("build reqwest client");
+        ThrottledClient::from_client(client)
+    }
+
     /// **Problem:**
     /// The tested function requires `'static` paths, leaking would prevent
     /// temporary files from being cleaned up.
@@ -537,13 +551,14 @@ mod tests {
         drop(index);
 
         let cas_paths = DownloadTarballToStore {
-            http_client: &Default::default(),
+            http_client: &fast_fail_client(),
             store_dir: store_path,
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
             // Any request that reaches the network here would fail the
-            // test by blowing up or hanging; the cache lookup must
-            // short-circuit before we get near it.
+            // test; the cache lookup must short-circuit before we get
+            // near it. `fast_fail_client` caps that at 1 s per side in
+            // case a firewalled runner drops the packet silently.
             package_url: "http://127.0.0.1:1/unreachable.tgz",
             package_id: pkg_id,
         }
@@ -594,7 +609,7 @@ mod tests {
         drop(index);
 
         let err = DownloadTarballToStore {
-            http_client: &Default::default(),
+            http_client: &fast_fail_client(),
             store_dir: store_path,
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
@@ -644,7 +659,7 @@ mod tests {
         drop(index);
 
         let err = DownloadTarballToStore {
-            http_client: &Default::default(),
+            http_client: &fast_fail_client(),
             store_dir: store_path,
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
@@ -697,7 +712,7 @@ mod tests {
         drop(index);
 
         let err = DownloadTarballToStore {
-            http_client: &Default::default(),
+            http_client: &fast_fail_client(),
             store_dir: store_path,
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
@@ -760,7 +775,7 @@ mod tests {
         drop(index);
 
         let err = DownloadTarballToStore {
-            http_client: &Default::default(),
+            http_client: &fast_fail_client(),
             store_dir: store_path,
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
