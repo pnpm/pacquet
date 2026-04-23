@@ -1,4 +1,5 @@
 mod custom_deserializer;
+mod workspace_yaml;
 
 use pacquet_store_dir::StoreDir;
 use pipe_trait::Pipe;
@@ -10,6 +11,9 @@ use crate::custom_deserializer::{
     default_public_hoist_pattern, default_registry, default_store_dir, default_virtual_store_dir,
     deserialize_bool, deserialize_pathbuf, deserialize_registry, deserialize_store_dir,
     deserialize_u64,
+};
+pub use workspace_yaml::{
+    workspace_root_or, LoadWorkspaceYamlError, WorkspaceSettings, WORKSPACE_MANIFEST_FILENAME,
 };
 
 #[derive(Debug, Deserialize, Default, PartialEq)]
@@ -159,9 +163,15 @@ impl Npmrc {
         config
     }
 
-    /// Try loading `.npmrc` in the current directory.
-    /// If fails, try in the home directory.
-    /// If fails again, return the default.
+    /// Build the runtime config by layering:
+    /// 1. hard-coded defaults, then
+    /// 2. the nearest `.npmrc` (cwd, falling back to home), then
+    /// 3. the nearest `pnpm-workspace.yaml` walking up from cwd.
+    ///
+    /// pnpm moved most settings (`storeDir`, `lockfile`, `registry`, …) out
+    /// of `.npmrc` into `pnpm-workspace.yaml` in v10+, so honouring the yaml
+    /// is required to behave correctly in a real pnpm-11-style project. The
+    /// yaml wins over `.npmrc` on any key it sets, matching pnpm itself.
     pub fn current<Error, CurrentDir, HomeDir, Default>(
         current_dir: CurrentDir,
         home_dir: HomeDir,
@@ -172,9 +182,6 @@ impl Npmrc {
         HomeDir: FnOnce() -> Option<PathBuf>,
         Default: FnOnce() -> Npmrc,
     {
-        // TODO: this code makes no sense.
-        // TODO: it should have merged the settings.
-
         let load = |dir: PathBuf| -> Option<Npmrc> {
             dir.join(".npmrc")
                 .pipe(fs::read_to_string)
@@ -183,11 +190,24 @@ impl Npmrc {
                 .ok() // TODO: should it throw error instead?
         };
 
-        current_dir()
-            .ok()
+        let cwd = current_dir().ok();
+        let mut npmrc = cwd
+            .clone()
             .and_then(load)
             .or_else(|| home_dir().and_then(load))
-            .unwrap_or_else(default)
+            .unwrap_or_else(default);
+
+        // Layer pnpm-workspace.yaml overrides on top of whatever .npmrc
+        // provided. Missing file or unreadable yaml is silently ignored to
+        // match `.npmrc`'s best-effort behaviour above.
+        if let Some(start) = cwd {
+            if let Ok(Some((path, settings))) = WorkspaceSettings::find_and_load(&start) {
+                let base_dir = path.parent().unwrap_or(&start).to_path_buf();
+                settings.apply_to(&mut npmrc, &base_dir);
+            }
+        }
+
+        npmrc
     }
 
     /// Persist the config data until the program terminates.
@@ -325,6 +345,41 @@ mod tests {
             || home_dir.path().to_path_buf().pipe(Some),
             || unreachable!("shouldn't reach home dir"),
         );
+        assert!(!config.symlink);
+    }
+
+    #[test]
+    pub fn pnpm_workspace_yaml_overrides_npmrc() {
+        let tmp = tempdir().unwrap();
+        fs::write(tmp.path().join(".npmrc"), "lockfile=true\nregistry=https://from-npmrc.test")
+            .expect("write to .npmrc");
+        fs::write(
+            tmp.path().join("pnpm-workspace.yaml"),
+            "lockfile: false\nregistry: https://from-yaml.test\n",
+        )
+        .expect("write to pnpm-workspace.yaml");
+        let config = Npmrc::current(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || unreachable!("shouldn't reach home dir"),
+            || unreachable!("shouldn't reach default"),
+        );
+        assert!(!config.lockfile, "lockfile from yaml should win over .npmrc");
+        assert_eq!(
+            config.registry, "https://from-yaml.test/",
+            "registry from yaml should win over .npmrc"
+        );
+    }
+
+    #[test]
+    pub fn pnpm_workspace_yaml_found_by_walking_up() {
+        let tmp = tempdir().unwrap();
+        let nested = tmp.path().join("packages/inner");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(tmp.path().join("pnpm-workspace.yaml"), "symlink: false\n")
+            .expect("write to pnpm-workspace.yaml");
+        // No `.npmrc` anywhere, but a parent dir has `pnpm-workspace.yaml` —
+        // the yaml should still be applied.
+        let config = Npmrc::current(|| nested.clone().pipe(Ok::<_, ()>), || None, Npmrc::new);
         assert!(!config.symlink);
     }
 
