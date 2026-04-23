@@ -31,52 +31,52 @@ pacquet-store-dir        = { path = "crates/store-dir" }
 pacquet-registry-mock = { path = "tasks/registry-mock" }
 
 # Dependencies
-async-recursion    = { version = "1.0.5" }
+async-recursion    = { version = "1.1.1" }
 clap               = { version = "4", features = ["derive", "string"] }
 command-extra      = { version = "1.0.0" }
-base64             = { version = "0.21.5" }
-dashmap            = { version = "5.5.3" }
-derive_more        = { version = "1.0.0-beta.6", features = ["full"] }
-dunce              = { version = "1.0.4" }
-home               = { version = "0.5.5" }
-insta              = { version = "1.34.0", features = ["yaml", "glob", "walkdir"] }
-itertools          = { version = "0.11.0" }
-futures-util       = { version = "0.3.29" }
-miette             = { version = "5.9.0", features = ["fancy"] }
-num_cpus           = { version = "1.16.0" }
-os_display         = { version = "0.1.3" }
-reflink-copy       = { version = "0.1.9" }
-junction           = { version = "1.0.0" }
-reqwest            = { version = "0.11", default-features = false, features = ["json", "native-tls-vendored"] }
-node-semver        = { version = "2.1.0" }
+base64             = { version = "0.22.1" }
+dashmap            = { version = "6.1.0" }
+derive_more        = { version = "2.1.1", features = ["full"] }
+dunce              = { version = "1.0.5" }
+home               = { version = "0.5.12" }
+insta              = { version = "1.47.2", features = ["yaml", "glob", "walkdir"] }
+itertools          = { version = "0.14.0" }
+futures-util       = { version = "0.3.32" }
+miette             = { version = "7.6.0", features = ["fancy"] }
+num_cpus           = { version = "1.17.0" }
+os_display         = { version = "0.1.4" }
+reflink-copy       = { version = "0.1.29" }
+junction           = { version = "1.4.2" }
+reqwest            = { version = "0.13", default-features = false, features = ["json", "native-tls-vendored"] }
+node-semver        = { version = "2.2.0" }
 pipe-trait         = { version = "0.4.0" }
 portpicker         = { version = "0.1.1" }
-rayon              = { version = "1.8.0" }
-serde              = { version = "1.0.188", features = ["derive"] }
+rayon              = { version = "1.12.0" }
+serde              = { version = "1.0.228", features = ["derive"] }
 serde_ini          = { version = "0.2.0" }
-serde_json         = { version = "1.0.107", features = ["preserve_order"] }
-serde_yaml         = { version = "0.9.1" }
-sha2               = { version = "0.10.8" }
-split-first-char   = { version = "0.0.0" }
-ssri               = { version = "9.0.0" }
-strum              = { version = "0.25.0", features = ["derive"] }
-sysinfo            = { version = "0.29.10" }
-tar                = { version = "0.4.40" }
-text-block-macros  = { version = "0.1.1" }
-tracing            = { version = "0.1.40" }
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+serde_json         = { version = "1.0.149", features = ["preserve_order"] }
+serde_yaml         = { version = "0.9.34" }
+sha2               = { version = "0.10.9" } # 0.11 removes the LowerHex impl on Output; revisit after upstream/consumers catch up
+split-first-char   = { version = "2.0.1" }
+ssri               = { version = "9.2.0" }
+strum              = { version = "0.28.0", features = ["derive"] }
+sysinfo            = { version = "0.38.4" }
+tar                = { version = "0.4.45" }
+text-block-macros  = { version = "0.2.0" }
+tracing            = { version = "0.1.44" }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tokio              = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
-walkdir            = { version = "2.4.0" }
-which              = { version = "4.4.2" }
+walkdir            = { version = "2.5.0" }
+which              = { version = "8.0.2" }
 zune-inflate       = { version = "0.2.54" }
 
 # Dev dependencies
-assert_cmd        = { version = "2.0.12" }
-criterion         = { version = "0.5.1", features = ["async_tokio"] }
-pretty_assertions = { version = "1.4.0" }
+assert_cmd        = { version = "2.2.1" }
+criterion         = { version = "0.8.2", features = ["async_tokio"] }
+pretty_assertions = { version = "1.4.1" }
 project-root      = { version = "0.2.2" }
-tempfile          = { version = "3.8.1" }
-mockito           = { version = "1.2.0" }
+tempfile          = { version = "3.27.0" }
+mockito           = { version = "1.7.2" }
 
 [workspace.metadata.workspaces]
 allow_branch = "main"

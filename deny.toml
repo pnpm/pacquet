@@ -21,23 +21,7 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 unmaintained = "workspace"
 # yanked-crates check: "deny" | "warn" | "allow"
 yanked = "warn"
-# Pre-existing advisories in transitive dependencies pinned to the old rust
-# toolchain (1.73.0). Dependency bumps to resolve them are tracked separately
-# from the v9-lockfile / install-error-propagation work in this PR.
-ignore = [
-  "RUSTSEC-2024-0003", # h2 cpu exhaustion
-  "RUSTSEC-2024-0019", # mio named-pipe tokens
-  "RUSTSEC-2024-0332", # h2 CONTINUATION flood
-  "RUSTSEC-2024-0357", # openssl MemBio::get_buf UB
-  "RUSTSEC-2024-0421", # idna Punycode
-  "RUSTSEC-2025-0004", # openssl select_next_proto UAF
-  "RUSTSEC-2025-0022", # openssl MD/cipher fetch UAF
-  "RUSTSEC-2025-0023", # bytes BytesMut::reserve overflow
-  "RUSTSEC-2025-0055", # tar-rs unpack_in symlink chmod
-  "RUSTSEC-2026-0007", # tar-rs PAX size header
-  "RUSTSEC-2026-0067", # tokio broadcast channel unsoundness
-  "RUSTSEC-2026-0068", # tracing-subscriber ANSI log poisoning
-]
+ignore = []
 
 # --- Licenses ------------------------------------------------------------
 # https://embarkstudios.github.io/cargo-deny/checks/licenses/cfg.html
@@ -46,6 +30,7 @@ allow = [
   "MIT",
   "MPL-2.0", # required by mockito, which is used by tasks/micro-benchmark
   "Apache-2.0",
+  "Unicode-3.0", # newer ICU crates switched from Unicode-DFS-2016 to this
   "Unicode-DFS-2016",
   "BSD-3-Clause",
   "BSL-1.0",

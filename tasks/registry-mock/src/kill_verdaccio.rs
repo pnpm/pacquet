@@ -1,7 +1,5 @@
 use pipe_trait::Pipe;
-use sysinfo::{
-    Pid, Process, ProcessExt, ProcessRefreshKind, RefreshKind, Signal, System, SystemExt,
-};
+use sysinfo::{Pid, Process, ProcessRefreshKind, RefreshKind, Signal, System};
 
 fn is_descent_of(process: &Process, suspect_ancestor: Pid, system: &System) -> bool {
     let Some(parent) = process.parent() else { return false };
@@ -22,8 +20,8 @@ pub fn kill_all_verdaccio_children_in(root: Pid, signal: Signal, system: &System
 }
 
 pub fn kill_all_verdaccio_children(root: Pid, signal: Signal) -> usize {
-    let system = RefreshKind::new()
-        .with_processes(ProcessRefreshKind::new())
+    let system = RefreshKind::nothing()
+        .with_processes(ProcessRefreshKind::nothing())
         .pipe(System::new_with_specifics);
     kill_all_verdaccio_children_in(root, signal, &system)
 }

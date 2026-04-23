@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
     sync::OnceLock,
 };
-use sysinfo::{Pid, PidExt, Signal};
+use sysinfo::{Pid, Signal};
 
 /// Count references and automatically manage a single shared mocked registry server instance that is spawn
 /// by the first test to run.

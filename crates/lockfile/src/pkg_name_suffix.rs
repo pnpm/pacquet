@@ -10,12 +10,12 @@ use std::str::FromStr;
 /// * `ts-node@10.9.1`, `@types/node@18.7.19`, `typescript@5.1.6`
 /// * `react-json-view@1.21.3(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)`
 #[derive(Debug, Display, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
-#[display(bound(Suffix: Display))]
+#[display(bound(Suffix: std::fmt::Display))]
 #[display("{name}@{suffix}")]
 #[serde(try_from = "&'de str", into = "String")]
 #[serde(bound(
-    deserialize = "Suffix: FromStr, Suffix::Err: Display",
-    serialize = "Suffix: Display + Clone",
+    deserialize = "Suffix: FromStr, Suffix::Err: std::fmt::Display",
+    serialize = "Suffix: std::fmt::Display + Clone",
 ))]
 pub struct PkgNameSuffix<Suffix> {
     pub name: PkgName,
@@ -81,7 +81,7 @@ impl<'a, Suffix: FromStr> TryFrom<&'a str> for PkgNameSuffix<Suffix> {
     }
 }
 
-impl<Suffix: Display> From<PkgNameSuffix<Suffix>> for String {
+impl<Suffix: std::fmt::Display> From<PkgNameSuffix<Suffix>> for String {
     fn from(value: PkgNameSuffix<Suffix>) -> Self {
         value.to_string()
     }
