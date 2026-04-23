@@ -261,7 +261,7 @@ fn transcode_value(
         // int32 range — so timestamps like `checkedAt = 1_700_000_000_000`
         // arrive as `cb` + 8 bytes, even though they're semantically
         // integers. `rmp_serde` rejects floats for our integer-typed
-        // fields (`size: u64`, `checked_at: Option<u128>`), so narrow
+        // fields (`size: u64`, `checked_at: Option<u64>`), so narrow
         // the representation back to uint 64 whenever the float is a
         // finite, non-negative integer value that fits. Non-integer or
         // out-of-range floats pass through unchanged so legitimate
@@ -591,11 +591,14 @@ mod tests {
     }
 
     /// A row pacquet wrote itself — vanilla msgpack via `rmp_serde::to_vec_named`
-    /// — must pass through the transcoder unchanged. This is the "no records
-    /// at all" case and guards against a regression where the transcoder
-    /// mangles bytes it wasn't supposed to touch.
+    /// — must decode to the same struct after passing through the
+    /// transcoder. The bytes are *not* guaranteed to be byte-for-byte
+    /// identical post-transcode: `CafsFileInfo::checked_at` is written
+    /// as `float 64` for msgpackr/pnpm interop, and the transcoder's
+    /// integer-valued-float narrowing rewrites it back to `uint 64`.
+    /// What matters is that the decoded `PackageFilesIndex` round-trips.
     #[test]
-    fn passes_through_plain_msgpack_unchanged() {
+    fn round_trips_plain_msgpack_through_transcoder() {
         let mut files = HashMap::new();
         files.insert(
             "README.md".to_string(),
@@ -609,12 +612,25 @@ mod tests {
             side_effects: None,
         };
         let bytes = rmp_serde::to_vec_named(&original).unwrap();
-
         let transcoded = transcode_to_plain_msgpack(&bytes).unwrap();
-        assert_eq!(transcoded, bytes, "plain msgpack must round-trip byte-for-byte");
-
         let decoded: PackageFilesIndex = rmp_serde::from_slice(&transcoded).unwrap();
         assert_eq!(decoded, original);
+    }
+
+    /// Plain msgpack bytes that contain no `float`-encoded integers should
+    /// still pass through the transcoder byte-for-byte — the narrowing
+    /// rule must not touch anything that isn't a float header.
+    #[test]
+    fn plain_msgpack_without_floats_passes_through_unchanged() {
+        // { "size": 17, "mode": 420 } — purely integer values, no
+        // checked_at, so the encoded bytes have no float headers.
+        let bytes = rmp_serde::to_vec_named(&serde_json::json!({
+            "size": 17,
+            "mode": 420,
+        }))
+        .unwrap();
+        let transcoded = transcode_to_plain_msgpack(&bytes).unwrap();
+        assert_eq!(transcoded, bytes);
     }
 
     /// A genuine non-integer float (π) must survive the transcoder as a

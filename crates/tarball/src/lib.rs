@@ -333,7 +333,10 @@ impl<'a> DownloadTarballToStore<'a> {
                         );
                     }
 
-                    let checked_at = UNIX_EPOCH.elapsed().ok().map(|x| x.as_millis());
+                    // `as_millis()` returns `u128`; narrow to `u64` to match the
+                    // store index schema — see `CafsFileInfo::checked_at` for why
+                    // `u64` is used instead of the wider `u128`.
+                    let checked_at = UNIX_EPOCH.elapsed().ok().map(|x| x.as_millis() as u64);
                     let file_size = entry
                         .header()
                         .size()
