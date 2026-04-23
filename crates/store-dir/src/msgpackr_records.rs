@@ -98,19 +98,37 @@ pub enum DecodeError {
 }
 
 /// Expand msgpackr records into a pure-MessagePack byte stream that
-/// `rmp_serde` can deserialize. `bytes` may already be pure msgpack (e.g.
-/// pacquet-written rows); in that case the output is byte-for-byte
-/// identical to the input.
+/// `rmp_serde` can deserialize.
+///
+/// `bytes` may already be pure msgpack (e.g. pacquet-written rows). The
+/// bytes `0x40..=0x7f` are ambiguous — in vanilla MessagePack they're
+/// positive fixints 64–127; inside a msgpackr-records stream they're
+/// record-slot references. We disambiguate by tracking whether a record
+/// definition has been seen in the stream so far: until the first
+/// `d4 72 <slot>` header, those bytes are treated as fixints and the
+/// transcoder behaves as a pass-through (modulo float-to-int narrowing,
+/// which is always applied so the output can be deserialized into
+/// integer-typed Rust fields).
 pub fn transcode_to_plain_msgpack(bytes: &[u8]) -> Result<Vec<u8>, DecodeError> {
+    let mut state = TranscodeState::default();
     let mut reader = Reader::new(bytes);
     let mut writer = Vec::with_capacity(bytes.len() + bytes.len() / 4);
-    let mut slots: HashMap<u8, Vec<String>> = HashMap::new();
-    transcode_value(&mut reader, &mut writer, &mut slots)?;
+    transcode_value(&mut reader, &mut writer, &mut state)?;
     let leftover = reader.remaining();
     if leftover != 0 {
         return Err(DecodeError::TrailingBytes { count: leftover });
     }
     Ok(writer)
+}
+
+/// Parser context threaded through `transcode_value`. Records mode
+/// starts off and flips on the first record definition — msgpackr
+/// doesn't re-emit positive fixints in the slot-byte range once records
+/// mode is on, so the flip is one-way for any real stream.
+#[derive(Default)]
+struct TranscodeState {
+    slots: HashMap<u8, Vec<String>>,
+    records_mode: bool,
 }
 
 struct Reader<'a> {
@@ -160,38 +178,42 @@ impl<'a> Reader<'a> {
 fn transcode_value(
     r: &mut Reader<'_>,
     w: &mut Vec<u8>,
-    slots: &mut HashMap<u8, Vec<String>>,
+    state: &mut TranscodeState,
 ) -> Result<(), DecodeError> {
     let start = r.pos;
     let head = r.peek(0)?;
 
-    // Record reference — standalone slot byte, instance follows as N raw values.
-    if (SLOT_LO..=SLOT_HI).contains(&head) {
+    // Record reference — only valid after records mode has been entered;
+    // in plain MessagePack the same bytes are positive fixints 64–127.
+    if state.records_mode && (SLOT_LO..=SLOT_HI).contains(&head) {
         r.read_u8()?;
-        let fields = slots
+        let fields = state
+            .slots
             .get(&head)
             .cloned()
             .ok_or(DecodeError::UnknownSlot { slot: head, offset: start })?;
         write_map_header(w, fields.len());
         for name in &fields {
             write_str(w, name);
-            transcode_value(r, w, slots)?;
+            transcode_value(r, w, state)?;
         }
         return Ok(());
     }
 
     // Record definition — fixext1 with ext type 0x72. Followed by the field-name
-    // array, then the first instance inlined.
+    // array, then the first instance inlined. Seeing this header flips the
+    // stream into records mode from here on.
     if head == 0xd4 && r.peek(1)? == RECORD_DEF_EXT_TYPE {
         r.read_u8()?; // 0xd4
         r.read_u8()?; // 0x72
         let slot = r.read_u8()?;
         let fields = read_string_array(r)?;
-        slots.insert(slot, fields.clone());
+        state.slots.insert(slot, fields.clone());
+        state.records_mode = true;
         write_map_header(w, fields.len());
         for name in &fields {
             write_str(w, name);
-            transcode_value(r, w, slots)?;
+            transcode_value(r, w, state)?;
         }
         return Ok(());
     }
@@ -200,23 +222,24 @@ fn transcode_value(
     // header + payload bytes across; for containers we emit the header and
     // recurse so any records inside still get expanded.
     match head {
-        // Positive fixint (0x00..=0x7f) — but 0x40..=0x7f are record refs
-        // handled above, so only 0x00..=0x3f falls here. Still 1 byte.
-        0x00..=0x3f => copy_n(r, w, 1),
+        // Positive fixint 0x00..=0x7f. When records mode is active the
+        // 0x40..=0x7f slice is trapped above; when it isn't, those bytes
+        // are legitimate fixints and pass through.
+        0x00..=0x7f => copy_n(r, w, 1),
 
         // Fixmap 0x80..=0x8f
         0x80..=0x8f => {
             let n = (head & 0x0f) as usize;
             r.read_u8()?;
             w.push(head);
-            transcode_pairs(r, w, slots, n)
+            transcode_pairs(r, w, state, n)
         }
         // Fixarray 0x90..=0x9f
         0x90..=0x9f => {
             let n = (head & 0x0f) as usize;
             r.read_u8()?;
             w.push(head);
-            transcode_array(r, w, slots, n)
+            transcode_array(r, w, state, n)
         }
         // Fixstr 0xa0..=0xbf
         0xa0..=0xbf => {
@@ -317,26 +340,26 @@ fn transcode_value(
             let n = u16::from_be_bytes([r.peek(1)?, r.peek(2)?]) as usize;
             let header = r.read_bytes(3)?.to_vec();
             w.extend_from_slice(&header);
-            transcode_array(r, w, slots, n)
+            transcode_array(r, w, state, n)
         }
         0xdd => {
             let n = u32::from_be_bytes([r.peek(1)?, r.peek(2)?, r.peek(3)?, r.peek(4)?]) as usize;
             let header = r.read_bytes(5)?.to_vec();
             w.extend_from_slice(&header);
-            transcode_array(r, w, slots, n)
+            transcode_array(r, w, state, n)
         }
         // map 16 / 32
         0xde => {
             let n = u16::from_be_bytes([r.peek(1)?, r.peek(2)?]) as usize;
             let header = r.read_bytes(3)?.to_vec();
             w.extend_from_slice(&header);
-            transcode_pairs(r, w, slots, n)
+            transcode_pairs(r, w, state, n)
         }
         0xdf => {
             let n = u32::from_be_bytes([r.peek(1)?, r.peek(2)?, r.peek(3)?, r.peek(4)?]) as usize;
             let header = r.read_bytes(5)?.to_vec();
             w.extend_from_slice(&header);
-            transcode_pairs(r, w, slots, n)
+            transcode_pairs(r, w, state, n)
         }
 
         // 0xc1 is reserved in the spec — reject rather than silently drop.
@@ -347,11 +370,11 @@ fn transcode_value(
 fn transcode_array(
     r: &mut Reader<'_>,
     w: &mut Vec<u8>,
-    slots: &mut HashMap<u8, Vec<String>>,
+    state: &mut TranscodeState,
     n: usize,
 ) -> Result<(), DecodeError> {
     for _ in 0..n {
-        transcode_value(r, w, slots)?;
+        transcode_value(r, w, state)?;
     }
     Ok(())
 }
@@ -359,12 +382,12 @@ fn transcode_array(
 fn transcode_pairs(
     r: &mut Reader<'_>,
     w: &mut Vec<u8>,
-    slots: &mut HashMap<u8, Vec<String>>,
+    state: &mut TranscodeState,
     n: usize,
 ) -> Result<(), DecodeError> {
     for _ in 0..n {
-        transcode_value(r, w, slots)?; // key
-        transcode_value(r, w, slots)?; // value
+        transcode_value(r, w, state)?; // key
+        transcode_value(r, w, state)?; // value
     }
     Ok(())
 }
@@ -410,11 +433,21 @@ fn read_string(r: &mut Reader<'_>) -> Result<String, DecodeError> {
     String::from_utf8(bytes).map_err(|_| DecodeError::Unsupported { byte: head, offset: start })
 }
 
-/// If `v` is a finite non-negative integer value that fits in `u64`, emit
-/// it as msgpack `uint 64` (`cf` + 8 big-endian bytes). Otherwise, pass
-/// through the original float header + payload unchanged.
+/// Exactly 2^64 as f64 — the smallest `f64` value that does **not** fit
+/// in a `u64`. `u64::MAX as f64` rounds *up* to 2^64 (u64::MAX is
+/// 2^64 − 1, which is not exactly representable in f64), so using it as
+/// the inclusive upper bound would admit a literal 2^64 and silently
+/// saturate to `u64::MAX` on cast.
+const U64_MAX_EXCLUSIVE_AS_F64: f64 = 18_446_744_073_709_551_616.0;
+
+/// If `v` is a finite non-negative integer value that strictly fits in
+/// `u64`, emit it as msgpack `uint 64` (`cf` + 8 big-endian bytes).
+/// Otherwise, pass through the original float header + payload
+/// unchanged. The strict upper bound (`< 2^64`, not `<= u64::MAX as f64`)
+/// prevents silent value corruption at the representable-but-overflowing
+/// edge.
 fn maybe_narrow_float_to_uint(w: &mut Vec<u8>, v: f64, original_head: u8, original_bytes: &[u8]) {
-    if v.is_finite() && v >= 0.0 && v <= u64::MAX as f64 && v.fract() == 0.0 {
+    if v.is_finite() && (0.0..U64_MAX_EXCLUSIVE_AS_F64).contains(&v) && v.fract() == 0.0 {
         w.push(0xcf);
         w.extend_from_slice(&(v as u64).to_be_bytes());
     } else {
@@ -647,6 +680,18 @@ mod tests {
         assert_eq!(out, input, "π must stay as float 64, not be narrowed");
     }
 
+    /// A `float 64` whose value is exactly `2^64` must NOT narrow —
+    /// `u64::MAX as f64` rounds up to 2^64, so a naive
+    /// `v <= u64::MAX as f64` bound would admit the value and silently
+    /// cast it to `u64::MAX`. Must pass through unchanged instead.
+    #[test]
+    fn float64_equal_to_2_pow_64_passes_through() {
+        let mut input = vec![0x91, 0xcb];
+        input.extend_from_slice(&18_446_744_073_709_551_616.0_f64.to_be_bytes());
+        let out = transcode_to_plain_msgpack(&input).unwrap();
+        assert_eq!(out, input, "2^64 must not be narrowed to u64::MAX");
+    }
+
     /// An integer-valued float 32 must be narrowed too. Pnpm doesn't
     /// emit `float 32`, but a hand-crafted payload could, and the rule
     /// should be consistent.
@@ -665,9 +710,33 @@ mod tests {
 
     #[test]
     fn rejects_reference_to_unknown_slot() {
-        // Just a bare slot byte with no preceding definition.
-        let err = transcode_to_plain_msgpack(&[0x40, 0xc0]).unwrap_err();
-        assert!(matches!(err, DecodeError::UnknownSlot { slot: 0x40, .. }), "got {err:?}");
+        // fixarray(2):
+        //   [0] def slot 0x40 (fields ["x"]) + inline first instance (nil)
+        //   [1] bare reference to slot 0x41 — never defined
+        let bytes: &[u8] = &[
+            0x92, // fixarray(2)
+            0xd4, 0x72, 0x40, // def slot 0x40
+            0x91, 0xa1, b'x', // fields: ["x"]
+            0xc0, // first instance: nil
+            0x41, // ref to slot 0x41 — undefined
+        ];
+        let err = transcode_to_plain_msgpack(bytes).unwrap_err();
+        assert!(matches!(err, DecodeError::UnknownSlot { slot: 0x41, .. }), "got {err:?}");
+    }
+
+    /// In plain MessagePack, a bare 0x40..=0x7f byte is a positive
+    /// fixint (64..=127) — not a record slot reference. The transcoder
+    /// must not touch it until a record definition has actually
+    /// appeared in the stream.
+    #[test]
+    fn plain_positive_fixint_in_slot_range_passes_through() {
+        // [65, 127] — both bytes would be "slot refs" under the old
+        // always-records interpretation and would blow up as
+        // `UnknownSlot`. Under records-mode tracking they're legitimate
+        // positive fixints.
+        let input = &[0x92, 0x41, 0x7f][..];
+        let out = transcode_to_plain_msgpack(input).unwrap();
+        assert_eq!(out, input);
     }
 
     #[test]

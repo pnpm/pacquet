@@ -222,25 +222,17 @@ impl StoreIndex {
     }
 }
 
-/// First two bytes emitted by msgpackr when `useRecords: true` is on —
-/// fixext1 header + the 0x72 ("r") record-definition ext type. Every
-/// pnpm-written `PackageFilesIndex` row opens with this pair because
-/// the top-level struct itself is a record.
-const MSGPACKR_RECORDS_MARKER: [u8; 2] = [0xd4, crate::msgpackr_records::RECORD_DEF_EXT_TYPE];
-
 fn decode_index_value(bytes: &[u8]) -> Result<PackageFilesIndex, StoreIndexError> {
-    // The transcoder has to be gated by the records-mode sniff — it
-    // assumes bytes in 0x40..=0x7f are record slot references, which in
-    // plain msgpack would collide with positive fixints (e.g. `size: 123`
-    // encodes as byte 0x7b). Running the transcoder on pacquet-written
-    // rows would therefore corrupt them.
-    if bytes.starts_with(&MSGPACKR_RECORDS_MARKER) {
-        let plain = crate::msgpackr_records::transcode_to_plain_msgpack(bytes)
-            .map_err(|source| StoreIndexError::Transcode { source })?;
-        rmp_serde::from_slice(&plain).map_err(|source| StoreIndexError::Decode { source })
-    } else {
-        rmp_serde::from_slice(bytes).map_err(|source| StoreIndexError::Decode { source })
-    }
+    // `transcode_to_plain_msgpack` tracks records-mode internally and
+    // only reinterprets `0x40..=0x7f` as slot references after a record
+    // definition has been observed, so it's safe to run on both
+    // pacquet-written (plain msgpack) and pnpm-written (msgpackr records)
+    // rows. For plain rows it still performs the integer-valued float
+    // narrowing we need on the read side — pacquet writes the
+    // `checkedAt` timestamp as `float 64` for JS/BigInt interop.
+    let plain = crate::msgpackr_records::transcode_to_plain_msgpack(bytes)
+        .map_err(|source| StoreIndexError::Transcode { source })?;
+    rmp_serde::from_slice(&plain).map_err(|source| StoreIndexError::Decode { source })
 }
 
 /// Build the SQLite key pnpm uses: `"{integrity}\t{pkg_id}"`. Integrity strings
@@ -302,12 +294,7 @@ pub struct CafsFileInfo {
     /// [`transcode_to_plain_msgpack`][crate::msgpackr_records::transcode_to_plain_msgpack]
     /// step narrows integer-valued floats back to `uint 64` so
     /// `rmp_serde` can deserialize into `Option<u64>` without complaint.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "serialize_checked_at",
-        deserialize_with = "deserialize_checked_at"
-    )]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "serialize_checked_at")]
     pub checked_at: Option<u64>,
 }
 
@@ -324,57 +311,6 @@ fn serialize_checked_at<S: serde::Serializer>(
         Some(v) => serializer.serialize_f64(*v as f64),
         None => serializer.serialize_none(),
     }
-}
-
-/// Accept either `float 64` (what pacquet itself writes now, what
-/// msgpackr/pnpm writes for timestamps past int32) or any integer
-/// encoding (what msgpackr-records rows contain after transcoding, and
-/// what stores written by earlier pacquet revisions may still hold).
-fn deserialize_checked_at<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<u64>, D::Error> {
-    use serde::de::{self, Visitor};
-    use std::fmt;
-
-    struct V;
-    impl<'de> Visitor<'de> for V {
-        type Value = Option<u64>;
-
-        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.write_str("a millisecond Unix timestamp (integer or float) or null")
-        }
-
-        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
-            Ok(None)
-        }
-        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
-            Ok(None)
-        }
-        fn visit_some<D: serde::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
-            d.deserialize_any(V)
-        }
-        fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
-            Ok(Some(v))
-        }
-        fn visit_u128<E: de::Error>(self, v: u128) -> Result<Self::Value, E> {
-            u64::try_from(v).map(Some).map_err(E::custom)
-        }
-        fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
-            u64::try_from(v).map(Some).map_err(E::custom)
-        }
-        fn visit_f64<E: de::Error>(self, v: f64) -> Result<Self::Value, E> {
-            if v.is_finite() && v >= 0.0 && v <= u64::MAX as f64 && v.fract() == 0.0 {
-                Ok(Some(v as u64))
-            } else {
-                Err(E::custom(format!("checkedAt is not an integer-valued f64: {v}")))
-            }
-        }
-        fn visit_f32<E: de::Error>(self, v: f32) -> Result<Self::Value, E> {
-            self.visit_f64(v as f64)
-        }
-    }
-
-    deserializer.deserialize_any(V)
 }
 
 /// Value of [`PackageFilesIndex::side_effects`].
