@@ -33,7 +33,6 @@ jobs:
       - name: Install Rust Toolchain
         uses: ./.github/actions/rustup
         with:
-          docs: true
           clippy: true
           save-cache: ${{ github.ref_name == 'main' }}
 
@@ -59,11 +58,6 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked -- -D warnings
 
-      - name: Doc
-        env:
-          RUSTDOCFLAGS: '-D warnings'
-        run: cargo doc
-
       - name: Install just
         uses: taiki-e/install-action@just
 
@@ -86,6 +80,25 @@ jobs:
           just test
 
           just registry-mock end
+
+  doc:
+    name: Doc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: ./.github/actions/rustup
+        with:
+          docs: true
+
+      - name: Doc
+        env:
+          RUSTDOCFLAGS: '-D warnings'
+        # --no-deps skips rendering HTML for every transitive crate. Only
+        # workspace crates are documented; broken intra-doc links and bad
+        # rustdoc markup in pacquet's own code are still caught.
+        run: cargo doc --no-deps --workspace
 
   typos:
     name: Spell Check
