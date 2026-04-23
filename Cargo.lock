@@ -1403,6 +1403,7 @@ dependencies = [
  "serde_yaml",
  "split-first-char",
  "ssri",
+ "tempfile",
  "text-block-macros",
 ]
 

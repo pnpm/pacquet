@@ -14,6 +14,7 @@ mod project_snapshot;
 mod resolution;
 mod resolved_dependency;
 mod root_project_snapshot;
+mod save_lockfile;
 
 pub use comver::*;
 pub use dependency_path::*;
@@ -31,6 +32,7 @@ pub use project_snapshot::*;
 pub use resolution::*;
 pub use resolved_dependency::*;
 pub use root_project_snapshot::*;
+pub use save_lockfile::*;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
