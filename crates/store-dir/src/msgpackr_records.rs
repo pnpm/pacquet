@@ -70,15 +70,15 @@ const SLOT_HI: u8 = 0x7f;
 #[derive(Debug, Display, Error, Diagnostic)]
 #[non_exhaustive]
 pub enum DecodeError {
-    #[display("Unexpected end of msgpackr buffer at offset {offset}")]
-    #[diagnostic(code(pacquet_store_dir::msgpackr::unexpected_eof))]
+    #[display("Unexpected end of MessagePack buffer at offset {offset}")]
+    #[diagnostic(code(pacquet_store_dir::msgpackr_records::unexpected_eof))]
     UnexpectedEof { offset: usize },
 
     #[display(
         "Reference to unknown record slot 0x{slot:02x} at offset {offset} — \
          the definition was missing or appeared later than its use"
     )]
-    #[diagnostic(code(pacquet_store_dir::msgpackr::unknown_slot))]
+    #[diagnostic(code(pacquet_store_dir::msgpackr_records::unknown_slot))]
     UnknownSlot { slot: u8, offset: usize },
 
     #[display(
@@ -86,7 +86,7 @@ pub enum DecodeError {
          is outside the valid reference range 0x40..=0x7f — any reference \
          written for this slot would be unreachable"
     )]
-    #[diagnostic(code(pacquet_store_dir::msgpackr::slot_out_of_range))]
+    #[diagnostic(code(pacquet_store_dir::msgpackr_records::slot_out_of_range))]
     SlotOutOfRange { slot: u8, offset: usize },
 
     #[display(
@@ -94,7 +94,7 @@ pub enum DecodeError {
          for a record-definition field-name list at offset {offset}, got \
          byte 0x{byte:02x}"
     )]
-    #[diagnostic(code(pacquet_store_dir::msgpackr::expected_array_header))]
+    #[diagnostic(code(pacquet_store_dir::msgpackr_records::expected_array_header))]
     ExpectedArrayHeader { byte: u8, offset: usize },
 
     #[display(
@@ -102,22 +102,22 @@ pub enum DecodeError {
          for a record-definition field name at offset {offset}, got byte \
          0x{byte:02x}"
     )]
-    #[diagnostic(code(pacquet_store_dir::msgpackr::expected_string_header))]
+    #[diagnostic(code(pacquet_store_dir::msgpackr_records::expected_string_header))]
     ExpectedStringHeader { byte: u8, offset: usize },
 
     #[display(
         "Field name in a record definition at offset {offset} contains \
          invalid UTF-8"
     )]
-    #[diagnostic(code(pacquet_store_dir::msgpackr::invalid_field_name_utf8))]
+    #[diagnostic(code(pacquet_store_dir::msgpackr_records::invalid_field_name_utf8))]
     InvalidFieldNameUtf8 { offset: usize },
 
     #[display("Unsupported msgpack header byte 0x{byte:02x} at offset {offset}")]
-    #[diagnostic(code(pacquet_store_dir::msgpackr::unsupported))]
+    #[diagnostic(code(pacquet_store_dir::msgpackr_records::unsupported))]
     Unsupported { byte: u8, offset: usize },
 
     #[display("{count} bytes left over after decoding the top-level value")]
-    #[diagnostic(code(pacquet_store_dir::msgpackr::trailing_bytes))]
+    #[diagnostic(code(pacquet_store_dir::msgpackr_records::trailing_bytes))]
     TrailingBytes { count: usize },
 }
 
