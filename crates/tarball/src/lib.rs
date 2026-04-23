@@ -98,13 +98,16 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
 }
 
 /// Try to reconstruct the `{filename → CAFS path}` map for a package from
-/// the SQLite store index, without going to the network. Returns `None` if
-/// anything looks off — no db, no row, unreadable row, malformed digest,
-/// or any referenced CAFS file missing from disk — so the caller falls
-/// through to a fresh download. Error paths are treated as cache misses
-/// because the index is a cache hint, not a source of truth; only the
-/// missing-blob case emits a `debug!` log to note a stale entry before
-/// re-fetching.
+/// the SQLite store index, without going to the network. Returns `None`
+/// if anything looks off — no db, no row, unreadable row, malformed
+/// digest, or any referenced CAFS path that fails validation — so the
+/// caller falls through to a fresh download. Error paths are treated as
+/// cache misses because the index is a cache hint, not a source of
+/// truth. Any CAFS-path validation failure (missing blob, metadata
+/// error, directory, symlink, or other non-regular file) emits a
+/// `debug!` log to note the stale entry before re-fetching; earlier
+/// checks — db / row / decode / digest — are silent because they don't
+/// point at a specific on-disk artifact worth describing.
 async fn load_cached_cas_paths(
     store_dir: &'static StoreDir,
     cache_key: String,
