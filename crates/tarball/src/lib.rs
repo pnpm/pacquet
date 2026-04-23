@@ -97,6 +97,66 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
         .map_err(TarballError::DecodeGzip)
 }
 
+/// Try to reconstruct the `{filename → CAFS path}` map for a package from
+/// the SQLite store index, without going to the network. Returns `None`
+/// if anything looks off — no db, no row, unreadable row, malformed
+/// digest, or any referenced CAFS path that fails validation — so the
+/// caller falls through to a fresh download. Error paths are treated as
+/// cache misses because the index is a cache hint, not a source of
+/// truth. Any CAFS-path validation failure (missing blob, metadata
+/// error, directory, symlink, or other non-regular file) emits a
+/// `debug!` log to note the stale entry before re-fetching; earlier
+/// checks — db / row / decode / digest — are silent because they don't
+/// point at a specific on-disk artifact worth describing.
+async fn load_cached_cas_paths(
+    store_dir: &'static StoreDir,
+    cache_key: String,
+) -> Option<HashMap<String, PathBuf>> {
+    tokio::task::spawn_blocking(move || -> Option<HashMap<String, PathBuf>> {
+        let index = StoreIndex::open_readonly_in(store_dir).ok()?;
+        let entry = index.get(&cache_key).ok()??;
+
+        let mut cas_paths = HashMap::with_capacity(entry.files.len());
+        // Consume `entry.files` so the owned `String` keys can move
+        // straight into `cas_paths` — cloning each filename is an extra
+        // alloc per file in the package, and on a real tarball that's
+        // hundreds of strings.
+        for (filename, info) in entry.files {
+            // `?` on `cas_file_path_by_mode` handles corrupt digests (empty,
+            // too short, or non-hex) as a cache miss. Without it the
+            // `hex[..2]` slice inside `file_path_by_hex_str` would panic.
+            let path = store_dir.cas_file_path_by_mode(&info.digest, info.mode)?;
+            // Use `symlink_metadata()` + reject symlinks so this check
+            // applies to the CAFS path itself without ever following a
+            // link. That rules out directory squatting, symlinked
+            // blobs (which could point *outside* the store — a store
+            // corruption / tampering vector), and other non-regular
+            // filesystem objects. Any metadata error also counts as a
+            // miss (blob pruned, permission issue, …).
+            if !path.symlink_metadata().is_ok_and(|m| {
+                let file_type = m.file_type();
+                !file_type.is_symlink() && file_type.is_file()
+            }) {
+                // Treat the whole entry as invalid and re-fetch — partial
+                // reuse would give the caller a broken layout.
+                tracing::debug!(
+                    target: "pacquet::download",
+                    ?cache_key,
+                    ?filename,
+                    ?path,
+                    "CAFS path missing or not a regular file; index entry is stale, re-fetching"
+                );
+                return None;
+            }
+            cas_paths.insert(filename, path);
+        }
+        Some(cas_paths)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 /// This subroutine downloads and extracts a tarball to the store directory.
 ///
 /// It returns a CAS map of files in the tarball.
@@ -167,6 +227,24 @@ impl<'a> DownloadTarballToStore<'a> {
             package_id,
         } = self;
 
+        // Before hitting the network, check the SQLite store index: if the
+        // tarball is already in the CAFS we can reuse its per-file paths
+        // and skip the download entirely. This is the payoff of the v11
+        // store migration (#244) — pnpm and pacquet share `index.db`, so a
+        // previous install of the same (integrity, pkg_id) pair leaves an
+        // entry we can read back here.
+        //
+        // The lookup is best-effort. A missing `index.db`, a missing row,
+        // an unreadable entry (e.g. written by pnpm's msgpackr record
+        // encoding — decoding support for that is a follow-up), or any
+        // CAFS file that has gone missing from disk all fall through to
+        // the download path below.
+        let cache_key = store_index_key(&package_integrity.to_string(), package_id);
+        if let Some(cas_paths) = load_cached_cas_paths(store_dir, cache_key).await {
+            tracing::info!(target: "pacquet::download", ?package_url, ?package_id, "Reusing cached CAFS entry — skipping download");
+            return Ok(cas_paths);
+        }
+
         tracing::info!(target: "pacquet::download", ?package_url, "New cache");
 
         let network_error = |error| {
@@ -229,7 +307,7 @@ impl<'a> DownloadTarballToStore<'a> {
                     let mut entry = entry.unwrap();
 
                     let file_mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
-                    let file_is_executable = file_mode::is_all_exec(file_mode);
+                    let file_is_executable = file_mode::is_executable(file_mode);
 
                     // Read the contents of the entry
                     let mut buffer = Vec::with_capacity(entry.size() as usize);
@@ -330,6 +408,20 @@ mod tests {
         integrity_str.parse().expect("parse integrity string")
     }
 
+    /// HTTP client for the fall-through tests. A default `ThrottledClient`
+    /// uses `Client::new()` with no connect / request timeout, so on a
+    /// firewalled runner the unreachable `http://127.0.0.1:1/...` URL
+    /// could stall for minutes of TCP retry. One-second bounds are
+    /// plenty for loopback and keep the failure mode deterministic.
+    fn fast_fail_client() -> ThrottledClient {
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(1))
+            .timeout(std::time::Duration::from_secs(1))
+            .build()
+            .expect("build reqwest client");
+        ThrottledClient::from_client(client)
+    }
+
     /// **Problem:**
     /// The tested function requires `'static` paths, leaking would prevent
     /// temporary files from being cleaned up.
@@ -402,6 +494,301 @@ mod tests {
         .run_without_mem_cache()
         .await
         .expect_err("checksum mismatch");
+
+        drop(store_dir);
+    }
+
+    /// When the SQLite index already has an entry for this
+    /// `(integrity, pkg_id)` pair and every referenced CAFS file is on
+    /// disk, `run_without_mem_cache` must return the cached layout
+    /// without issuing an HTTP request. We prove the "no network"
+    /// property by pointing `package_url` at an address that would
+    /// fail-fast if dialed.
+    #[tokio::test]
+    async fn reuses_cached_cas_paths_when_index_entry_is_live() {
+        let (store_dir, store_path) = tempdir_with_leaked_path();
+
+        let (pkg_json_path, pkg_json_hash) =
+            store_path.write_cas_file(b"{\"name\":\"fake\"}", false).unwrap();
+        let (bin_path, bin_hash) =
+            store_path.write_cas_file(b"#!/usr/bin/env node\nconsole.log('hi');\n", true).unwrap();
+
+        let pkg_integrity =
+            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_id = "fake@1.0.0";
+        let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
+
+        let mut files = HashMap::new();
+        files.insert(
+            "package.json".to_string(),
+            CafsFileInfo {
+                digest: format!("{pkg_json_hash:x}"),
+                mode: 0o644,
+                size: 15,
+                checked_at: None,
+            },
+        );
+        files.insert(
+            "bin/cli.js".to_string(),
+            CafsFileInfo {
+                digest: format!("{bin_hash:x}"),
+                mode: 0o755,
+                size: 39,
+                checked_at: None,
+            },
+        );
+
+        let entry = PackageFilesIndex {
+            manifest: None,
+            requires_build: Some(false),
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+
+        let index = StoreIndex::open_in(store_path).unwrap();
+        index.set(&index_key, &entry).unwrap();
+        drop(index);
+
+        let cas_paths = DownloadTarballToStore {
+            http_client: &fast_fail_client(),
+            store_dir: store_path,
+            package_integrity: &pkg_integrity,
+            package_unpacked_size: None,
+            // Any request that reaches the network here would fail the
+            // test; the cache lookup must short-circuit before we get
+            // near it. `fast_fail_client` caps that at 1 s per side in
+            // case a firewalled runner drops the packet silently.
+            package_url: "http://127.0.0.1:1/unreachable.tgz",
+            package_id: pkg_id,
+        }
+        .run_without_mem_cache()
+        .await
+        .expect("cache hit should succeed without network");
+
+        assert_eq!(cas_paths.len(), 2);
+        assert_eq!(cas_paths.get("package.json"), Some(&pkg_json_path));
+        assert_eq!(cas_paths.get("bin/cli.js"), Some(&bin_path));
+
+        drop(store_dir);
+    }
+
+    /// If the index row points at a CAFS blob that no longer exists on
+    /// disk (pruned out-of-band, say), the cache lookup must reject the
+    /// entry and fall through to a download. We don't want to do the
+    /// download for real in a unit test, so assert that we got a
+    /// `FetchTarball` error from the unreachable URL rather than the
+    /// cache-hit's `Ok`.
+    #[tokio::test]
+    async fn falls_through_when_cafs_file_missing() {
+        let (store_dir, store_path) = tempdir_with_leaked_path();
+
+        let pkg_integrity =
+            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_id = "fake@1.0.0";
+        let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
+
+        let mut files = HashMap::new();
+        // A digest that matches no file on disk. `load_cached_cas_paths`
+        // should see the missing path, reject the entry, and let
+        // `run_without_mem_cache` proceed to the network fetch.
+        files.insert(
+            "package.json".to_string(),
+            CafsFileInfo { digest: "0".repeat(128), mode: 0o644, size: 0, checked_at: None },
+        );
+
+        let entry = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let index = StoreIndex::open_in(store_path).unwrap();
+        index.set(&index_key, &entry).unwrap();
+        drop(index);
+
+        let err = DownloadTarballToStore {
+            http_client: &fast_fail_client(),
+            store_dir: store_path,
+            package_integrity: &pkg_integrity,
+            package_unpacked_size: None,
+            package_url: "http://127.0.0.1:1/unreachable.tgz",
+            package_id: pkg_id,
+        }
+        .run_without_mem_cache()
+        .await
+        .expect_err("stale index entry must not resolve to a cache hit");
+        assert!(
+            matches!(err, TarballError::FetchTarball(_)),
+            "expected fall-through to network fetch, got: {err:?}"
+        );
+
+        drop(store_dir);
+    }
+
+    /// A corrupt row whose digest is empty (or too short / non-hex) used
+    /// to panic inside `StoreDir::file_path_by_hex_str` (`hex[..2]`). The
+    /// validation in `cas_file_path_by_mode` now rejects such rows, and
+    /// `load_cached_cas_paths` treats that as a cache miss.
+    #[tokio::test]
+    async fn falls_through_when_digest_is_malformed() {
+        let (store_dir, store_path) = tempdir_with_leaked_path();
+
+        let pkg_integrity =
+            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_id = "fake@1.0.0";
+        let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
+
+        let mut files = HashMap::new();
+        files.insert(
+            "package.json".to_string(),
+            // Empty digest — pre-fix this would panic in the spawn_blocking
+            // task during `hex[..2]`.
+            CafsFileInfo { digest: String::new(), mode: 0o644, size: 0, checked_at: None },
+        );
+        let entry = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let index = StoreIndex::open_in(store_path).unwrap();
+        index.set(&index_key, &entry).unwrap();
+        drop(index);
+
+        let err = DownloadTarballToStore {
+            http_client: &fast_fail_client(),
+            store_dir: store_path,
+            package_integrity: &pkg_integrity,
+            package_unpacked_size: None,
+            package_url: "http://127.0.0.1:1/unreachable.tgz",
+            package_id: pkg_id,
+        }
+        .run_without_mem_cache()
+        .await
+        .expect_err("corrupt digest must not resolve to a cache hit");
+        assert!(
+            matches!(err, TarballError::FetchTarball(_)),
+            "expected fall-through to network fetch, got: {err:?}"
+        );
+
+        drop(store_dir);
+    }
+
+    /// A corrupted store might have a directory sitting where a CAFS blob
+    /// belongs (stray `mkdir -p`, interrupted write, whatever). `exists()`
+    /// would have let it through; `metadata().is_file()` rejects it.
+    #[tokio::test]
+    async fn falls_through_when_cafs_path_is_a_directory() {
+        let (store_dir, store_path) = tempdir_with_leaked_path();
+
+        let pkg_integrity =
+            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_id = "fake@1.0.0";
+        let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
+
+        let digest = "a".repeat(128);
+        let cafs_path = store_path
+            .cas_file_path_by_mode(&digest, 0o644)
+            .expect("128-char hex must produce a valid CAFS path");
+        std::fs::create_dir_all(&cafs_path).unwrap();
+
+        let mut files = HashMap::new();
+        files.insert(
+            "package.json".to_string(),
+            CafsFileInfo { digest, mode: 0o644, size: 0, checked_at: None },
+        );
+        let entry = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let index = StoreIndex::open_in(store_path).unwrap();
+        index.set(&index_key, &entry).unwrap();
+        drop(index);
+
+        let err = DownloadTarballToStore {
+            http_client: &fast_fail_client(),
+            store_dir: store_path,
+            package_integrity: &pkg_integrity,
+            package_unpacked_size: None,
+            package_url: "http://127.0.0.1:1/unreachable.tgz",
+            package_id: pkg_id,
+        }
+        .run_without_mem_cache()
+        .await
+        .expect_err("directory at CAFS path must not resolve to a cache hit");
+        assert!(
+            matches!(err, TarballError::FetchTarball(_)),
+            "expected fall-through to network fetch, got: {err:?}"
+        );
+
+        drop(store_dir);
+    }
+
+    /// A symlink at the CAFS path — even one pointing at a valid regular
+    /// file — must not be trusted. A tampered / corrupted store could
+    /// place one pointing outside the store entirely, so we use
+    /// `symlink_metadata()` and reject symlinks regardless of target.
+    #[tokio::test]
+    #[cfg(not(target_os = "windows"))]
+    async fn falls_through_when_cafs_path_is_a_symlink() {
+        let (store_dir, store_path) = tempdir_with_leaked_path();
+
+        let pkg_integrity =
+            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_id = "fake@1.0.0";
+        let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
+
+        let digest = "b".repeat(128);
+        let cafs_path = store_path
+            .cas_file_path_by_mode(&digest, 0o644)
+            .expect("128-char hex must produce a valid CAFS path");
+        std::fs::create_dir_all(cafs_path.parent().unwrap()).unwrap();
+
+        // Plant a symlink at the CAFS path pointing at a real regular
+        // file elsewhere. `metadata()` would have followed it and the
+        // check would have (incorrectly) succeeded; `symlink_metadata()`
+        // must reject the link itself.
+        let target = store_dir.path().join("outside-the-cafs.txt");
+        std::fs::write(&target, b"evil").unwrap();
+        std::os::unix::fs::symlink(&target, &cafs_path).unwrap();
+
+        let mut files = HashMap::new();
+        files.insert(
+            "package.json".to_string(),
+            CafsFileInfo { digest, mode: 0o644, size: 4, checked_at: None },
+        );
+        let entry = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let index = StoreIndex::open_in(store_path).unwrap();
+        index.set(&index_key, &entry).unwrap();
+        drop(index);
+
+        let err = DownloadTarballToStore {
+            http_client: &fast_fail_client(),
+            store_dir: store_path,
+            package_integrity: &pkg_integrity,
+            package_unpacked_size: None,
+            package_url: "http://127.0.0.1:1/unreachable.tgz",
+            package_id: pkg_id,
+        }
+        .run_without_mem_cache()
+        .await
+        .expect_err("symlink at CAFS path must not resolve to a cache hit");
+        assert!(
+            matches!(err, TarballError::FetchTarball(_)),
+            "expected fall-through to network fetch, got: {err:?}"
+        );
 
         drop(store_dir);
     }

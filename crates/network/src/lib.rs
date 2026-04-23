@@ -28,9 +28,17 @@ impl ThrottledClient {
     /// If the number of CPUs is greater than 16, the number of permits will be equal to the number of CPUs.
     /// Otherwise, the number of permits will be 16.
     pub fn new_from_cpu_count() -> Self {
+        ThrottledClient::from_client(Client::new())
+    }
+
+    /// Construct a throttled client wrapping a pre-built [`Client`].
+    /// Primarily useful for tests that need custom timeouts (a default
+    /// `Client` has no connect / request timeout, so a firewall that
+    /// silently drops packets instead of refusing them can stall the
+    /// test suite for TCP-retry worth of time).
+    pub fn from_client(client: Client) -> Self {
         const MIN_PERMITS: usize = 16;
         let semaphore = num_cpus::get().max(MIN_PERMITS).pipe(Semaphore::new);
-        let client = Client::new();
         ThrottledClient { semaphore, client }
     }
 }

@@ -119,13 +119,21 @@ impl StoreIndex {
         StoreIndex::open(&store_dir.v11())
     }
 
-    /// Open an existing `index.db` read-only. Does not run any PRAGMAs or
-    /// `CREATE TABLE IF NOT EXISTS`, so it will not create WAL / SHM sidecar
-    /// files or otherwise mutate the store. Suitable for tests and tooling
-    /// that only need to inspect the current index state.
+    /// Open an existing `index.db` read-only. Skips the schema-mutating
+    /// PRAGMAs (`journal_mode=WAL`, `synchronous`, `wal_autocheckpoint`)
+    /// and `CREATE TABLE IF NOT EXISTS`, so the call cannot create WAL /
+    /// SHM sidecar files or otherwise mutate the store.
+    ///
+    /// We *do* set `busy_timeout`: it's a connection-local wait, not a
+    /// DB mutation, and without it a concurrent writer (pnpm or another
+    /// pacquet process) turns every cache lookup during contention into
+    /// an immediate `SQLITE_BUSY` — i.e. a spurious cache miss that
+    /// triggers a full re-download. 5 s matches the writer side.
     pub fn open_readonly(store_dir: &Path) -> Result<Self, StoreIndexError> {
         let db_path = store_dir.join("index.db");
         let conn = Connection::open_with_flags(&db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|source| StoreIndexError::Open { path: db_path.clone(), source })?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(|source| StoreIndexError::Open { path: db_path, source })?;
         Ok(StoreIndex { conn })
     }
