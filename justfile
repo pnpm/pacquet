@@ -13,6 +13,11 @@ alias t := test
 # or install via `cargo install cargo-binstall`
 init:
   cargo binstall cargo-nextest cargo-watch cargo-insta typos-cli taplo-cli wasm-pack cargo-llvm-cov -y
+  just install-hooks
+
+# Point git at .githooks/ so the tracked pre-push format check runs on `git push`.
+install-hooks:
+  git config core.hooksPath .githooks
 
 # When ready, run the same CI commands
 ready:
