@@ -114,18 +114,26 @@ async fn load_cached_cas_paths(
         let entry = index.get(&cache_key).ok()??;
 
         let mut cas_paths = HashMap::with_capacity(entry.files.len());
-        for (filename, info) in &entry.files {
+        // Consume `entry.files` so the owned `String` keys can move
+        // straight into `cas_paths` — cloning each filename is an extra
+        // alloc per file in the package, and on a real tarball that's
+        // hundreds of strings.
+        for (filename, info) in entry.files {
             // `?` on `cas_file_path_by_mode` handles corrupt digests (empty,
             // too short, or non-hex) as a cache miss. Without it the
             // `hex[..2]` slice inside `file_path_by_hex_str` would panic.
             let path = store_dir.cas_file_path_by_mode(&info.digest, info.mode)?;
-            // Use metadata().is_file() rather than path.exists() so a
-            // directory squatting at the CAFS path (store corruption,
-            // stray `mkdir -p`, whatever) is rejected — `exists()` would
-            // otherwise return true and a caller would try to link a
-            // directory as if it were a file. Any metadata error also
-            // counts as a miss (blob pruned, permission issue, …).
-            if !path.metadata().is_ok_and(|m| m.is_file()) {
+            // Use `symlink_metadata()` + reject symlinks so this check
+            // applies to the CAFS path itself without ever following a
+            // link. That rules out directory squatting, symlinked
+            // blobs (which could point *outside* the store — a store
+            // corruption / tampering vector), and other non-regular
+            // filesystem objects. Any metadata error also counts as a
+            // miss (blob pruned, permission issue, …).
+            if !path.symlink_metadata().is_ok_and(|m| {
+                let file_type = m.file_type();
+                !file_type.is_symlink() && file_type.is_file()
+            }) {
                 // Treat the whole entry as invalid and re-fetch — partial
                 // reuse would give the caller a broken layout.
                 tracing::debug!(
@@ -137,7 +145,7 @@ async fn load_cached_cas_paths(
                 );
                 return None;
             }
-            cas_paths.insert(filename.clone(), path);
+            cas_paths.insert(filename, path);
         }
         Some(cas_paths)
     })
@@ -696,6 +704,69 @@ mod tests {
         .run_without_mem_cache()
         .await
         .expect_err("directory at CAFS path must not resolve to a cache hit");
+        assert!(
+            matches!(err, TarballError::FetchTarball(_)),
+            "expected fall-through to network fetch, got: {err:?}"
+        );
+
+        drop(store_dir);
+    }
+
+    /// A symlink at the CAFS path — even one pointing at a valid regular
+    /// file — must not be trusted. A tampered / corrupted store could
+    /// place one pointing outside the store entirely, so we use
+    /// `symlink_metadata()` and reject symlinks regardless of target.
+    #[tokio::test]
+    #[cfg(not(target_os = "windows"))]
+    async fn falls_through_when_cafs_path_is_a_symlink() {
+        let (store_dir, store_path) = tempdir_with_leaked_path();
+
+        let pkg_integrity =
+            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_id = "fake@1.0.0";
+        let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
+
+        let digest = "b".repeat(128);
+        let cafs_path = store_path
+            .cas_file_path_by_mode(&digest, 0o644)
+            .expect("128-char hex must produce a valid CAFS path");
+        std::fs::create_dir_all(cafs_path.parent().unwrap()).unwrap();
+
+        // Plant a symlink at the CAFS path pointing at a real regular
+        // file elsewhere. `metadata()` would have followed it and the
+        // check would have (incorrectly) succeeded; `symlink_metadata()`
+        // must reject the link itself.
+        let target = store_dir.path().join("outside-the-cafs.txt");
+        std::fs::write(&target, b"evil").unwrap();
+        std::os::unix::fs::symlink(&target, &cafs_path).unwrap();
+
+        let mut files = HashMap::new();
+        files.insert(
+            "package.json".to_string(),
+            CafsFileInfo { digest, mode: 0o644, size: 4, checked_at: None },
+        );
+        let entry = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let index = StoreIndex::open_in(store_path).unwrap();
+        index.set(&index_key, &entry).unwrap();
+        drop(index);
+
+        let err = DownloadTarballToStore {
+            http_client: &Default::default(),
+            store_dir: store_path,
+            package_integrity: &pkg_integrity,
+            package_unpacked_size: None,
+            package_url: "http://127.0.0.1:1/unreachable.tgz",
+            package_id: pkg_id,
+        }
+        .run_without_mem_cache()
+        .await
+        .expect_err("symlink at CAFS path must not resolve to a cache hit");
         assert!(
             matches!(err, TarballError::FetchTarball(_)),
             "expected fall-through to network fetch, got: {err:?}"

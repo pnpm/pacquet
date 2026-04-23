@@ -132,9 +132,9 @@ impl StoreIndex {
     pub fn open_readonly(store_dir: &Path) -> Result<Self, StoreIndexError> {
         let db_path = store_dir.join("index.db");
         let conn = Connection::open_with_flags(&db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .map_err(|source| StoreIndexError::Open { path: db_path, source })?;
+            .map_err(|source| StoreIndexError::Open { path: db_path.clone(), source })?;
         conn.busy_timeout(std::time::Duration::from_secs(5))
-            .map_err(|source| StoreIndexError::InitSchema { source })?;
+            .map_err(|source| StoreIndexError::Open { path: db_path, source })?;
         Ok(StoreIndex { conn })
     }
 
