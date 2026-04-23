@@ -607,7 +607,7 @@ fn write_str(w: &mut Vec<u8>, s: &str) {
 /// - **`SideEffectsDiff`**: fixed schema `[added, deleted]`, each
 ///   field `nil` when absent. Same reasoning as `CafsFileInfo`.
 pub fn encode_package_files_index(index: &PackageFilesIndex) -> Result<Vec<u8>, EncodeError> {
-    let mut state = EncodeState::default();
+    let mut state = EncodeState::new();
     let mut out = Vec::with_capacity(256);
     encode_pkg_files_index_value(&mut out, &mut state, index)?;
     Ok(out)
@@ -628,19 +628,76 @@ pub enum EncodeError {
     ManifestNotSupported,
 }
 
-/// Slot numbers used by [`encode_package_files_index`].
-const PKG_FILES_INDEX_SLOT: u8 = 0x40;
-const CAFS_FILE_INFO_SLOT: u8 = 0x41;
-const SIDE_EFFECTS_DIFF_SLOT: u8 = 0x42;
+/// Slot allocated to the top-level [`PackageFilesIndex`] record.
+/// A single stream always has exactly one of these, so it gets the
+/// base slot. Inner records (`CafsFileInfo`, `SideEffectsDiff`) are
+/// allocated lazily from `FIRST_INNER_SLOT` upwards, one slot per
+/// distinct shape — see [`EncodeState::slot_for`].
+const PKG_FILES_INDEX_SLOT: u8 = SLOT_LO; // 0x40
+const FIRST_INNER_SLOT: u8 = SLOT_LO + 1; // 0x41
 
-/// Tracks which records have already been defined in the current byte
-/// stream. The **first** instance of a slot is preceded by its
-/// `d4 72 <slot>` + field-name-array definition and the values are
-/// inlined; every subsequent instance is just `<slot>` + values.
-#[derive(Default)]
+/// Tracks which shapes have been defined and what slot each got.
+/// Mirrors msgpackr's own strategy: when it sees a new record instance
+/// whose field set differs from anything previously packed, it
+/// allocates a new slot rather than redefining an existing one — so
+/// same-shape instances downstream collapse to a single bare-slot byte
+/// (the point of records), and mixed-shape streams still decode
+/// correctly without per-instance re-defs.
+///
+/// Shape keys are small bitmasks over the optional fields of each
+/// record type, see `cafs_shape` / `side_effects_shape`. Each type has
+/// at most a handful of possible shapes (2 for `CafsFileInfo`, 4 for
+/// `SideEffectsDiff`), so the 0x40..=0x7f slot range is vastly
+/// over-provisioned for realistic workloads.
 struct EncodeState {
-    defined_cafs: bool,
-    defined_side_effects: bool,
+    /// Shape → slot for every `CafsFileInfo` shape seen so far. The
+    /// index is the shape bitmask produced by [`cafs_shape`] (2
+    /// possible values today). `None` = shape hasn't been emitted yet
+    /// in this stream.
+    cafs_slots: [Option<u8>; 2],
+    /// Same for `SideEffectsDiff`, indexed by [`side_effects_shape`]
+    /// (4 possible values).
+    side_effects_slots: [Option<u8>; 4],
+    /// Next unused slot in the 0x41..=0x7f range. Starts above
+    /// `PKG_FILES_INDEX_SLOT` because the top-level record always
+    /// takes slot 0x40.
+    next_slot: u8,
+}
+
+impl EncodeState {
+    fn new() -> Self {
+        EncodeState {
+            cafs_slots: [None; 2],
+            side_effects_slots: [None; 4],
+            next_slot: FIRST_INNER_SLOT,
+        }
+    }
+
+    fn allocate_slot(&mut self) -> u8 {
+        assert!(
+            self.next_slot <= SLOT_HI,
+            "msgpackr-records encoder ran out of slot numbers (>63 distinct \
+             record shapes in one stream); this shouldn't happen for \
+             realistic pacquet workloads — `CafsFileInfo` has at most 2 \
+             shapes and `SideEffectsDiff` at most 4"
+        );
+        let slot = self.next_slot;
+        self.next_slot += 1;
+        slot
+    }
+}
+
+/// Bitmask describing which optional fields a [`CafsFileInfo`] carries.
+/// Bit 0 = `checked_at`. Required fields (digest, mode, size) don't
+/// affect the shape because they're always present.
+fn cafs_shape(info: &CafsFileInfo) -> u8 {
+    u8::from(info.checked_at.is_some())
+}
+
+/// Bitmask describing which optional fields a [`SideEffectsDiff`]
+/// carries. Bit 0 = `added`, bit 1 = `deleted`.
+fn side_effects_shape(diff: &SideEffectsDiff) -> u8 {
+    u8::from(diff.added.is_some()) | (u8::from(diff.deleted.is_some()) << 1)
 }
 
 fn encode_pkg_files_index_value(
@@ -690,55 +747,74 @@ fn encode_pkg_files_index_value(
 }
 
 fn encode_cafs_file_info(w: &mut Vec<u8>, state: &mut EncodeState, info: &CafsFileInfo) {
-    if !state.defined_cafs {
-        state.defined_cafs = true;
-        // First instance: emit the record definition inline.
-        write_record_def_header(w, CAFS_FILE_INFO_SLOT, &["digest", "mode", "size", "checkedAt"]);
+    let shape = cafs_shape(info);
+    if let Some(slot) = state.cafs_slots[shape as usize] {
+        w.push(slot); // bare slot = record reference; no def needed
     } else {
-        // Subsequent instance: a bare slot byte is a reference.
-        w.push(CAFS_FILE_INFO_SLOT);
+        // New shape for this stream — allocate a slot and emit a
+        // record def inline. `digest`, `mode`, `size` are required;
+        // `checkedAt` is included only when `Some`, matching msgpackr's
+        // field-omit-when-absent behaviour so pnpm's reader sees the
+        // same object shape on round-trip. Field order matches pnpm's
+        // own output.
+        let slot = state.allocate_slot();
+        state.cafs_slots[shape as usize] = Some(slot);
+        let fields: &[&str] = if info.checked_at.is_some() {
+            &["digest", "mode", "size", "checkedAt"]
+        } else {
+            &["digest", "mode", "size"]
+        };
+        write_record_def_header(w, slot, fields);
     }
+
     write_str(w, &info.digest);
     write_uint(w, info.mode as u64);
     write_uint(w, info.size);
-    match info.checked_at {
-        // Float 64 — not uint 64 — because msgpackr decodes `uint 64` as
-        // a JS `BigInt`, and pnpm's integrity check does
+    if let Some(v) = info.checked_at {
+        // Float 64 — not uint 64 — because msgpackr decodes `uint 64`
+        // as a JS `BigInt`, and pnpm's integrity check does
         // `mtimeMs - (checkedAt ?? 0)` which throws `TypeError: Cannot
-        // mix BigInt and other types`. Packing as a double matches what
-        // pnpm writes for the same millisecond-epoch value (JS Number
-        // is a double, so msgpackr emits `cb` + 8 bytes for values past
-        // int32 range).
-        Some(v) => write_float64(w, v as f64),
-        None => write_nil(w),
+        // mix BigInt and other types`. Packing as a double matches
+        // what pnpm writes for the same millisecond-epoch value (JS
+        // Number is a double, so msgpackr emits `cb` + 8 bytes for
+        // values past int32 range).
+        write_float64(w, v as f64);
     }
 }
 
 fn encode_side_effects_diff(w: &mut Vec<u8>, state: &mut EncodeState, diff: &SideEffectsDiff) {
-    if !state.defined_side_effects {
-        state.defined_side_effects = true;
-        write_record_def_header(w, SIDE_EFFECTS_DIFF_SLOT, &["added", "deleted"]);
+    let shape = side_effects_shape(diff);
+    if let Some(slot) = state.side_effects_slots[shape as usize] {
+        w.push(slot);
     } else {
-        w.push(SIDE_EFFECTS_DIFF_SLOT);
+        // Msgpackr omits absent `added` / `deleted` from the schema
+        // rather than writing them as explicit `null`. Match that so
+        // downstream JS code checking `diff.added != null` /
+        // `diff.deleted != null` sees the same shape regardless of
+        // which tool wrote the row.
+        let slot = state.allocate_slot();
+        state.side_effects_slots[shape as usize] = Some(slot);
+        let fields: &[&str] = match (diff.added.is_some(), diff.deleted.is_some()) {
+            (true, true) => &["added", "deleted"],
+            (true, false) => &["added"],
+            (false, true) => &["deleted"],
+            (false, false) => &[],
+        };
+        write_record_def_header(w, slot, fields);
     }
-    match &diff.added {
-        Some(added) => {
-            write_map_header(w, added.len());
-            for (name, info) in added {
-                write_str(w, name);
-                encode_cafs_file_info(w, state, info);
-            }
+
+    if let Some(added) = &diff.added {
+        write_map_header(w, added.len());
+        for (name, info) in added {
+            write_str(w, name);
+            encode_cafs_file_info(w, state, info);
         }
-        None => write_nil(w),
     }
-    match &diff.deleted {
-        Some(deleted) => {
-            write_array_header(w, deleted.len());
-            for name in deleted {
-                write_str(w, name);
-            }
+    if let Some(deleted) = &diff.deleted {
+        write_array_header(w, deleted.len());
+        for name in deleted {
+            write_str(w, name);
         }
-        None => write_nil(w),
     }
 }
 
@@ -801,10 +877,6 @@ fn write_float64(w: &mut Vec<u8>, v: f64) {
 
 fn write_bool(w: &mut Vec<u8>, b: bool) {
     w.push(if b { 0xc3 } else { 0xc2 });
-}
-
-fn write_nil(w: &mut Vec<u8>) {
-    w.push(0xc0);
 }
 
 #[cfg(test)]
@@ -1173,11 +1245,14 @@ mod tests {
     }
 
     #[test]
-    fn encode_handles_missing_checked_at_as_nil() {
-        // `None` `checkedAt` is encoded as `c0` (nil), keeping the
-        // record schema for `CafsFileInfo` constant at four fields.
-        // pnpm's integrity check does `mtimeMs - (checkedAt ?? 0)`
-        // so `null` and missing are equivalent in its eyes.
+    fn encode_omits_checked_at_when_none() {
+        // `None` `checkedAt` is *omitted* from the record schema
+        // rather than encoded as `nil` — matches msgpackr's
+        // field-omit-when-absent behaviour, so pnpm's reader sees the
+        // same object shape it would produce on its own output (the
+        // `checkedAt` property is missing, not `null`). Round-trip
+        // through our transcoder still recovers `None` because
+        // `Option<u64>` deserializes a missing field to `None`.
         let mut files = HashMap::new();
         files.insert("f".to_string(), sample_cafs(100, false));
         let original = PackageFilesIndex {
@@ -1187,7 +1262,47 @@ mod tests {
             files,
             side_effects: None,
         };
+        let bytes = encode_package_files_index(&original).unwrap();
+        // No `checkedAt` string should appear — the schema for this
+        // `CafsFileInfo` only has `[digest, mode, size]`.
+        let needle = b"checkedAt";
+        assert!(
+            bytes.windows(needle.len()).all(|w| w != needle),
+            "checkedAt leaked into output when the field was None: {bytes:02x?}"
+        );
         assert_eq!(roundtrip(&original).files.get("f").unwrap().checked_at, None);
+    }
+
+    #[test]
+    fn encode_allocates_separate_slots_for_distinct_cafs_shapes() {
+        // Two `CafsFileInfo` instances with different shapes — one
+        // carries `checkedAt`, the other doesn't — must land in
+        // different slots. Same shape reuses its slot, which is the
+        // whole point of records. msgpackr does the same: slot 0x41
+        // for the first shape seen, 0x42 for the next new one, etc.
+        let mut files = HashMap::new();
+        files.insert("with_ts.js".to_string(), sample_cafs(10, true));
+        files.insert("no_ts_a.js".to_string(), sample_cafs(20, false));
+        files.insert("no_ts_b.js".to_string(), sample_cafs(30, false));
+        let original = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let bytes = encode_package_files_index(&original).unwrap();
+        let record_def_headers =
+            bytes.windows(2).filter(|w| *w == [0xd4, RECORD_DEF_EXT_TYPE]).count();
+        // Exactly three defs: `PackageFilesIndex`, `CafsFileInfo` with
+        // checkedAt, `CafsFileInfo` without checkedAt. The third file
+        // (second no-ts instance) shares the no-ts slot, so no fourth
+        // def.
+        assert_eq!(
+            record_def_headers, 3,
+            "expected three defs (outer + two CafsFileInfo shapes), got bytes {bytes:02x?}"
+        );
+        assert_eq!(roundtrip(&original), original);
     }
 
     #[test]
@@ -1245,6 +1360,71 @@ mod tests {
             files,
             side_effects: Some(side_effects),
         };
+        assert_eq!(roundtrip(&original), original);
+    }
+
+    #[test]
+    fn encode_side_effects_with_only_added_omits_deleted_field() {
+        // A `SideEffectsDiff` with `deleted: None` must not emit a
+        // `deleted` field name in the record schema. This is the case
+        // Copilot flagged: the fixed-schema encoder used to write
+        // `deleted: nil` here, producing a JS shape (`{ added, deleted:
+        // null }`) different from what msgpackr itself produces for
+        // the same Rust input (`{ added }`).
+        let mut added = HashMap::new();
+        added.insert("foo.so".to_string(), sample_cafs(42, true));
+        let mut side_effects = HashMap::new();
+        side_effects
+            .insert("linux".to_string(), SideEffectsDiff { added: Some(added), deleted: None });
+        let original = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files: HashMap::new(),
+            side_effects: Some(side_effects),
+        };
+        let bytes = encode_package_files_index(&original).unwrap();
+        assert!(
+            bytes.windows(7).all(|w| w != b"deleted"),
+            "`deleted` field name appeared in output when the field was None: {bytes:02x?}"
+        );
+        assert_eq!(roundtrip(&original), original);
+    }
+
+    #[test]
+    fn encode_allocates_separate_slots_for_distinct_side_effects_shapes() {
+        // Two `SideEffectsDiff` instances with distinct shapes (one
+        // with only `added`, one with only `deleted`) must land in
+        // different slots, mirroring msgpackr's behaviour on the same
+        // input.
+        let mut linux_added = HashMap::new();
+        linux_added.insert("foo.so".to_string(), sample_cafs(42, true));
+        let mut side_effects = HashMap::new();
+        side_effects.insert(
+            "linux".to_string(),
+            SideEffectsDiff { added: Some(linux_added), deleted: None },
+        );
+        side_effects.insert(
+            "darwin".to_string(),
+            SideEffectsDiff { added: None, deleted: Some(vec!["bar.o".to_string()]) },
+        );
+        let original = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files: HashMap::new(),
+            side_effects: Some(side_effects),
+        };
+        let bytes = encode_package_files_index(&original).unwrap();
+        let record_def_headers =
+            bytes.windows(2).filter(|w| *w == [0xd4, RECORD_DEF_EXT_TYPE]).count();
+        // Three defs: outer `PackageFilesIndex`, `SideEffectsDiff`
+        // shape-`added`, `SideEffectsDiff` shape-`deleted`. The inner
+        // `CafsFileInfo` adds a fourth.
+        assert_eq!(
+            record_def_headers, 4,
+            "expected defs for outer + two distinct side-effects shapes + CafsFileInfo, got bytes {bytes:02x?}"
+        );
         assert_eq!(roundtrip(&original), original);
     }
 
