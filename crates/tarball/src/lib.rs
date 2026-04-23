@@ -107,9 +107,8 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
 /// re-fetching.
 async fn load_cached_cas_paths(
     store_dir: &'static StoreDir,
-    cache_key: &str,
+    cache_key: String,
 ) -> Option<HashMap<String, PathBuf>> {
-    let cache_key = cache_key.to_string();
     tokio::task::spawn_blocking(move || -> Option<HashMap<String, PathBuf>> {
         let index = StoreIndex::open_readonly_in(store_dir).ok()?;
         let entry = index.get(&cache_key).ok()??;
@@ -225,8 +224,8 @@ impl<'a> DownloadTarballToStore<'a> {
         // CAFS file that has gone missing from disk all fall through to
         // the download path below.
         let cache_key = store_index_key(&package_integrity.to_string(), package_id);
-        if let Some(cas_paths) = load_cached_cas_paths(store_dir, &cache_key).await {
-            tracing::info!(target: "pacquet::download", ?package_url, ?cache_key, "Reusing cached CAFS entry — skipping download");
+        if let Some(cas_paths) = load_cached_cas_paths(store_dir, cache_key).await {
+            tracing::info!(target: "pacquet::download", ?package_url, ?package_id, "Reusing cached CAFS entry — skipping download");
             return Ok(cas_paths);
         }
 

@@ -18,13 +18,18 @@ impl StoreDir {
     /// [`getFilePathByModeInCafs`](https://github.com/pnpm/pnpm/blob/main/store/cafs/src/getFilePathInCafs.ts)
     /// so index entries written by either tool resolve to the same path.
     ///
-    /// Returns `None` when `hex` is too short or not ASCII-hex — the
-    /// underlying split slices `hex[..2]` and would otherwise panic on a
-    /// corrupt / partially-interop row. Callers treat `None` as "cache
-    /// miss" so a bad index entry falls through to a fresh download
-    /// instead of aborting the install.
+    /// Returns `None` when `hex` is too short or not ASCII-hex.
+    ///
+    /// We require *more* than two hex chars — the first two become the
+    /// shard directory `files/XX/`, and the rest is the file component.
+    /// A two-char input produces an empty tail, which on disk is the
+    /// shard directory itself (usually present), so without this tighter
+    /// check a caller would hand a directory path back as if it were a
+    /// CAFS file path. The ASCII-hex requirement additionally guards the
+    /// `hex[..2]` slice inside `file_path_by_hex_str` from panicking on
+    /// non-UTF-8-char-boundary input.
     pub fn cas_file_path_by_mode(&self, hex: &str, mode: u32) -> Option<PathBuf> {
-        if hex.len() < 2 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        if hex.len() <= 2 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
         let suffix = if (mode & 0o111) != 0 { "-exec" } else { "" };
@@ -87,9 +92,12 @@ mod tests {
         let store_dir = StoreDir::new("STORE_DIR");
         assert_eq!(store_dir.cas_file_path_by_mode("", 0o644), None);
         assert_eq!(store_dir.cas_file_path_by_mode("a", 0o644), None);
+        // Exactly two hex chars is still rejected — it would resolve to
+        // the shard directory itself (files/XX/), which is not a file.
+        assert_eq!(store_dir.cas_file_path_by_mode("ab", 0o644), None);
         assert_eq!(store_dir.cas_file_path_by_mode("zz", 0o644), None);
         assert_eq!(store_dir.cas_file_path_by_mode("Ab\tcd", 0o644), None);
-        assert!(store_dir.cas_file_path_by_mode("ab", 0o644).is_some());
+        assert!(store_dir.cas_file_path_by_mode("abc", 0o644).is_some());
         assert!(store_dir.cas_file_path_by_mode("abcdef", 0o755).is_some());
     }
 }
