@@ -1,18 +1,8 @@
 ---
 source: crates/cli/tests/install.rs
-assertion_line: 130
 expression: index_file_contents
 ---
-v3/files/a5/541962367c9c3aaaa8be96312f7efedf7ae638bd051e80573649ca93b4852f4f2749efdce9f19fa7355b3a6d9130eded64e4b3c0efe753622735c5069482cd-index.json:
-  index.js:
-    integrity: sha512-AvnZUjQereZ10Kj12hTUJ3/e1i+TckIpLCz18bsO2hAbX4AwmNZOKhOPS/5M3zJs+vj2tAFUdquG0l3wPd7HMQ==
-    mode: 493
-    size: 79
-  package.json:
-    integrity: sha512-k+MfzZFEpgT4fQT6j7SgWCAsV53xf9KyEwHhesCuTz4rrpDO165xtxIYvUp4njVe97i9iJnNt4UlAHGyKVA7Lg==
-    mode: 420
-    size: 537
-v3/files/dd/feae8107ea156f46477e8e49e4dfb12365ba9ee122c953db785a5f776f4ff7b91b25378889dab77fb4188f8caaf45cc1c373b01ad326aef20d6a77c24ecefd-index.json:
+v3/files/10/3bc9cd22c210c9d49ebac819d57e21458fffcc3e9d48ceb9acb6bb4296db43277e79b7972addaae43e80a3cd00e51f02c28bd72db59e9d6740dd0fc8ffb9ec-index.json:
   index.js:
     integrity: sha512-vwyHjypPLsbyMbstQUVH77FesipnOBXLo2rP2JYzzUyK/8vck3jpCtTY/GVN6SHR9nREvpTmovgb2pMwvmC+kw==
     mode: 493
@@ -21,4 +11,12 @@ v3/files/dd/feae8107ea156f46477e8e49e4dfb12365ba9ee122c953db785a5f776f4ff7b91b25
     integrity: sha512-aLg3tP15grCBUh5RsUoWfM2ycrPEmSAkSdB9SNeKL6e7hlLTqJS7BqxuOZXlEm7jRw9ztXdVhJQHUfzovkaEBQ==
     mode: 420
     size: 379
-
+v3/files/7c/4cc63270237a5aebe25f56320e4d445e93ca6dc784b05b75435edc2f8440ead6571fe3552325b1e7e89228efda62038022e6ec5bfa17352589004076cabdd5-index.json:
+  index.js:
+    integrity: sha512-AvnZUjQereZ10Kj12hTUJ3/e1i+TckIpLCz18bsO2hAbX4AwmNZOKhOPS/5M3zJs+vj2tAFUdquG0l3wPd7HMQ==
+    mode: 493
+    size: 79
+  package.json:
+    integrity: sha512-k+MfzZFEpgT4fQT6j7SgWCAsV53xf9KyEwHhesCuTz4rrpDO165xtxIYvUp4njVe97i9iJnNt4UlAHGyKVA7Lg==
+    mode: 420
+    size: 537
