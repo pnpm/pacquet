@@ -36,6 +36,7 @@ allow = [
   "BSL-1.0",
   "ISC",
   "Unlicense", # required by portpicker, which is used by crates/registry-mock
+  "Zlib", # required by foldhash, a transitive dep of rusqlite
 ]
 confidence-threshold = 0.8
 exceptions = []

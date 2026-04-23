@@ -50,6 +50,9 @@ pub struct AddMockedRegistry {
 
 impl CommandTempCwd<()> {
     /// Create a mock registry and a `.npmrc` file that defines `store-dir`, `cache-dir`, and `registry`.
+    ///
+    /// Also writes a `pnpm-workspace.yaml` with `storeDir` / `cacheDir` because
+    /// pnpm 11 reads those from the workspace YAML rather than `.npmrc`.
     pub fn add_mocked_registry(self) -> CommandTempCwd<AddMockedRegistry> {
         let store_dir = self.root.path().join("pacquet-store");
         let cache_dir = self.root.path().join("pacquet-cache");
@@ -62,6 +65,14 @@ impl CommandTempCwd<()> {
         let mocked_registry = mock_instance.url();
         let npmrc_text = format!("registry={mocked_registry}\n{npmrc_text}");
         fs::write(&npmrc_path, npmrc_text).expect("write to .npmrc");
+
+        let workspace_yaml = self.workspace.join("pnpm-workspace.yaml");
+        let workspace_yaml_text = text_block_fnl! {
+            "storeDir: ../pacquet-store"
+            "cacheDir: ../pacquet-cache"
+        };
+        fs::write(&workspace_yaml, workspace_yaml_text).expect("write to pnpm-workspace.yaml");
+
         let npmrc_info = AddMockedRegistry { npmrc_path, store_dir, cache_dir, mock_instance };
         let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info: () } = self;
         CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info }

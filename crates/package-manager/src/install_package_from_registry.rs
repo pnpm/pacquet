@@ -76,6 +76,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
         } = self;
 
         let store_folder_name = package_version.to_virtual_store_name();
+        let package_id = format!("{0}@{1}", package_version.name, package_version.version);
 
         // TODO: skip when it already exists in store?
         let cas_paths = DownloadTarballToStore {
@@ -88,6 +89,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
                 .expect("has integrity field"),
             package_unpacked_size: package_version.dist.unpacked_size,
             package_url: package_version.as_tarball_url(),
+            package_id: &package_id,
         }
         .run_with_mem_cache(tarball_mem_cache)
         .await

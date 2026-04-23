@@ -38,14 +38,6 @@ fn store_usable_by_pnpm_offline() {
     drop((root, mock_instance)); // cleanup
 }
 
-// Ignored until pacquet adopts the pnpm v11 store format (SQLite + `store/v11/`
-// directory layout). See https://github.com/pnpm/pacquet/issues/244. Until then
-// pacquet writes `store/v3/files/XX/…-index.json` and pnpm 11 writes
-// `store/v11/files/XX/…` + `index.db`, so the two stores can never have the same
-// file structure. Also, pnpm 11 moved `store-dir` out of `.npmrc` into
-// `pnpm-workspace.yaml`, so the current test setup's `.npmrc`-based store-dir
-// config is ignored by pnpm 11 entirely.
-#[ignore = "requires pnpm v11 store format in pacquet (#244)"]
 #[test]
 fn same_file_structure() {
     let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info } =
@@ -68,15 +60,41 @@ fn same_file_structure() {
     });
     fs::write(manifest_path, package_json_content.to_string()).expect("write to package.json");
 
+    // Filter out pnpm-only artifacts whose presence is orthogonal to whether
+    // the two tools agree on the CAFS layout:
+    //   * `v11/projects/<hash>` — pnpm-11-only per-project metadata tracking
+    //     which packages in the store are linked from which project. Pacquet
+    //     doesn't yet populate this, and sharing the store doesn't require it.
+    //   * `v11/index.db-wal` / `v11/index.db-shm` — SQLite WAL sidecars that
+    //     only exist while a connection is open; their presence at comparison
+    //     time depends on whether the checkpoint ran before we measured.
+    let normalize = |files: Vec<String>| -> Vec<String> {
+        files
+            .into_iter()
+            // Per-project metadata that pnpm 11 populates and pacquet doesn't.
+            // Doesn't affect the shared-cafs story.
+            .filter(|p| !p.starts_with("v11/projects/"))
+            // Hoisted-symlinks layout introduced in pnpm 11 — pnpm stores
+            // one `node_modules` tree per `<name>/<version>/<hash>/` under
+            // `v11/links/` and links the project's `node_modules/X` into there.
+            // Pacquet still uses the older per-project `.pnpm/` virtual store,
+            // so these paths exist only on the pnpm side.
+            .filter(|p| !p.starts_with("v11/links/"))
+            // SQLite WAL sidecars exist only while a connection holds the
+            // journal open. Their presence at compare-time depends on timing.
+            .filter(|p| p != "v11/index.db-wal" && p != "v11/index.db-shm")
+            .collect()
+    };
+
     eprintln!("Installing with pacquet...");
     pacquet.with_arg("install").assert().success();
-    let pacquet_store_files = get_all_files(&store_dir);
+    let pacquet_store_files = normalize(get_all_files(&store_dir));
 
     cleanup();
 
     eprintln!("Installing with pnpm...");
     pnpm.with_args(["install", "--ignore-scripts"]).assert().success();
-    let pnpm_store_files = get_all_files(&store_dir);
+    let pnpm_store_files = normalize(get_all_files(&store_dir));
 
     cleanup();
 
@@ -86,7 +104,12 @@ fn same_file_structure() {
     drop((root, mock_instance)); // cleanup
 }
 
-#[ignore = "requires pnpm v11 store format in pacquet (#244)"]
+// pnpm writes its `index.db` values with msgpackr `useRecords: true`, which
+// uses extension-typed records that rmp-serde can't decode. Pacquet-written
+// entries round-trip fine (we use `to_vec_named`), but reading entries that
+// pnpm wrote is blocked on msgpackr-records decoding support — tracked in
+// #244 as a follow-up after the v11 store cutover.
+#[ignore = "requires msgpackr useRecords decoding to read pnpm-written entries (#244)"]
 #[test]
 fn same_index_file_contents() {
     let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info } =
