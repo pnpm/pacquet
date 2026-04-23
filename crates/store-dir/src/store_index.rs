@@ -152,19 +152,25 @@ impl StoreIndex {
 
     /// Look up a package-files index by key. Returns `Ok(None)` if no row exists.
     ///
-    /// Both pnpm- and pacquet-written rows are msgpackr-records streams
-    /// (pacquet now writes records via
-    /// [`encode_package_files_index`][crate::msgpackr_records::encode_package_files_index]
-    /// for pnpm-interop reasons, matching what pnpm's `Packr({useRecords:
-    /// true, …})` emits). Both run through
-    /// [`transcode_to_plain_msgpack`][crate::msgpackr_records::transcode_to_plain_msgpack]
-    /// to unpack the records and narrow the integer-valued `float 64`
-    /// encoding of `checkedAt` back to `uint 64`, then `rmp_serde`
-    /// deserializes into [`PackageFilesIndex`]. The transcoder also
-    /// tolerates legacy plain-msgpack rows pacquet may have left behind
-    /// before this change — they contain no record headers, so the
-    /// `records_mode` flag never flips and those bytes pass through
-    /// with only the float-narrowing applied.
+    /// Rows come in three flavours and all three decode through one
+    /// path:
+    /// 1. **pnpm-written**: msgpackr-records, what pnpm's
+    ///    `Packr({useRecords: true, …})` emits.
+    /// 2. **pacquet-written**: also msgpackr-records, from
+    ///    [`encode_package_files_index`][crate::msgpackr_records::encode_package_files_index]
+    ///    — pacquet matches pnpm's on-wire shape so the two tools can
+    ///    share `index.db`.
+    /// 3. **Legacy pacquet-written**: plain MessagePack maps from the
+    ///    `rmp_serde::to_vec_named` path used before this PR. These
+    ///    may still live in caches that predate the cutover.
+    ///
+    /// All three route through
+    /// [`transcode_to_plain_msgpack`][crate::msgpackr_records::transcode_to_plain_msgpack],
+    /// which expands records into plain msgpack maps and narrows the
+    /// `float 64` encoding of `checkedAt` back to `uint 64`. Plain
+    /// msgpack rows skip the records-expansion (the `records_mode` flag
+    /// never flips) but still benefit from the float narrowing. The
+    /// result feeds `rmp_serde` to produce a [`PackageFilesIndex`].
     ///
     /// Cost is one `Vec<u8>` allocation + memcpy per read, dwarfed by
     /// the SQLite query and disk I/O.

@@ -155,29 +155,28 @@ fn same_index_file_contents() {
     drop((root, mock_instance)); // cleanup
 }
 
-// Regression: pacquet-written `index.db` rows must be readable by
-// pnpm's msgpackr-based reader.
+// Regression: pacquet-written `index.db` rows must remain readable
+// by pnpm's msgpackr-based reader. Pacquet now writes
+// msgpackr-records via `encode_package_files_index`; this test guards
+// against regressing to the older `rmp_serde::to_vec_named` plain-map
+// encoding.
 //
-// Earlier builds of pacquet encoded `PackageFilesIndex` via
-// `rmp_serde::to_vec_named`, which produces plain MessagePack maps.
-// pnpm's `Packr({useRecords: true, moreTypes: true}).unpack(…)` then
-// decoded the whole row as a JS `Map` (because every msgpack map at
-// any nesting level becomes a `Map` in that mode — records are the
-// escape hatch to "decode as an object"). Downstream pnpm code does
-// `pkgIndex.files` — a property access — and got `undefined`, which
-// made its `for (const [f, fstat] of pkgIndex.files)` throw
-// `files is not iterable`. The failure surfaced in CI as
-// `ERR_PNPM_READ_FROM_STORE` when a later run's cached pnpm v11 store
-// contained pacquet-written rows.
+// Why that regression would be silent without this test: pnpm's
+// `Packr({useRecords: true, moreTypes: true}).unpack(…)` decodes
+// every plain msgpack map (at any nesting level) as a JS `Map` —
+// records are the escape hatch that says "this one's a plain object".
+// A plain-map-encoded row would come back as a top-level `Map`,
+// `pkgIndex.files` (property access) would be `undefined`, and pnpm's
+// `for (const [f, fstat] of pkgIndex.files)` would throw
+// `files is not iterable`, surfacing as `ERR_PNPM_READ_FROM_STORE`.
+// That's exactly what took CI down before this PR.
 //
-// The flow below reproduces the path the benchmark took: pacquet
-// populates the store (writing rows with the new msgpackr-records
-// encoder), `node_modules` is wiped, then pnpm installs against the
-// same store. If pnpm hits a pacquet-written row while building the
-// dependency tree and can't decode it, this test fails with the same
-// `ERR_PNPM_READ_FROM_STORE` the benchmark did. Leaving the store
-// intact (unlike `same_file_structure`) is what makes pnpm actually
-// *read* from it.
+// The flow below reproduces the benchmark's path: pacquet populates
+// the store, `node_modules` is wiped, then pnpm installs against the
+// same store. Leaving the store intact — unlike `same_file_structure`
+// and `same_index_file_contents`, which clean it between the pacquet
+// and pnpm halves — is what makes pnpm actually *read* pacquet's
+// rows.
 #[test]
 fn pnpm_reads_pacquet_written_rows() {
     let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info } =
