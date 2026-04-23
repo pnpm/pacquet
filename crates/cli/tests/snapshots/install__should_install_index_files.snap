@@ -2,21 +2,21 @@
 source: crates/cli/tests/install.rs
 expression: index_file_contents
 ---
-v3/files/10/3bc9cd22c210c9d49ebac819d57e21458fffcc3e9d48ceb9acb6bb4296db43277e79b7972addaae43e80a3cd00e51f02c28bd72db59e9d6740dd0fc8ffb9ec-index.json:
+"sha512-EDvJzSLCEMnUnrrIGdV+IUWP/8w+nUjOuay2u0KW20Mnfnm3lyrdquQ+gKPNAOUfAsKL1y21np1nQN0PyP+57A==\t@pnpm.e2e/hello-world-js-bin@1.0.0":
   index.js:
-    integrity: sha512-vwyHjypPLsbyMbstQUVH77FesipnOBXLo2rP2JYzzUyK/8vck3jpCtTY/GVN6SHR9nREvpTmovgb2pMwvmC+kw==
+    digest: bf0c878f2a4f2ec6f231bb2d414547efb15eb22a673815cba36acfd89633cd4c8affcbdc9378e90ad4d8fc654de921d1f67444be94e6a2f81bda9330be60be93
     mode: 493
     size: 48
   package.json:
-    integrity: sha512-aLg3tP15grCBUh5RsUoWfM2ycrPEmSAkSdB9SNeKL6e7hlLTqJS7BqxuOZXlEm7jRw9ztXdVhJQHUfzovkaEBQ==
+    digest: 68b837b4fd7982b081521e51b14a167ccdb272b3c499202449d07d48d78a2fa7bb8652d3a894bb06ac6e3995e5126ee3470f73b5775584940751fce8be468405
     mode: 420
     size: 379
-v3/files/7c/4cc63270237a5aebe25f56320e4d445e93ca6dc784b05b75435edc2f8440ead6571fe3552325b1e7e89228efda62038022e6ec5bfa17352589004076cabdd5-index.json:
+"sha512-fEzGMnAjelrr4l9WMg5NRF6Tym3HhLBbdUNe3C+EQOrWVx/jVSMlsefokijv2mIDgCLm7Fv6FzUliQBAdsq91Q==\t@pnpm.e2e/hello-world-js-bin-parent@1.0.0":
   index.js:
-    integrity: sha512-AvnZUjQereZ10Kj12hTUJ3/e1i+TckIpLCz18bsO2hAbX4AwmNZOKhOPS/5M3zJs+vj2tAFUdquG0l3wPd7HMQ==
+    digest: 02f9d952341eade675d0a8f5da14d4277fded62f937242292c2cf5f1bb0eda101b5f803098d64e2a138f4bfe4cdf326cfaf8f6b4015476ab86d25df03ddec731
     mode: 493
     size: 79
   package.json:
-    integrity: sha512-k+MfzZFEpgT4fQT6j7SgWCAsV53xf9KyEwHhesCuTz4rrpDO165xtxIYvUp4njVe97i9iJnNt4UlAHGyKVA7Lg==
+    digest: 93e31fcd9144a604f87d04fa8fb4a058202c579df17fd2b21301e17ac0ae4f3e2bae90ced7ae71b71218bd4a789e355ef7b8bd8899cdb785250071b229503b2e
     mode: 420
     size: 537
