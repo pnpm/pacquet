@@ -64,11 +64,11 @@ pub enum StoreIndexError {
         source: rusqlite::Error,
     },
 
-    #[display("Failed to encode PackageFilesIndex as msgpack: {source}")]
-    #[diagnostic(code(pacquet_store_dir::store_index::encode))]
+    #[display("Failed to encode PackageFilesIndex as msgpackr records: {source}")]
+    #[diagnostic(transparent)]
     Encode {
         #[error(source)]
-        source: rmp_serde::encode::Error,
+        source: crate::msgpackr_records::EncodeError,
     },
 
     #[display("Failed to decode PackageFilesIndex from msgpack: {source}")]
@@ -152,25 +152,28 @@ impl StoreIndex {
 
     /// Look up a package-files index by key. Returns `Ok(None)` if no row exists.
     ///
-    /// pacquet-written rows are plain `rmp_serde` msgpack maps (via
-    /// `to_vec_named`). pnpm-written rows use msgpackr's records extension.
-    /// Both shapes are normalised through
-    /// [`transcode_to_plain_msgpack`][crate::msgpackr_records::transcode_to_plain_msgpack]
-    /// before `rmp_serde` sees them — the transcoder tracks records
-    /// mode internally, so passing plain msgpack through is safe and
-    /// also lets it narrow the integer-valued `float 64` encoding we
-    /// use for `checkedAt` back into `uint 64` for deserialization.
+    /// Rows come in three flavours and all three decode through one
+    /// path:
+    /// 1. **pnpm-written**: msgpackr-records, what pnpm's
+    ///    `Packr({useRecords: true, …})` emits.
+    /// 2. **pacquet-written**: also msgpackr-records, from
+    ///    [`encode_package_files_index`][crate::msgpackr_records::encode_package_files_index]
+    ///    — pacquet matches pnpm's on-wire shape so the two tools can
+    ///    share `index.db`.
+    /// 3. **Legacy pacquet-written**: plain MessagePack maps from the
+    ///    `rmp_serde::to_vec_named` path used before this PR. These
+    ///    may still live in caches that predate the cutover.
     ///
-    /// There's no bypass fast-path for pacquet-written rows because
-    /// they carry `checkedAt` as `float 64` on purpose (see
-    /// [`CafsFileInfo::checked_at`] for why — msgpackr reads `uint 64`
-    /// as a JS `BigInt`, and pnpm's integrity check does
-    /// `mtimeMs - (checkedAt ?? 0)` which crashes on Number/BigInt
-    /// mixing). Any real tarball has at least one file with
-    /// `checkedAt: Some(…)`, so every row needs float-narrowing and
-    /// the transcoder ends up running. The cost is one extra
-    /// `Vec<u8>` allocation + memcpy per read, dwarfed by the SQLite
-    /// and disk costs.
+    /// All three route through
+    /// [`transcode_to_plain_msgpack`][crate::msgpackr_records::transcode_to_plain_msgpack],
+    /// which expands records into plain msgpack maps and narrows the
+    /// `float 64` encoding of `checkedAt` back to `uint 64`. Plain
+    /// msgpack rows skip the records-expansion (the `records_mode` flag
+    /// never flips) but still benefit from the float narrowing. The
+    /// result feeds `rmp_serde` to produce a [`PackageFilesIndex`].
+    ///
+    /// Cost is one `Vec<u8>` allocation + memcpy per read, dwarfed by
+    /// the SQLite query and disk I/O.
     pub fn get(&self, key: &str) -> Result<Option<PackageFilesIndex>, StoreIndexError> {
         let row: Option<Vec<u8>> = self
             .conn
@@ -188,12 +191,18 @@ impl StoreIndex {
     }
 
     /// Insert or replace a package-files index.
+    ///
+    /// Uses the [`encode_package_files_index`][crate::msgpackr_records::encode_package_files_index]
+    /// encoder, which emits msgpackr-records bytes that pnpm's
+    /// `Packr({useRecords: true, moreTypes: true}).unpack(…)` reads as
+    /// the same shape it produces itself. A naive
+    /// `rmp_serde::to_vec_named` here produced bytes that pnpm's reader
+    /// interpreted as a top-level JS `Map`, making `pkgIndex.files` a
+    /// property-access miss and crashing with `files is not iterable`
+    /// inside pnpm's CAFS layer.
     pub fn set(&self, key: &str, value: &PackageFilesIndex) -> Result<(), StoreIndexError> {
-        // `to_vec_named` writes structs as string-keyed maps rather than
-        // positional arrays — required for pnpm-interop, since pnpm's
-        // msgpackr reads/writes named-field records.
-        let buf =
-            rmp_serde::to_vec_named(value).map_err(|source| StoreIndexError::Encode { source })?;
+        let buf = crate::msgpackr_records::encode_package_files_index(value)
+            .map_err(|source| StoreIndexError::Encode { source })?;
         self.conn
             .execute(
                 "INSERT OR REPLACE INTO package_index (key, data) VALUES (?1, ?2)",

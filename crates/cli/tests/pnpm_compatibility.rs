@@ -104,11 +104,13 @@ fn same_file_structure() {
     drop((root, mock_instance)); // cleanup
 }
 
-// pnpm writes `index.db` values with msgpackr `useRecords: true`; pacquet
-// writes plain msgpack via `rmp_serde::to_vec_named`. `StoreIndex::get`
-// now transcodes msgpackr rows to plain msgpack before deserializing, so
-// both encodings decode to the same `PackageFilesIndex` — the snapshot
-// assertion below compares the decoded shape, not the on-disk bytes.
+// Both pnpm and pacquet now write `index.db` values as msgpackr
+// records (pnpm via `Packr({useRecords: true})`, pacquet via
+// `encode_package_files_index`). `StoreIndex::get` decodes both through
+// the shared transcoder, so this test just asserts the two tools'
+// decoded `PackageFilesIndex` shapes match for the same install — not
+// byte-identical rows, because `HashMap` iteration order can differ
+// from msgpackr's, but the post-decode structs compare equal.
 #[test]
 fn same_index_file_contents() {
     let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info } =
@@ -151,6 +153,55 @@ fn same_index_file_contents() {
 
     eprintln!("Produce the same store dir structure");
     assert_eq!(&pacquet_index_file_contents, &pnpm_index_file_contents);
+
+    drop((root, mock_instance)); // cleanup
+}
+
+// Regression: pacquet-written `index.db` rows must remain readable
+// by pnpm's msgpackr-based reader. Pacquet now writes
+// msgpackr-records via `encode_package_files_index`; this test guards
+// against regressing to the older `rmp_serde::to_vec_named` plain-map
+// encoding.
+//
+// Why that regression would be silent without this test: pnpm's
+// `Packr({useRecords: true, moreTypes: true}).unpack(…)` decodes
+// every plain msgpack map (at any nesting level) as a JS `Map` —
+// records are the escape hatch that says "this one's a plain object".
+// A plain-map-encoded row would come back as a top-level `Map`,
+// `pkgIndex.files` (property access) would be `undefined`, and pnpm's
+// `for (const [f, fstat] of pkgIndex.files)` would throw
+// `files is not iterable`, surfacing as `ERR_PNPM_READ_FROM_STORE`.
+// That's exactly what took CI down before this PR.
+//
+// The flow below reproduces the benchmark's path: pacquet populates
+// the store, `node_modules` is wiped, then pnpm installs against the
+// same store. Leaving the store intact — unlike `same_file_structure`
+// and `same_index_file_contents`, which clean it between the pacquet
+// and pnpm halves — is what makes pnpm actually *read* pacquet's
+// rows.
+#[test]
+fn pnpm_reads_pacquet_written_rows() {
+    let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info } =
+        CommandTempCwd::init().add_mocked_registry();
+    let AddMockedRegistry { mock_instance, .. } = npmrc_info;
+
+    eprintln!("Creating package.json...");
+    let manifest_path = workspace.join("package.json");
+    let package_json_content = serde_json::json!({
+        "dependencies": {
+            "@pnpm.e2e/hello-world-js-bin-parent": "1.0.0",
+        },
+    });
+    fs::write(manifest_path, package_json_content.to_string()).expect("write to package.json");
+
+    eprintln!("pacquet install (populates store with msgpackr records)...");
+    pacquet.with_arg("install").assert().success();
+
+    eprintln!("Removing node_modules; store is kept so pnpm has to read pacquet's rows...");
+    fs::remove_dir_all(workspace.join("node_modules")).expect("delete node_modules");
+
+    eprintln!("pnpm install --ignore-scripts (reads pacquet's index.db rows)...");
+    pnpm.with_args(["install", "--ignore-scripts"]).assert().success();
 
     drop((root, mock_instance)); // cleanup
 }

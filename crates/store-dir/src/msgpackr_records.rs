@@ -1,6 +1,7 @@
-//! Decoder for the narrow subset of [msgpackr](https://github.com/kriszyp/msgpackr)'s
-//! wire format that pnpm v11 uses to write `index.db` rows — standard
-//! MessagePack extended with msgpackr's **records** extension.
+//! Encoder and decoder for the narrow subset of
+//! [msgpackr](https://github.com/kriszyp/msgpackr)'s wire format that
+//! pnpm v11 uses to write `index.db` rows — standard MessagePack
+//! extended with msgpackr's **records** extension.
 //!
 //! ## Why this exists
 //!
@@ -9,10 +10,21 @@
 //! [`store/index/src/index.ts`](https://github.com/pnpm/pnpm/blob/main/store/index/src/index.ts)
 //! line 12). `useRecords` replaces repeated string keys in same-shape
 //! structs with a compact slot reference — roughly, Protobuf field numbers
-//! inline. Standard `rmp_serde` has no idea what those bytes mean, so a
-//! row pnpm wrote round-trips as "decode error → cache miss → re-download"
-//! through pacquet's SQLite lookup. That defeats the whole point of a
-//! shared store.
+//! inline. Plain `rmp_serde` output round-trips through msgpackr badly
+//! in *both* directions:
+//!
+//! - **Reading pnpm → pacquet**: standard `rmp_serde` has no idea what
+//!   records bytes mean, so a row pnpm wrote would fail to decode and
+//!   look like a cache miss, forcing a full re-download.
+//! - **Reading pacquet → pnpm**: msgpackr with `useRecords: true`
+//!   decodes every plain msgpack map (at any nesting level) as a JS
+//!   `Map`, including the top-level `PackageFilesIndex`. pnpm's code
+//!   then does `pkgIndex.files` (a property access on that `Map`),
+//!   gets `undefined`, and crashes with `files is not iterable`.
+//!
+//! This module provides both halves — [`transcode_to_plain_msgpack`]
+//! for the read side and [`encode_package_files_index`] for the write
+//! side — so a shared `index.db` actually works.
 //!
 //! ## Wire format (the parts pnpm actually emits)
 //!
@@ -43,12 +55,26 @@
 //!
 //! ## Strategy
 //!
-//! Rather than deserialize `PackageFilesIndex` directly from msgpackr
-//! bytes, we **transcode** to vanilla MessagePack (expanding each record
-//! instance into a string-keyed map) and hand the result to `rmp_serde`.
-//! Reusing the existing `Deserialize` derive keeps the decoder focused on
-//! the wire-format transformation and nothing else.
+//! **Read side** ([`transcode_to_plain_msgpack`]): rather than
+//! deserialize `PackageFilesIndex` directly from msgpackr bytes, we
+//! transcode to vanilla MessagePack (expanding each record instance
+//! into a string-keyed map) and hand the result to `rmp_serde`.
+//! Reusing the existing `Deserialize` derive keeps the decoder focused
+//! on the wire-format transformation and nothing else.
+//!
+//! **Write side** ([`encode_package_files_index`]): a hand-written
+//! emitter that allocates slots lazily per distinct *record shape*
+//! for `PackageFilesIndex`, `CafsFileInfo`, and `SideEffectsDiff` —
+//! `0x40` is reserved for the top-level `PackageFilesIndex`, and
+//! inner slots in `0x41..=0x7f` are handed out in first-seen order,
+//! so a single Rust type can consume more than one slot when its
+//! optional-field presence varies within the same row. `HashMap`
+//! fields (`files`, `sideEffects`, `added`) stay as plain msgpack
+//! maps. That shape matches what msgpackr itself emits for a JS
+//! object containing `Map` fields, so pnpm's reader round-trips the
+//! bytes correctly.
 
+use crate::{CafsFileInfo, PackageFilesIndex, SideEffectsDiff};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use std::{collections::HashMap, rc::Rc};
@@ -498,8 +524,13 @@ fn write_map_header(w: &mut Vec<u8>, n: usize) {
         w.push(0xde);
         w.extend_from_slice(&(n as u16).to_be_bytes());
     } else {
+        // MessagePack's `map 32` header caps length at `u32::MAX`. On
+        // 64-bit hosts a `usize` could in principle exceed that; use
+        // a checked conversion so we panic with a clear message
+        // rather than silently truncating to a corrupt payload.
+        let n = u32::try_from(n).expect("map length exceeds MessagePack's u32::MAX limit");
         w.push(0xdf);
-        w.extend_from_slice(&(n as u32).to_be_bytes());
+        w.extend_from_slice(&n.to_be_bytes());
     }
 }
 
@@ -515,10 +546,391 @@ fn write_str(w: &mut Vec<u8>, s: &str) {
         w.push(0xda);
         w.extend_from_slice(&(n as u16).to_be_bytes());
     } else {
+        // `str 32` tops out at `u32::MAX` bytes. Checked cast to
+        // fail loudly rather than silently truncating to a corrupt
+        // length prefix.
+        let n = u32::try_from(n).expect("string length exceeds MessagePack's u32::MAX limit");
         w.push(0xdb);
-        w.extend_from_slice(&(n as u32).to_be_bytes());
+        w.extend_from_slice(&n.to_be_bytes());
     }
     w.extend_from_slice(bytes);
+}
+
+/// Encode a [`PackageFilesIndex`] to msgpackr-records bytes that match
+/// pnpm v11's wire format closely enough that `Packr({useRecords: true,
+/// moreTypes: true}).unpack(bytes)` decodes to the same JS shape pnpm
+/// produces itself.
+///
+/// ## Why not `rmp_serde::to_vec_named`?
+///
+/// `rmp_serde` emits plain MessagePack — every struct becomes a `fixmap`
+/// / `map16` / `map32`. That's a perfectly valid MessagePack encoding,
+/// but msgpackr with `useRecords: true` interprets *every* msgpack map
+/// (no matter the nesting depth) as a JS `Map` object, including the
+/// top-level `PackageFilesIndex`. pnpm's reader then does
+/// `pkgIndex.files` (a property access) on what is actually a `Map`,
+/// gets `undefined`, and crashes with `files is not iterable`.
+///
+/// pnpm itself sidesteps this because it packs the outer struct with
+/// `useRecords: true`, which makes msgpackr emit a **record**: the
+/// `d4 72 <slot>` fixext1 header followed by a field-name array and the
+/// values. Records decode back as plain JS objects, while legitimate JS
+/// `Map` values (pnpm's `files` / `sideEffects` / `added`) are still
+/// encoded as msgpack maps and decode back as `Map`. The decoder can
+/// tell the two apart because records are marked with the fixext1
+/// envelope; plain maps aren't.
+///
+/// So to interop with pnpm, pacquet has to emit records for the Rust
+/// `struct`s (object-shape on the pnpm side) and keep plain msgpack
+/// maps for the Rust `HashMap`s (`Map`-shape on the pnpm side). That's
+/// what this encoder does.
+///
+/// ## Slot allocation
+///
+/// Slot `0x40` is reserved for the top-level [`PackageFilesIndex`] —
+/// one per row, always first in the stream. Inner slots in
+/// `0x41..=0x7f` are allocated **lazily, in first-seen order, one per
+/// distinct record shape** (where "shape" is the set of fields that
+/// instance actually carries). A single Rust type may therefore span
+/// multiple slots if different optional-field combinations show up in
+/// the same row: a `CafsFileInfo` carrying `checkedAt` lands in one
+/// slot and a `CafsFileInfo` without it lands in another. Same-shape
+/// instances downstream collapse to a single bare-slot byte, which is
+/// the record-compression win records exist for.
+///
+/// This is what msgpackr itself does for the same traversal and shape
+/// set, so pacquet's output is **wire-compatible** with msgpackr (same
+/// record schemas, same slot numbers, same value encodings) — pnpm's
+/// reader reconstructs the same JS shape from both. Exact bytes can
+/// still differ when Rust's `HashMap` iterates `files` / `sideEffects`
+/// / `added` entries in a different order than msgpackr's JS `Map`
+/// iteration, which is fine for correctness but worth keeping in mind
+/// when diffing bytes against a pnpm-written reference row.
+///
+/// ## Optional-field handling
+///
+/// - **`PackageFilesIndex`**: `algo` and `files` are always emitted;
+///   `requires_build` and `side_effects` are included in the record
+///   schema only when `Some`. `manifest` is always `None` in pacquet
+///   today and not yet wired through; the encoder returns
+///   [`EncodeError::ManifestNotSupported`] if it ever gets a `Some`,
+///   which is louder than silently dropping it.
+/// - **`CafsFileInfo`**: optional `checkedAt` is omitted from the
+///   record schema entirely when `None` rather than written as `nil`,
+///   so the presence of `checkedAt` determines the shape and thus
+///   the slot. When `Some`, it's written as `float 64` (see
+///   [`CafsFileInfo::checked_at`] for why — msgpackr reads `uint 64`
+///   as `BigInt`, which crashes pnpm's `mtimeMs - (checkedAt ?? 0)`).
+/// - **`SideEffectsDiff`**: `added` and `deleted` are both optional;
+///   each is included in the schema only when `Some`. The four
+///   possible shapes (`{added}`, `{deleted}`, `{added, deleted}`,
+///   `{}`) each get their own slot on first use.
+///
+/// Matching msgpackr's omit-when-absent convention (rather than
+/// padding with `nil`) means pnpm's reader sees the same JS object
+/// shape regardless of which tool wrote the row — a `SideEffectsDiff
+/// { added: Some, deleted: None }` decodes to `{ added: Map }`, not
+/// `{ added: Map, deleted: null }`.
+pub fn encode_package_files_index(index: &PackageFilesIndex) -> Result<Vec<u8>, EncodeError> {
+    let mut state = EncodeState::new();
+    let mut out = Vec::with_capacity(256);
+    encode_pkg_files_index_value(&mut out, &mut state, index)?;
+    Ok(out)
+}
+
+/// Error type of [`encode_package_files_index`].
+#[derive(Debug, Display, Error, Diagnostic)]
+#[non_exhaustive]
+pub enum EncodeError {
+    #[display(
+        "PackageFilesIndex.manifest is Some, but the msgpackr-records \
+         encoder doesn't yet know how to serialize `serde_json::Value` \
+         — pacquet doesn't populate this field today, so the code path \
+         is unimplemented. Add manifest encoding if/when pacquet starts \
+         writing bundled manifests."
+    )]
+    #[diagnostic(code(pacquet_store_dir::msgpackr_records::manifest_not_supported))]
+    ManifestNotSupported,
+
+    #[display(
+        "Ran out of msgpackr record slots: encountered more than \
+         {max} distinct record shapes (slot range is 0x41..=0x7f). \
+         This shouldn't happen for current pacquet payloads — \
+         `CafsFileInfo` has at most 2 shapes and `SideEffectsDiff` \
+         at most 4. Reaching this error likely means a new record \
+         type was added to the encoder without bumping the shape \
+         accounting, or the encoder is being reused for a schema \
+         it wasn't designed for."
+    )]
+    #[diagnostic(code(pacquet_store_dir::msgpackr_records::out_of_record_slots))]
+    OutOfRecordSlots { max: usize },
+}
+
+/// Slot allocated to the top-level [`PackageFilesIndex`] record.
+/// A single stream always has exactly one of these, so it gets the
+/// base slot. Inner records (`CafsFileInfo`, `SideEffectsDiff`) are
+/// allocated lazily from `FIRST_INNER_SLOT` upwards, one slot per
+/// distinct shape — see [`EncodeState::allocate_slot`].
+const PKG_FILES_INDEX_SLOT: u8 = SLOT_LO; // 0x40
+const FIRST_INNER_SLOT: u8 = SLOT_LO + 1; // 0x41
+
+/// Tracks which shapes have been defined and what slot each got.
+/// Mirrors msgpackr's own strategy: when it sees a new record instance
+/// whose field set differs from anything previously packed, it
+/// allocates a new slot rather than redefining an existing one — so
+/// same-shape instances downstream collapse to a single bare-slot byte
+/// (the point of records), and mixed-shape streams still decode
+/// correctly without per-instance re-defs.
+///
+/// Shape keys are small bitmasks over the optional fields of each
+/// record type, see `cafs_shape` / `side_effects_shape`. Each type has
+/// at most a handful of possible shapes (2 for `CafsFileInfo`, 4 for
+/// `SideEffectsDiff`), so the 0x40..=0x7f slot range is vastly
+/// over-provisioned for realistic workloads.
+struct EncodeState {
+    /// Shape → slot for every `CafsFileInfo` shape seen so far. The
+    /// index is the shape bitmask produced by [`cafs_shape`] (2
+    /// possible values today). `None` = shape hasn't been emitted yet
+    /// in this stream.
+    cafs_slots: [Option<u8>; 2],
+    /// Same for `SideEffectsDiff`, indexed by [`side_effects_shape`]
+    /// (4 possible values).
+    side_effects_slots: [Option<u8>; 4],
+    /// Next unused slot in the 0x41..=0x7f range. Starts above
+    /// `PKG_FILES_INDEX_SLOT` because the top-level record always
+    /// takes slot 0x40.
+    next_slot: u8,
+}
+
+impl EncodeState {
+    fn new() -> Self {
+        EncodeState {
+            cafs_slots: [None; 2],
+            side_effects_slots: [None; 4],
+            next_slot: FIRST_INNER_SLOT,
+        }
+    }
+
+    fn allocate_slot(&mut self) -> Result<u8, EncodeError> {
+        if self.next_slot > SLOT_HI {
+            return Err(EncodeError::OutOfRecordSlots {
+                max: (SLOT_HI - FIRST_INNER_SLOT + 1) as usize,
+            });
+        }
+        let slot = self.next_slot;
+        self.next_slot += 1;
+        Ok(slot)
+    }
+}
+
+/// Bitmask describing which optional fields a [`CafsFileInfo`] carries.
+/// Bit 0 = `checked_at`. Required fields (digest, mode, size) don't
+/// affect the shape because they're always present.
+fn cafs_shape(info: &CafsFileInfo) -> u8 {
+    u8::from(info.checked_at.is_some())
+}
+
+/// Bitmask describing which optional fields a [`SideEffectsDiff`]
+/// carries. Bit 0 = `added`, bit 1 = `deleted`.
+fn side_effects_shape(diff: &SideEffectsDiff) -> u8 {
+    u8::from(diff.added.is_some()) | (u8::from(diff.deleted.is_some()) << 1)
+}
+
+fn encode_pkg_files_index_value(
+    w: &mut Vec<u8>,
+    state: &mut EncodeState,
+    idx: &PackageFilesIndex,
+) -> Result<(), EncodeError> {
+    if idx.manifest.is_some() {
+        return Err(EncodeError::ManifestNotSupported);
+    }
+
+    // Field order `[algo, requiresBuild?, files, sideEffects?]`
+    // matches what pnpm's msgpackr emits, as verified by the
+    // `decodes_requires_build_true` and `decodes_side_effects`
+    // fixtures captured from msgpackr 1.11.8 right here in this
+    // module. Optional fields are omitted from the schema when
+    // `None`. `manifest` stays out of the schema entirely until
+    // pacquet starts populating it (the `Some` check above bails
+    // before we get here).
+    let mut fields: Vec<&str> = Vec::with_capacity(4);
+    fields.push("algo");
+    if idx.requires_build.is_some() {
+        fields.push("requiresBuild");
+    }
+    fields.push("files");
+    if idx.side_effects.is_some() {
+        fields.push("sideEffects");
+    }
+
+    write_record_def_header(w, PKG_FILES_INDEX_SLOT, &fields);
+
+    // Values in the same order as `fields` above.
+    write_str(w, &idx.algo);
+    if let Some(rb) = idx.requires_build {
+        write_bool(w, rb);
+    }
+    write_map_header(w, idx.files.len());
+    for (name, info) in &idx.files {
+        write_str(w, name);
+        encode_cafs_file_info(w, state, info)?;
+    }
+    if let Some(se) = &idx.side_effects {
+        write_map_header(w, se.len());
+        for (platform, diff) in se {
+            write_str(w, platform);
+            encode_side_effects_diff(w, state, diff)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn encode_cafs_file_info(
+    w: &mut Vec<u8>,
+    state: &mut EncodeState,
+    info: &CafsFileInfo,
+) -> Result<(), EncodeError> {
+    let shape = cafs_shape(info);
+    if let Some(slot) = state.cafs_slots[shape as usize] {
+        w.push(slot); // bare slot = record reference; no def needed
+    } else {
+        // New shape for this stream — allocate a slot and emit a
+        // record def inline. `digest`, `mode`, `size` are required;
+        // `checkedAt` is included only when `Some`, matching msgpackr's
+        // field-omit-when-absent behaviour so pnpm's reader sees the
+        // same object shape on round-trip. Field order matches pnpm's
+        // own output.
+        let slot = state.allocate_slot()?;
+        state.cafs_slots[shape as usize] = Some(slot);
+        let fields: &[&str] = if info.checked_at.is_some() {
+            &["digest", "mode", "size", "checkedAt"]
+        } else {
+            &["digest", "mode", "size"]
+        };
+        write_record_def_header(w, slot, fields);
+    }
+
+    write_str(w, &info.digest);
+    write_uint(w, info.mode as u64);
+    write_uint(w, info.size);
+    if let Some(v) = info.checked_at {
+        // Float 64 — not uint 64 — because msgpackr decodes `uint 64`
+        // as a JS `BigInt`, and pnpm's integrity check does
+        // `mtimeMs - (checkedAt ?? 0)` which throws `TypeError: Cannot
+        // mix BigInt and other types`. Packing as a double matches
+        // what pnpm writes for the same millisecond-epoch value (JS
+        // Number is a double, so msgpackr emits `cb` + 8 bytes for
+        // values past int32 range).
+        write_float64(w, v as f64);
+    }
+    Ok(())
+}
+
+fn encode_side_effects_diff(
+    w: &mut Vec<u8>,
+    state: &mut EncodeState,
+    diff: &SideEffectsDiff,
+) -> Result<(), EncodeError> {
+    let shape = side_effects_shape(diff);
+    if let Some(slot) = state.side_effects_slots[shape as usize] {
+        w.push(slot);
+    } else {
+        // Msgpackr omits absent `added` / `deleted` from the schema
+        // rather than writing them as explicit `null`. Match that so
+        // downstream JS code checking `diff.added != null` /
+        // `diff.deleted != null` sees the same shape regardless of
+        // which tool wrote the row.
+        let slot = state.allocate_slot()?;
+        state.side_effects_slots[shape as usize] = Some(slot);
+        let fields: &[&str] = match (diff.added.is_some(), diff.deleted.is_some()) {
+            (true, true) => &["added", "deleted"],
+            (true, false) => &["added"],
+            (false, true) => &["deleted"],
+            (false, false) => &[],
+        };
+        write_record_def_header(w, slot, fields);
+    }
+
+    if let Some(added) = &diff.added {
+        write_map_header(w, added.len());
+        for (name, info) in added {
+            write_str(w, name);
+            encode_cafs_file_info(w, state, info)?;
+        }
+    }
+    if let Some(deleted) = &diff.deleted {
+        write_array_header(w, deleted.len());
+        for name in deleted {
+            write_str(w, name);
+        }
+    }
+    Ok(())
+}
+
+/// `d4 72 <slot>` fixext1 header + msgpack array of `fields` as strings.
+fn write_record_def_header(w: &mut Vec<u8>, slot: u8, fields: &[&str]) {
+    w.push(0xd4);
+    w.push(RECORD_DEF_EXT_TYPE);
+    w.push(slot);
+    write_array_header(w, fields.len());
+    for field in fields {
+        write_str(w, field);
+    }
+}
+
+fn write_array_header(w: &mut Vec<u8>, n: usize) {
+    if n < 16 {
+        w.push(0x90 | (n as u8));
+    } else if n <= u16::MAX as usize {
+        w.push(0xdc);
+        w.extend_from_slice(&(n as u16).to_be_bytes());
+    } else {
+        // `array 32` tops out at `u32::MAX` entries. Checked cast
+        // so an overflow panics with a clear message rather than
+        // silently truncating to a corrupt length prefix.
+        let n = u32::try_from(n).expect("array length exceeds MessagePack's u32::MAX limit");
+        w.push(0xdd);
+        w.extend_from_slice(&n.to_be_bytes());
+    }
+}
+
+/// Write an unsigned integer in the smallest MessagePack encoding that
+/// is safe inside an active records stream. Values `0x40..=0x7f` cannot
+/// be emitted as positive fixints — their byte representation collides
+/// with record-slot references — so they get promoted to `uint 8`.
+/// msgpackr does the same thing under `useRecords: true` for exactly
+/// the same reason. `mode: u32` (e.g. `0o755` = 493) and `size: u64`
+/// round-trip through this.
+fn write_uint(w: &mut Vec<u8>, v: u64) {
+    if v < SLOT_LO as u64 {
+        // Positive fixint 0x00..=0x3f — below the slot range, safe to
+        // emit bare.
+        w.push(v as u8);
+    } else if v <= u8::MAX as u64 {
+        // Covers 0x40..=0xff; the 0x40..=0x7f sub-range must use uint 8
+        // so the decoder doesn't mistake it for a slot byte.
+        w.push(0xcc);
+        w.push(v as u8);
+    } else if v <= u16::MAX as u64 {
+        w.push(0xcd);
+        w.extend_from_slice(&(v as u16).to_be_bytes());
+    } else if v <= u32::MAX as u64 {
+        w.push(0xce);
+        w.extend_from_slice(&(v as u32).to_be_bytes());
+    } else {
+        w.push(0xcf);
+        w.extend_from_slice(&v.to_be_bytes());
+    }
+}
+
+fn write_float64(w: &mut Vec<u8>, v: f64) {
+    w.push(0xcb);
+    w.extend_from_slice(&v.to_be_bytes());
+}
+
+fn write_bool(w: &mut Vec<u8>, b: bool) {
+    w.push(if b { 0xc3 } else { 0xc2 });
 }
 
 #[cfg(test)]
@@ -779,5 +1191,366 @@ mod tests {
         // Record def claims 2 field names but only one is present.
         let err = transcode_to_plain_msgpack(&[0xd4, 0x72, 0x40, 0x92, 0xa1, b'k']).unwrap_err();
         assert!(matches!(err, DecodeError::UnexpectedEof { .. }), "got {err:?}");
+    }
+
+    // ===== Encoder tests =====
+    //
+    // The round-trip pattern is: `encode` → `transcode_to_plain_msgpack`
+    // → `rmp_serde::from_slice`. The transcoder is the Rust
+    // implementation of msgpackr's records wire format, so if bytes
+    // round-trip through it cleanly, msgpackr 1.11.8 will too. pnpm's
+    // store uses exactly that version, pinned in its `catalog:`.
+
+    fn roundtrip(original: &PackageFilesIndex) -> PackageFilesIndex {
+        let bytes = encode_package_files_index(original).expect("encode succeeds");
+        let plain = transcode_to_plain_msgpack(&bytes).expect("transcode succeeds");
+        rmp_serde::from_slice(&plain).expect("deserialize")
+    }
+
+    fn sample_cafs(size: u64, with_checked_at: bool) -> CafsFileInfo {
+        CafsFileInfo {
+            digest: "a".repeat(128),
+            mode: 0o644,
+            size,
+            checked_at: with_checked_at.then_some(1_700_000_000_000),
+        }
+    }
+
+    #[test]
+    fn encode_emits_record_header_for_top_level_struct() {
+        // The whole point: outer struct is a record (fixext1 `d4 72 40`),
+        // not a plain msgpack map. Without this, pnpm's msgpackr would
+        // decode the row as a top-level JS `Map`, and `pkgIndex.files`
+        // (a property access) would be `undefined`.
+        let idx = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files: HashMap::new(),
+            side_effects: None,
+        };
+        let bytes = encode_package_files_index(&idx).unwrap();
+        assert_eq!(&bytes[0..3], &[0xd4, RECORD_DEF_EXT_TYPE, PKG_FILES_INDEX_SLOT]);
+    }
+
+    #[test]
+    fn encode_roundtrips_single_file() {
+        let mut files = HashMap::new();
+        files.insert("index.js".to_string(), sample_cafs(10, true));
+        let original = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        assert_eq!(roundtrip(&original), original);
+    }
+
+    #[test]
+    fn encode_roundtrips_many_files_sharing_one_slot() {
+        // Second and subsequent `CafsFileInfo` instances must be
+        // emitted as bare slot references (one byte), not re-defined.
+        // A tarball with N files collapses N × ~34 bytes of field
+        // names into N × 1 byte — that's the whole point of records.
+        let mut files = HashMap::new();
+        for i in 0..5 {
+            files.insert(format!("file{i}.js"), sample_cafs(1000 + i as u64, true));
+        }
+        let original = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let bytes = encode_package_files_index(&original).unwrap();
+        let record_def_headers =
+            bytes.windows(2).filter(|w| *w == [0xd4, RECORD_DEF_EXT_TYPE]).count();
+        // Exactly two record defs: one for `PackageFilesIndex`, one
+        // for the first `CafsFileInfo` instance. The other four
+        // `CafsFileInfo` instances must reference that slot.
+        assert_eq!(
+            record_def_headers, 2,
+            "expected one def per distinct shape, got bytes {bytes:02x?}"
+        );
+        assert_eq!(roundtrip(&original), original);
+    }
+
+    #[test]
+    fn encode_handles_fixint_in_slot_range_safely() {
+        // `size: 0x7b` (= 123) falls inside the slot-reference range
+        // 0x40..=0x7f. A naive encoder that emits it as a positive
+        // fixint would produce a byte stream the decoder then
+        // interprets as a reference to slot 0x7b, which is never
+        // defined — the classic "UnknownSlot" blow-up. msgpackr
+        // promotes all integers in this range to `uint 8` for exactly
+        // this reason.
+        let mut files = HashMap::new();
+        files.insert("f".to_string(), sample_cafs(0x7b, true));
+        let original = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        assert_eq!(roundtrip(&original).files.get("f").unwrap().size, 0x7b);
+    }
+
+    #[test]
+    fn encode_omits_checked_at_when_none() {
+        // `None` `checkedAt` is *omitted* from the record schema
+        // rather than encoded as `nil` — matches msgpackr's
+        // field-omit-when-absent behaviour, so pnpm's reader sees the
+        // same object shape it would produce on its own output (the
+        // `checkedAt` property is missing, not `null`). Round-trip
+        // through our transcoder still recovers `None` because
+        // `Option<u64>` deserializes a missing field to `None`.
+        let mut files = HashMap::new();
+        files.insert("f".to_string(), sample_cafs(100, false));
+        let original = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let bytes = encode_package_files_index(&original).unwrap();
+        // No `checkedAt` string should appear — the schema for this
+        // `CafsFileInfo` only has `[digest, mode, size]`.
+        let needle = b"checkedAt";
+        assert!(
+            bytes.windows(needle.len()).all(|w| w != needle),
+            "checkedAt leaked into output when the field was None: {bytes:02x?}"
+        );
+        assert_eq!(roundtrip(&original).files.get("f").unwrap().checked_at, None);
+    }
+
+    #[test]
+    fn encode_allocates_separate_slots_for_distinct_cafs_shapes() {
+        // Two `CafsFileInfo` instances with different shapes — one
+        // carries `checkedAt`, the other doesn't — must land in
+        // different slots. Same shape reuses its slot, which is the
+        // whole point of records. msgpackr does the same: slot 0x41
+        // for the first shape seen, 0x42 for the next new one, etc.
+        let mut files = HashMap::new();
+        files.insert("with_ts.js".to_string(), sample_cafs(10, true));
+        files.insert("no_ts_a.js".to_string(), sample_cafs(20, false));
+        files.insert("no_ts_b.js".to_string(), sample_cafs(30, false));
+        let original = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let bytes = encode_package_files_index(&original).unwrap();
+        let record_def_headers =
+            bytes.windows(2).filter(|w| *w == [0xd4, RECORD_DEF_EXT_TYPE]).count();
+        // Exactly three defs: `PackageFilesIndex`, `CafsFileInfo` with
+        // checkedAt, `CafsFileInfo` without checkedAt. The third file
+        // (second no-ts instance) shares the no-ts slot, so no fourth
+        // def.
+        assert_eq!(
+            record_def_headers, 3,
+            "expected three defs (outer + two CafsFileInfo shapes), got bytes {bytes:02x?}"
+        );
+        assert_eq!(roundtrip(&original), original);
+    }
+
+    #[test]
+    fn encode_requires_build_when_set() {
+        let original = PackageFilesIndex {
+            manifest: None,
+            requires_build: Some(true),
+            algo: "sha512".to_string(),
+            files: HashMap::new(),
+            side_effects: None,
+        };
+        let roundtripped = roundtrip(&original);
+        assert_eq!(roundtripped.requires_build, Some(true));
+    }
+
+    #[test]
+    fn encode_outer_field_order_matches_msgpackr() {
+        // Field order in the outer record must match what pnpm's
+        // msgpackr emits, because wire-level diffing against pnpm-
+        // written rows is a routine debugging exercise. Ground truth
+        // comes from the `decodes_requires_build_true` fixture
+        // captured from msgpackr 1.11.8, where the schema reads
+        // `[algo, requiresBuild, files]` — i.e. optional fields slot
+        // in at pnpm's TypeScript-declared position, not tacked onto
+        // the end.
+        let mut files = HashMap::new();
+        files.insert("a.js".to_string(), sample_cafs(10, true));
+        let idx = PackageFilesIndex {
+            manifest: None,
+            requires_build: Some(true),
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let bytes = encode_package_files_index(&idx).unwrap();
+        // Find the outer schema bytes: after `d4 72 40` (fixext1 +
+        // ext-type + slot) comes `93` (fixarray of 3 fields), then
+        // the field-name fixstrs.
+        assert_eq!(&bytes[0..4], &[0xd4, RECORD_DEF_EXT_TYPE, PKG_FILES_INDEX_SLOT, 0x93]);
+        // Re-decode the field names from offset 4 onwards.
+        let mut pos = 4;
+        let mut names = Vec::new();
+        for _ in 0..3 {
+            let hdr = bytes[pos];
+            assert!(matches!(hdr, 0xa0..=0xbf), "expected fixstr at {pos}, got {hdr:02x}");
+            let len = (hdr & 0x1f) as usize;
+            pos += 1;
+            names.push(std::str::from_utf8(&bytes[pos..pos + len]).unwrap().to_string());
+            pos += len;
+        }
+        assert_eq!(names, vec!["algo", "requiresBuild", "files"]);
+    }
+
+    #[test]
+    fn encode_omits_requires_build_when_none() {
+        // When `requires_build` is `None`, it must not appear in the
+        // record schema at all — matching msgpackr's own behaviour of
+        // field-omit-when-absent for plain JS objects with missing
+        // properties. This keeps the byte output minimal for the
+        // common case (pacquet rarely populates requires_build).
+        let idx = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files: HashMap::new(),
+            side_effects: None,
+        };
+        let bytes = encode_package_files_index(&idx).unwrap();
+        // Scan for the bytes that spell "requiresBuild" — must not
+        // appear anywhere in the output.
+        let needle = b"requiresBuild";
+        assert!(
+            bytes.windows(needle.len()).all(|w| w != needle),
+            "requiresBuild leaked into output when the field was None: {bytes:02x?}"
+        );
+    }
+
+    #[test]
+    fn encode_side_effects_roundtrip() {
+        let mut added = HashMap::new();
+        added.insert("foo.so".to_string(), sample_cafs(42, true));
+        let mut side_effects = HashMap::new();
+        side_effects.insert(
+            "linux".to_string(),
+            SideEffectsDiff { added: Some(added), deleted: Some(vec!["bar.o".to_string()]) },
+        );
+        let mut files = HashMap::new();
+        files.insert("main.js".to_string(), sample_cafs(10, true));
+        let original = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files,
+            side_effects: Some(side_effects),
+        };
+        assert_eq!(roundtrip(&original), original);
+    }
+
+    #[test]
+    fn encode_side_effects_with_only_added_omits_deleted_field() {
+        // A `SideEffectsDiff` with `deleted: None` must not emit a
+        // `deleted` field name in the record schema. This is the case
+        // Copilot flagged: the fixed-schema encoder used to write
+        // `deleted: nil` here, producing a JS shape (`{ added, deleted:
+        // null }`) different from what msgpackr itself produces for
+        // the same Rust input (`{ added }`).
+        let mut added = HashMap::new();
+        added.insert("foo.so".to_string(), sample_cafs(42, true));
+        let mut side_effects = HashMap::new();
+        side_effects
+            .insert("linux".to_string(), SideEffectsDiff { added: Some(added), deleted: None });
+        let original = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files: HashMap::new(),
+            side_effects: Some(side_effects),
+        };
+        let bytes = encode_package_files_index(&original).unwrap();
+        assert!(
+            bytes.windows(7).all(|w| w != b"deleted"),
+            "`deleted` field name appeared in output when the field was None: {bytes:02x?}"
+        );
+        assert_eq!(roundtrip(&original), original);
+    }
+
+    #[test]
+    fn encode_allocates_separate_slots_for_distinct_side_effects_shapes() {
+        // Two `SideEffectsDiff` instances with distinct shapes (one
+        // with only `added`, one with only `deleted`) must land in
+        // different slots, mirroring msgpackr's behaviour on the same
+        // input.
+        let mut linux_added = HashMap::new();
+        linux_added.insert("foo.so".to_string(), sample_cafs(42, true));
+        let mut side_effects = HashMap::new();
+        side_effects.insert(
+            "linux".to_string(),
+            SideEffectsDiff { added: Some(linux_added), deleted: None },
+        );
+        side_effects.insert(
+            "darwin".to_string(),
+            SideEffectsDiff { added: None, deleted: Some(vec!["bar.o".to_string()]) },
+        );
+        let original = PackageFilesIndex {
+            manifest: None,
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files: HashMap::new(),
+            side_effects: Some(side_effects),
+        };
+        let bytes = encode_package_files_index(&original).unwrap();
+        let record_def_headers =
+            bytes.windows(2).filter(|w| *w == [0xd4, RECORD_DEF_EXT_TYPE]).count();
+        // Three defs: outer `PackageFilesIndex`, `SideEffectsDiff`
+        // shape-`added`, `SideEffectsDiff` shape-`deleted`. The inner
+        // `CafsFileInfo` adds a fourth.
+        assert_eq!(
+            record_def_headers, 4,
+            "expected defs for outer + two distinct side-effects shapes + CafsFileInfo, got bytes {bytes:02x?}"
+        );
+        assert_eq!(roundtrip(&original), original);
+    }
+
+    #[test]
+    fn allocate_slot_returns_error_past_0x7f() {
+        // Exhaust the inner-slot range (0x41..=0x7f, 63 slots) and
+        // verify the next call returns `OutOfRecordSlots` rather than
+        // panicking. Not reachable through the public encoder for
+        // current pacquet payloads — `CafsFileInfo` has 2 shapes,
+        // `SideEffectsDiff` has 4 — but the error path must exist in
+        // case a future record type is added without bumping the
+        // shape accounting.
+        let mut state = EncodeState::new();
+        for _ in FIRST_INNER_SLOT..=SLOT_HI {
+            state.allocate_slot().expect("should succeed within the slot range");
+        }
+        let err = state.allocate_slot().expect_err("64th allocation must fail");
+        assert!(matches!(err, EncodeError::OutOfRecordSlots { max: 63 }), "got {err:?}");
+    }
+
+    #[test]
+    fn encode_rejects_manifest_some() {
+        // pacquet doesn't populate `manifest` today; encoding a
+        // `Some` value is unimplemented. Fail loudly rather than
+        // silently dropping it — if/when the field starts carrying
+        // real data, this test trips and we implement the path.
+        let idx = PackageFilesIndex {
+            manifest: Some(serde_json::json!({ "name": "x" })),
+            requires_build: None,
+            algo: "sha512".to_string(),
+            files: HashMap::new(),
+            side_effects: None,
+        };
+        let err = encode_package_files_index(&idx).unwrap_err();
+        assert!(matches!(err, EncodeError::ManifestNotSupported), "got {err:?}");
     }
 }
