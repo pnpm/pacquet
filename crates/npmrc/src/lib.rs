@@ -1,4 +1,5 @@
 mod custom_deserializer;
+mod npmrc_auth;
 mod workspace_yaml;
 
 use pacquet_store_dir::StoreDir;
@@ -165,13 +166,19 @@ impl Npmrc {
 
     /// Build the runtime config by layering:
     /// 1. hard-coded defaults, then
-    /// 2. the nearest `.npmrc` (cwd, falling back to home), then
+    /// 2. **auth/network-only** keys read from the nearest `.npmrc`
+    ///    (cwd, falling back to home), then
     /// 3. the nearest `pnpm-workspace.yaml` walking up from cwd.
     ///
-    /// pnpm moved most settings (`storeDir`, `lockfile`, `registry`, …) out
-    /// of `.npmrc` into `pnpm-workspace.yaml` in v10+, so honouring the yaml
-    /// is required to behave correctly in a real pnpm-11-style project. The
-    /// yaml wins over `.npmrc` on any key it sets, matching pnpm itself.
+    /// pnpm 11 stopped reading project-structural settings from `.npmrc` —
+    /// it now only honours the auth/network subset there (`registry`,
+    /// `_authToken`, `ca`, `cafile`, `cert`, `key`, `proxy`, `https-proxy`,
+    /// scoped-registry and per-host auth lines). Everything else
+    /// (`storeDir`, `lockfile`, `hoist-pattern`, …) has to come from
+    /// `pnpm-workspace.yaml` or CLI flags. Pacquet follows suit: writing
+    /// non-auth keys to `.npmrc` is silently ignored.
+    ///
+    /// The yaml wins over `.npmrc` on any key it sets, matching pnpm itself.
     pub fn current<Error, CurrentDir, HomeDir, Default>(
         current_dir: CurrentDir,
         home_dir: HomeDir,
@@ -182,24 +189,22 @@ impl Npmrc {
         HomeDir: FnOnce() -> Option<PathBuf>,
         Default: FnOnce() -> Npmrc,
     {
-        let load = |dir: PathBuf| -> Option<Npmrc> {
-            dir.join(".npmrc")
-                .pipe(fs::read_to_string)
-                .ok()? // TODO: should it throw error instead?
-                .pipe_as_ref(serde_ini::from_str)
-                .ok() // TODO: should it throw error instead?
-        };
+        let mut npmrc = default();
 
         let cwd = current_dir().ok();
-        let mut npmrc = cwd
-            .clone()
-            .and_then(load)
-            .or_else(|| home_dir().and_then(load))
-            .unwrap_or_else(default);
+        // Read the nearest .npmrc (cwd first, home second) and apply only
+        // the auth/network subset. Everything else is intentionally ignored.
+        let auth_source = cwd
+            .as_ref()
+            .and_then(|dir| read_npmrc(dir))
+            .or_else(|| home_dir().and_then(|dir| read_npmrc(&dir)));
+        if let Some(text) = auth_source {
+            crate::npmrc_auth::NpmrcAuth::from_ini(&text).apply_to(&mut npmrc);
+        }
 
-        // Layer pnpm-workspace.yaml overrides on top of whatever .npmrc
-        // provided. Missing file or unreadable yaml is silently ignored to
-        // match `.npmrc`'s best-effort behaviour above.
+        // Layer pnpm-workspace.yaml overrides on top. Missing file or
+        // unreadable yaml is silently ignored, matching .npmrc's
+        // best-effort behaviour above.
         if let Some(start) = cwd {
             if let Ok(Some((path, settings))) = WorkspaceSettings::find_and_load(&start) {
                 let base_dir = path.parent().unwrap_or(&start).to_path_buf();
@@ -214,6 +219,13 @@ impl Npmrc {
     pub fn leak(self) -> &'static mut Self {
         self.pipe(Box::new).pipe(Box::leak)
     }
+}
+
+/// Read the text of the `.npmrc` in `dir`, returning `None` for anything
+/// from "file doesn't exist" to "not valid UTF-8" — same best-effort
+/// behaviour as pnpm. The caller decides which keys to honour.
+fn read_npmrc(dir: &std::path::Path) -> Option<String> {
+    fs::read_to_string(dir.join(".npmrc")).ok()
 }
 
 impl Default for Npmrc {
@@ -313,15 +325,33 @@ mod tests {
     }
 
     #[test]
-    pub fn test_current_folder_for_npmrc() {
+    pub fn npmrc_in_current_folder_applies_registry() {
         let tmp = tempdir().unwrap();
-        fs::write(tmp.path().join(".npmrc"), "symlink=false").expect("write to .npmrc");
+        fs::write(tmp.path().join(".npmrc"), "registry=https://cwd.example")
+            .expect("write to .npmrc");
         let config = Npmrc::current(
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || unreachable!("shouldn't reach home dir"),
-            || unreachable!("shouldn't reach default"),
+            Npmrc::new,
         );
-        assert!(!config.symlink);
+        assert_eq!(config.registry, "https://cwd.example/");
+    }
+
+    #[test]
+    pub fn non_auth_keys_in_npmrc_are_ignored() {
+        // pnpm 11 stopped reading project-structural settings from .npmrc.
+        // Writing `symlink=false` / `lockfile=true` / hoist / node-linker /
+        // store-dir to .npmrc should have no effect on the resolved config.
+        let tmp = tempdir().unwrap();
+        let non_auth_ini = "symlink=false\nlockfile=true\nhoist=false\nnode-linker=hoisted\n";
+        fs::write(tmp.path().join(".npmrc"), non_auth_ini).expect("write to .npmrc");
+        let defaults = Npmrc::new();
+        let config =
+            Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new);
+        assert_eq!(config.symlink, defaults.symlink);
+        assert_eq!(config.lockfile, defaults.lockfile);
+        assert_eq!(config.hoist, defaults.hoist);
+        assert_eq!(config.node_linker, defaults.node_linker);
     }
 
     #[test]
@@ -331,43 +361,39 @@ mod tests {
         fs::write(tmp.path().join(".npmrc"), b"Hello \xff World").expect("write to .npmrc");
         let config =
             Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new);
-        assert!(config.symlink); // TODO: what the hell? why succeed?
+        assert!(config.symlink); // default — invalid .npmrc is silently ignored
     }
 
     #[test]
-    pub fn test_current_folder_fallback_to_home() {
+    pub fn npmrc_in_home_folder_applies_registry() {
         let current_dir = tempdir().unwrap();
         let home_dir = tempdir().unwrap();
-        dbg!(&current_dir, &home_dir);
-        fs::write(home_dir.path().join(".npmrc"), "symlink=false").expect("write to .npmrc");
+        fs::write(home_dir.path().join(".npmrc"), "registry=https://home.example")
+            .expect("write to .npmrc");
         let config = Npmrc::current(
             || current_dir.path().to_path_buf().pipe(Ok::<_, ()>),
             || home_dir.path().to_path_buf().pipe(Some),
-            || unreachable!("shouldn't reach home dir"),
+            Npmrc::new,
         );
-        assert!(!config.symlink);
+        assert_eq!(config.registry, "https://home.example/");
     }
 
     #[test]
-    pub fn pnpm_workspace_yaml_overrides_npmrc() {
+    pub fn pnpm_workspace_yaml_registry_overrides_npmrc_registry() {
+        // `registry` is the one non-scope key pnpm 11 still reads from
+        // .npmrc (it's in RAW_AUTH_CFG_KEYS). When both files define it,
+        // the yaml wins, matching pnpm itself.
         let tmp = tempdir().unwrap();
-        fs::write(tmp.path().join(".npmrc"), "lockfile=true\nregistry=https://from-npmrc.test")
+        fs::write(tmp.path().join(".npmrc"), "registry=https://from-npmrc.test")
             .expect("write to .npmrc");
-        fs::write(
-            tmp.path().join("pnpm-workspace.yaml"),
-            "lockfile: false\nregistry: https://from-yaml.test\n",
-        )
-        .expect("write to pnpm-workspace.yaml");
+        fs::write(tmp.path().join("pnpm-workspace.yaml"), "registry: https://from-yaml.test\n")
+            .expect("write to pnpm-workspace.yaml");
         let config = Npmrc::current(
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || unreachable!("shouldn't reach home dir"),
-            || unreachable!("shouldn't reach default"),
+            Npmrc::new,
         );
-        assert!(!config.lockfile, "lockfile from yaml should win over .npmrc");
-        assert_eq!(
-            config.registry, "https://from-yaml.test/",
-            "registry from yaml should win over .npmrc"
-        );
+        assert_eq!(config.registry, "https://from-yaml.test/");
     }
 
     #[test]
