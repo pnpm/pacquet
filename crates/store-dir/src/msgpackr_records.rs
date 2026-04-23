@@ -1,6 +1,7 @@
-//! Decoder for the narrow subset of [msgpackr](https://github.com/kriszyp/msgpackr)'s
-//! wire format that pnpm v11 uses to write `index.db` rows — standard
-//! MessagePack extended with msgpackr's **records** extension.
+//! Encoder and decoder for the narrow subset of
+//! [msgpackr](https://github.com/kriszyp/msgpackr)'s wire format that
+//! pnpm v11 uses to write `index.db` rows — standard MessagePack
+//! extended with msgpackr's **records** extension.
 //!
 //! ## Why this exists
 //!
@@ -9,10 +10,21 @@
 //! [`store/index/src/index.ts`](https://github.com/pnpm/pnpm/blob/main/store/index/src/index.ts)
 //! line 12). `useRecords` replaces repeated string keys in same-shape
 //! structs with a compact slot reference — roughly, Protobuf field numbers
-//! inline. Standard `rmp_serde` has no idea what those bytes mean, so a
-//! row pnpm wrote round-trips as "decode error → cache miss → re-download"
-//! through pacquet's SQLite lookup. That defeats the whole point of a
-//! shared store.
+//! inline. Plain `rmp_serde` output round-trips through msgpackr badly
+//! in *both* directions:
+//!
+//! - **Reading pnpm → pacquet**: standard `rmp_serde` has no idea what
+//!   records bytes mean, so a row pnpm wrote would fail to decode and
+//!   look like a cache miss, forcing a full re-download.
+//! - **Reading pacquet → pnpm**: msgpackr with `useRecords: true`
+//!   decodes every plain msgpack map (at any nesting level) as a JS
+//!   `Map`, including the top-level `PackageFilesIndex`. pnpm's code
+//!   then does `pkgIndex.files` (a property access on that `Map`),
+//!   gets `undefined`, and crashes with `files is not iterable`.
+//!
+//! This module provides both halves — [`transcode_to_plain_msgpack`]
+//! for the read side and [`encode_package_files_index`] for the write
+//! side — so a shared `index.db` actually works.
 //!
 //! ## Wire format (the parts pnpm actually emits)
 //!
@@ -43,11 +55,20 @@
 //!
 //! ## Strategy
 //!
-//! Rather than deserialize `PackageFilesIndex` directly from msgpackr
-//! bytes, we **transcode** to vanilla MessagePack (expanding each record
-//! instance into a string-keyed map) and hand the result to `rmp_serde`.
-//! Reusing the existing `Deserialize` derive keeps the decoder focused on
-//! the wire-format transformation and nothing else.
+//! **Read side** ([`transcode_to_plain_msgpack`]): rather than
+//! deserialize `PackageFilesIndex` directly from msgpackr bytes, we
+//! transcode to vanilla MessagePack (expanding each record instance
+//! into a string-keyed map) and hand the result to `rmp_serde`.
+//! Reusing the existing `Deserialize` derive keeps the decoder focused
+//! on the wire-format transformation and nothing else.
+//!
+//! **Write side** ([`encode_package_files_index`]): a hand-written
+//! emitter that allocates a slot per Rust struct type
+//! (`PackageFilesIndex`, `CafsFileInfo`, `SideEffectsDiff`) and keeps
+//! the `HashMap` fields (`files`, `sideEffects`, `added`) as plain
+//! msgpack maps. That shape matches what msgpackr itself emits for a
+//! JS object containing `Map` fields, so pnpm's reader round-trips
+//! the bytes correctly.
 
 use crate::{CafsFileInfo, PackageFilesIndex, SideEffectsDiff};
 use derive_more::{Display, Error};
