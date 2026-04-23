@@ -574,38 +574,46 @@ fn write_str(w: &mut Vec<u8>, s: &str) {
 ///
 /// ## Slot allocation
 ///
-/// | slot | type |
-/// |------|------|
-/// | `0x40` | [`PackageFilesIndex`] — always one instance per row |
-/// | `0x41` | [`CafsFileInfo`] — one per file in the tarball |
-/// | `0x42` | [`SideEffectsDiff`] — one per platform key, when present |
+/// Slot `0x40` is reserved for the top-level [`PackageFilesIndex`] —
+/// one per row, always first in the stream. Inner slots in
+/// `0x41..=0x7f` are allocated **lazily, in first-seen order, one per
+/// distinct record shape** (where "shape" is the set of fields that
+/// instance actually carries). A single Rust type may therefore span
+/// multiple slots if different optional-field combinations show up in
+/// the same row: a `CafsFileInfo` carrying `checkedAt` lands in one
+/// slot and a `CafsFileInfo` without it lands in another. Same-shape
+/// instances downstream collapse to a single bare-slot byte, which is
+/// the record-compression win records exist for.
 ///
-/// Matches msgpackr's own allocation order for a naive round-trip on
-/// the same shape, which keeps the bytes easy to diff against pnpm's
-/// output while debugging.
+/// This is what msgpackr itself does for the same traversal and shape
+/// set, so pacquet's output is byte-identical to what msgpackr would
+/// emit for the same logical input — keeps bytes easy to diff against
+/// pnpm's output while debugging.
 ///
 /// ## Optional-field handling
 ///
 /// - **`PackageFilesIndex`**: `algo` and `files` are always emitted;
 ///   `requires_build` and `side_effects` are included in the record
-///   schema only when `Some`. Mirrors what msgpackr produces when
-///   packing a plain JS object with those fields absent vs. set —
-///   field-omit-when-absent is the msgpackr idiom. `manifest` is
-///   always `None` in pacquet today and not yet wired through; the
-///   encoder returns [`EncodeError::ManifestNotSupported`] if it ever
-///   gets a `Some`, which is louder than silently dropping it.
-/// - **`CafsFileInfo`**: the schema is fixed at `[digest, mode, size,
-///   checkedAt]`. `checked_at` is written as `float 64` when `Some`
-///   (see [`CafsFileInfo::checked_at`] for why — msgpackr reads
-///   `uint 64` as `BigInt`, which crashes pnpm's
-///   `mtimeMs - (checkedAt ?? 0)`) and as `nil` when `None`. pnpm
-///   tolerates either because its integrity check coalesces via
-///   `?? 0`, so this one-schema-regardless approach lets every
-///   `CafsFileInfo` in a row share the same slot. (msgpackr itself
-///   would have split into two slots for the two shapes; the logical
-///   decoding is identical either way.)
-/// - **`SideEffectsDiff`**: fixed schema `[added, deleted]`, each
-///   field `nil` when absent. Same reasoning as `CafsFileInfo`.
+///   schema only when `Some`. `manifest` is always `None` in pacquet
+///   today and not yet wired through; the encoder returns
+///   [`EncodeError::ManifestNotSupported`] if it ever gets a `Some`,
+///   which is louder than silently dropping it.
+/// - **`CafsFileInfo`**: optional `checkedAt` is omitted from the
+///   record schema entirely when `None` rather than written as `nil`,
+///   so the presence of `checkedAt` determines the shape and thus
+///   the slot. When `Some`, it's written as `float 64` (see
+///   [`CafsFileInfo::checked_at`] for why — msgpackr reads `uint 64`
+///   as `BigInt`, which crashes pnpm's `mtimeMs - (checkedAt ?? 0)`).
+/// - **`SideEffectsDiff`**: `added` and `deleted` are both optional;
+///   each is included in the schema only when `Some`. The four
+///   possible shapes (`{added}`, `{deleted}`, `{added, deleted}`,
+///   `{}`) each get their own slot on first use.
+///
+/// Matching msgpackr's omit-when-absent convention (rather than
+/// padding with `nil`) means pnpm's reader sees the same JS object
+/// shape regardless of which tool wrote the row — a `SideEffectsDiff
+/// { added: Some, deleted: None }` decodes to `{ added: Map }`, not
+/// `{ added: Map, deleted: null }`.
 pub fn encode_package_files_index(index: &PackageFilesIndex) -> Result<Vec<u8>, EncodeError> {
     let mut state = EncodeState::new();
     let mut out = Vec::with_capacity(256);
@@ -632,7 +640,7 @@ pub enum EncodeError {
 /// A single stream always has exactly one of these, so it gets the
 /// base slot. Inner records (`CafsFileInfo`, `SideEffectsDiff`) are
 /// allocated lazily from `FIRST_INNER_SLOT` upwards, one slot per
-/// distinct shape — see [`EncodeState::slot_for`].
+/// distinct shape — see [`EncodeState::allocate_slot`].
 const PKG_FILES_INDEX_SLOT: u8 = SLOT_LO; // 0x40
 const FIRST_INNER_SLOT: u8 = SLOT_LO + 1; // 0x41
 
