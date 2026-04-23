@@ -77,6 +77,13 @@ pub enum StoreIndexError {
         #[error(source)]
         source: rmp_serde::decode::Error,
     },
+
+    #[display("Failed to transcode msgpackr-records payload to plain msgpack: {source}")]
+    #[diagnostic(transparent)]
+    Transcode {
+        #[error(source)]
+        source: crate::msgpackr_records::DecodeError,
+    },
 }
 
 impl StoreIndex {
@@ -144,6 +151,26 @@ impl StoreIndex {
     }
 
     /// Look up a package-files index by key. Returns `Ok(None)` if no row exists.
+    ///
+    /// pacquet-written rows are plain `rmp_serde` msgpack maps (via
+    /// `to_vec_named`). pnpm-written rows use msgpackr's records extension.
+    /// Both shapes are normalised through
+    /// [`transcode_to_plain_msgpack`][crate::msgpackr_records::transcode_to_plain_msgpack]
+    /// before `rmp_serde` sees them — the transcoder tracks records
+    /// mode internally, so passing plain msgpack through is safe and
+    /// also lets it narrow the integer-valued `float 64` encoding we
+    /// use for `checkedAt` back into `uint 64` for deserialization.
+    ///
+    /// There's no bypass fast-path for pacquet-written rows because
+    /// they carry `checkedAt` as `float 64` on purpose (see
+    /// [`CafsFileInfo::checked_at`] for why — msgpackr reads `uint 64`
+    /// as a JS `BigInt`, and pnpm's integrity check does
+    /// `mtimeMs - (checkedAt ?? 0)` which crashes on Number/BigInt
+    /// mixing). Any real tarball has at least one file with
+    /// `checkedAt: Some(…)`, so every row needs float-narrowing and
+    /// the transcoder ends up running. The cost is one extra
+    /// `Vec<u8>` allocation + memcpy per read, dwarfed by the SQLite
+    /// and disk costs.
     pub fn get(&self, key: &str) -> Result<Option<PackageFilesIndex>, StoreIndexError> {
         let row: Option<Vec<u8>> = self
             .conn
@@ -156,10 +183,8 @@ impl StoreIndex {
                 other => Err(StoreIndexError::Read { source: other }),
             })?;
 
-        row.as_deref()
-            .map(rmp_serde::from_slice)
-            .transpose()
-            .map_err(|source| StoreIndexError::Decode { source })
+        let Some(bytes) = row else { return Ok(None) };
+        decode_index_value(&bytes).map(Some)
     }
 
     /// Insert or replace a package-files index.
@@ -209,6 +234,19 @@ impl StoreIndex {
     }
 }
 
+fn decode_index_value(bytes: &[u8]) -> Result<PackageFilesIndex, StoreIndexError> {
+    // `transcode_to_plain_msgpack` tracks records-mode internally and
+    // only reinterprets `0x40..=0x7f` as slot references after a record
+    // definition has been observed, so it's safe to run on both
+    // pacquet-written (plain msgpack) and pnpm-written (msgpackr records)
+    // rows. For plain rows it still performs the integer-valued float
+    // narrowing we need on the read side — pacquet writes the
+    // `checkedAt` timestamp as `float 64` for JS/BigInt interop.
+    let plain = crate::msgpackr_records::transcode_to_plain_msgpack(bytes)
+        .map_err(|source| StoreIndexError::Transcode { source })?;
+    rmp_serde::from_slice(&plain).map_err(|source| StoreIndexError::Decode { source })
+}
+
 /// Build the SQLite key pnpm uses: `"{integrity}\t{pkg_id}"`. Integrity strings
 /// never contain tabs so the separator is unambiguous.
 pub fn store_index_key(integrity: &str, pkg_id: &str) -> String {
@@ -255,8 +293,36 @@ pub struct CafsFileInfo {
     pub digest: String,
     pub mode: u32,
     pub size: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub checked_at: Option<u128>,
+    /// Millisecond Unix timestamp of the last integrity check, or `None`
+    /// if never verified.
+    ///
+    /// Wire note: serialized as MessagePack `float 64` so the byte
+    /// encoding matches what pnpm itself emits (JS `Number` is a double,
+    /// so msgpackr writes timestamps past int32 range as `cb` + 8
+    /// bytes). Writing as `uint 64` instead would be "correct" MessagePack
+    /// but msgpackr would decode it as a `BigInt`, and pnpm's integrity
+    /// check does `mtimeMs - (checkedAt ?? 0)` — mixing Number and
+    /// BigInt throws `TypeError` at runtime. On the read side, the
+    /// [`transcode_to_plain_msgpack`][crate::msgpackr_records::transcode_to_plain_msgpack]
+    /// step narrows integer-valued floats back to `uint 64` so
+    /// `rmp_serde` can deserialize into `Option<u64>` without complaint.
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "serialize_checked_at")]
+    pub checked_at: Option<u64>,
+}
+
+/// Emit `Option<u64>` on the msgpack wire as `float 64` rather than
+/// `uint 64`. See the doc on [`CafsFileInfo::checked_at`] for the
+/// interop reasoning — short version, msgpackr reads `uint 64` as a
+/// `BigInt` and pnpm's integrity check then crashes on Number/BigInt
+/// mixing.
+fn serialize_checked_at<S: serde::Serializer>(
+    value: &Option<u64>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match value {
+        Some(v) => serializer.serialize_f64(*v as f64),
+        None => serializer.serialize_none(),
+    }
 }
 
 /// Value of [`PackageFilesIndex::side_effects`].
@@ -364,5 +430,41 @@ mod tests {
         let idx = StoreIndex::open_in(&store).unwrap();
         idx.set("k\tv", &sample_index()).unwrap();
         assert!(store.v11().join("index.db").exists());
+    }
+
+    /// A row whose bytes are msgpackr-records (as pnpm writes) must decode
+    /// through `StoreIndex::get` just like a pacquet-written row. The
+    /// fixture here is the same "one-file index" bytes used in the
+    /// `msgpackr_records` unit tests — inserted via a direct SQL write so
+    /// we test the decoder *through the get path*, not the round-trip.
+    #[test]
+    fn get_decodes_msgpackr_records_rows() {
+        let dir = tempdir().unwrap();
+        let idx = StoreIndex::open(dir.path()).unwrap();
+        let key = "sha512-xyz\tfake@1.0.0";
+
+        // Captured from `node /tmp/msgpackr_fixture.mjs`, "one-file index".
+        let msgpackr_row: &[u8] = &[
+            0xd4, 0x72, 0x40, 0x92, 0xa4, 0x61, 0x6c, 0x67, 0x6f, 0xa5, 0x66, 0x69, 0x6c, 0x65,
+            0x73, 0xa6, 0x73, 0x68, 0x61, 0x35, 0x31, 0x32, 0x81, 0xac, 0x70, 0x61, 0x63, 0x6b,
+            0x61, 0x67, 0x65, 0x2e, 0x6a, 0x73, 0x6f, 0x6e, 0xd4, 0x72, 0x41, 0x94, 0xa6, 0x64,
+            0x69, 0x67, 0x65, 0x73, 0x74, 0xa4, 0x6d, 0x6f, 0x64, 0x65, 0xa4, 0x73, 0x69, 0x7a,
+            0x65, 0xa9, 0x63, 0x68, 0x65, 0x63, 0x6b, 0x65, 0x64, 0x41, 0x74, 0xa3, 0x61, 0x62,
+            0x63, 0xcd, 0x01, 0xa4, 0x11, 0xcb, 0x42, 0x78, 0xbc, 0xfe, 0x56, 0x80, 0x00, 0x00,
+        ];
+        idx.conn
+            .execute(
+                "INSERT INTO package_index (key, data) VALUES (?1, ?2)",
+                rusqlite::params![key, msgpackr_row],
+            )
+            .unwrap();
+
+        let loaded = idx.get(key).unwrap().expect("row must decode");
+        assert_eq!(loaded.algo, "sha512");
+        let info = loaded.files.get("package.json").unwrap();
+        assert_eq!(info.digest, "abc");
+        assert_eq!(info.mode, 0o644);
+        assert_eq!(info.size, 17);
+        assert_eq!(info.checked_at, Some(1_700_000_000_000));
     }
 }

@@ -333,7 +333,17 @@ impl<'a> DownloadTarballToStore<'a> {
                         );
                     }
 
-                    let checked_at = UNIX_EPOCH.elapsed().ok().map(|x| x.as_millis());
+                    // `as_millis()` returns `u128`; narrow to `u64` to match
+                    // the store index schema — see `CafsFileInfo::checked_at`
+                    // for why `u64` is used. Using `u64::try_from` rather
+                    // than `as u64` avoids a silent wrap: even though
+                    // millisecond epochs don't overflow `u64` for ~584M
+                    // years, the intent should be explicit. If the clock
+                    // ever reports something unrepresentable, drop the
+                    // timestamp — the `checkedAt` field is optional and
+                    // pnpm tolerates `None`.
+                    let checked_at =
+                        UNIX_EPOCH.elapsed().ok().and_then(|x| u64::try_from(x.as_millis()).ok());
                     let file_size = entry
                         .header()
                         .size()

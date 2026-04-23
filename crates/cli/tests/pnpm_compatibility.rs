@@ -104,12 +104,11 @@ fn same_file_structure() {
     drop((root, mock_instance)); // cleanup
 }
 
-// pnpm writes its `index.db` values with msgpackr `useRecords: true`, which
-// uses extension-typed records that rmp-serde can't decode. Pacquet-written
-// entries round-trip fine (we use `to_vec_named`), but reading entries that
-// pnpm wrote is blocked on msgpackr-records decoding support — tracked in
-// #244 as a follow-up after the v11 store cutover.
-#[ignore = "requires msgpackr useRecords decoding to read pnpm-written entries (#244)"]
+// pnpm writes `index.db` values with msgpackr `useRecords: true`; pacquet
+// writes plain msgpack via `rmp_serde::to_vec_named`. `StoreIndex::get`
+// now transcodes msgpackr rows to plain msgpack before deserializing, so
+// both encodings decode to the same `PackageFilesIndex` — the snapshot
+// assertion below compares the decoded shape, not the on-disk bytes.
 #[test]
 fn same_index_file_contents() {
     let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info } =
