@@ -77,6 +77,13 @@ pub enum StoreIndexError {
         #[error(source)]
         source: rmp_serde::decode::Error,
     },
+
+    #[display("Failed to transcode msgpackr-records payload to plain msgpack: {source}")]
+    #[diagnostic(transparent)]
+    Transcode {
+        #[error(source)]
+        source: crate::msgpackr_records::DecodeError,
+    },
 }
 
 impl StoreIndex {
@@ -144,6 +151,14 @@ impl StoreIndex {
     }
 
     /// Look up a package-files index by key. Returns `Ok(None)` if no row exists.
+    ///
+    /// pacquet-written rows are plain `rmp_serde` msgpack maps (via
+    /// `to_vec_named`). pnpm-written rows use msgpackr's records extension
+    /// — a shape we route through [`transcode_to_plain_msgpack`][crate::msgpackr_records::transcode_to_plain_msgpack]
+    /// so `rmp_serde` never has to know about slot bytes or ext type 0x72.
+    /// We sniff the leading two bytes (`d4 72` == fixext1 + records ext
+    /// type) to avoid transcoding pacquet's own rows, which don't need
+    /// it and would otherwise pay an extra allocation per read.
     pub fn get(&self, key: &str) -> Result<Option<PackageFilesIndex>, StoreIndexError> {
         let row: Option<Vec<u8>> = self
             .conn
@@ -156,10 +171,8 @@ impl StoreIndex {
                 other => Err(StoreIndexError::Read { source: other }),
             })?;
 
-        row.as_deref()
-            .map(rmp_serde::from_slice)
-            .transpose()
-            .map_err(|source| StoreIndexError::Decode { source })
+        let Some(bytes) = row else { return Ok(None) };
+        decode_index_value(&bytes).map(Some)
     }
 
     /// Insert or replace a package-files index.
@@ -206,6 +219,22 @@ impl StoreIndex {
             out.push(row.map_err(|source| StoreIndexError::Read { source })?);
         }
         Ok(out)
+    }
+}
+
+/// First two bytes emitted by msgpackr when `useRecords: true` is on —
+/// fixext1 header + the 0x72 ("r") record-definition ext type. Every
+/// pnpm-written `PackageFilesIndex` row opens with this pair because
+/// the top-level struct itself is a record.
+const MSGPACKR_RECORDS_MARKER: [u8; 2] = [0xd4, crate::msgpackr_records::RECORD_DEF_EXT_TYPE];
+
+fn decode_index_value(bytes: &[u8]) -> Result<PackageFilesIndex, StoreIndexError> {
+    if bytes.starts_with(&MSGPACKR_RECORDS_MARKER) {
+        let plain = crate::msgpackr_records::transcode_to_plain_msgpack(bytes)
+            .map_err(|source| StoreIndexError::Transcode { source })?;
+        rmp_serde::from_slice(&plain).map_err(|source| StoreIndexError::Decode { source })
+    } else {
+        rmp_serde::from_slice(bytes).map_err(|source| StoreIndexError::Decode { source })
     }
 }
 
@@ -364,5 +393,41 @@ mod tests {
         let idx = StoreIndex::open_in(&store).unwrap();
         idx.set("k\tv", &sample_index()).unwrap();
         assert!(store.v11().join("index.db").exists());
+    }
+
+    /// A row whose bytes are msgpackr-records (as pnpm writes) must decode
+    /// through `StoreIndex::get` just like a pacquet-written row. The
+    /// fixture here is the same "one-file index" bytes used in the
+    /// `msgpackr_records` unit tests — inserted via a direct SQL write so
+    /// we test the decoder *through the get path*, not the round-trip.
+    #[test]
+    fn get_decodes_msgpackr_records_rows() {
+        let dir = tempdir().unwrap();
+        let idx = StoreIndex::open(dir.path()).unwrap();
+        let key = "sha512-xyz\tfake@1.0.0";
+
+        // Captured from `node /tmp/msgpackr_fixture.mjs`, "one-file index".
+        let msgpackr_row: &[u8] = &[
+            0xd4, 0x72, 0x40, 0x92, 0xa4, 0x61, 0x6c, 0x67, 0x6f, 0xa5, 0x66, 0x69, 0x6c, 0x65,
+            0x73, 0xa6, 0x73, 0x68, 0x61, 0x35, 0x31, 0x32, 0x81, 0xac, 0x70, 0x61, 0x63, 0x6b,
+            0x61, 0x67, 0x65, 0x2e, 0x6a, 0x73, 0x6f, 0x6e, 0xd4, 0x72, 0x41, 0x94, 0xa6, 0x64,
+            0x69, 0x67, 0x65, 0x73, 0x74, 0xa4, 0x6d, 0x6f, 0x64, 0x65, 0xa4, 0x73, 0x69, 0x7a,
+            0x65, 0xa9, 0x63, 0x68, 0x65, 0x63, 0x6b, 0x65, 0x64, 0x41, 0x74, 0xa3, 0x61, 0x62,
+            0x63, 0xcd, 0x01, 0xa4, 0x11, 0xcb, 0x42, 0x78, 0xbc, 0xfe, 0x56, 0x80, 0x00, 0x00,
+        ];
+        idx.conn
+            .execute(
+                "INSERT INTO package_index (key, data) VALUES (?1, ?2)",
+                rusqlite::params![key, msgpackr_row],
+            )
+            .unwrap();
+
+        let loaded = idx.get(key).unwrap().expect("row must decode");
+        assert_eq!(loaded.algo, "sha512");
+        let info = loaded.files.get("package.json").unwrap();
+        assert_eq!(info.digest, "abc");
+        assert_eq!(info.mode, 0o644);
+        assert_eq!(info.size, 17);
+        assert_eq!(info.checked_at, Some(1_700_000_000_000));
     }
 }
