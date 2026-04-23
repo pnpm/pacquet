@@ -43,7 +43,7 @@ jobs:
       - name: Install pnpm (for compatibility check)
         uses: pnpm/action-setup@v4
         with:
-          version: 11
+          version: 11.0.0-rc.5
           run_install: false
           standalone: true
 
