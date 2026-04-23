@@ -1,4 +1,6 @@
-use crate::{CreateVirtualStore, SymlinkDirectDependencies};
+use crate::{CreateVirtualStore, CreateVirtualStoreError, SymlinkDirectDependencies};
+use derive_more::{Display, Error};
+use miette::Diagnostic;
 use pacquet_lockfile::{DependencyPath, PackageSnapshot, RootProjectSnapshot};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
@@ -26,12 +28,19 @@ where
     pub dependency_groups: DependencyGroupList,
 }
 
+/// Error type of [`InstallFrozenLockfile`].
+#[derive(Debug, Display, Error, Diagnostic)]
+pub enum InstallFrozenLockfileError {
+    #[diagnostic(transparent)]
+    CreateVirtualStore(#[error(source)] CreateVirtualStoreError),
+}
+
 impl<'a, DependencyGroupList> InstallFrozenLockfile<'a, DependencyGroupList>
 where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
     /// Execute the subroutine.
-    pub async fn run(self) {
+    pub async fn run(self) -> Result<(), InstallFrozenLockfileError> {
         let InstallFrozenLockfile {
             http_client,
             config,
@@ -44,8 +53,13 @@ where
 
         assert!(config.prefer_frozen_lockfile, "Non frozen lockfile is not yet supported");
 
-        CreateVirtualStore { http_client, config, packages, project_snapshot }.run().await;
+        CreateVirtualStore { http_client, config, packages, project_snapshot }
+            .run()
+            .await
+            .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
 
         SymlinkDirectDependencies { config, project_snapshot, dependency_groups }.run();
+
+        Ok(())
     }
 }

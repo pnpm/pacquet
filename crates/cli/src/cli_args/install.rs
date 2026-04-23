@@ -1,5 +1,6 @@
 use crate::State;
 use clap::Args;
+use miette::Context;
 use pacquet_package_manager::Install;
 use pacquet_package_manifest::DependencyGroup;
 
@@ -64,7 +65,8 @@ impl InstallArgs {
             resolved_packages,
         }
         .run()
-        .await;
+        .await
+        .wrap_err("installing dependencies")?;
 
         Ok(())
     }

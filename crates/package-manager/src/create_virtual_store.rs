@@ -1,5 +1,7 @@
-use crate::InstallPackageBySnapshot;
+use crate::{InstallPackageBySnapshot, InstallPackageBySnapshotError};
+use derive_more::{Display, Error};
 use futures_util::future;
+use miette::Diagnostic;
 use pacquet_lockfile::{DependencyPath, PackageSnapshot, RootProjectSnapshot};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
@@ -15,9 +17,16 @@ pub struct CreateVirtualStore<'a> {
     pub project_snapshot: &'a RootProjectSnapshot,
 }
 
+/// Error type of [`CreateVirtualStore`].
+#[derive(Debug, Display, Error, Diagnostic)]
+pub enum CreateVirtualStoreError {
+    #[diagnostic(transparent)]
+    InstallPackageBySnapshot(#[error(source)] InstallPackageBySnapshotError),
+}
+
 impl<'a> CreateVirtualStore<'a> {
     /// Execute the subroutine.
-    pub async fn run(self) {
+    pub async fn run(self) -> Result<(), CreateVirtualStoreError> {
         let CreateVirtualStore { http_client, config, packages, project_snapshot } = self;
 
         let packages = packages.unwrap_or_else(|| {
@@ -31,9 +40,11 @@ impl<'a> CreateVirtualStore<'a> {
                 InstallPackageBySnapshot { http_client, config, dependency_path, package_snapshot }
                     .run()
                     .await
-                    .unwrap(); // TODO: properly propagate this error
+                    .map_err(CreateVirtualStoreError::InstallPackageBySnapshot)
             })
-            .pipe(future::join_all)
-            .await;
+            .pipe(future::try_join_all)
+            .await?;
+
+        Ok(())
     }
 }
