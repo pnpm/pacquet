@@ -1,7 +1,9 @@
-use crate::InstallPackageFromRegistry;
+use crate::{InstallPackageFromRegistry, InstallPackageFromRegistryError};
 use async_recursion::async_recursion;
 use dashmap::DashSet;
+use derive_more::{Display, Error};
 use futures_util::future;
+use miette::Diagnostic;
 use node_semver::Version;
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
@@ -35,9 +37,16 @@ pub struct InstallWithoutLockfile<'a, DependencyGroupList> {
     pub dependency_groups: DependencyGroupList,
 }
 
+/// Error type of [`InstallWithoutLockfile`].
+#[derive(Debug, Display, Error, Diagnostic)]
+pub enum InstallWithoutLockfileError {
+    #[diagnostic(transparent)]
+    InstallPackageFromRegistry(#[error(source)] InstallPackageFromRegistryError),
+}
+
 impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
     /// Execute the subroutine.
-    pub async fn run(self)
+    pub async fn run(self) -> Result<(), InstallWithoutLockfileError>
     where
         DependencyGroupList: IntoIterator<Item = DependencyGroup>,
     {
@@ -50,8 +59,8 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
             resolved_packages,
         } = self;
 
-        let _: Vec<()> = manifest
-            .dependencies(dependency_groups.into_iter())
+        manifest
+            .dependencies(dependency_groups)
             .map(|(name, version_range)| async move {
                 let dependency = InstallPackageFromRegistry {
                     tarball_mem_cache,
@@ -63,7 +72,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                 }
                 .run::<Version>()
                 .await
-                .unwrap();
+                .map_err(InstallWithoutLockfileError::InstallPackageFromRegistry)?;
 
                 InstallWithoutLockfile {
                     tarball_mem_cache,
@@ -74,17 +83,24 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                     resolved_packages,
                 }
                 .install_dependencies_from_registry(&dependency)
-                .await;
+                .await?;
+
+                Ok::<_, InstallWithoutLockfileError>(())
             })
-            .pipe(future::join_all)
-            .await;
+            .pipe(future::try_join_all)
+            .await?;
+
+        Ok(())
     }
 }
 
 impl<'a> InstallWithoutLockfile<'a, ()> {
     /// Install dependencies of a dependency.
     #[async_recursion]
-    async fn install_dependencies_from_registry(&self, package: &PackageVersion) {
+    async fn install_dependencies_from_registry(
+        &self,
+        package: &PackageVersion,
+    ) -> Result<(), InstallWithoutLockfileError> {
         let InstallWithoutLockfile {
             tarball_mem_cache,
             http_client,
@@ -96,7 +112,7 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
         // This package has already resolved, there is no need to reinstall again.
         if !resolved_packages.insert(package.to_virtual_store_name()) {
             tracing::info!(target: "pacquet::install", package = ?package.to_virtual_store_name(), "Skip subset");
-            return;
+            return Ok(());
         }
 
         let node_modules_path = self
@@ -120,12 +136,15 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
                 }
                 .run::<Version>()
                 .await
-                .unwrap(); // TODO: proper error propagation
-                self.install_dependencies_from_registry(&dependency).await;
+                .map_err(InstallWithoutLockfileError::InstallPackageFromRegistry)?;
+                self.install_dependencies_from_registry(&dependency).await?;
+                Ok::<_, InstallWithoutLockfileError>(())
             })
-            .pipe(future::join_all)
-            .await;
+            .pipe(future::try_join_all)
+            .await?;
 
         tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Complete subset");
+
+        Ok(())
     }
 }

@@ -51,20 +51,20 @@ mod tests {
             }};
         }
 
+        case!(9, "9.0" => ComVer { major: 9, minor: 0 });
+        case!(9, "9.1" => ComVer { major: 9, minor: 1 });
         case!(6, "6.0" => ComVer { major: 6, minor: 0 });
-        case!(6, "6.1" => ComVer { major: 6, minor: 1 });
-        case!(5, "5.0" => ComVer { major: 5, minor: 0 });
     }
 
     #[test]
     fn incompatible() {
         let error =
-            "5.0".parse::<ComVer>().unwrap().pipe(LockfileVersion::<6>::try_from).unwrap_err();
+            "6.0".parse::<ComVer>().unwrap().pipe(LockfileVersion::<9>::try_from).unwrap_err();
         dbg!(&error);
-        assert_eq!(error.to_string(), "The lockfileVersion of 5.0 is incompatible with 6.x");
+        assert_eq!(error.to_string(), "The lockfileVersion of 6.0 is incompatible with 9.x");
         assert!(matches!(
             error,
-            LockfileVersionError::IncompatibleMajor(ComVer { major: 5, minor: 0 }),
+            LockfileVersionError::IncompatibleMajor(ComVer { major: 6, minor: 0 }),
         ));
     }
 }

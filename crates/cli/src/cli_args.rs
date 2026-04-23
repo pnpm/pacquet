@@ -79,11 +79,7 @@ impl CliArgs {
                 // The intended usage of the property is to specify a command that starts your program.
                 let manifest = PackageManifest::from_path(manifest_path())
                     .wrap_err("getting the package.json in current directory")?;
-                let command = if let Some(script) = manifest.script("start", true)? {
-                    script
-                } else {
-                    "node server.js"
-                };
+                let command = manifest.script("start", true)?.unwrap_or("node server.js");
                 execute_shell(command).wrap_err(format!("executing command: \"{0}\"", command))?;
             }
             CliCommand::Store(command) => command.run(|| npmrc())?,

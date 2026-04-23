@@ -17,6 +17,21 @@ impl PkgNameVerPeer {
         // optimization requires parser combinator
         self.to_string().replace('/', "+").replace(")(", "_").replace('(', "_").replace(')', "")
     }
+
+    /// Return a new [`PkgNameVerPeer`] with the peer-dependency suffix stripped.
+    ///
+    /// This converts a v9 snapshot key (e.g. `react-dom@17.0.2(react@17.0.2)`)
+    /// into the corresponding `packages:` key (e.g. `react-dom@17.0.2`), which
+    /// identifies the package version independent of peer context.
+    pub fn without_peer(&self) -> PkgNameVerPeer {
+        let bare = self
+            .suffix
+            .version()
+            .to_string()
+            .parse::<PkgVerPeer>()
+            .expect("a bare semver version is always a valid PkgVerPeer");
+        PkgNameVerPeer::new(self.name.clone(), bare)
+    }
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use crate::{Install, ResolvedPackages};
+use crate::{Install, InstallError, ResolvedPackages};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::Lockfile;
@@ -34,6 +34,8 @@ pub enum AddError {
     AddDependencyToManifest(#[error(source)] PackageManifestError),
     #[display("Failed save the manifest file: {_0}")]
     SaveManifest(#[error(source)] PackageManifestError),
+    #[diagnostic(transparent)]
+    Install(#[error(source)] InstallError),
 }
 
 impl<'a, ListDependencyGroups, DependencyGroupList>
@@ -82,7 +84,8 @@ where
             resolved_packages,
         }
         .run()
-        .await;
+        .await
+        .map_err(AddError::Install)?;
 
         manifest.save().map_err(AddError::SaveManifest)?;
 

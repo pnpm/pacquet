@@ -1,10 +1,9 @@
 use crate::{kill_verdaccio::kill_all_verdaccio_children, MockInstanceOptions, RegistryInfo};
-use advisory_lock::{AdvisoryFileLock, FileLockError, FileLockMode};
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 use std::{
     env::temp_dir,
-    fs::{self, File, OpenOptions},
+    fs::{self, File, OpenOptions, TryLockError},
     mem::forget,
     path::{Path, PathBuf},
     sync::OnceLock,
@@ -123,21 +122,24 @@ impl GuardFile {
                 .read(true)
                 .write(true)
                 .create(true)
+                .truncate(false)
                 .open(temp_dir().join("pacquet-registry-mock-anchor.lock"))
                 .expect("open the guard file")
         })
     }
 
     fn lock() -> Self {
-        GuardFile::path().lock(FileLockMode::Exclusive).expect("acquire file guard");
+        GuardFile::path().lock().expect("acquire file guard");
         GuardFile
     }
 
     fn try_lock() -> Option<Self> {
-        match GuardFile::path().try_lock(FileLockMode::Exclusive) {
+        match GuardFile::path().try_lock() {
             Ok(()) => Some(GuardFile),
-            Err(FileLockError::AlreadyLocked) => None,
-            Err(FileLockError::Io(error)) => panic!("Failed to acquire the file guard: {error}"),
+            Err(TryLockError::WouldBlock) => None,
+            Err(TryLockError::Error(error)) => {
+                panic!("Failed to acquire the file guard: {error}")
+            }
         }
     }
 

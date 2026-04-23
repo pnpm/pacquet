@@ -1,4 +1,5 @@
 mod add;
+mod build_snapshot;
 mod create_cas_files;
 mod create_symlink_layout;
 mod create_virtual_dir_by_snapshot;
@@ -13,6 +14,7 @@ mod symlink_direct_dependencies;
 mod symlink_package;
 
 pub use add::*;
+pub use build_snapshot::*;
 pub use create_cas_files::*;
 pub use create_symlink_layout::*;
 pub use create_virtual_dir_by_snapshot::*;
