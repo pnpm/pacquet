@@ -166,19 +166,18 @@ impl Npmrc {
 
     /// Build the runtime config by layering:
     /// 1. hard-coded defaults, then
-    /// 2. **auth/network-only** keys read from the nearest `.npmrc`
+    /// 2. the supported `.npmrc` subset read from the nearest `.npmrc`
     ///    (cwd, falling back to home), then
     /// 3. the nearest `pnpm-workspace.yaml` walking up from cwd.
     ///
-    /// pnpm 11 stopped reading project-structural settings from `.npmrc` —
-    /// it now only honours the auth/network subset there (`registry`,
-    /// `_authToken`, `ca`, `cafile`, `cert`, `key`, `proxy`, `https-proxy`,
-    /// scoped-registry and per-host auth lines). Everything else
-    /// (`storeDir`, `lockfile`, `hoist-pattern`, …) has to come from
-    /// `pnpm-workspace.yaml` or CLI flags. Pacquet follows suit: writing
-    /// non-auth keys to `.npmrc` is silently ignored.
+    /// Pacquet currently only applies `registry` from `.npmrc`. Other
+    /// `.npmrc` entries — pnpm's TLS / npm-auth / proxy / scoped-registry
+    /// keys, plus project-structural settings like `storeDir`, `lockfile`
+    /// and `hoist-pattern` — are silently ignored here. The first group
+    /// is tracked for future auth / proxy / TLS work; the second must
+    /// come from `pnpm-workspace.yaml` or CLI flags, matching pnpm 11.
     ///
-    /// The yaml wins over `.npmrc` on any key it sets, matching pnpm itself.
+    /// The yaml wins over `.npmrc` on any key it sets.
     pub fn current<Error, CurrentDir, HomeDir, Default>(
         current_dir: CurrentDir,
         home_dir: HomeDir,

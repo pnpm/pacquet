@@ -1,17 +1,18 @@
 use crate::Npmrc;
 
-/// Narrow subset of `.npmrc` that pacquet still reads — matches pnpm v11's
-/// auth / network allow-list from `@pnpm/config.reader::localConfig`:
-/// `registry`, `ca`, `cafile`, `cert`, `key`, `_auth`, `_authToken`,
-/// `_password`, `email`, `keyfile`, `username`, `https-proxy`, `proxy`,
-/// `no-proxy`, `http-proxy`, `local-address`, `strict-ssl`, plus the
-/// dynamic `@scope:registry` and `//host:_authToken` patterns. Everything
-/// else (`storeDir`, `lockfile`, hoist pattern, …) now lives in
-/// `pnpm-workspace.yaml` and is ignored here.
+/// Narrow subset of `.npmrc` that pacquet currently reads.
 ///
-/// Pacquet currently only *uses* `registry`; the rest are tracked so we can
-/// light up auth / proxy / TLS support without changing the .npmrc parser
-/// again.
+/// At the moment this parser only extracts the top-level `registry` key.
+/// The rest of pnpm's `.npmrc` allow-list (TLS via `ca` / `cafile` /
+/// `cert` / `key`, npm auth via `_auth` / `_authToken` / `_password` /
+/// `email` / `keyfile` / `username`, proxy via `https-proxy` / `proxy` /
+/// `no-proxy` / `http-proxy` / `local-address` / `strict-ssl`, plus the
+/// dynamic `@scope:registry` and `//host:_authToken` patterns) is not yet
+/// represented in `NpmrcAuth` and is silently ignored.
+///
+/// Project-structural settings (`storeDir`, `lockfile`, hoist pattern,
+/// `node-linker`, …) now live in `pnpm-workspace.yaml` and are also
+/// ignored here.
 #[derive(Debug, Default, PartialEq)]
 pub struct NpmrcAuth {
     pub registry: Option<String>,
