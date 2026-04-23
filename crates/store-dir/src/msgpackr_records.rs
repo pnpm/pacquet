@@ -524,8 +524,13 @@ fn write_map_header(w: &mut Vec<u8>, n: usize) {
         w.push(0xde);
         w.extend_from_slice(&(n as u16).to_be_bytes());
     } else {
+        // MessagePack's `map 32` header caps length at `u32::MAX`. On
+        // 64-bit hosts a `usize` could in principle exceed that; use
+        // a checked conversion so we panic with a clear message
+        // rather than silently truncating to a corrupt payload.
+        let n = u32::try_from(n).expect("map length exceeds MessagePack's u32::MAX limit");
         w.push(0xdf);
-        w.extend_from_slice(&(n as u32).to_be_bytes());
+        w.extend_from_slice(&n.to_be_bytes());
     }
 }
 
@@ -541,8 +546,12 @@ fn write_str(w: &mut Vec<u8>, s: &str) {
         w.push(0xda);
         w.extend_from_slice(&(n as u16).to_be_bytes());
     } else {
+        // `str 32` tops out at `u32::MAX` bytes. Checked cast to
+        // fail loudly rather than silently truncating to a corrupt
+        // length prefix.
+        let n = u32::try_from(n).expect("string length exceeds MessagePack's u32::MAX limit");
         w.push(0xdb);
-        w.extend_from_slice(&(n as u32).to_be_bytes());
+        w.extend_from_slice(&n.to_be_bytes());
     }
     w.extend_from_slice(bytes);
 }
@@ -736,19 +745,19 @@ fn encode_pkg_files_index_value(
         return Err(EncodeError::ManifestNotSupported);
     }
 
-    // Field order matches pnpm's `PackageFilesIndex` TypeScript
-    // declaration (`manifest?`, `requiresBuild?`, `algo`, `files`,
-    // `sideEffects?`) which is the insertion order msgpackr picks up
-    // when packing pnpm's own struct — keeps bytes byte-close to
-    // pnpm's output for wire-level diffing. Optional fields are
-    // omitted from the schema when `None`. `manifest` stays out of
-    // the schema entirely until pacquet starts populating it (the
-    // `Some` check above bails before here).
+    // Field order `[algo, requiresBuild?, files, sideEffects?]`
+    // matches what pnpm's msgpackr emits, as verified by the
+    // `decodes_requires_build_true` and `decodes_side_effects`
+    // fixtures captured from msgpackr 1.11.8 right here in this
+    // module. Optional fields are omitted from the schema when
+    // `None`. `manifest` stays out of the schema entirely until
+    // pacquet starts populating it (the `Some` check above bails
+    // before we get here).
     let mut fields: Vec<&str> = Vec::with_capacity(4);
+    fields.push("algo");
     if idx.requires_build.is_some() {
         fields.push("requiresBuild");
     }
-    fields.push("algo");
     fields.push("files");
     if idx.side_effects.is_some() {
         fields.push("sideEffects");
@@ -757,10 +766,10 @@ fn encode_pkg_files_index_value(
     write_record_def_header(w, PKG_FILES_INDEX_SLOT, &fields);
 
     // Values in the same order as `fields` above.
+    write_str(w, &idx.algo);
     if let Some(rb) = idx.requires_build {
         write_bool(w, rb);
     }
-    write_str(w, &idx.algo);
     write_map_header(w, idx.files.len());
     for (name, info) in &idx.files {
         write_str(w, name);
@@ -877,8 +886,12 @@ fn write_array_header(w: &mut Vec<u8>, n: usize) {
         w.push(0xdc);
         w.extend_from_slice(&(n as u16).to_be_bytes());
     } else {
+        // `array 32` tops out at `u32::MAX` entries. Checked cast
+        // so an overflow panics with a clear message rather than
+        // silently truncating to a corrupt length prefix.
+        let n = u32::try_from(n).expect("array length exceeds MessagePack's u32::MAX limit");
         w.push(0xdd);
-        w.extend_from_slice(&(n as u32).to_be_bytes());
+        w.extend_from_slice(&n.to_be_bytes());
     }
 }
 
@@ -1394,7 +1407,7 @@ mod tests {
             names.push(std::str::from_utf8(&bytes[pos..pos + len]).unwrap().to_string());
             pos += len;
         }
-        assert_eq!(names, vec!["requiresBuild", "algo", "files"]);
+        assert_eq!(names, vec!["algo", "requiresBuild", "files"]);
     }
 
     #[test]
