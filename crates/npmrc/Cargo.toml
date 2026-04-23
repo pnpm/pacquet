@@ -17,6 +17,7 @@ home       = { workspace = true }
 pipe-trait = { workspace = true }
 serde      = { workspace = true }
 serde_ini  = { workspace = true }
+serde_yaml = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
