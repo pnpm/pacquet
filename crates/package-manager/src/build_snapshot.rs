@@ -1,21 +1,20 @@
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::{
-    DependencyPath, LockfileResolution, PackageSnapshot, PackageSnapshotDependency, PkgName,
-    PkgNameVerPeer, PkgVerPeer, RegistryResolution,
+    LockfileResolution, PackageKey, PackageMetadata, PkgName, PkgNameVerPeer, PkgVerPeer,
+    RegistryResolution, SnapshotEntry,
 };
 use pacquet_registry::PackageVersion;
 use std::collections::HashMap;
 
-/// Flags that cannot be derived from a [`PackageVersion`] alone and must be
-/// provided by the installer based on how the package was reached.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SnapshotFlags {
-    /// `true` if every path from the root to this package goes through a
-    /// `devDependencies` entry.
-    pub dev: bool,
-    /// `true` if the package is an optional dependency.
-    pub optional: bool,
+/// Result of converting a resolved [`PackageVersion`] into the v9 lockfile
+/// shape: a `PackageKey` (used to index both `packages:` and `snapshots:`), the
+/// per-version `PackageMetadata`, and the per-instance `SnapshotEntry`.
+#[derive(Debug)]
+pub struct BuiltSnapshot {
+    pub package_key: PackageKey,
+    pub metadata: PackageMetadata,
+    pub snapshot: SnapshotEntry,
 }
 
 /// Error type of [`build_package_snapshot`].
@@ -36,21 +35,20 @@ pub enum BuildSnapshotError {
     },
 }
 
-/// Build the lockfile `DependencyPath` for a package installed from the default
-/// registry (no custom registry, no peer suffix).
-pub fn registry_dependency_path(
-    package: &PackageVersion,
-) -> Result<DependencyPath, BuildSnapshotError> {
+/// Build the v9 lockfile `PackageKey` (name@version, no peer suffix) for a
+/// package installed from the default registry.
+pub fn registry_package_key(package: &PackageVersion) -> Result<PackageKey, BuildSnapshotError> {
     let name = PkgName::parse(package.name.as_str())
         .map_err(|source| BuildSnapshotError::ParseName { name: package.name.clone(), source })?;
-    let peer = format!("{}", package.version)
+    let peer = package
+        .version
+        .to_string()
         .parse::<PkgVerPeer>()
         .expect("PackageVersion.version always serializes to a valid PkgVerPeer");
-    Ok(DependencyPath { custom_registry: None, package_specifier: PkgNameVerPeer::new(name, peer) })
+    Ok(PkgNameVerPeer::new(name, peer))
 }
 
-/// Convert a [`PackageVersion`] into a ([`DependencyPath`], [`PackageSnapshot`]) pair,
-/// suitable for insertion into a `pnpm-lock.yaml`'s `packages` map.
+/// Convert a [`PackageVersion`] into a v9 [`BuiltSnapshot`].
 ///
 /// `resolved_dependencies` maps each of this package's declared dependency
 /// names to the version-with-peer-suffix that was actually picked by the
@@ -59,9 +57,8 @@ pub fn registry_dependency_path(
 pub fn build_package_snapshot(
     package: &PackageVersion,
     resolved_dependencies: &HashMap<String, PkgVerPeer>,
-    flags: SnapshotFlags,
-) -> Result<(DependencyPath, PackageSnapshot), BuildSnapshotError> {
-    let dependency_path = registry_dependency_path(package)?;
+) -> Result<BuiltSnapshot, BuildSnapshotError> {
+    let package_key = registry_package_key(package)?;
 
     let integrity =
         package.dist.integrity.clone().ok_or_else(|| BuildSnapshotError::MissingIntegrity {
@@ -69,18 +66,15 @@ pub fn build_package_snapshot(
             version: package.version.to_string(),
         })?;
 
-    let mut dependencies: HashMap<PkgName, PackageSnapshotDependency> = HashMap::new();
+    let mut dependencies: HashMap<PkgName, PkgVerPeer> = HashMap::new();
     for (dep_name, ver_peer) in resolved_dependencies {
         let parsed = PkgName::parse(dep_name.as_str())
             .map_err(|source| BuildSnapshotError::ParseName { name: dep_name.clone(), source })?;
-        dependencies.insert(parsed, PackageSnapshotDependency::PkgVerPeer(ver_peer.clone()));
+        dependencies.insert(parsed, ver_peer.clone());
     }
 
-    let snapshot = PackageSnapshot {
+    let metadata = PackageMetadata {
         resolution: LockfileResolution::Registry(RegistryResolution { integrity }),
-        id: None,
-        name: None,
-        version: None,
         engines: None,
         cpu: None,
         os: None,
@@ -92,14 +86,17 @@ pub fn build_package_snapshot(
         bundled_dependencies: None,
         peer_dependencies: None,
         peer_dependencies_meta: None,
+    };
+
+    let snapshot = SnapshotEntry {
+        id: None,
         dependencies: (!dependencies.is_empty()).then_some(dependencies),
         optional_dependencies: None,
         transitive_peer_dependencies: None,
-        dev: Some(flags.dev),
-        optional: Some(flags.optional),
+        patched: None,
     };
 
-    Ok((dependency_path, snapshot))
+    Ok(BuiltSnapshot { package_key, metadata, snapshot })
 }
 
 #[cfg(test)]
@@ -134,34 +131,27 @@ mod tests {
     }
 
     #[test]
-    fn builds_dependency_path_with_no_registry_and_no_peer_suffix() {
+    fn builds_package_key_without_leading_slash_and_no_peer() {
         let pkg = make_package("react", "17.0.2");
-        let dep_path = registry_dependency_path(&pkg).unwrap();
-        assert_eq!(dep_path.to_string(), "/react@17.0.2");
+        let key = registry_package_key(&pkg).unwrap();
+        assert_eq!(key.to_string(), "react@17.0.2");
     }
 
     #[test]
-    fn builds_dependency_path_for_scoped_name() {
+    fn builds_package_key_for_scoped_name() {
         let pkg = make_package("@types/node", "18.7.19");
-        let dep_path = registry_dependency_path(&pkg).unwrap();
-        assert_eq!(dep_path.to_string(), "/@types/node@18.7.19");
+        let key = registry_package_key(&pkg).unwrap();
+        assert_eq!(key.to_string(), "@types/node@18.7.19");
     }
 
     #[test]
-    fn builds_snapshot_with_registry_resolution_and_flags() {
+    fn builds_metadata_with_registry_resolution_and_no_deps() {
         let pkg = make_package("lodash", "4.17.21");
-        let (dep_path, snapshot) = build_package_snapshot(
-            &pkg,
-            &HashMap::new(),
-            SnapshotFlags { dev: true, optional: false },
-        )
-        .unwrap();
+        let built = build_package_snapshot(&pkg, &HashMap::new()).unwrap();
 
-        assert_eq!(dep_path.to_string(), "/lodash@4.17.21");
-        assert!(matches!(snapshot.resolution, LockfileResolution::Registry(_)));
-        assert_eq!(snapshot.dev, Some(true));
-        assert_eq!(snapshot.optional, Some(false));
-        assert!(snapshot.dependencies.is_none());
+        assert_eq!(built.package_key.to_string(), "lodash@4.17.21");
+        assert!(matches!(built.metadata.resolution, LockfileResolution::Registry(_)));
+        assert!(built.snapshot.dependencies.is_none());
     }
 
     #[test]
@@ -170,16 +160,12 @@ mod tests {
         let mut resolved = HashMap::new();
         resolved.insert("react".to_string(), "17.0.2".parse::<PkgVerPeer>().unwrap());
 
-        let (_, snapshot) =
-            build_package_snapshot(&pkg, &resolved, SnapshotFlags::default()).unwrap();
+        let built = build_package_snapshot(&pkg, &resolved).unwrap();
 
-        let deps = snapshot.dependencies.expect("dependencies should be populated");
+        let deps = built.snapshot.dependencies.expect("dependencies should be populated");
         assert_eq!(deps.len(), 1);
         let react_key = PkgName::parse("react").unwrap();
-        match deps.get(&react_key).expect("react entry") {
-            PackageSnapshotDependency::PkgVerPeer(v) => assert_eq!(v.to_string(), "17.0.2"),
-            other => panic!("expected PkgVerPeer, got {other:?}"),
-        }
+        assert_eq!(deps.get(&react_key).unwrap().to_string(), "17.0.2");
     }
 
     #[test]
@@ -187,7 +173,7 @@ mod tests {
         let mut pkg = make_package("broken", "1.0.0");
         pkg.dist.integrity = None;
 
-        let err = build_package_snapshot(&pkg, &HashMap::new(), SnapshotFlags::default())
+        let err = build_package_snapshot(&pkg, &HashMap::new())
             .expect_err("should fail without integrity");
         assert!(matches!(err, BuildSnapshotError::MissingIntegrity { .. }));
     }

@@ -2,7 +2,7 @@ use crate::{InstallPackageBySnapshot, InstallPackageBySnapshotError};
 use derive_more::{Display, Error};
 use futures_util::future;
 use miette::Diagnostic;
-use pacquet_lockfile::{DependencyPath, PackageSnapshot, RootProjectSnapshot};
+use pacquet_lockfile::{PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pipe_trait::Pipe;
@@ -13,8 +13,8 @@ use std::collections::HashMap;
 pub struct CreateVirtualStore<'a> {
     pub http_client: &'a ThrottledClient,
     pub config: &'static Npmrc,
-    pub packages: Option<&'a HashMap<DependencyPath, PackageSnapshot>>,
-    pub project_snapshot: &'a RootProjectSnapshot,
+    pub packages: Option<&'a HashMap<PackageKey, PackageMetadata>>,
+    pub snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,
 }
 
 /// Error type of [`CreateVirtualStore`].
@@ -22,25 +22,47 @@ pub struct CreateVirtualStore<'a> {
 pub enum CreateVirtualStoreError {
     #[diagnostic(transparent)]
     InstallPackageBySnapshot(#[error(source)] InstallPackageBySnapshotError),
+
+    #[display("Lockfile has a snapshot entry `{snapshot_key}` with no matching metadata entry (`{metadata_key}`) in `packages:`.")]
+    #[diagnostic(code(pacquet_package_manager::missing_package_metadata))]
+    MissingPackageMetadata { snapshot_key: String, metadata_key: String },
 }
 
 impl<'a> CreateVirtualStore<'a> {
     /// Execute the subroutine.
     pub async fn run(self) -> Result<(), CreateVirtualStoreError> {
-        let CreateVirtualStore { http_client, config, packages, project_snapshot } = self;
+        let CreateVirtualStore { http_client, config, packages, snapshots } = self;
 
+        let Some(snapshots) = snapshots else {
+            // No snapshots to install. If the lockfile also has no project deps
+            // this is a valid no-op; if it does, pnpm would have populated
+            // `snapshots`, so bailing out here is safe enough for v9.
+            return Ok(());
+        };
         let packages = packages.unwrap_or_else(|| {
-            dbg!(project_snapshot);
-            todo!("check project_snapshot, error if it's not empty, do nothing if empty");
+            panic!("lockfile has `snapshots:` but no `packages:`; this violates the v9 spec")
         });
 
-        packages
+        snapshots
             .iter()
-            .map(|(dependency_path, package_snapshot)| async move {
-                InstallPackageBySnapshot { http_client, config, dependency_path, package_snapshot }
-                    .run()
-                    .await
-                    .map_err(CreateVirtualStoreError::InstallPackageBySnapshot)
+            .map(|(snapshot_key, snapshot)| async move {
+                let metadata_key = snapshot_key.without_peer();
+                let metadata = packages.get(&metadata_key).ok_or_else(|| {
+                    CreateVirtualStoreError::MissingPackageMetadata {
+                        snapshot_key: snapshot_key.to_string(),
+                        metadata_key: metadata_key.to_string(),
+                    }
+                })?;
+                InstallPackageBySnapshot {
+                    http_client,
+                    config,
+                    package_key: snapshot_key,
+                    metadata,
+                    snapshot,
+                }
+                .run()
+                .await
+                .map_err(CreateVirtualStoreError::InstallPackageBySnapshot)
             })
             .pipe(future::try_join_all)
             .await?;

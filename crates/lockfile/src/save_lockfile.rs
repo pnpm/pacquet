@@ -42,49 +42,57 @@ mod tests {
     use tempfile::tempdir;
     use text_block_macros::text_block;
 
-    /// A compact lockfile fixture exercising the root settings, the three
-    /// direct-dependency groups, and the `packages` map with both tarball and
-    /// registry resolutions.
+    /// A compact v9 lockfile fixture exercising the `importers` root entry, the
+    /// `packages` metadata map (registry resolution + engines + hasBin), and
+    /// the `snapshots` map (including peer-qualified keys and inner
+    /// `dependencies`).
     const LOCKFILE_YAML: &str = text_block! {
-        "lockfileVersion: '6.0'"
+        "lockfileVersion: '9.0'"
         ""
         "settings:"
-        "  autoInstallPeers: false"
+        "  autoInstallPeers: true"
         "  excludeLinksFromLockfile: false"
         ""
-        "dependencies:"
-        "  react:"
-        "    specifier: ^17.0.2"
-        "    version: 17.0.2"
-        "  react-dom:"
-        "    specifier: ^17.0.2"
-        "    version: 17.0.2(react@17.0.2)"
+        "importers:"
         ""
-        "devDependencies:"
-        "  typescript:"
-        "    specifier: ^5.1.6"
-        "    version: 5.1.6"
+        "  .:"
+        "    dependencies:"
+        "      react:"
+        "        specifier: ^17.0.2"
+        "        version: 17.0.2"
+        "      react-dom:"
+        "        specifier: ^17.0.2"
+        "        version: 17.0.2(react@17.0.2)"
+        "    devDependencies:"
+        "      typescript:"
+        "        specifier: ^5.1.6"
+        "        version: 5.1.6"
         ""
         "packages:"
         ""
-        "  /react@17.0.2:"
+        "  react@17.0.2:"
         "    resolution: {integrity: sha512-TIE61hcgbI/SlJh/0c1sT1SZbBlpg7WiZcs65WPJhoIZQPhH1SCpcGA7LgrVXT15lwN3HV4GQM/MJ9aKEn3Qfg==}"
         "    engines: {node: '>=0.10.0'}"
-        "    dev: false"
         ""
-        "  /react-dom@17.0.2(react@17.0.2):"
+        "  react-dom@17.0.2:"
         "    resolution: {integrity: sha512-s4h96KtLDUQlsENhMn1ar8t2bEa+q/YAtj8pPPdIjPDGBDIVNsrD9aXNWqspUe6AzKCIG0C1HZZLqLV7qpOBGA==}"
         "    peerDependencies:"
         "      react: 17.0.2"
-        "    dependencies:"
-        "      react: 17.0.2"
-        "    dev: false"
         ""
-        "  /typescript@5.1.6:"
+        "  typescript@5.1.6:"
         "    resolution: {integrity: sha512-zaWCozRZ6DLEWAWFrVDz1H6FVXzUSfTy5FUMWsQlU8Ym5JP9eO4xkTIROFCQvhQf61z6O/G6ugw3SgAnvvm+HA==}"
         "    engines: {node: '>=14.17'}"
         "    hasBin: true"
-        "    dev: true"
+        ""
+        "snapshots:"
+        ""
+        "  react@17.0.2: {}"
+        ""
+        "  react-dom@17.0.2(react@17.0.2):"
+        "    dependencies:"
+        "      react: 17.0.2"
+        ""
+        "  typescript@5.1.6: {}"
     };
 
     #[test]
@@ -105,7 +113,7 @@ mod tests {
     #[test]
     fn save_fails_with_wrapped_io_error_when_path_is_invalid() {
         let empty_lockfile: Lockfile =
-            serde_yaml::from_str("lockfileVersion: '6.0'\n").expect("parse minimal lockfile");
+            serde_yaml::from_str("lockfileVersion: '9.0'\n").expect("parse minimal lockfile");
 
         // Attempt to write under a non-existent directory; fs::write returns NotFound.
         let bad_path = std::path::Path::new("/nonexistent-pacquet-dir/pnpm-lock.yaml");

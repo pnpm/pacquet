@@ -1,8 +1,9 @@
 use crate::symlink_package;
-use pacquet_lockfile::{PkgName, PkgNameVerPeer, RootProjectSnapshot};
+use pacquet_lockfile::{Lockfile, PkgName, PkgNameVerPeer, ProjectSnapshot};
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::DependencyGroup;
 use rayon::prelude::*;
+use std::collections::HashMap;
 
 /// This subroutine creates symbolic links in the `node_modules` directory for
 /// the direct dependencies. The targets of the link are the virtual directories.
@@ -16,7 +17,7 @@ where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
     pub config: &'static Npmrc,
-    pub project_snapshot: &'a RootProjectSnapshot,
+    pub importers: &'a HashMap<String, ProjectSnapshot>,
     pub dependency_groups: DependencyGroupList,
 }
 
@@ -26,10 +27,10 @@ where
 {
     /// Execute the subroutine.
     pub fn run(self) {
-        let SymlinkDirectDependencies { config, project_snapshot, dependency_groups } = self;
+        let SymlinkDirectDependencies { config, importers, dependency_groups } = self;
 
-        let RootProjectSnapshot::Single(project_snapshot) = project_snapshot else {
-            panic!("Monorepo is not yet supported"); // TODO: properly propagate this error
+        let Some(project_snapshot) = importers.get(Lockfile::ROOT_IMPORTER_KEY) else {
+            return;
         };
 
         project_snapshot

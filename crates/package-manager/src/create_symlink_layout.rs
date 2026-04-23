@@ -1,5 +1,5 @@
 use crate::symlink_package;
-use pacquet_lockfile::{PackageSnapshotDependency, PkgName, PkgNameVerPeer};
+use pacquet_lockfile::{PkgName, PkgNameVerPeer, PkgVerPeer};
 use rayon::prelude::*;
 use std::{collections::HashMap, path::Path};
 
@@ -7,20 +7,13 @@ use std::{collections::HashMap, path::Path};
 ///
 /// **NOTE:** `virtual_node_modules_dir` is assumed to already exist.
 pub fn create_symlink_layout(
-    dependencies: &HashMap<PkgName, PackageSnapshotDependency>,
+    dependencies: &HashMap<PkgName, PkgVerPeer>,
     virtual_root: &Path,
     virtual_node_modules_dir: &Path,
 ) {
-    dependencies.par_iter().for_each(|(name, spec)| {
-        let virtual_store_name = match spec {
-            PackageSnapshotDependency::PkgVerPeer(ver_peer) => {
-                let package_specifier = PkgNameVerPeer::new(name.clone(), ver_peer.clone()); // TODO: remove copying here
-                package_specifier.to_virtual_store_name()
-            }
-            PackageSnapshotDependency::DependencyPath(dependency_path) => {
-                dependency_path.package_specifier.to_virtual_store_name()
-            }
-        };
+    dependencies.par_iter().for_each(|(name, ver_peer)| {
+        let package_specifier = PkgNameVerPeer::new(name.clone(), ver_peer.clone()); // TODO: remove copying here
+        let virtual_store_name = package_specifier.to_virtual_store_name();
         let name_str = name.to_string();
         symlink_package(
             &virtual_root.join(virtual_store_name).join("node_modules").join(&name_str),
