@@ -642,6 +642,19 @@ pub enum EncodeError {
     )]
     #[diagnostic(code(pacquet_store_dir::msgpackr_records::manifest_not_supported))]
     ManifestNotSupported,
+
+    #[display(
+        "Ran out of msgpackr record slots: encountered more than \
+         {max} distinct record shapes (slot range is 0x41..=0x7f). \
+         This shouldn't happen for current pacquet payloads — \
+         `CafsFileInfo` has at most 2 shapes and `SideEffectsDiff` \
+         at most 4. Reaching this error likely means a new record \
+         type was added to the encoder without bumping the shape \
+         accounting, or the encoder is being reused for a schema \
+         it wasn't designed for."
+    )]
+    #[diagnostic(code(pacquet_store_dir::msgpackr_records::out_of_record_slots))]
+    OutOfRecordSlots { max: usize },
 }
 
 /// Slot allocated to the top-level [`PackageFilesIndex`] record.
@@ -689,17 +702,15 @@ impl EncodeState {
         }
     }
 
-    fn allocate_slot(&mut self) -> u8 {
-        assert!(
-            self.next_slot <= SLOT_HI,
-            "msgpackr-records encoder ran out of slot numbers (>63 distinct \
-             record shapes in one stream); this shouldn't happen for \
-             realistic pacquet workloads — `CafsFileInfo` has at most 2 \
-             shapes and `SideEffectsDiff` at most 4"
-        );
+    fn allocate_slot(&mut self) -> Result<u8, EncodeError> {
+        if self.next_slot > SLOT_HI {
+            return Err(EncodeError::OutOfRecordSlots {
+                max: (SLOT_HI - FIRST_INNER_SLOT + 1) as usize,
+            });
+        }
         let slot = self.next_slot;
         self.next_slot += 1;
-        slot
+        Ok(slot)
     }
 }
 
@@ -746,7 +757,7 @@ fn encode_pkg_files_index_value(
     write_map_header(w, idx.files.len());
     for (name, info) in &idx.files {
         write_str(w, name);
-        encode_cafs_file_info(w, state, info);
+        encode_cafs_file_info(w, state, info)?;
     }
     if let Some(rb) = idx.requires_build {
         write_bool(w, rb);
@@ -755,14 +766,18 @@ fn encode_pkg_files_index_value(
         write_map_header(w, se.len());
         for (platform, diff) in se {
             write_str(w, platform);
-            encode_side_effects_diff(w, state, diff);
+            encode_side_effects_diff(w, state, diff)?;
         }
     }
 
     Ok(())
 }
 
-fn encode_cafs_file_info(w: &mut Vec<u8>, state: &mut EncodeState, info: &CafsFileInfo) {
+fn encode_cafs_file_info(
+    w: &mut Vec<u8>,
+    state: &mut EncodeState,
+    info: &CafsFileInfo,
+) -> Result<(), EncodeError> {
     let shape = cafs_shape(info);
     if let Some(slot) = state.cafs_slots[shape as usize] {
         w.push(slot); // bare slot = record reference; no def needed
@@ -773,7 +788,7 @@ fn encode_cafs_file_info(w: &mut Vec<u8>, state: &mut EncodeState, info: &CafsFi
         // field-omit-when-absent behaviour so pnpm's reader sees the
         // same object shape on round-trip. Field order matches pnpm's
         // own output.
-        let slot = state.allocate_slot();
+        let slot = state.allocate_slot()?;
         state.cafs_slots[shape as usize] = Some(slot);
         let fields: &[&str] = if info.checked_at.is_some() {
             &["digest", "mode", "size", "checkedAt"]
@@ -796,9 +811,14 @@ fn encode_cafs_file_info(w: &mut Vec<u8>, state: &mut EncodeState, info: &CafsFi
         // values past int32 range).
         write_float64(w, v as f64);
     }
+    Ok(())
 }
 
-fn encode_side_effects_diff(w: &mut Vec<u8>, state: &mut EncodeState, diff: &SideEffectsDiff) {
+fn encode_side_effects_diff(
+    w: &mut Vec<u8>,
+    state: &mut EncodeState,
+    diff: &SideEffectsDiff,
+) -> Result<(), EncodeError> {
     let shape = side_effects_shape(diff);
     if let Some(slot) = state.side_effects_slots[shape as usize] {
         w.push(slot);
@@ -808,7 +828,7 @@ fn encode_side_effects_diff(w: &mut Vec<u8>, state: &mut EncodeState, diff: &Sid
         // downstream JS code checking `diff.added != null` /
         // `diff.deleted != null` sees the same shape regardless of
         // which tool wrote the row.
-        let slot = state.allocate_slot();
+        let slot = state.allocate_slot()?;
         state.side_effects_slots[shape as usize] = Some(slot);
         let fields: &[&str] = match (diff.added.is_some(), diff.deleted.is_some()) {
             (true, true) => &["added", "deleted"],
@@ -823,7 +843,7 @@ fn encode_side_effects_diff(w: &mut Vec<u8>, state: &mut EncodeState, diff: &Sid
         write_map_header(w, added.len());
         for (name, info) in added {
             write_str(w, name);
-            encode_cafs_file_info(w, state, info);
+            encode_cafs_file_info(w, state, info)?;
         }
     }
     if let Some(deleted) = &diff.deleted {
@@ -832,6 +852,7 @@ fn encode_side_effects_diff(w: &mut Vec<u8>, state: &mut EncodeState, diff: &Sid
             write_str(w, name);
         }
     }
+    Ok(())
 }
 
 /// `d4 72 <slot>` fixext1 header + msgpack array of `fields` as strings.
@@ -1442,6 +1463,23 @@ mod tests {
             "expected defs for outer + two distinct side-effects shapes + CafsFileInfo, got bytes {bytes:02x?}"
         );
         assert_eq!(roundtrip(&original), original);
+    }
+
+    #[test]
+    fn allocate_slot_returns_error_past_0x7f() {
+        // Exhaust the inner-slot range (0x41..=0x7f, 63 slots) and
+        // verify the next call returns `OutOfRecordSlots` rather than
+        // panicking. Not reachable through the public encoder for
+        // current pacquet payloads — `CafsFileInfo` has 2 shapes,
+        // `SideEffectsDiff` has 4 — but the error path must exist in
+        // case a future record type is added without bumping the
+        // shape accounting.
+        let mut state = EncodeState::new();
+        for _ in FIRST_INNER_SLOT..=SLOT_HI {
+            state.allocate_slot().expect("should succeed within the slot range");
+        }
+        let err = state.allocate_slot().expect_err("64th allocation must fail");
+        assert!(matches!(err, EncodeError::OutOfRecordSlots { max: 63 }), "got {err:?}");
     }
 
     #[test]
