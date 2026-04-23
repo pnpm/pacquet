@@ -307,7 +307,7 @@ impl<'a> DownloadTarballToStore<'a> {
                     let mut entry = entry.unwrap();
 
                     let file_mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
-                    let file_is_executable = file_mode::is_all_exec(file_mode);
+                    let file_is_executable = file_mode::is_executable(file_mode);
 
                     // Read the contents of the entry
                     let mut buffer = Vec::with_capacity(entry.size() as usize);

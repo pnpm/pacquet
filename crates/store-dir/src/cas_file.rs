@@ -1,7 +1,11 @@
 use crate::{FileHash, StoreDir};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_fs::{ensure_file, file_mode::EXEC_MODE, EnsureFileError};
+use pacquet_fs::{
+    ensure_file,
+    file_mode::{is_executable, EXEC_MODE},
+    EnsureFileError,
+};
 use sha2::{Digest, Sha512};
 use std::path::PathBuf;
 
@@ -32,7 +36,13 @@ impl StoreDir {
         if hex.len() <= 2 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
-        let suffix = if (mode & 0o111) != 0 { "-exec" } else { "" };
+        // Same executable-bit rule the write side uses
+        // (`pacquet_fs::file_mode::is_executable`, matching pnpm's
+        // `modeIsExecutable`), so a blob written as `-exec` is read back
+        // as `-exec` and vice versa. Using a raw `0o111` literal here
+        // silently diverged from the write side for modes like `0o744`
+        // and turned every lookup of such a file into a cache miss.
+        let suffix = if is_executable(mode) { "-exec" } else { "" };
         Some(self.file_path_by_hex_str(hex, suffix))
     }
 }
@@ -85,6 +95,34 @@ mod tests {
             true,
             "STORE_DIR/v11/files/30/9ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f-exec",
         );
+    }
+
+    #[test]
+    fn cas_file_path_by_mode_suffix_matches_write_side() {
+        // Tarballs frequently ship scripts as `0o744` (user-exec only).
+        // The write side treats any-exec-bit-set as executable and stores
+        // the blob under `-exec`; the read side must use the same rule,
+        // otherwise every cache lookup for such a file turns into a miss.
+        let store_dir = StoreDir::new("STORE_DIR");
+        let hex = "a".repeat(128);
+        for mode in [0o744, 0o755, 0o775, 0o100, 0o010, 0o001] {
+            let path = store_dir
+                .cas_file_path_by_mode(&hex, mode)
+                .unwrap_or_else(|| panic!("mode {mode:o} should produce a path"));
+            assert!(
+                path.to_string_lossy().ends_with("-exec"),
+                "mode {mode:o} should resolve to an `-exec` path, got {path:?}"
+            );
+        }
+        for mode in [0o644, 0o600, 0o444, 0o000] {
+            let path = store_dir
+                .cas_file_path_by_mode(&hex, mode)
+                .unwrap_or_else(|| panic!("mode {mode:o} should produce a path"));
+            assert!(
+                !path.to_string_lossy().ends_with("-exec"),
+                "mode {mode:o} should NOT resolve to an `-exec` path, got {path:?}"
+            );
+        }
     }
 
     #[test]
