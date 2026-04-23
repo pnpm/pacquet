@@ -1474,6 +1474,7 @@ dependencies = [
  "pretty_assertions",
  "rayon",
  "reflink-copy",
+ "ssri",
  "tempfile",
  "tokio",
  "tracing",
