@@ -71,17 +71,23 @@ impl StoreDir {
     /// separate `Sha512::digest(buffer)` pass inside this function.
     ///
     /// The caller is responsible for ensuring `file_hash` is the
-    /// SHA-512 of `buffer`; passing a mismatched hash would corrupt the
-    /// CAFS (the blob would land at a path that advertises a digest its
-    /// contents don't satisfy). This isn't validated here because the
-    /// tarball entry loop that computes the hash holds the buffer for
-    /// the same scope and there's no redundant work worth paying for.
+    /// SHA-512 of `buffer`; passing a mismatched hash would corrupt
+    /// the CAFS (the blob would land at a path that advertises a
+    /// digest its contents don't satisfy). A `debug_assert` catches
+    /// that misuse in debug builds / tests; release builds trust the
+    /// caller so the write path stays single-pass.
     pub fn write_cas_file_prehashed(
         &self,
         buffer: &[u8],
         file_hash: FileHash,
         executable: bool,
     ) -> Result<PathBuf, WriteCasFileError> {
+        debug_assert_eq!(
+            Sha512::digest(buffer),
+            file_hash,
+            "write_cas_file_prehashed called with a hash that is not Sha512(buffer); \
+             passing a mismatched hash would silently corrupt the CAFS",
+        );
         let file_path = self.cas_file_path(file_hash, executable);
         let mode = executable.then_some(EXEC_MODE);
 

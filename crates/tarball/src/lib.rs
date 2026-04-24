@@ -202,6 +202,20 @@ fn extract_tarball_entries(
             if n == 0 {
                 break;
             }
+            // `try_reserve` before every `extend_from_slice` keeps the
+            // same OOM-safety as the initial `try_reserve(prealloc_hint)`
+            // above — the prealloc is only a hint (clamped to 64 MiB
+            // even if the header claims more), so an entry whose real
+            // size exceeds the clamp must keep allocating without
+            // aborting. `Vec::extend_from_slice` falls back to
+            // `Vec::reserve`, which aborts on allocation failure, so
+            // we opt into the fallible path explicitly here.
+            buffer.try_reserve(n).map_err(|err| {
+                TarballError::ReadTarballEntries(std::io::Error::new(
+                    std::io::ErrorKind::OutOfMemory,
+                    format!("failed to reserve {n} bytes while reading tar entry: {err}"),
+                ))
+            })?;
             hasher.update(&chunk[..n]);
             buffer.extend_from_slice(&chunk[..n]);
         }
@@ -554,30 +568,58 @@ impl<'a> DownloadTarballToStore<'a> {
         };
         let mut decoder = GzipDecoder::new(decompressed_sink);
         let mut body = response_head.bytes_stream();
+        // Drain the whole body into the `IntegrityChecker` regardless
+        // of what the decoder does, and defer any gzip-decode error
+        // until after the integrity verdict. pnpm's upstream pipeline
+        // (`worker/src/start.ts` → `crypto.hash` then `gunzipSync`)
+        // hashes the compressed bytes before touching zlib, so a
+        // corrupt-gzip-with-mismatched-integrity tarball surfaces as
+        // an integrity failure there; if we bailed on the first
+        // `decoder.write_all` error we'd surface `DecodeGzip` for the
+        // same input and diverge from the documented error-code
+        // contract (AGENTS.md "errors and diagnostics"). Keep feeding
+        // the hasher so the verdict is over the full bytes the server
+        // sent, then replay the decoder error after `checker.result()`
+        // only if integrity passed.
+        let mut decoder_error: Option<std::io::Error> = None;
         while let Some(chunk) = body.next().await {
             let chunk = chunk.map_err(network_error)?;
             checker.input(&chunk);
-            decoder.write_all(&chunk).await.map_err(TarballError::DecodeGzip)?;
+            if decoder_error.is_none() {
+                if let Err(err) = decoder.write_all(&chunk).await {
+                    decoder_error = Some(err);
+                }
+            }
         }
-        // `shutdown` finalizes the gzip stream: it flushes any
-        // still-buffered decompressed output into the inner `Vec` and
-        // rejects a truncated / malformed footer (CRC32 + ISIZE
-        // trailer) as an `io::Error`. Without this we could silently
-        // accept a cut-short tarball.
-        decoder.shutdown().await.map_err(TarballError::DecodeGzip)?;
-        let decompressed = decoder.into_inner();
 
         tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
 
         // Verify the tee'd digest against the expected `Integrity`
-        // *before* we start writing any CAFS blobs. Matching pnpm's
+        // before we start writing any CAFS blobs. Matching pnpm's
         // behavior: a mismatch here aborts the install for this
-        // tarball without touching the store.
+        // tarball without touching the store — and takes precedence
+        // over any gzip error that may have happened on the same
+        // bytes, because an integrity failure describes the real
+        // problem (the server sent us bytes we didn't ask for) while
+        // a decode error is a second-order consequence.
         checker.result().map_err(|error| {
             TarballError::Checksum(VerifyChecksumError { url: package_url.to_string(), error })
         })?;
 
         tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
+
+        // Integrity passed — surface any gzip error now, or finalize.
+        // `shutdown` flushes any still-buffered decompressed output
+        // into the inner `Vec` and rejects a truncated / malformed
+        // footer (CRC32 + ISIZE trailer) as an `io::Error`. Without
+        // this finalize we could silently accept a cut-short tarball
+        // that happened to match the expected integrity (degenerate,
+        // but cheap to guard).
+        if let Some(error) = decoder_error {
+            return Err(TarballError::DecodeGzip(error));
+        }
+        decoder.shutdown().await.map_err(TarballError::DecodeGzip)?;
+        let decompressed = decoder.into_inner();
 
         // TODO: Cloning here is less than desirable, there are 2 possible solutions for this problem:
         // 1. Use an Arc and convert this line to Arc::clone.
