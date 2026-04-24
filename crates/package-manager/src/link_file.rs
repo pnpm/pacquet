@@ -25,7 +25,7 @@ pub enum LinkFileError {
     },
 }
 
-// Cached downgrade state for `PackageImportMethod::Auto`.
+// Cached downgrade states shared by `Auto` and `CloneOrCopy`.
 //
 // Whether reflink / hardlink work is a property of the (source fs,
 // target fs) pair, not of individual files. Once we observe a tier
@@ -38,9 +38,15 @@ pub enum LinkFileError {
 // failure all converge to the same downgraded value without a lock.
 // Worst case cost on startup is `N` stale attempts per tier where `N`
 // is the rayon thread count — bounded, not per-file.
-const AUTO_STATE_CLONE: u8 = 0;
-const AUTO_STATE_HARDLINK: u8 = 1;
-const AUTO_STATE_COPY: u8 = 2;
+//
+// This mirrors pnpm's per-importer closure in
+// `render-peer/fs/indexed-pkg-importer/src/index.ts` — `createAutoImporter`
+// and `createCloneOrCopyImporter` reassign their `auto` variable to the
+// concrete function that succeeded on the probe, so subsequent files
+// skip the probe entirely.
+const LINK_STATE_CLONE: u8 = 0;
+const LINK_STATE_HARDLINK: u8 = 1;
+const LINK_STATE_COPY: u8 = 2;
 
 /// Materialize a CAFS file into `target_link` using `method`.
 ///
@@ -72,19 +78,31 @@ pub fn link_file(
     // Hardlinking a file from the store into `node_modules` means any
     // package that edits its own files at runtime (postinstall scripts
     // are the usual offender) ends up mutating the shared store copy.
-    // Pnpm guards against this by falling back to copy for packages that
-    // declare a postinstall script; pacquet doesn't run postinstall
-    // scripts yet, so there's nothing to gate on here — revisit when
-    // script execution lands.
+    // Current pnpm's indexed-pkg-importer does not guard against this
+    // either — postinstall handling lives in the script runner, not the
+    // import layer — so there's nothing to gate on here.
     let result = match method {
         PackageImportMethod::Auto => {
-            static AUTO_STATE: AtomicU8 = AtomicU8::new(AUTO_STATE_CLONE);
+            static AUTO_STATE: AtomicU8 = AtomicU8::new(LINK_STATE_CLONE);
             auto_link(&AUTO_STATE, source_file, target_link)
         }
-        PackageImportMethod::Hardlink => fs::hard_link(source_file, target_link),
+        // pnpm's explicit `hardlink` method uses `hardlinkPkg(linkOrCopy)`
+        // which falls back to copy on `EXDEV` (cross-device link not
+        // permitted) but propagates other errors. Match that: if the
+        // user asks for hardlink and they've put their store on a
+        // different device from `node_modules`, copy silently; anything
+        // else (missing source, permission denied, …) is a real error
+        // and should surface. No caching — the `fs::hard_link` syscall
+        // itself is already cheap; pnpm doesn't cache this path either.
+        PackageImportMethod::Hardlink => match fs::hard_link(source_file, target_link) {
+            Ok(()) => Ok(()),
+            Err(error) if is_cross_device(&error) => fs::copy(source_file, target_link).map(drop),
+            Err(error) => Err(error),
+        },
         PackageImportMethod::Clone => reflink_copy::reflink(source_file, target_link),
         PackageImportMethod::CloneOrCopy => {
-            reflink_copy::reflink_or_copy(source_file, target_link).map(drop)
+            static CLONE_OR_COPY_STATE: AtomicU8 = AtomicU8::new(LINK_STATE_CLONE);
+            clone_or_copy_link(&CLONE_OR_COPY_STATE, source_file, target_link)
         }
         PackageImportMethod::Copy => fs::copy(source_file, target_link).map(drop),
     };
@@ -96,27 +114,55 @@ pub fn link_file(
     })
 }
 
-/// Auto's clone → hardlink → copy chain, using `state` to skip tiers
+/// EXDEV = "cross-device link not permitted". Linux / macOS / BSD all
+/// use errno 18; Windows maps its equivalent `ERROR_NOT_SAME_DEVICE`
+/// to raw OS error 17 in Rust's `io::Error`. pnpm detects this by
+/// checking `err.message.startsWith('EXDEV: cross-device link not
+/// permitted')` — we can be a little tighter by looking at the raw
+/// errno.
+fn is_cross_device(err: &io::Error) -> bool {
+    matches!(err.raw_os_error(), Some(18) | Some(17))
+}
+
+/// `Auto`'s clone → hardlink → copy chain, using `state` to skip tiers
 /// that have already failed in this process. Factored out so tests can
 /// pass their own `AtomicU8` and exercise the downgrade logic in
 /// isolation — the production path uses a `static` declared inside
 /// [`link_file`]. Broad-catches each tier's errors because "operation
 /// not supported" surfaces as different `io::ErrorKind`s depending on
 /// platform and filesystem (`EOPNOTSUPP`, `EXDEV`, `EPERM`, …) and pnpm
-/// itself doesn't try to enumerate them.
+/// itself doesn't try to enumerate them here either.
 fn auto_link(state: &AtomicU8, source: &Path, target: &Path) -> io::Result<()> {
     loop {
         match state.load(Ordering::Relaxed) {
-            AUTO_STATE_CLONE => match reflink_copy::reflink(source, target) {
+            LINK_STATE_CLONE => match reflink_copy::reflink(source, target) {
                 Ok(()) => return Ok(()),
                 Err(_) => {
-                    state.fetch_max(AUTO_STATE_HARDLINK, Ordering::Relaxed);
+                    state.fetch_max(LINK_STATE_HARDLINK, Ordering::Relaxed);
                 }
             },
-            AUTO_STATE_HARDLINK => match fs::hard_link(source, target) {
+            LINK_STATE_HARDLINK => match fs::hard_link(source, target) {
                 Ok(()) => return Ok(()),
                 Err(_) => {
-                    state.fetch_max(AUTO_STATE_COPY, Ordering::Relaxed);
+                    state.fetch_max(LINK_STATE_COPY, Ordering::Relaxed);
+                }
+            },
+            _ => return fs::copy(source, target).map(drop),
+        }
+    }
+}
+
+/// `CloneOrCopy`'s clone → copy chain with the same per-process cache
+/// as [`auto_link`]. Differs from `Auto` by skipping the hardlink tier
+/// entirely — matches pnpm's `createCloneOrCopyImporter`, which on
+/// first reflink failure reassigns its closure directly to `copyPkg`.
+fn clone_or_copy_link(state: &AtomicU8, source: &Path, target: &Path) -> io::Result<()> {
+    loop {
+        match state.load(Ordering::Relaxed) {
+            LINK_STATE_CLONE => match reflink_copy::reflink(source, target) {
+                Ok(()) => return Ok(()),
+                Err(_) => {
+                    state.fetch_max(LINK_STATE_COPY, Ordering::Relaxed);
                 }
             },
             _ => return fs::copy(source, target).map(drop),
@@ -216,10 +262,12 @@ mod tests {
         }
     }
 
-    /// Explicit `Hardlink` must surface link-creation errors instead of
-    /// silently falling back — that's what `Auto` is for. We drive the
-    /// error path by pointing at a non-existent source (`NotFound`) so
-    /// the failure is deterministic on every platform / filesystem.
+    /// Explicit `Hardlink` must surface non-`EXDEV` link-creation errors
+    /// instead of silently falling back — matches pnpm's `linkOrCopy`,
+    /// which only swallows `EXDEV` (and a couple of other kernel-level
+    /// "not permitted" codes, not modelled here). We drive the error
+    /// path by pointing at a non-existent source (`NotFound`, which is
+    /// not `EXDEV`) so the failure is deterministic on every platform.
     #[test]
     fn explicit_hardlink_surfaces_errors() {
         let tmp = tempdir().unwrap();
@@ -284,37 +332,32 @@ mod tests {
         assert!(fs::symlink_metadata(&dst).unwrap().file_type().is_symlink());
     }
 
-    /// Core caching property: once Auto observes reflink failing, the
-    /// state downgrades and subsequent calls skip reflink entirely.
-    /// Using a non-existent source to force both reflink and hardlink
-    /// to fail deterministically on every platform — we just want to
-    /// drive the state machine to its terminal `COPY` state.
+    /// Core caching property for `Auto`: once reflink fails, the state
+    /// downgrades and subsequent calls skip reflink entirely. Using a
+    /// non-existent source forces both reflink and hardlink to fail
+    /// deterministically on every platform — we just want to drive the
+    /// state machine to its terminal `COPY` state.
     #[test]
     fn auto_state_downgrades_monotonically_on_failure() {
-        let state = AtomicU8::new(AUTO_STATE_CLONE);
+        let state = AtomicU8::new(LINK_STATE_CLONE);
         let tmp = tempdir().unwrap();
         let src = tmp.path().join("does-not-exist");
         let dst = tmp.path().join("dst");
 
-        // First call: reflink fails → downgrade to HARDLINK; hardlink
-        // fails → downgrade to COPY; copy fails → error bubbles up.
-        // Final state = COPY.
         let _ = auto_link(&state, &src, &dst);
-        assert_eq!(state.load(Ordering::Relaxed), AUTO_STATE_COPY);
+        assert_eq!(state.load(Ordering::Relaxed), LINK_STATE_COPY);
     }
 
-    /// Once state is `COPY`, Auto must use `fs::copy` and must not
-    /// re-attempt reflink / hardlink. We can't observe the negative
-    /// directly, but using a cross-file-type source that only `fs::copy`
-    /// handles cleanly would be platform-sensitive — instead, assert on
-    /// the observable: a successful link with a fresh state=COPY has
-    /// independent inodes (copy semantics), not shared ones (hardlink).
+    /// Once `Auto`'s state is `COPY`, we use `fs::copy` and must not
+    /// re-attempt reflink / hardlink. Observable: a successful link
+    /// with state pre-seeded to `COPY` has independent inodes (copy
+    /// semantics), not shared ones (hardlink).
     #[test]
     #[cfg(unix)]
     fn auto_respects_cached_copy_state() {
         use std::os::unix::fs::MetadataExt;
 
-        let state = AtomicU8::new(AUTO_STATE_COPY);
+        let state = AtomicU8::new(LINK_STATE_COPY);
         let tmp = tempdir().unwrap();
         let src = write_source(tmp.path(), "src.txt", b"cached-copy");
         let dst = tmp.path().join("dst.txt");
@@ -327,7 +370,7 @@ mod tests {
             fs::metadata(&dst).unwrap().ino(),
             "state=COPY must not hardlink",
         );
-        assert_eq!(state.load(Ordering::Relaxed), AUTO_STATE_COPY, "state must not drift");
+        assert_eq!(state.load(Ordering::Relaxed), LINK_STATE_COPY, "state must not drift");
     }
 
     /// State=HARDLINK means Auto skips the reflink attempt and jumps
@@ -337,7 +380,7 @@ mod tests {
     fn auto_respects_cached_hardlink_state() {
         use std::os::unix::fs::MetadataExt;
 
-        let state = AtomicU8::new(AUTO_STATE_HARDLINK);
+        let state = AtomicU8::new(LINK_STATE_HARDLINK);
         let tmp = tempdir().unwrap();
         let src = write_source(tmp.path(), "src.txt", b"cached-hardlink");
         let dst = tmp.path().join("dst.txt");
@@ -349,6 +392,45 @@ mod tests {
             fs::metadata(&dst).unwrap().ino(),
             "state=HARDLINK must hardlink, not copy",
         );
-        assert_eq!(state.load(Ordering::Relaxed), AUTO_STATE_HARDLINK, "state must not drift");
+        assert_eq!(state.load(Ordering::Relaxed), LINK_STATE_HARDLINK, "state must not drift");
+    }
+
+    /// Same caching property for `CloneOrCopy` — first reflink failure
+    /// flips the state to `COPY`, skipping reflink for every subsequent
+    /// file. No hardlink tier to drive through, so the terminal state
+    /// is reached in one step.
+    #[test]
+    fn clone_or_copy_state_downgrades_to_copy_on_failure() {
+        let state = AtomicU8::new(LINK_STATE_CLONE);
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("does-not-exist");
+        let dst = tmp.path().join("dst");
+
+        let _ = clone_or_copy_link(&state, &src, &dst);
+        assert_eq!(state.load(Ordering::Relaxed), LINK_STATE_COPY);
+    }
+
+    /// Pre-seed `CloneOrCopy` state to `COPY` and verify it uses
+    /// `fs::copy` — mirrors `auto_respects_cached_copy_state`. Also
+    /// confirms we skip the hardlink tier entirely (pnpm
+    /// `createCloneOrCopyImporter` has no hardlink fallback).
+    #[test]
+    #[cfg(unix)]
+    fn clone_or_copy_respects_cached_copy_state() {
+        use std::os::unix::fs::MetadataExt;
+
+        let state = AtomicU8::new(LINK_STATE_COPY);
+        let tmp = tempdir().unwrap();
+        let src = write_source(tmp.path(), "src.txt", b"cached");
+        let dst = tmp.path().join("dst.txt");
+
+        clone_or_copy_link(&state, &src, &dst).expect("copy should succeed");
+
+        assert_ne!(
+            fs::metadata(&src).unwrap().ino(),
+            fs::metadata(&dst).unwrap().ino(),
+            "state=COPY must not hardlink",
+        );
+        assert_eq!(state.load(Ordering::Relaxed), LINK_STATE_COPY, "state must not drift");
     }
 }
