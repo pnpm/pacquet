@@ -16,10 +16,21 @@ pub enum LinkFileError {
         #[error(source)]
         error: io::Error,
     },
-    #[display("fail to create a link from {from:?} to {to:?}: {error}")]
-    CreateLink {
+    // `link_file` now dispatches to copy / reflink / hardlink depending
+    // on `PackageImportMethod`, so a "fail to create a link" message
+    // would be misleading when the configured method is `Copy`. Using
+    // pnpm's "import" terminology (see `createPackageImporter`) so the
+    // message is accurate regardless of which tier actually ran.
+    #[display("failed to import {from:?} to {to:?}: {error}")]
+    Import {
         from: PathBuf,
         to: PathBuf,
+        #[error(source)]
+        error: io::Error,
+    },
+    #[display("failed to remove stale dirent at {path:?}: {error}")]
+    RemoveStale {
+        path: PathBuf,
         #[error(source)]
         error: io::Error,
     },
@@ -27,23 +38,25 @@ pub enum LinkFileError {
 
 // Cached downgrade states shared by `Auto` and `CloneOrCopy`.
 //
-// Whether reflink / hardlink work is a property of the (source fs,
-// target fs) pair, not of individual files. Once we observe a tier
-// failing we stop trying it for the rest of the process — otherwise
-// an install of a package with hundreds of files on a non-reflink FS
-// would pay the "try reflink, fail" cost hundreds of times.
+// This cache is process-global, not keyed by `(source fs, target fs)`.
+// Once we observe a tier failing anywhere, we stop trying it for the
+// rest of the process. That's a coarse optimization to avoid paying
+// the "try reflink, fail" cost for every file in installs where a
+// higher tier is not usable on the store / workspace pair.
+//
+// A failure on one path can therefore downgrade later calls that
+// would have succeeded on a different pair — in practice pacquet runs
+// one install per process with one store and one target root, so this
+// is fine. Pnpm's per-importer `let auto` closure (see
+// `render-peer/fs/indexed-pkg-importer/src/index.ts`,
+// `createAutoImporter` / `createCloneOrCopyImporter`) has the same
+// coarseness once `pnpm install` has picked an import direction.
 //
 // The state is monotonic (`CLONE` → `HARDLINK` → `COPY`) and updated
 // with `fetch_max`, so concurrent rayon workers racing on the first
 // failure all converge to the same downgraded value without a lock.
 // Worst case cost on startup is `N` stale attempts per tier where `N`
 // is the rayon thread count — bounded, not per-file.
-//
-// This mirrors pnpm's per-importer closure in
-// `render-peer/fs/indexed-pkg-importer/src/index.ts` — `createAutoImporter`
-// and `createCloneOrCopyImporter` reassign their `auto` variable to the
-// concrete function that succeeded on the probe, so subsequent files
-// skip the probe entirely.
 const LINK_STATE_CLONE: u8 = 0;
 const LINK_STATE_HARDLINK: u8 = 1;
 const LINK_STATE_COPY: u8 = 2;
@@ -57,15 +70,30 @@ pub fn link_file(
     source_file: &Path,
     target_link: &Path,
 ) -> Result<(), LinkFileError> {
-    // `exists()` follows symlinks, so a dangling symlink at
-    // `target_link` (left behind by an interrupted prior install) would
-    // slip through here and make the subsequent `hard_link` / `reflink`
-    // fail with `AlreadyExists`, contradicting the "already exists → no
-    // op" contract in the doc comment above. `symlink_metadata` asks
-    // about the directory entry itself without following, which covers
-    // files, directories, and symlinks (broken or otherwise).
-    if fs::symlink_metadata(target_link).is_ok() {
+    // If the target resolves to a live file (directly or via a
+    // symlink), a prior install placed it and there's nothing to do.
+    // `fs::metadata` follows symlinks and returns `Err(NotFound)` for
+    // dangling ones, which is exactly what we want here.
+    if fs::metadata(target_link).is_ok() {
         return Ok(());
+    }
+    // `metadata` above can also fail when the dirent itself is a
+    // dangling symlink — left behind by an interrupted prior install.
+    // `symlink_metadata` doesn't follow, so it'll succeed in that
+    // case. Scrub the broken link so the subsequent link / copy
+    // doesn't collide with `AlreadyExists` and so the installed
+    // package isn't left with a silently-missing file.
+    if let Ok(meta) = fs::symlink_metadata(target_link) {
+        if meta.file_type().is_symlink() {
+            fs::remove_file(target_link).map_err(|error| LinkFileError::RemoveStale {
+                path: target_link.to_path_buf(),
+                error,
+            })?;
+        }
+        // Non-symlink dirent present but `metadata` failed — rare
+        // (permissions, stale NFS handle, …). Let the link / copy
+        // below surface the specific error rather than guess at a
+        // recovery here.
     }
 
     if let Some(parent_dir) = target_link.parent() {
@@ -107,7 +135,7 @@ pub fn link_file(
         PackageImportMethod::Copy => fs::copy(source_file, target_link).map(drop),
     };
 
-    result.map_err(|error| LinkFileError::CreateLink {
+    result.map_err(|error| LinkFileError::Import {
         from: source_file.to_path_buf(),
         to: target_link.to_path_buf(),
         error,
@@ -276,7 +304,7 @@ mod tests {
 
         let err =
             link_file(PackageImportMethod::Hardlink, &src, &dst).expect_err("no source → error");
-        assert!(matches!(err, LinkFileError::CreateLink { .. }), "got: {err:?}");
+        assert!(matches!(err, LinkFileError::Import { .. }), "got: {err:?}");
     }
 
     /// `CloneOrCopy` has to succeed on any filesystem because
@@ -307,29 +335,49 @@ mod tests {
         let dst = tmp.path().join("dst.txt");
 
         let err = link_file(PackageImportMethod::Clone, &src, &dst).expect_err("no source → error");
-        assert!(matches!(err, LinkFileError::CreateLink { .. }), "got: {err:?}");
+        assert!(matches!(err, LinkFileError::Import { .. }), "got: {err:?}");
     }
 
-    /// A dangling symlink left behind by an interrupted install used
-    /// to sneak past the `target_link.exists()` check (which follows
-    /// symlinks) and then collide with `hard_link` / `reflink` as
-    /// `AlreadyExists`. The doc comment promises "if target_link
-    /// already exists, do nothing" — so the dangling link must be
-    /// treated as already-present.
+    /// A dangling symlink left behind by an interrupted install is a
+    /// corrupt target: if we short-circuit on it as "already present"
+    /// the package ends up with a silently-missing file while the
+    /// install reports success. Remove the broken link, re-materialize,
+    /// and confirm the final dirent is a real file with the expected
+    /// contents.
     #[test]
     #[cfg(unix)]
-    fn dangling_symlink_is_treated_as_already_present() {
+    fn dangling_symlink_is_replaced() {
         let tmp = tempdir().unwrap();
         let src = write_source(tmp.path(), "src.txt", b"fresh");
         let dst = tmp.path().join("dst.txt");
-        // Target of the symlink does not exist — the link is dangling.
         std::os::unix::fs::symlink(tmp.path().join("never-created"), &dst).unwrap();
 
         link_file(PackageImportMethod::Hardlink, &src, &dst)
-            .expect("dangling symlink should short-circuit, not fail");
-        // The dangling symlink should still be there, unchanged — we
-        // don't attempt to replace it.
+            .expect("dangling symlink should be scrubbed, then hardlinked");
+
+        let meta = fs::symlink_metadata(&dst).unwrap();
+        assert!(!meta.file_type().is_symlink(), "dangling link must be replaced with a real file");
+        assert_eq!(fs::read(&dst).unwrap(), b"fresh");
+    }
+
+    /// Live symlinks (pointing at real files) should still short-circuit
+    /// — they're legitimate user state, not corruption from an
+    /// interrupted install. Observable: we don't remove the link, and
+    /// we don't overwrite its target either.
+    #[test]
+    #[cfg(unix)]
+    fn live_symlink_short_circuits() {
+        let tmp = tempdir().unwrap();
+        let src = write_source(tmp.path(), "src.txt", b"new");
+        let real_target = write_source(tmp.path(), "existing.txt", b"old");
+        let dst = tmp.path().join("dst.txt");
+        std::os::unix::fs::symlink(&real_target, &dst).unwrap();
+
+        link_file(PackageImportMethod::Hardlink, &src, &dst)
+            .expect("live symlink should short-circuit");
+
         assert!(fs::symlink_metadata(&dst).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read(&real_target).unwrap(), b"old", "target must not be overwritten");
     }
 
     /// Core caching property for `Auto`: once reflink fails, the state
