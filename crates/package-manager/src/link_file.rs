@@ -36,10 +36,14 @@ pub enum LinkFileError {
     },
 }
 
-// Cached downgrade states shared by `Auto` and `CloneOrCopy`.
+// Downgrade state machine used by both `Auto` and `CloneOrCopy`.
+// These are the state *values*, not the cache itself: each mode keeps
+// its own process-global `AtomicU8` (`AUTO_STATE` inside `link_file`,
+// `CLONE_OR_COPY_STATE` likewise), so an `Auto` downgrade doesn't
+// affect `CloneOrCopy` and vice versa.
 //
-// This cache is process-global, not keyed by `(source fs, target fs)`.
-// Once we observe a tier failing anywhere, we stop trying it for the
+// Neither cache is keyed by `(source fs, target fs)`. Once we observe
+// a tier failing anywhere for a given mode, we stop trying it for the
 // rest of the process. That's a coarse optimization to avoid paying
 // the "try reflink, fail" cost for every file in installs where a
 // higher tier is not usable on the store / workspace pair.
