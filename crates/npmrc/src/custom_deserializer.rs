@@ -151,6 +151,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_env_guard::EnvGuard;
     use pretty_assertions::assert_eq;
     use std::env;
 
@@ -160,10 +161,10 @@ mod tests {
 
     #[test]
     fn test_default_store_dir_with_pnpm_home_env() {
+        let _g = EnvGuard::snapshot(["PNPM_HOME"]);
         env::set_var("PNPM_HOME", "/tmp/pnpm-home"); // TODO: change this to dependency injection
         let store_dir = default_store_dir();
         assert_eq!(display_store_dir(&store_dir), "/tmp/pnpm-home/store");
-        env::remove_var("PNPM_HOME");
     }
 
     #[test]
@@ -171,14 +172,16 @@ mod tests {
         // `default_store_dir` checks `PNPM_HOME` before `XDG_DATA_HOME`,
         // so a developer running the test suite with pnpm in their
         // environment (very common) otherwise sees the `PNPM_HOME`
-        // branch win and the assertion fail. Clear it explicitly to
-        // isolate the XDG branch until the TODO below swaps env lookups
-        // for dependency injection.
-        env::remove_var("PNPM_HOME"); // TODO: change this to dependency injection
+        // branch win and the assertion fail. Snapshot-and-restore both
+        // env vars so the test is self-contained even under nextest's
+        // in-process parallelism. Proper fix is dependency injection —
+        // see the TODO — but this is enough for the failure mode this
+        // PR is fixing.
+        let _g = EnvGuard::snapshot(["PNPM_HOME", "XDG_DATA_HOME"]);
+        env::remove_var("PNPM_HOME");
         env::set_var("XDG_DATA_HOME", "/tmp/xdg_data_home");
         let store_dir = default_store_dir();
         assert_eq!(display_store_dir(&store_dir), "/tmp/xdg_data_home/pnpm/store");
-        env::remove_var("XDG_DATA_HOME");
     }
 
     #[cfg(windows)]

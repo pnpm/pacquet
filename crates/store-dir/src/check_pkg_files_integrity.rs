@@ -47,18 +47,25 @@ pub struct VerifyResult {
 /// equivalent).
 pub fn build_file_maps_from_index(store_dir: &StoreDir, entry: &PackageFilesIndex) -> VerifyResult {
     let mut files_map = HashMap::with_capacity(entry.files.len());
+    let mut passed = true;
     for (filename, info) in &entry.files {
         let Some(path) = store_dir.cas_file_path_by_mode(&info.digest, info.mode) else {
-            // A malformed digest (non-hex / too short) skips this file.
-            // pnpm has no equivalent — its `getFilePathByModeInCafs` doesn't
-            // validate. For pacquet's SQLite rows we prefer a safe drop
-            // over a `panic!`, since the row can be rebuilt from the
-            // next install.
+            // A malformed digest (non-hex / too short) makes this entry
+            // unreconstructable. pnpm's `getFilePathByModeInCafs` doesn't
+            // validate and would crash at import time, so a `None` here
+            // is pacquet-specific guardrail. We'd rather silently drop
+            // the row than panic, but a partial `files_map` would leave
+            // the caller with a cache hit missing package files — the
+            // caller would proceed to link and end up with a broken
+            // install. Flipping `passed` to `false` sends the whole
+            // entry back through the re-fetch path so the install stays
+            // consistent.
+            passed = false;
             continue;
         };
         files_map.insert(filename.clone(), path);
     }
-    VerifyResult { passed: true, files_map }
+    VerifyResult { passed, files_map }
 }
 
 /// Careful path used when `verify-store-integrity` is `true` (pnpm's
@@ -119,20 +126,58 @@ fn verify_file(path: &Path, info: &CafsFileInfo, algo: &str) -> bool {
     }
     if size != info.size {
         // Wrong size → content definitely changed. Remove so the next
-        // caller fetches a clean copy. Best-effort: removal failures
-        // don't bubble up, they'll just hit the same mismatch next run.
-        let _ = fs::remove_file(path);
+        // caller fetches a clean copy. See `remove_stale_cafs_entry`
+        // for why this has to cover dirs too.
+        remove_stale_cafs_entry(path);
         return false;
     }
     let passed = verify_file_integrity(path, &info.digest, algo);
     if !passed {
-        let _ = fs::remove_file(path);
+        remove_stale_cafs_entry(path);
     }
     passed
 }
 
-/// Port of pnpm's `checkFile`. `(is_modified, size)` on a live file,
-/// `None` on `ENOENT`.
+/// Remove a CAFS dirent that failed verification, matching pnpm's
+/// `rimrafSync` semantics.
+///
+/// `fs::remove_file` on a directory returns `EISDIR` / `EPERM`, and a
+/// corrupted store that has a directory sitting where a CAFS blob
+/// belongs (stray `mkdir -p`, interrupted write, filesystem hiccup)
+/// would stay there forever if we only tried `remove_file`. Next
+/// install's verification would fail again and again — the store
+/// wouldn't self-heal.
+///
+/// Best-effort for both: try `remove_file`, fall back to
+/// `remove_dir_all` if the dirent is a directory. Errors are logged at
+/// `debug` and dropped — worst case the next install notices the same
+/// stale dirent and retries. We use `symlink_metadata` so we identify
+/// the dirent type without following a symlink.
+fn remove_stale_cafs_entry(path: &Path) {
+    let is_dir = fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_dir());
+    let result = if is_dir { fs::remove_dir_all(path) } else { fs::remove_file(path) };
+    if let Err(error) = result {
+        tracing::debug!(
+            target: "pacquet::store_index",
+            ?path,
+            ?error,
+            "failed to scrub stale CAFS entry; next install will retry",
+        );
+    }
+}
+
+/// Port of pnpm's `checkFile`. `Some((is_modified, size))` for a file
+/// we can read metadata for; `None` otherwise.
+///
+/// Pnpm rethrows non-`ENOENT` errors and only returns `null` for
+/// `ENOENT`. This port collapses every metadata error (permission
+/// denied, EIO, platform mtime representation failures) to `None`
+/// instead, which the caller then treats as "verification failed →
+/// re-fetch". That's a safer default for a cache-hint path — we don't
+/// want a transient `EACCES` on a CAS blob to panic the install — and
+/// the content-hash check in `verify_file_integrity` still catches
+/// actual corruption. If we ever want pnpm-strict error propagation,
+/// changing the return type to `Result<Option<…>>` is the right shape.
 ///
 /// 100 ms of slack on the mtime comparison matches pnpm's threshold —
 /// accounts for coarse mtime resolution on some filesystems plus the
@@ -333,6 +378,46 @@ mod tests {
         let result = check_pkg_files_integrity(&store_dir, &entry);
         assert!(!result.passed);
         assert!(!path.exists(), "unknown algo → treated as corrupt → removed");
+    }
+
+    /// A CAFS dirent that's a directory (store corruption — stray
+    /// `mkdir -p` or interrupted write) must not survive verification:
+    /// pacquet used to reject with `remove_file(dir)` → `EISDIR`, which
+    /// silently failed and left the directory in place forever. The new
+    /// `remove_stale_cafs_entry` falls back to `remove_dir_all` so the
+    /// store actually self-heals on the next install.
+    #[test]
+    fn careful_path_removes_directory_at_cafs_path() {
+        let tmp = tempdir().unwrap();
+        let store_dir = StoreDir::new(tmp.path());
+        // Plant a directory where a CAFS file belongs.
+        let digest = "c".repeat(128);
+        let cafs_path = store_dir.cas_file_path_by_mode(&digest, 0o644).unwrap();
+        fs::create_dir_all(&cafs_path).unwrap();
+        // Row claims non-zero size; `check_file` stats the dir, size
+        // mismatches the row, we hit the `remove_stale_cafs_entry` path.
+        let entry =
+            index_with("sha512", vec![("impostor", info(&digest, 1_000_000, 0o644, Some(0)))]);
+        let result = check_pkg_files_integrity(&store_dir, &entry);
+        assert!(!result.passed);
+        assert!(
+            !cafs_path.exists(),
+            "a directory at the CAFS path must be scrubbed like a file so the next install re-fetches",
+        );
+    }
+
+    /// `build_file_maps_from_index` shouldn't silently drop unresolvable
+    /// entries — that would give the caller a partial `files_map` and a
+    /// cache hit with missing files. Flip `passed` to `false` when any
+    /// digest can't be turned into a CAFS path so the caller re-fetches.
+    #[test]
+    fn fast_path_fails_when_digest_is_malformed() {
+        let tmp = tempdir().unwrap();
+        let store_dir = StoreDir::new(tmp.path());
+        let entry = index_with("sha512", vec![("bad-digest", info("not-hex", 10, 0o644, None))]);
+        let result = build_file_maps_from_index(&store_dir, &entry);
+        assert!(!result.passed, "malformed digest → whole entry fails so caller re-fetches");
+        assert_eq!(result.files_map.len(), 0);
     }
 
     // `CafsFileInfo` is `!Clone` in production (no need there). Give

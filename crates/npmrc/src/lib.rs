@@ -1,5 +1,7 @@
 mod custom_deserializer;
 mod npmrc_auth;
+#[cfg(test)]
+mod test_env_guard;
 mod workspace_yaml;
 
 use pacquet_store_dir::StoreDir;
@@ -254,6 +256,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+    use crate::test_env_guard::EnvGuard;
 
     fn display_store_dir(store_dir: &StoreDir) -> String {
         store_dir.display().to_string().replace('\\', "/")
@@ -297,10 +300,10 @@ mod tests {
 
     #[test]
     pub fn should_use_pnpm_home_env_var() {
+        let _g = EnvGuard::snapshot(["PNPM_HOME"]);
         env::set_var("PNPM_HOME", "/hello"); // TODO: change this to dependency injection
         let value: Npmrc = serde_ini::from_str("").unwrap();
         assert_eq!(display_store_dir(&value.store_dir), "/hello/store");
-        env::remove_var("PNPM_HOME");
     }
 
     #[test]
@@ -308,13 +311,15 @@ mod tests {
         // Clear `PNPM_HOME` first — `default_store_dir` checks it
         // before `XDG_DATA_HOME`, so running the test suite with pnpm
         // installed (common) would otherwise hit the `PNPM_HOME`
-        // branch and fail the assertion. See the companion fix in
+        // branch and fail the assertion. Snapshot both so the test
+        // cleans up after itself even when parallel peers observe the
+        // temporarily-unset state. See the companion fix in
         // `custom_deserializer::tests::test_default_store_dir_with_xdg_env`.
+        let _g = EnvGuard::snapshot(["PNPM_HOME", "XDG_DATA_HOME"]);
         env::remove_var("PNPM_HOME"); // TODO: change this to dependency injection
         env::set_var("XDG_DATA_HOME", "/hello");
         let value: Npmrc = serde_ini::from_str("").unwrap();
         assert_eq!(display_store_dir(&value.store_dir), "/hello/pnpm/store");
-        env::remove_var("XDG_DATA_HOME");
     }
 
     #[test]

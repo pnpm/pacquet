@@ -231,9 +231,12 @@ pub struct DownloadTarballToStore<'a> {
     /// setting. When `true` (pnpm's default) each cached CAFS file is
     /// stat'ed and optionally re-hashed before reuse. When `false` the
     /// index is trusted and the import fails lazily if a blob is
-    /// missing — noticeably faster on the warm-cache-hit path but
-    /// means a mutated store can serve stale content until the next
-    /// integrity-full install.
+    /// missing — trades the per-file stat / optional rehash for the
+    /// risk that a mutated or corrupt store serves stale content until
+    /// the next integrity-full install. Whether that translates into a
+    /// wall-time win depends on the workload; the per-snapshot stat
+    /// isn't the bottleneck on the benchmarks this repo tracks (see
+    /// #273), but cutting the syscall count is still correct.
     pub verify_store_integrity: bool,
     pub package_integrity: &'a Integrity,
     pub package_unpacked_size: Option<usize>,
