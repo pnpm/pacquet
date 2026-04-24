@@ -1,6 +1,4 @@
-use crate::{
-    ParsePkgNameSuffixError, ParsePkgVerPeerError, PkgName, PkgNameVerPeer, PkgVerPeer,
-};
+use crate::{ParsePkgNameSuffixError, ParsePkgVerPeerError, PkgName, PkgNameVerPeer, PkgVerPeer};
 use derive_more::{Display, Error};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
