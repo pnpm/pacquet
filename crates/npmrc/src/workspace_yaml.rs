@@ -45,6 +45,7 @@ pub struct WorkspaceSettings {
     pub dedupe_peer_dependents: Option<bool>,
     pub strict_peer_dependencies: Option<bool>,
     pub resolve_peers_from_workspace_root: Option<bool>,
+    pub verify_store_integrity: Option<bool>,
 }
 
 /// Basename of the file pnpm reads; exported for test use.
@@ -141,6 +142,9 @@ impl WorkspaceSettings {
         }
         if let Some(v) = self.resolve_peers_from_workspace_root {
             npmrc.resolve_peers_from_workspace_root = v;
+        }
+        if let Some(v) = self.verify_store_integrity {
+            npmrc.verify_store_integrity = v;
         }
     }
 }

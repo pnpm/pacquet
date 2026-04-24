@@ -168,7 +168,14 @@ mod tests {
 
     #[test]
     fn test_default_store_dir_with_xdg_env() {
-        env::set_var("XDG_DATA_HOME", "/tmp/xdg_data_home"); // TODO: change this to dependency injection
+        // `default_store_dir` checks `PNPM_HOME` before `XDG_DATA_HOME`,
+        // so a developer running the test suite with pnpm in their
+        // environment (very common) otherwise sees the `PNPM_HOME`
+        // branch win and the assertion fail. Clear it explicitly to
+        // isolate the XDG branch until the TODO below swaps env lookups
+        // for dependency injection.
+        env::remove_var("PNPM_HOME"); // TODO: change this to dependency injection
+        env::set_var("XDG_DATA_HOME", "/tmp/xdg_data_home");
         let store_dir = default_store_dir();
         assert_eq!(display_store_dir(&store_dir), "/tmp/xdg_data_home/pnpm/store");
         env::remove_var("XDG_DATA_HOME");

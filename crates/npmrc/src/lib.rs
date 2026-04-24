@@ -156,6 +156,19 @@ pub struct Npmrc {
     /// projects in the workspace use the same versions of the peer dependencies.
     #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
     pub resolve_peers_from_workspace_root: bool,
+
+    /// Whether to verify each CAFS file's on-disk integrity before reusing it
+    /// for an install. When `true` (pnpm's default), the store-index cache
+    /// lookup stats each referenced file and re-hashes any whose mtime has
+    /// advanced past the stored `checkedAt` timestamp. When `false`, the
+    /// lookup skips that verification entirely and trusts the index — a
+    /// missing blob is discovered lazily at link time instead.
+    ///
+    /// Matches pnpm's `verify-store-integrity` / `verifyStoreIntegrity`
+    /// setting (see `installing/deps-installer/src/install/extendInstallOptions.ts`
+    /// for the same default of `true`).
+    #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
+    pub verify_store_integrity: bool,
 }
 
 impl Npmrc {
@@ -292,7 +305,13 @@ mod tests {
 
     #[test]
     pub fn should_use_xdg_data_home_env_var() {
-        env::set_var("XDG_DATA_HOME", "/hello"); // TODO: change this to dependency injection
+        // Clear `PNPM_HOME` first — `default_store_dir` checks it
+        // before `XDG_DATA_HOME`, so running the test suite with pnpm
+        // installed (common) would otherwise hit the `PNPM_HOME`
+        // branch and fail the assertion. See the companion fix in
+        // `custom_deserializer::tests::test_default_store_dir_with_xdg_env`.
+        env::remove_var("PNPM_HOME"); // TODO: change this to dependency injection
+        env::set_var("XDG_DATA_HOME", "/hello");
         let value: Npmrc = serde_ini::from_str("").unwrap();
         assert_eq!(display_store_dir(&value.store_dir), "/hello/pnpm/store");
         env::remove_var("XDG_DATA_HOME");

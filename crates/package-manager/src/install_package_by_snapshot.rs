@@ -96,6 +96,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             store_dir: &config.store_dir,
             store_index: store_index.cloned(),
             store_index_writer: store_index_writer.cloned(),
+            verify_store_integrity: config.verify_store_integrity,
             package_integrity: integrity,
             package_unpacked_size: None,
             package_url: &tarball_url,
