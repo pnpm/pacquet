@@ -135,8 +135,9 @@ impl StoreDir {
     ///
     /// Errors from individual shard mkdirs are ignored when the error is
     /// [`AlreadyExists`][std::io::ErrorKind::AlreadyExists] **and** the
-    /// existing entry is actually a directory (via [`Path::is_dir`],
-    /// which follows symlinks — a symlink pointing at a real directory
+    /// existing entry is actually a directory (via
+    /// [`Path::is_dir`][std::path::Path::is_dir], which follows
+    /// symlinks — a symlink pointing at a real directory
     /// is accepted, matching what ops folks sometimes do to spread a
     /// store across disks). This matches pnpm's try/catch per shard
     /// (parallel process racing the same layout is benign) but
