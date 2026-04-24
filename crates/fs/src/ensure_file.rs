@@ -5,6 +5,7 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, Instant},
 };
 
 /// Error type of [`ensure_file`].
@@ -192,7 +193,7 @@ fn write_atomic(
         return Err(EnsureFileError::WriteFile { file_path: tmp_path, error });
     }
 
-    if let Err(error) = fs::rename(&tmp_path, file_path) {
+    if let Err(error) = rename_with_retry(&tmp_path, file_path) {
         let _ = fs::remove_file(&tmp_path);
         return Err(EnsureFileError::RenameFile {
             tmp_path,
@@ -202,6 +203,65 @@ fn write_atomic(
     }
 
     Ok(())
+}
+
+/// Total budget for retrying a rename that keeps hitting transient
+/// errors. Matches pnpm's `rename-overwrite` retry window.
+const RENAME_RETRY_BUDGET: Duration = Duration::from_secs(60);
+
+/// Cap on per-iteration sleep — pnpm grows the backoff by 10 ms each
+/// loop and stops growing at 100 ms.
+const RENAME_RETRY_BACKOFF_CAP: Duration = Duration::from_millis(100);
+
+/// `fs::rename` with the one retry family that actually hits pacquet
+/// in practice: Windows Defender (and other Windows antivirus / file-
+/// indexer tooling) momentarily holding the destination open, which
+/// makes the rename fail with `ERROR_ACCESS_DENIED` /
+/// `ERROR_SHARING_VIOLATION`. These surface through Rust's
+/// `io::ErrorKind` as `PermissionDenied` or `ResourceBusy`, and they
+/// clear as soon as the scan completes — a short sleep + retry
+/// recovers. Mirrors the `EPERM|EACCES|EBUSY` arm of
+/// `rename-overwrite`'s `renameOverwriteSync` (see zkochan/packages/
+/// rename-overwrite/index.js): 60-second total budget, 10 ms backoff
+/// step, 100 ms cap.
+///
+/// Other retry arms from `rename-overwrite` (`ENOTEMPTY`/`EEXIST`/
+/// `ENOTDIR` swap-rename, `ENOENT` mkdir-and-recurse, `EXDEV` copy-
+/// and-delete) don't apply to this call site: temp and target share
+/// the CAS shard dir (already pre-created by `StoreDir::init`), both
+/// are files not directories, and pacquet's CAS readers
+/// (`link_file` → `fs::hard_link` / `reflink_copy`) don't keep file
+/// handles on the target, so there's no "parallel reader sees a gap"
+/// concern that would motivate swap-rename.
+fn rename_with_retry(src: &Path, dst: &Path) -> io::Result<()> {
+    let mut backoff = Duration::ZERO;
+    let start = Instant::now();
+
+    loop {
+        match fs::rename(src, dst) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                if !is_transient_rename_error(&error) || start.elapsed() >= RENAME_RETRY_BUDGET {
+                    return Err(error);
+                }
+                if !backoff.is_zero() {
+                    std::thread::sleep(backoff);
+                }
+                backoff = (backoff + Duration::from_millis(10)).min(RENAME_RETRY_BACKOFF_CAP);
+            }
+        }
+    }
+}
+
+/// Windows AV / indexer interference surfaces as `PermissionDenied`
+/// (`ERROR_ACCESS_DENIED`) or `ResourceBusy`
+/// (`ERROR_SHARING_VIOLATION`). `ResourceBusy` is the Rust 1.84+
+/// mapping; on older toolchains it came through as `Other` instead,
+/// but pacquet's MSRV is well past that. Unix never hits these codes
+/// for our same-directory file rename, so the retry loop is
+/// effectively a no-op there.
+fn is_transient_rename_error(error: &io::Error) -> bool {
+    matches!(error.kind(), io::ErrorKind::PermissionDenied | io::ErrorKind::ResourceBusy)
 }
 
 /// Build a unique temp path next to `file_path`. Mirrors pnpm v11's
@@ -347,5 +407,53 @@ mod tests {
         let name = tmp.file_name().unwrap().to_string_lossy().into_owned();
         assert!(name.starts_with("cdef"), "got {name}");
         assert_ne!(name, "cdef", "must include pid + counter suffix");
+    }
+
+    /// Windows AV / indexer interference surfaces as
+    /// `PermissionDenied` or `ResourceBusy`; both must trigger the
+    /// retry loop. Any other kind must propagate immediately.
+    #[test]
+    fn transient_rename_error_classifier() {
+        assert!(is_transient_rename_error(&io::Error::from(io::ErrorKind::PermissionDenied)));
+        assert!(is_transient_rename_error(&io::Error::from(io::ErrorKind::ResourceBusy)));
+
+        // Non-transient kinds: must not trigger the retry loop. A
+        // regression that classified e.g. `NotFound` as transient
+        // would pathologically spin for 60 seconds on a legitimately
+        // missing source.
+        for kind in [
+            io::ErrorKind::NotFound,
+            io::ErrorKind::AlreadyExists,
+            io::ErrorKind::InvalidInput,
+            io::ErrorKind::InvalidData,
+            io::ErrorKind::Unsupported,
+            io::ErrorKind::Other,
+        ] {
+            assert!(
+                !is_transient_rename_error(&io::Error::from(kind)),
+                "{kind:?} must not be classified as transient"
+            );
+        }
+    }
+
+    /// Happy-path rename (no transient errors) returns immediately
+    /// via the `Ok(())` branch without sleeping. Pins that the retry
+    /// loop doesn't accidentally delay successful renames.
+    #[test]
+    fn rename_with_retry_succeeds_fast_when_no_error() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("src");
+        let dst = tmp.path().join("dst");
+        fs::write(&src, b"payload").unwrap();
+
+        let start = Instant::now();
+        rename_with_retry(&src, &dst).expect("rename should succeed");
+        let elapsed = start.elapsed();
+
+        assert_eq!(fs::read(&dst).unwrap(), b"payload");
+        assert!(!src.exists(), "source should be gone after rename");
+        // The retry loop's minimum sleep is 10 ms; a successful
+        // first attempt must not hit that, so elapsed << 10 ms.
+        assert!(elapsed < Duration::from_millis(10), "took {elapsed:?}");
     }
 }
