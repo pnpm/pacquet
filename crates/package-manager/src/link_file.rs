@@ -465,9 +465,40 @@ mod tests {
     /// tier, and we'd have permanently disabled it for no reason.
     /// Pin the behaviour for `Auto`; the error propagates verbatim
     /// and the cache stays at `CLONE`.
+    ///
+    /// We use `AlreadyExists` as the trigger (pre-populated target)
+    /// rather than `NotFound` (missing source) because
+    /// `reflink_copy::reflink` on non-macOS platforms rewrites a
+    /// missing-source `NotFound` into `ErrorKind::InvalidInput` for
+    /// diagnostic purposes (see `reflink-copy/src/lib.rs:64`). That
+    /// makes `NotFound` a poor test for "call errors propagate" — the
+    /// error surfaces as `InvalidInput` on Linux / Windows and the
+    /// test would silently pass via the fallback path instead of the
+    /// propagation path we want to exercise.
     #[test]
     fn auto_call_errors_propagate_without_downgrading() {
         let state = AtomicU8::new(LINK_STATE_CLONE);
+        let tmp = tempdir().unwrap();
+        let src = write_source(tmp.path(), "src.txt", b"fresh");
+        let dst = tmp.path().join("dst");
+        fs::write(&dst, b"pre-existing").unwrap();
+
+        let err = auto_link(&state, &src, &dst).expect_err("target exists → AlreadyExists");
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            state.load(Ordering::Relaxed),
+            LINK_STATE_CLONE,
+            "AlreadyExists must not poison the cache",
+        );
+    }
+
+    /// Same propagation rule at the hardlink tier. `fs::hard_link`
+    /// doesn't get the same error-rewriting treatment that reflink
+    /// does, so we can use the simpler "missing source → NotFound"
+    /// trigger here.
+    #[test]
+    fn auto_hardlink_tier_call_errors_propagate() {
+        let state = AtomicU8::new(LINK_STATE_HARDLINK);
         let tmp = tempdir().unwrap();
         let src = tmp.path().join("does-not-exist");
         let dst = tmp.path().join("dst");
@@ -476,8 +507,8 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
         assert_eq!(
             state.load(Ordering::Relaxed),
-            LINK_STATE_CLONE,
-            "NotFound must not poison the cache",
+            LINK_STATE_HARDLINK,
+            "NotFound at the hardlink tier must not poison the cache",
         );
     }
 
@@ -528,21 +559,27 @@ mod tests {
         assert_eq!(state.load(Ordering::Relaxed), LINK_STATE_HARDLINK, "state must not drift");
     }
 
-    /// Same propagate-on-call-error property for `CloneOrCopy`.
-    /// Missing source must not downgrade the cache.
+    /// Same propagate-on-call-error property for `CloneOrCopy`. Uses
+    /// `AlreadyExists` trigger for the same reason
+    /// `auto_call_errors_propagate_without_downgrading` does —
+    /// `NotFound` gets rewritten to `InvalidInput` inside reflink-copy
+    /// on non-macOS and would take the fallback path instead of the
+    /// propagation path.
     #[test]
     fn clone_or_copy_call_errors_propagate_without_downgrading() {
         let state = AtomicU8::new(LINK_STATE_CLONE);
         let tmp = tempdir().unwrap();
-        let src = tmp.path().join("does-not-exist");
+        let src = write_source(tmp.path(), "src.txt", b"fresh");
         let dst = tmp.path().join("dst");
+        fs::write(&dst, b"pre-existing").unwrap();
 
-        let err = clone_or_copy_link(&state, &src, &dst).expect_err("missing source → NotFound");
-        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        let err =
+            clone_or_copy_link(&state, &src, &dst).expect_err("target exists → AlreadyExists");
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(
             state.load(Ordering::Relaxed),
             LINK_STATE_CLONE,
-            "NotFound must not poison the cache",
+            "AlreadyExists must not poison the cache",
         );
     }
 
