@@ -11,6 +11,7 @@ mod project_snapshot;
 mod resolution;
 mod resolved_dependency;
 mod save_lockfile;
+mod snapshot_dep_ref;
 mod snapshot_entry;
 
 pub use comver::*;
@@ -26,6 +27,7 @@ pub use project_snapshot::*;
 pub use resolution::*;
 pub use resolved_dependency::*;
 pub use save_lockfile::*;
+pub use snapshot_dep_ref::*;
 pub use snapshot_entry::*;
 
 use serde::{Deserialize, Serialize};
