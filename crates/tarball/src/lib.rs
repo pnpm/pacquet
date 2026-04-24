@@ -632,9 +632,15 @@ impl<'a> DownloadTarballToStore<'a> {
         decoder.shutdown().await.map_err(TarballError::DecodeGzip)?;
         let decompressed = decoder.into_inner();
 
-        // TODO: Cloning here is less than desirable, there are 2 possible solutions for this problem:
-        // 1. Use an Arc and convert this line to Arc::clone.
-        // 2. Replace ssri with base64 and serde magic (which supports Copy).
+        // These allocations move owned `String`s into the
+        // `spawn_blocking` closure below so it doesn't need a lifetime
+        // on the borrowed inputs. `package_integrity.to_string()`
+        // re-serializes the `Integrity` (a small ssri structure) into
+        // its canonical string form for the `index.db` key; it's not
+        // on the byte-loop hot path, so the per-tarball cost is noise.
+        // If it ever shows up in a profile, switching to an
+        // `Arc<str>` captured once at `DownloadTarballToStore`
+        // construction would avoid the conversion at call sites.
         let package_integrity_str = package_integrity.to_string();
         let package_id = package_id.to_string();
 

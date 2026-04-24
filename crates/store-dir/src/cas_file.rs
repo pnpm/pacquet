@@ -61,8 +61,14 @@ impl StoreDir {
         executable: bool,
     ) -> Result<(PathBuf, FileHash), WriteCasFileError> {
         let file_hash = Sha512::digest(buffer);
-        self.write_cas_file_prehashed(buffer, file_hash, executable)
-            .map(|file_path| (file_path, file_hash))
+        // Skip the `debug_assert` in `write_cas_file_prehashed` — we
+        // computed `file_hash` from `buffer` on the line above, so a
+        // re-hash would just re-prove our own computation at the cost
+        // of doubling the work in debug/test builds (and this is on
+        // the install hot path). Route through the private helper
+        // instead.
+        let file_path = self.write_cas_file_unchecked(buffer, file_hash, executable)?;
+        Ok((file_path, file_hash))
     }
 
     /// Same as [`write_cas_file`](Self::write_cas_file) but takes a
@@ -88,6 +94,19 @@ impl StoreDir {
             "write_cas_file_prehashed called with a hash that is not Sha512(buffer); \
              passing a mismatched hash would silently corrupt the CAFS",
         );
+        self.write_cas_file_unchecked(buffer, file_hash, executable)
+    }
+
+    /// Path-derive + write without re-hashing. Private so the only
+    /// callers are the two trusted entry points above: one that
+    /// computed the hash itself and one that debug-asserts the
+    /// caller's hash.
+    fn write_cas_file_unchecked(
+        &self,
+        buffer: &[u8],
+        file_hash: FileHash,
+        executable: bool,
+    ) -> Result<PathBuf, WriteCasFileError> {
         let file_path = self.cas_file_path(file_hash, executable);
         let mode = executable.then_some(EXEC_MODE);
 
@@ -224,5 +243,54 @@ mod tests {
         assert_eq!(store_dir.cas_file_path_by_mode("Ab\tcd", 0o644), None);
         assert!(store_dir.cas_file_path_by_mode("abc", 0o644).is_some());
         assert!(store_dir.cas_file_path_by_mode("abcdef", 0o755).is_some());
+    }
+
+    /// `write_cas_file_prehashed` is a new public API that lets a
+    /// caller skip the internal `Sha512::digest(buffer)` pass.
+    /// Prove it's a drop-in replacement for `write_cas_file`: given
+    /// the same bytes and executable flag, both must land at the
+    /// same CAFS path and leave the same bytes on disk.
+    #[test]
+    fn write_cas_file_prehashed_parity_with_write_cas_file() {
+        for executable in [false, true] {
+            let tempdir = tempfile::tempdir().expect("tempdir");
+            let store_dir = StoreDir::from(tempdir.path().to_path_buf());
+
+            let bytes = b"// prehashed-parity fixture\nmodule.exports = 42;\n";
+            let expected_hash = Sha512::digest(bytes);
+
+            let (path_from_hashed, hash_from_hashed) =
+                store_dir.write_cas_file(bytes, executable).expect("write_cas_file");
+            assert_eq!(hash_from_hashed, expected_hash);
+
+            let path_from_prehashed = store_dir
+                .write_cas_file_prehashed(bytes, expected_hash, executable)
+                .expect("write_cas_file_prehashed");
+
+            // Same digest + same executable-bit => same CAFS path.
+            // The second write is a no-op because `ensure_file` short-
+            // circuits when the path already exists.
+            assert_eq!(path_from_hashed, path_from_prehashed);
+            let on_disk = std::fs::read(&path_from_prehashed).expect("read back cafs blob");
+            assert_eq!(on_disk, bytes);
+        }
+    }
+
+    /// A mismatched `file_hash` would land the blob at a path that
+    /// advertises a digest its contents don't satisfy — silent CAFS
+    /// corruption. The `debug_assert` inside `write_cas_file_prehashed`
+    /// catches this in debug/test builds. `debug_assert` is compiled
+    /// out in release, so gate the test on `debug_assertions` and let
+    /// release-profile test runs skip it (the assertion is a dev-side
+    /// guardrail, not a runtime contract).
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "silently corrupt the CAFS")]
+    fn write_cas_file_prehashed_debug_asserts_hash_matches_buffer() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store_dir = StoreDir::from(tempdir.path().to_path_buf());
+        let bytes = b"payload";
+        let wrong_hash = Sha512::digest(b"a different payload entirely");
+        let _ = store_dir.write_cas_file_prehashed(bytes, wrong_hash, false);
     }
 }
