@@ -84,6 +84,11 @@ pub enum TarballError {
     #[from(ignore)]
     #[diagnostic(code(pacquet_tarball::task_join_error))]
     TaskJoin(tokio::task::JoinError),
+
+    #[from(ignore)]
+    #[display("Tarball at {url} had Content-Length {expected} but {received} bytes were received")]
+    #[diagnostic(code(pacquet_tarball::bad_tarball_size))]
+    BadTarballSize { url: String, expected: u64, received: u64 },
 }
 
 /// Value of the cache.
@@ -482,6 +487,14 @@ impl<'a> DownloadTarballToStore<'a> {
             .await
             .map_err(network_error)?;
 
+        // Read `Content-Length` *before* we start consuming the body
+        // stream so we can pre-size the buffer. Ports pnpm v11's
+        // `fetching/tarball-fetcher/src/remoteTarballFetcher.ts:148-164`:
+        // reqwest/hyper internally grows its buffer by doubling when
+        // CL isn't used, so on a 1352-tarball cold install that's a
+        // lot of wasted alloc + copy work across the pipeline.
+        let expected_size = response_head.content_length();
+
         // Gate the memory-heavy + CPU-heavy part of the pipeline with
         // `post_download_semaphore`:
         //
@@ -489,7 +502,7 @@ impl<'a> DownloadTarballToStore<'a> {
         //   for I/O wait but disastrous for CPU work that can only
         //   really run `num_cpus` at a time, so we cap concurrent
         //   `spawn_blocking` bodies.
-        // - We also acquire the permit *before* `.bytes().await`
+        // - We also acquire the permit *before* we consume the body
         //   rather than right before `spawn_blocking`. Buffering is
         //   where the per-tarball memory spike lives (a full
         //   decompressed package can be many MB), so holding the
@@ -499,14 +512,57 @@ impl<'a> DownloadTarballToStore<'a> {
         //   up hundreds of buffered tarballs waiting for a permit to
         //   process (Copilot review on #269).
         //
-        // The permit is held across both `.bytes().await` and the
-        // `spawn_blocking.await` below, dropping at end of scope.
+        // The permit is held across both the body-stream drain and
+        // the `spawn_blocking.await` below, dropping at end of scope.
         let _post_download_permit = post_download_semaphore()
             .acquire()
             .await
             .expect("post-download semaphore shouldn't be closed this soon");
 
-        let response = response_head.bytes().await.map_err(network_error)?;
+        // Stream the body into a single pre-sized `Vec<u8>` when
+        // `Content-Length` is known. One allocation + one
+        // `extend_from_slice` per chunk, no growth-by-doubling.
+        // Falls back to the empty-capacity `Vec::new()` when CL is
+        // missing (chunked transfer encoding), which still avoids
+        // reqwest/hyper's intermediate-chunk-list + second-copy pass.
+        //
+        // Pnpm also surfaces a `BadTarballError` when the received
+        // size doesn't match the CL header — mirror that via
+        // `BadTarballSize` so an upstream bug or middleware
+        // truncation is visible instead of silently producing a
+        // short tarball that only fails later at the integrity check.
+        let response = {
+            use futures_util::StreamExt;
+            let mut buf: Vec<u8> = match expected_size {
+                Some(size) => Vec::with_capacity(size as usize),
+                None => Vec::new(),
+            };
+            let mut stream = response_head.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(network_error)?;
+                if let Some(expected) = expected_size {
+                    let after = buf.len() as u64 + chunk.len() as u64;
+                    if after > expected {
+                        return Err(TarballError::BadTarballSize {
+                            url: package_url.to_string(),
+                            expected,
+                            received: after,
+                        });
+                    }
+                }
+                buf.extend_from_slice(&chunk);
+            }
+            if let Some(expected) = expected_size {
+                if buf.len() as u64 != expected {
+                    return Err(TarballError::BadTarballSize {
+                        url: package_url.to_string(),
+                        expected,
+                        received: buf.len() as u64,
+                    });
+                }
+            }
+            buf
+        };
 
         tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
 
