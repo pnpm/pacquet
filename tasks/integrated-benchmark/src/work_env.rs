@@ -172,10 +172,17 @@ impl WorkEnv {
     }
 
     fn benchmark(&self) {
+        // hyperfine runs `--prepare` before *each* timed invocation, so
+        // cleanup must cover every bench dir we're about to measure.
+        // Previously this only wiped the pacquet revisions — if
+        // `--with-pnpm` was set, pnpm's `node_modules` survived between
+        // iterations, and after the warmup pnpm just hit a no-op
+        // "already installed" code path instead of doing real work.
         let cleanup_targets = self
             .revision_ids()
-            .map(|revision| self.bench_dir(revision))
-            .flat_map(|revision| [revision.join("node_modules"), revision.join("store-dir")])
+            .chain(self.with_pnpm.then_some(WorkEnv::PNPM))
+            .map(|id| self.bench_dir(id))
+            .flat_map(|dir| [dir.join("node_modules"), dir.join("store-dir")])
             .map(|path| path.maybe_quote().to_string())
             .join(" ");
         let cleanup_command = format!("rm -rf {cleanup_targets}");
