@@ -45,13 +45,13 @@ pub enum PackageImportMethod {
     /// hard link packages from the store
     Hardlink,
 
-    /// try to clone packages from the store. If cloning is not supported then fall back to copying
+    /// copy packages from the store
     Copy,
 
-    /// copy packages from the store
+    /// clone (AKA copy-on-write or reference link) packages from the store
     Clone,
 
-    /// clone (AKA copy-on-write or reference link) packages from the store
+    /// try to clone packages from the store. If cloning is not supported then fall back to copying
     CloneOrCopy,
 }
 

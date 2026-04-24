@@ -23,12 +23,6 @@ pub fn create_cas_files(
     dir_path: &Path,
     cas_paths: &HashMap<String, PathBuf>,
 ) -> Result<(), CreateCasFilesError> {
-    assert_eq!(
-        import_method,
-        PackageImportMethod::Auto,
-        "Only PackageImportMethod::Auto is currently supported, but {dir_path:?} requires {import_method:?}",
-    );
-
     if dir_path.exists() {
         return Ok(());
     }
@@ -36,7 +30,7 @@ pub fn create_cas_files(
     cas_paths
         .par_iter()
         .try_for_each(|(cleaned_entry, store_path)| {
-            link_file(store_path, &dir_path.join(cleaned_entry))
+            link_file(import_method, store_path, &dir_path.join(cleaned_entry))
         })
         .map_err(CreateCasFilesError::LinkFile)
 }
