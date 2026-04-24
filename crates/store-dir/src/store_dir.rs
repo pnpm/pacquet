@@ -135,12 +135,16 @@ impl StoreDir {
     ///
     /// Errors from individual shard mkdirs are ignored when the error is
     /// [`AlreadyExists`][std::io::ErrorKind::AlreadyExists] **and** the
-    /// existing entry is actually a directory — matching pnpm's
-    /// try/catch per shard, which treats a parallel process racing
-    /// the same layout as benign, but *not* silently accepting a
-    /// regular file or symlink squatting on the shard path. Other
-    /// errors propagate; the caller degrades them to a warning and
-    /// falls back to the per-write lazy mkdir.
+    /// existing entry is actually a directory (via [`Path::is_dir`],
+    /// which follows symlinks — a symlink pointing at a real directory
+    /// is accepted, matching what ops folks sometimes do to spread a
+    /// store across disks). This matches pnpm's try/catch per shard
+    /// (parallel process racing the same layout is benign) but
+    /// tightens it slightly: a regular file, a non-directory symlink,
+    /// or a broken symlink squatting on the shard path is rejected
+    /// instead of being cached as ensured. Other errors propagate; the
+    /// caller degrades them to a warning and falls back to the per-
+    /// write lazy mkdir.
     pub fn init(&self) -> std::io::Result<()> {
         let files = self.files();
         // `is_dir()` rather than `exists()`: if `files` is present but
@@ -164,18 +168,22 @@ impl StoreDir {
                     return Err(error);
                 }
                 // `AlreadyExists` is benign only when the existing
-                // entry is itself a directory — a parallel pnpm
+                // entry resolves to a directory — a parallel pnpm
                 // or pacquet process racing the same layout is
-                // fine. A regular file or non-dir symlink squatting
-                // on the shard path, on the other hand, would make
-                // `mark_shard_ensured` a lie and punt the failure
-                // to a much less actionable `open` error inside
-                // the per-file CAFS write. Reject upfront.
+                // fine, and a symlink pointing at a real directory
+                // is too (ops folks occasionally spread a store
+                // across disks that way). `Path::is_dir` follows
+                // symlinks, which is the desired semantics here. A
+                // regular file, a non-dir symlink, or a broken
+                // symlink would make `mark_shard_ensured` a lie and
+                // punt the failure to a much less actionable
+                // `open` error inside the per-file CAFS write.
+                // Reject upfront.
                 if !shard_dir.is_dir() {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::AlreadyExists,
                         format!(
-                            "CAFS shard path {} exists but is not a directory",
+                            "CAFS shard path {} exists but does not resolve to a directory",
                             shard_dir.display(),
                         ),
                     ));
