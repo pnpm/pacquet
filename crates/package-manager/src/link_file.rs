@@ -51,7 +51,14 @@ pub fn link_file(
     source_file: &Path,
     target_link: &Path,
 ) -> Result<(), LinkFileError> {
-    if target_link.exists() {
+    // `exists()` follows symlinks, so a dangling symlink at
+    // `target_link` (left behind by an interrupted prior install) would
+    // slip through here and make the subsequent `hard_link` / `reflink`
+    // fail with `AlreadyExists`, contradicting the "already exists → no
+    // op" contract in the doc comment above. `symlink_metadata` asks
+    // about the directory entry itself without following, which covers
+    // files, directories, and symlinks (broken or otherwise).
+    if fs::symlink_metadata(target_link).is_ok() {
         return Ok(());
     }
 
@@ -209,9 +216,10 @@ mod tests {
         }
     }
 
-    /// Explicit `Hardlink` across devices (EXDEV) must surface the error
-    /// instead of silently falling back — that's what `Auto` is for. We
-    /// simulate a hard-link failure by pointing at a non-existent source.
+    /// Explicit `Hardlink` must surface link-creation errors instead of
+    /// silently falling back — that's what `Auto` is for. We drive the
+    /// error path by pointing at a non-existent source (`NotFound`) so
+    /// the failure is deterministic on every platform / filesystem.
     #[test]
     fn explicit_hardlink_surfaces_errors() {
         let tmp = tempdir().unwrap();
@@ -221,6 +229,60 @@ mod tests {
         let err =
             link_file(PackageImportMethod::Hardlink, &src, &dst).expect_err("no source → error");
         assert!(matches!(err, LinkFileError::CreateLink { .. }), "got: {err:?}");
+    }
+
+    /// `CloneOrCopy` has to succeed on any filesystem because
+    /// `reflink_or_copy` falls back to a plain copy when the kernel
+    /// can't reflink. This hits the match arm directly — the
+    /// `existing_target_is_preserved` loop short-circuits before the
+    /// arm ever runs, so without this we had no coverage of the real
+    /// code path.
+    #[test]
+    fn clone_or_copy_materializes_the_file_contents() {
+        let tmp = tempdir().unwrap();
+        let src = write_source(tmp.path(), "src.txt", b"clone-or-copy");
+        let dst = tmp.path().join("nested/dst.txt");
+
+        link_file(PackageImportMethod::CloneOrCopy, &src, &dst)
+            .expect("CloneOrCopy should always succeed");
+        assert_eq!(fs::read(&dst).unwrap(), b"clone-or-copy");
+    }
+
+    /// Explicit `Clone` must propagate errors rather than silently
+    /// copying. Pointing at a non-existent source gives us a
+    /// deterministic failure on every FS regardless of reflink
+    /// support, so the test doesn't need a btrfs / APFS runner.
+    #[test]
+    fn explicit_clone_surfaces_errors() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("does-not-exist");
+        let dst = tmp.path().join("dst.txt");
+
+        let err =
+            link_file(PackageImportMethod::Clone, &src, &dst).expect_err("no source → error");
+        assert!(matches!(err, LinkFileError::CreateLink { .. }), "got: {err:?}");
+    }
+
+    /// A dangling symlink left behind by an interrupted install used
+    /// to sneak past the `target_link.exists()` check (which follows
+    /// symlinks) and then collide with `hard_link` / `reflink` as
+    /// `AlreadyExists`. The doc comment promises "if target_link
+    /// already exists, do nothing" — so the dangling link must be
+    /// treated as already-present.
+    #[test]
+    #[cfg(unix)]
+    fn dangling_symlink_is_treated_as_already_present() {
+        let tmp = tempdir().unwrap();
+        let src = write_source(tmp.path(), "src.txt", b"fresh");
+        let dst = tmp.path().join("dst.txt");
+        // Target of the symlink does not exist — the link is dangling.
+        std::os::unix::fs::symlink(tmp.path().join("never-created"), &dst).unwrap();
+
+        link_file(PackageImportMethod::Hardlink, &src, &dst)
+            .expect("dangling symlink should short-circuit, not fail");
+        // The dangling symlink should still be there, unchanged — we
+        // don't attempt to replace it.
+        assert!(fs::symlink_metadata(&dst).unwrap().file_type().is_symlink());
     }
 
     /// Core caching property: once Auto observes reflink failing, the
