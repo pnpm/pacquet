@@ -169,9 +169,9 @@ async fn load_cached_cas_paths(
         }?;
 
         let verify_result = if verify_store_integrity {
-            pacquet_store_dir::check_pkg_files_integrity(store_dir, &entry)
+            pacquet_store_dir::check_pkg_files_integrity(store_dir, entry)
         } else {
-            pacquet_store_dir::build_file_maps_from_index(store_dir, &entry)
+            pacquet_store_dir::build_file_maps_from_index(store_dir, entry)
         };
         if !verify_result.passed {
             tracing::debug!(

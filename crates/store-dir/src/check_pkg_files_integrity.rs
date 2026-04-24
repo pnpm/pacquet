@@ -48,10 +48,14 @@ pub struct VerifyResult {
 /// No stat syscalls — the caller trusts the index, and any missing /
 /// corrupt CAFS file surfaces lazily at import time (pnpm's `linkOrCopy`
 /// equivalent).
-pub fn build_file_maps_from_index(store_dir: &StoreDir, entry: &PackageFilesIndex) -> VerifyResult {
+pub fn build_file_maps_from_index(store_dir: &StoreDir, entry: PackageFilesIndex) -> VerifyResult {
     let mut files_map = HashMap::with_capacity(entry.files.len());
     let mut passed = true;
-    for (filename, info) in &entry.files {
+    // Consume `entry.files` so the owned `String` filenames move into
+    // `files_map` without a per-file clone. On a realistic install the
+    // previous borrow-then-clone cost one allocation per file on every
+    // warm cache hit.
+    for (filename, info) in entry.files {
         let Some(path) = store_dir.cas_file_path_by_mode(&info.digest, info.mode) else {
             // A malformed digest (non-hex / too short) makes this entry
             // unreconstructable. pnpm's `getFilePathByModeInCafs` doesn't
@@ -66,7 +70,7 @@ pub fn build_file_maps_from_index(store_dir: &StoreDir, entry: &PackageFilesInde
             passed = false;
             continue;
         };
-        files_map.insert(filename.clone(), path);
+        files_map.insert(filename, path);
     }
     VerifyResult { passed, files_map }
 }
@@ -91,28 +95,42 @@ pub fn build_file_maps_from_index(store_dir: &StoreDir, entry: &PackageFilesInde
 /// reject non-regular-file dirents preemptively — the integrity hash
 /// catches real corruption, and pnpm doesn't guard against it in this
 /// function either.
-pub fn check_pkg_files_integrity(store_dir: &StoreDir, entry: &PackageFilesIndex) -> VerifyResult {
+pub fn check_pkg_files_integrity(store_dir: &StoreDir, entry: PackageFilesIndex) -> VerifyResult {
+    // Destructure so the owned `files` HashMap and `algo` String can be
+    // consumed below; moving beats the extra per-file `filename.clone()`
+    // the old borrow-based signature forced on the hot path.
+    let PackageFilesIndex { files, algo, .. } = entry;
     let mut all_verified = true;
-    let mut files_map = HashMap::with_capacity(entry.files.len());
+    let mut files_map = HashMap::with_capacity(files.len());
     // pnpm's `verifiedFilesCache: Set<string>` dedups within a single
     // entry. Two different in-tarball filenames can point at the same
     // CAFS blob (hash-collision-less dedup), so caching by digest spares
     // the second stat.
-    let mut verified: HashSet<&str> = HashSet::new();
-    for (filename, info) in &entry.files {
+    //
+    // Owned `String` instead of `&str` because we move the `filename`
+    // into `files_map` at the end of each iteration, and the `info`
+    // (which owned the digest) gets consumed by `verify_file` by
+    // reference — once the iteration advances, any borrow into `info`
+    // is invalidated.
+    let mut verified: HashSet<String> = HashSet::new();
+    for (filename, info) in files {
         let Some(path) = store_dir.cas_file_path_by_mode(&info.digest, info.mode) else {
             all_verified = false;
             continue;
         };
-        files_map.insert(filename.clone(), path.clone());
-        if verified.contains(info.digest.as_str()) {
-            continue;
+        if !verified.contains(info.digest.as_str()) {
+            if verify_file(&path, &info, &algo) {
+                // One digest clone per unique CAFS blob we actually
+                // verified; zero for dedup hits. On a 1352-snapshot
+                // install that's an extra allocation per *unique*
+                // blob, not per *filename* — strictly better than the
+                // old per-filename clone.
+                verified.insert(info.digest);
+            } else {
+                all_verified = false;
+            }
         }
-        if verify_file(&path, info, &entry.algo) {
-            verified.insert(info.digest.as_str());
-        } else {
-            all_verified = false;
-        }
+        files_map.insert(filename, path);
     }
     VerifyResult { passed: all_verified, files_map }
 }
@@ -289,7 +307,7 @@ mod tests {
         let store_dir = StoreDir::new(tmp.path());
         let digest = sha512_hex(b"dummy");
         let entry = index_with("sha512", vec![("index.js", info(&digest, 5, 0o644, None))]);
-        let result = build_file_maps_from_index(&store_dir, &entry);
+        let result = build_file_maps_from_index(&store_dir, entry);
         assert!(result.passed, "fast path always passes");
         let path = result.files_map.get("index.js").expect("path inserted");
         assert!(!path.exists(), "no file was planted — fast path didn't care");
@@ -314,7 +332,7 @@ mod tests {
             "sha512",
             vec![("index.js", info(&digest, content.len() as u64, 0o644, Some(future)))],
         );
-        let result = check_pkg_files_integrity(&store_dir, &entry);
+        let result = check_pkg_files_integrity(&store_dir, entry);
         assert!(result.passed);
         assert_eq!(result.files_map.len(), 1);
     }
@@ -327,7 +345,7 @@ mod tests {
         let store_dir = StoreDir::new(tmp.path());
         let digest = sha512_hex(b"nope");
         let entry = index_with("sha512", vec![("README", info(&digest, 4, 0o644, None))]);
-        let result = check_pkg_files_integrity(&store_dir, &entry);
+        let result = check_pkg_files_integrity(&store_dir, entry);
         assert!(!result.passed, "missing file → fail");
         assert_eq!(result.files_map.len(), 1);
     }
@@ -348,7 +366,7 @@ mod tests {
             "sha512",
             vec![("whatever", info(&fake_digest, actual.len() as u64, 0o644, Some(0)))],
         );
-        let result = check_pkg_files_integrity(&store_dir, &entry);
+        let result = check_pkg_files_integrity(&store_dir, entry);
         assert!(!result.passed, "bad hash → fail");
         assert!(!path.exists(), "mismatched file is removed so the next call re-fetches");
     }
@@ -365,7 +383,7 @@ mod tests {
         let digest = sha512_hex(content);
         let path = plant_cafs_file(&store_dir, &digest, 0o644, content);
         let entry = index_with("sha512", vec![("mismatch", info(&digest, 999, 0o644, Some(0)))]);
-        let result = check_pkg_files_integrity(&store_dir, &entry);
+        let result = check_pkg_files_integrity(&store_dir, entry);
         assert!(!result.passed);
         assert!(!path.exists(), "size mismatch removes the file so a re-fetch starts clean");
     }
@@ -385,7 +403,7 @@ mod tests {
             "sha512",
             vec![("a.txt", info_shared.clone_for_test()), ("b.txt", info_shared.clone_for_test())],
         );
-        let result = check_pkg_files_integrity(&store_dir, &entry);
+        let result = check_pkg_files_integrity(&store_dir, entry);
         assert!(result.passed);
         assert_eq!(result.files_map.len(), 2);
     }
@@ -403,7 +421,7 @@ mod tests {
         let path = plant_cafs_file(&store_dir, &digest, 0o644, content);
         let entry =
             index_with("sha256", vec![("x", info(&digest, content.len() as u64, 0o644, Some(0)))]);
-        let result = check_pkg_files_integrity(&store_dir, &entry);
+        let result = check_pkg_files_integrity(&store_dir, entry);
         assert!(!result.passed);
         assert!(!path.exists(), "unknown algo → treated as corrupt → removed");
     }
@@ -426,7 +444,7 @@ mod tests {
         // mismatches the row, we hit the `remove_stale_cafs_entry` path.
         let entry =
             index_with("sha512", vec![("impostor", info(&digest, 1_000_000, 0o644, Some(0)))]);
-        let result = check_pkg_files_integrity(&store_dir, &entry);
+        let result = check_pkg_files_integrity(&store_dir, entry);
         assert!(!result.passed);
         assert!(
             !cafs_path.exists(),
@@ -443,7 +461,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let store_dir = StoreDir::new(tmp.path());
         let entry = index_with("sha512", vec![("bad-digest", info("not-hex", 10, 0o644, None))]);
-        let result = build_file_maps_from_index(&store_dir, &entry);
+        let result = build_file_maps_from_index(&store_dir, entry);
         assert!(!result.passed, "malformed digest → whole entry fails so caller re-fetches");
         assert_eq!(result.files_map.len(), 0);
     }
