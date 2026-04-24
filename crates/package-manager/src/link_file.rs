@@ -61,6 +61,28 @@ const LINK_STATE_CLONE: u8 = 0;
 const LINK_STATE_HARDLINK: u8 = 1;
 const LINK_STATE_COPY: u8 = 2;
 
+// One-shot "we picked this import method" log, matching pnpm's
+// `packageImportMethodLogger.debug({ method: 'clone' | 'hardlink' | 'copy' })`
+// in `fs/indexed-pkg-importer/src/index.ts`. Emits once per process per
+// method so a reader of the logs can tell which tier actually ran —
+// crucial for verifying hardlinks are kicking in on CI runners where
+// reflink isn't available.
+//
+// Pnpm logs at `debug`; pacquet uses `info` so the message surfaces
+// without verbose logging configured. `fetch_or` returns the previous
+// bitfield, so the first caller to set a given bit is the one that
+// emits.
+const LOG_FLAG_CLONE: u8 = 1 << 0;
+const LOG_FLAG_HARDLINK: u8 = 1 << 1;
+const LOG_FLAG_COPY: u8 = 1 << 2;
+static LOGGED_METHODS: AtomicU8 = AtomicU8::new(0);
+
+fn log_method_once(flag: u8, method: &'static str) {
+    if LOGGED_METHODS.fetch_or(flag, Ordering::Relaxed) & flag == 0 {
+        tracing::info!(target: "pacquet::package_import_method", method);
+    }
+}
+
 /// Materialize a CAFS file into `target_link` using `method`.
 ///
 /// * If `target_link` already exists, do nothing.
@@ -123,16 +145,29 @@ pub fn link_file(
         // and should surface. No caching — the `fs::hard_link` syscall
         // itself is already cheap; pnpm doesn't cache this path either.
         PackageImportMethod::Hardlink => match fs::hard_link(source_file, target_link) {
-            Ok(()) => Ok(()),
-            Err(error) if is_cross_device(&error) => fs::copy(source_file, target_link).map(drop),
+            Ok(()) => {
+                log_method_once(LOG_FLAG_HARDLINK, "hardlink");
+                Ok(())
+            }
+            Err(error) if is_cross_device(&error) => {
+                log_method_once(LOG_FLAG_COPY, "copy");
+                fs::copy(source_file, target_link).map(drop)
+            }
             Err(error) => Err(error),
         },
-        PackageImportMethod::Clone => reflink_copy::reflink(source_file, target_link),
+        PackageImportMethod::Clone => {
+            reflink_copy::reflink(source_file, target_link).inspect(|_| {
+                log_method_once(LOG_FLAG_CLONE, "clone");
+            })
+        }
         PackageImportMethod::CloneOrCopy => {
             static CLONE_OR_COPY_STATE: AtomicU8 = AtomicU8::new(LINK_STATE_CLONE);
             clone_or_copy_link(&CLONE_OR_COPY_STATE, source_file, target_link)
         }
-        PackageImportMethod::Copy => fs::copy(source_file, target_link).map(drop),
+        PackageImportMethod::Copy => {
+            log_method_once(LOG_FLAG_COPY, "copy");
+            fs::copy(source_file, target_link).map(drop)
+        }
     };
 
     result.map_err(|error| LinkFileError::Import {
@@ -152,30 +187,75 @@ fn is_cross_device(err: &io::Error) -> bool {
     matches!(err.raw_os_error(), Some(18) | Some(17))
 }
 
+/// Errors that indicate "this filesystem can't reflink" — the kernel
+/// rejected the ioctl, not the file. The downgrade cache uses this to
+/// skip the reflink tier for subsequent files, while letting
+/// `NotFound` / `PermissionDenied` / `AlreadyExists` and other real
+/// errors propagate (a one-off missing-source file must not
+/// permanently disable reflink for the rest of the process).
+///
+/// `ErrorKind::Unsupported` covers Rust's portable layer when newer
+/// standards lands; the raw-errno list covers platforms where the
+/// kernel reports the capability gap as a bare `Err(_)` without
+/// mapping to a kind:
+/// * `ENOSYS` (38) — syscall not implemented
+/// * `EOPNOTSUPP` / `ENOTSUP` (95 Linux, 102 FreeBSD, 45 macOS) —
+///   operation not supported on this fd
+/// * `ENOTTY` (25) — what ext4 returns for `ioctl_ficlone` when the
+///   filesystem doesn't implement reflink; without this, ext4 would
+///   never downgrade and every file would pay the failed-ioctl cost
+///
+/// We additionally treat `EXDEV` as a fallback trigger — a cross-device
+/// reflink can't possibly succeed no matter how many times we retry.
+fn is_reflink_fallback_error(err: &io::Error) -> bool {
+    matches!(err.kind(), io::ErrorKind::Unsupported)
+        || is_cross_device(err)
+        || matches!(err.raw_os_error(), Some(38) | Some(95) | Some(102) | Some(45) | Some(25))
+}
+
+/// Errors that indicate "this filesystem / device pair can't
+/// hardlink". In practice this is `EXDEV` (cross-device) and
+/// `ErrorKind::Unsupported` (some exotic FSes refuse hardlinks
+/// altogether). Everything else propagates.
+fn is_hardlink_fallback_error(err: &io::Error) -> bool {
+    is_cross_device(err) || matches!(err.kind(), io::ErrorKind::Unsupported)
+}
+
 /// `Auto`'s clone → hardlink → copy chain, using `state` to skip tiers
 /// that have already failed in this process. Factored out so tests can
 /// pass their own `AtomicU8` and exercise the downgrade logic in
 /// isolation — the production path uses a `static` declared inside
-/// [`link_file`]. Broad-catches each tier's errors because "operation
-/// not supported" surfaces as different `io::ErrorKind`s depending on
-/// platform and filesystem (`EOPNOTSUPP`, `EXDEV`, `EPERM`, …) and pnpm
-/// itself doesn't try to enumerate them here either.
+/// [`link_file`]. Only capability / cross-device style failures
+/// downgrade the cached state; other errors propagate immediately so a
+/// one-off `NotFound` on a single file doesn't permanently disable a
+/// tier for the rest of the process.
 fn auto_link(state: &AtomicU8, source: &Path, target: &Path) -> io::Result<()> {
     loop {
         match state.load(Ordering::Relaxed) {
             LINK_STATE_CLONE => match reflink_copy::reflink(source, target) {
-                Ok(()) => return Ok(()),
-                Err(_) => {
+                Ok(()) => {
+                    log_method_once(LOG_FLAG_CLONE, "clone");
+                    return Ok(());
+                }
+                Err(err) if is_reflink_fallback_error(&err) => {
                     state.fetch_max(LINK_STATE_HARDLINK, Ordering::Relaxed);
                 }
+                Err(err) => return Err(err),
             },
             LINK_STATE_HARDLINK => match fs::hard_link(source, target) {
-                Ok(()) => return Ok(()),
-                Err(_) => {
+                Ok(()) => {
+                    log_method_once(LOG_FLAG_HARDLINK, "hardlink");
+                    return Ok(());
+                }
+                Err(err) if is_hardlink_fallback_error(&err) => {
                     state.fetch_max(LINK_STATE_COPY, Ordering::Relaxed);
                 }
+                Err(err) => return Err(err),
             },
-            _ => return fs::copy(source, target).map(drop),
+            _ => {
+                log_method_once(LOG_FLAG_COPY, "copy");
+                return fs::copy(source, target).map(drop);
+            }
         }
     }
 }
@@ -184,16 +264,25 @@ fn auto_link(state: &AtomicU8, source: &Path, target: &Path) -> io::Result<()> {
 /// as [`auto_link`]. Differs from `Auto` by skipping the hardlink tier
 /// entirely — matches pnpm's `createCloneOrCopyImporter`, which on
 /// first reflink failure reassigns its closure directly to `copyPkg`.
+/// Same error-narrowing as `auto_link`: only capability failures
+/// downgrade; real errors propagate.
 fn clone_or_copy_link(state: &AtomicU8, source: &Path, target: &Path) -> io::Result<()> {
     loop {
         match state.load(Ordering::Relaxed) {
             LINK_STATE_CLONE => match reflink_copy::reflink(source, target) {
-                Ok(()) => return Ok(()),
-                Err(_) => {
+                Ok(()) => {
+                    log_method_once(LOG_FLAG_CLONE, "clone");
+                    return Ok(());
+                }
+                Err(err) if is_reflink_fallback_error(&err) => {
                     state.fetch_max(LINK_STATE_COPY, Ordering::Relaxed);
                 }
+                Err(err) => return Err(err),
             },
-            _ => return fs::copy(source, target).map(drop),
+            _ => {
+                log_method_once(LOG_FLAG_COPY, "copy");
+                return fs::copy(source, target).map(drop);
+            }
         }
     }
 }
@@ -308,11 +397,11 @@ mod tests {
     }
 
     /// `CloneOrCopy` has to succeed on any filesystem because
-    /// `reflink_or_copy` falls back to a plain copy when the kernel
-    /// can't reflink. This hits the match arm directly — the
-    /// `existing_target_is_preserved` loop short-circuits before the
-    /// arm ever runs, so without this we had no coverage of the real
-    /// code path.
+    /// `clone_or_copy_link` falls back to `fs::copy` when the reflink
+    /// attempt fails with a capability error. This hits the match arm
+    /// directly — the `existing_target_is_preserved` loop
+    /// short-circuits before the arm ever runs, so without this we had
+    /// no coverage of the real code path.
     #[test]
     fn clone_or_copy_materializes_the_file_contents() {
         let tmp = tempdir().unwrap();
@@ -380,20 +469,27 @@ mod tests {
         assert_eq!(fs::read(&real_target).unwrap(), b"old", "target must not be overwritten");
     }
 
-    /// Core caching property for `Auto`: once reflink fails, the state
-    /// downgrades and subsequent calls skip reflink entirely. Using a
-    /// non-existent source forces both reflink and hardlink to fail
-    /// deterministically on every platform — we just want to drive the
-    /// state machine to its terminal `COPY` state.
+    /// A one-off `NotFound` / `PermissionDenied` / `AlreadyExists` on
+    /// a single file must not downgrade the cache — those are
+    /// per-call errors, not capability errors. A different source /
+    /// target later in the install would still succeed at the current
+    /// tier, and we'd have permanently disabled it for no reason.
+    /// Pin the behaviour for `Auto`; the error propagates verbatim
+    /// and the cache stays at `CLONE`.
     #[test]
-    fn auto_state_downgrades_monotonically_on_failure() {
+    fn auto_call_errors_propagate_without_downgrading() {
         let state = AtomicU8::new(LINK_STATE_CLONE);
         let tmp = tempdir().unwrap();
         let src = tmp.path().join("does-not-exist");
         let dst = tmp.path().join("dst");
 
-        let _ = auto_link(&state, &src, &dst);
-        assert_eq!(state.load(Ordering::Relaxed), LINK_STATE_COPY);
+        let err = auto_link(&state, &src, &dst).expect_err("missing source → NotFound");
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert_eq!(
+            state.load(Ordering::Relaxed),
+            LINK_STATE_CLONE,
+            "NotFound must not poison the cache",
+        );
     }
 
     /// Once `Auto`'s state is `COPY`, we use `fs::copy` and must not
@@ -443,19 +539,46 @@ mod tests {
         assert_eq!(state.load(Ordering::Relaxed), LINK_STATE_HARDLINK, "state must not drift");
     }
 
-    /// Same caching property for `CloneOrCopy` — first reflink failure
-    /// flips the state to `COPY`, skipping reflink for every subsequent
-    /// file. No hardlink tier to drive through, so the terminal state
-    /// is reached in one step.
+    /// Same propagate-on-call-error property for `CloneOrCopy`.
+    /// Missing source must not downgrade the cache.
     #[test]
-    fn clone_or_copy_state_downgrades_to_copy_on_failure() {
+    fn clone_or_copy_call_errors_propagate_without_downgrading() {
         let state = AtomicU8::new(LINK_STATE_CLONE);
         let tmp = tempdir().unwrap();
         let src = tmp.path().join("does-not-exist");
         let dst = tmp.path().join("dst");
 
-        let _ = clone_or_copy_link(&state, &src, &dst);
-        assert_eq!(state.load(Ordering::Relaxed), LINK_STATE_COPY);
+        let err = clone_or_copy_link(&state, &src, &dst).expect_err("missing source → NotFound");
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert_eq!(
+            state.load(Ordering::Relaxed),
+            LINK_STATE_CLONE,
+            "NotFound must not poison the cache",
+        );
+    }
+
+    /// Pin the classification helper directly — the state-machine
+    /// tests above exercise the common kinds (`NotFound` →
+    /// propagate), but we also care that the capability codes we
+    /// added ENOTTY and EOPNOTSUPP for actually trigger the fallback.
+    #[test]
+    fn is_reflink_fallback_error_classifies_capability_codes() {
+        // NotFound must NOT be a capability error.
+        let not_found = io::Error::from(io::ErrorKind::NotFound);
+        assert!(!is_reflink_fallback_error(&not_found));
+
+        // Unsupported IS a capability error.
+        let unsupported = io::Error::from(io::ErrorKind::Unsupported);
+        assert!(is_reflink_fallback_error(&unsupported));
+
+        // ENOTTY (25) — what ext4 returns for ioctl_ficlone on a FS
+        // without reflink support. This is the CI-critical case.
+        let enotty = io::Error::from_raw_os_error(25);
+        assert!(is_reflink_fallback_error(&enotty));
+
+        // EXDEV (18) is cross-device — also a fallback trigger.
+        let exdev = io::Error::from_raw_os_error(18);
+        assert!(is_reflink_fallback_error(&exdev));
     }
 
     /// Pre-seed `CloneOrCopy` state to `COPY` and verify it uses
