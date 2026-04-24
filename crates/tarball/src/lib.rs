@@ -323,13 +323,36 @@ impl<'a> DownloadTarballToStore<'a> {
         let network_error = |error| {
             TarballError::FetchTarball(NetworkError { url: package_url.to_string(), error })
         };
-        let response = http_client
+        let response_head = http_client
             .run_with_permit(|client| client.get(package_url).send())
             .await
-            .map_err(network_error)?
-            .bytes()
-            .await
             .map_err(network_error)?;
+
+        // Gate the memory-heavy + CPU-heavy part of the pipeline with
+        // `post_download_semaphore`:
+        //
+        // - The blocking pool is 512-wide by default, which is right
+        //   for I/O wait but disastrous for CPU work that can only
+        //   really run `num_cpus` at a time, so we cap concurrent
+        //   `spawn_blocking` bodies.
+        // - We also acquire the permit *before* `.bytes().await`
+        //   rather than right before `spawn_blocking`. Buffering is
+        //   where the per-tarball memory spike lives (a full
+        //   decompressed package can be many MB), so holding the
+        //   permit across buffering bounds the number of fully-buffered
+        //   response bodies in RAM to the post-download cap. Without
+        //   this, a fast registry + `try_join_all` fan-out could pile
+        //   up hundreds of buffered tarballs waiting for a permit to
+        //   process (Copilot review on #269).
+        //
+        // The permit is held across both `.bytes().await` and the
+        // `spawn_blocking.await` below, dropping at end of scope.
+        let _post_download_permit = post_download_semaphore()
+            .acquire()
+            .await
+            .expect("post-download semaphore shouldn't be closed this soon");
+
+        let response = response_head.bytes().await.map_err(network_error)?;
 
         tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
 
@@ -356,18 +379,8 @@ impl<'a> DownloadTarballToStore<'a> {
         // blocking-thread pool instead, so the tail drains in parallel.
         // The store-index row handoff at the end stays non-blocking
         // (`StoreIndexWriter::queue`, #265), so the closure itself does
-        // no SQLite work.
-        //
-        // Gate the in-flight count with `post_download_semaphore` — the
-        // blocking pool is 512-wide by default, which is right for I/O
-        // wait but disastrous for CPU work that can only really run
-        // `num_cpus` at a time. The permit is held across the
-        // `spawn_blocking.await` below (it drops naturally at end of
-        // scope) so no task enters the body until one is free.
-        let _post_download_permit = post_download_semaphore()
-            .acquire()
-            .await
-            .expect("post-download semaphore shouldn't be closed this soon");
+        // no SQLite work. Concurrency is already capped by the
+        // `_post_download_permit` acquired above.
         let cas_paths =
             tokio::task::spawn_blocking(move || -> Result<HashMap<String, PathBuf>, TaskError> {
                 package_integrity.check(&response).map_err(TaskError::Checksum)?;
