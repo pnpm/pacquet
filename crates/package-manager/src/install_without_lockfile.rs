@@ -1,4 +1,7 @@
-use crate::{InstallPackageFromRegistry, InstallPackageFromRegistryError};
+use crate::{
+    store_init::init_store_dir_best_effort, InstallPackageFromRegistry,
+    InstallPackageFromRegistryError,
+};
 use async_recursion::async_recursion;
 use dashmap::DashSet;
 use derive_more::{Display, Error};
@@ -60,12 +63,20 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
             resolved_packages,
         } = self;
 
+        let store_dir: &'static _ = &config.store_dir;
+
+        // Eagerly create `files/00..ff` under the v11 store root so per-
+        // tarball CAFS writes never pay a `create_dir_all` syscall on the
+        // hot path. Ports pnpm's `initStore` in `worker/src/start.ts`.
+        // See [`init_store_dir_best_effort`] for the error-degradation
+        // policy shared with `create_virtual_store.rs`.
+        init_store_dir_best_effort(store_dir).await;
+
         // Open the read-only SQLite index once per install, shared across
         // every `DownloadTarballToStore`. See the matching comment in
         // `create_virtual_store.rs` for the full rationale, including the
         // `JoinError`-to-cache-miss degradation (with a `warn!` so it
         // stays diagnosable).
-        let store_dir: &'static _ = &config.store_dir;
         let store_index =
             match tokio::task::spawn_blocking(move || StoreIndex::shared_readonly_in(store_dir))
                 .await

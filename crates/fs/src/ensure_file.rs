@@ -29,9 +29,24 @@ pub enum EnsureFileError {
     },
 }
 
+/// Ensure `dir` (and any missing ancestors) exists. Idempotent.
+///
+/// Split out from [`ensure_file`] so hot-path callers (the CAFS writer)
+/// can cache which directories they've already created and skip the
+/// syscall cost when they have — `fs::create_dir_all` does a `stat` on
+/// every call even when the directory already exists, which adds up to
+/// one wasted `stat` per file on a cold install.
+pub fn ensure_parent_dir(dir: &Path) -> Result<(), EnsureFileError> {
+    fs::create_dir_all(dir)
+        .map_err(|error| EnsureFileError::CreateDir { parent_dir: dir.to_path_buf(), error })
+}
+
 /// Write `content` to `file_path` unless it already exists.
 ///
-/// Ancestor directories will be created if they don't already exist.
+/// **The parent directory must already exist.** Callers that can't
+/// guarantee that should call [`ensure_parent_dir`] first — splitting
+/// the two lets the CAFS writer share one `create_dir_all` per shard
+/// instead of paying it per file.
 pub fn ensure_file(
     file_path: &Path,
     content: &[u8],
@@ -40,12 +55,6 @@ pub fn ensure_file(
     if file_path.exists() {
         return Ok(());
     }
-
-    let parent_dir = file_path.parent().unwrap();
-    fs::create_dir_all(parent_dir).map_err(|error| EnsureFileError::CreateDir {
-        parent_dir: parent_dir.to_path_buf(),
-        error,
-    })?;
 
     let mut options = OpenOptions::new();
     options.write(true).create(true);

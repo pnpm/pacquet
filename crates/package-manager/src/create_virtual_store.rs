@@ -1,4 +1,6 @@
-use crate::{InstallPackageBySnapshot, InstallPackageBySnapshotError};
+use crate::{
+    store_init::init_store_dir_best_effort, InstallPackageBySnapshot, InstallPackageBySnapshotError,
+};
 use derive_more::{Display, Error};
 use futures_util::future;
 use miette::Diagnostic;
@@ -70,6 +72,14 @@ impl<'a> CreateVirtualStore<'a> {
         // surface the error at `warn!` so a silent task panic or
         // cancellation is still diagnosable in the log.
         let store_dir: &'static _ = &config.store_dir;
+
+        // Eagerly create `files/00..ff` under the v11 store root so per-
+        // tarball CAFS writes never pay a `create_dir_all` syscall on the
+        // hot path. Ports pnpm's `initStore` in `worker/src/start.ts`.
+        // See [`init_store_dir_best_effort`] for the error-degradation
+        // policy shared with `install_without_lockfile.rs`.
+        init_store_dir_best_effort(store_dir).await;
+
         let store_index =
             match tokio::task::spawn_blocking(move || StoreIndex::shared_readonly_in(store_dir))
                 .await

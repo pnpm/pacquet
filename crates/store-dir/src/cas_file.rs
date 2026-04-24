@@ -2,7 +2,7 @@ use crate::{FileHash, StoreDir};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_fs::{
-    ensure_file,
+    ensure_file, ensure_parent_dir,
     file_mode::{is_executable, EXEC_MODE},
     EnsureFileError,
 };
@@ -63,6 +63,22 @@ impl StoreDir {
         let file_hash = Sha512::digest(buffer);
         let file_path = self.cas_file_path(file_hash, executable);
         let mode = executable.then_some(EXEC_MODE);
+
+        // Ensure the shard directory (`files/XX/`) exists. The CAS has
+        // 256 shards keyed by `file_hash[0]`; `create_dir_all` does a
+        // `stat` syscall every call even when the directory is already
+        // there, so remember which shards we've created and skip on
+        // repeat. Duplicate mkdirs across threads are benign — the first
+        // few writes into a fresh shard may each call `create_dir_all`,
+        // which is idempotent; once any of them completes and inserts
+        // into the cache, subsequent writes take the fast path.
+        let shard_byte = file_hash[0];
+        if !self.shard_already_ensured(shard_byte) {
+            let parent = file_path.parent().expect("CAS file path always has a parent shard dir");
+            ensure_parent_dir(parent).map_err(WriteCasFileError::WriteFile)?;
+            self.mark_shard_ensured(shard_byte);
+        }
+
         ensure_file(&file_path, buffer, mode).map_err(WriteCasFileError::WriteFile)?;
         Ok((file_path, file_hash))
     }
@@ -123,6 +139,50 @@ mod tests {
                 "mode {mode:o} should NOT resolve to an `-exec` path, got {path:?}"
             );
         }
+    }
+
+    /// The shard-mkdir cache is empty on a fresh `StoreDir` (we
+    /// haven't called `init`) and grows as `write_cas_file` runs its
+    /// lazy fallback. This test pins three invariants:
+    ///
+    /// * the first write into a given shard populates the cache entry
+    ///   for that shard (no eager seeding);
+    /// * a second write of identical content is a successful noop via
+    ///   the `file_path.exists()` warm-cache branch inside
+    ///   `ensure_file`, and leaves the cache unchanged;
+    /// * a later write of different content still succeeds whether it
+    ///   lands in the same shard or a new one.
+    ///
+    /// Recovering from an out-of-band `rmdir` of a cached shard dir is
+    /// intentionally out of scope: pnpm's equivalent `dirs` Set in
+    /// `store/cafs/src/writeFile.ts` doesn't handle that either, and
+    /// the install aborts with the kernel's `open` error if it
+    /// happens.
+    #[test]
+    fn shard_cache_populates_on_first_write_and_skips_mkdir_thereafter() {
+        use tempfile::tempdir;
+
+        let tempdir = tempdir().unwrap();
+        let store_dir = StoreDir::new(tempdir.path());
+
+        let (path_a, hash_a) = store_dir.write_cas_file(b"hello world", false).unwrap();
+        assert!(store_dir.shard_already_ensured(hash_a[0]));
+        assert!(path_a.is_file());
+
+        // Second write of identical content — same hash, same path —
+        // hits the `file_path.exists()` fast path inside `ensure_file`
+        // and returns Ok without touching the filesystem further.
+        let (path_b, hash_b) = store_dir.write_cas_file(b"hello world", false).unwrap();
+        assert_eq!(hash_a, hash_b);
+        assert_eq!(path_a, path_b);
+        assert!(store_dir.shard_already_ensured(hash_b[0]));
+
+        // Different content: either lands in a fresh shard (cache
+        // grows by one) or happens to share the same first digest byte
+        // as "hello world" (cache stays put). Either way the write
+        // must succeed and materialize the file on disk.
+        let (path_c, _) = store_dir.write_cas_file(b"goodbye world", false).unwrap();
+        assert!(path_c.is_file());
     }
 
     #[test]
