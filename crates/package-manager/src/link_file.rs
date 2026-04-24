@@ -603,11 +603,11 @@ mod tests {
     /// signal, so the detection IS correct there.
     #[test]
     fn is_cross_device_distinguishes_unix_eexist_from_windows_not_same_device() {
-        let exdev = io::Error::from_raw_os_error(18);
-        assert!(is_cross_device(&exdev), "raw 18 is EXDEV on every Unix");
-
         #[cfg(unix)]
         {
+            let exdev = io::Error::from_raw_os_error(18);
+            assert!(is_cross_device(&exdev), "raw 18 is EXDEV on every Unix");
+
             let eexist = io::Error::from_raw_os_error(17);
             assert!(
                 !is_cross_device(&eexist),
@@ -621,6 +621,12 @@ mod tests {
             assert!(
                 is_cross_device(&not_same_device),
                 "Windows ERROR_NOT_SAME_DEVICE (raw 17) IS cross-device",
+            );
+
+            let not_exdev = io::Error::from_raw_os_error(18);
+            assert!(
+                !is_cross_device(&not_exdev),
+                "raw 18 on Windows is not the cross-device code — must not be classified as EXDEV",
             );
         }
     }
