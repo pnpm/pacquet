@@ -4,6 +4,7 @@ use miette::Diagnostic;
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageTag, PackageVersion, RegistryError};
+use pacquet_store_dir::SharedReadonlyStoreIndex;
 use pacquet_tarball::{DownloadTarballToStore, MemCache, TarballError};
 use std::{path::Path, str::FromStr};
 
@@ -20,6 +21,7 @@ pub struct InstallPackageFromRegistry<'a> {
     pub tarball_mem_cache: &'a MemCache,
     pub http_client: &'a ThrottledClient,
     pub config: &'static Npmrc,
+    pub store_index: Option<&'a SharedReadonlyStoreIndex>,
     pub node_modules_dir: &'a Path,
     pub name: &'a str,
     pub version_range: &'a str,
@@ -71,6 +73,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
             tarball_mem_cache,
             http_client,
             config,
+            store_index,
             node_modules_dir,
             ..
         } = self;
@@ -82,6 +85,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
         let cas_paths = DownloadTarballToStore {
             http_client,
             store_dir: &config.store_dir,
+            store_index: store_index.cloned(),
             package_integrity: package_version
                 .dist
                 .integrity
@@ -165,6 +169,7 @@ mod tests {
             tarball_mem_cache: &Default::default(),
             config,
             http_client: &http_client,
+            store_index: None,
             name: "fast-querystring",
             version_range: "1.0.0",
             node_modules_dir: modules_dir.path(),

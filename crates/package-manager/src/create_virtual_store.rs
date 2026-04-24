@@ -5,6 +5,7 @@ use miette::Diagnostic;
 use pacquet_lockfile::{PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
+use pacquet_store_dir::StoreIndex;
 use pipe_trait::Pipe;
 use std::collections::HashMap;
 
@@ -47,9 +48,19 @@ impl<'a> CreateVirtualStore<'a> {
         };
         let packages = packages.ok_or(CreateVirtualStoreError::MissingPackagesSection)?;
 
+        // Open the read-only SQLite index once for the whole run instead of
+        // per snapshot. Every `InstallPackageBySnapshot` performs a cache
+        // lookup against this index before falling through to the network;
+        // on a 1352-package lockfile the per-snapshot reopen accounted for
+        // ~1.3 s of wall time even with a fully populated store (see #260).
+        // A `None` here means the store has no `index.db` yet (first install
+        // against an empty store), in which case every lookup would miss —
+        // so we keep the handle `Option`al and short-circuit.
+        let store_index = StoreIndex::shared_readonly_in(&config.store_dir);
+
         snapshots
             .iter()
-            .map(|(snapshot_key, snapshot)| async move {
+            .map(|(snapshot_key, snapshot)| async {
                 let metadata_key = snapshot_key.without_peer();
                 let metadata = packages.get(&metadata_key).ok_or_else(|| {
                     CreateVirtualStoreError::MissingPackageMetadata {
@@ -60,6 +71,7 @@ impl<'a> CreateVirtualStore<'a> {
                 InstallPackageBySnapshot {
                     http_client,
                     config,
+                    store_index: store_index.as_ref(),
                     package_key: snapshot_key,
                     metadata,
                     snapshot,

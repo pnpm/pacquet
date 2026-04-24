@@ -9,6 +9,7 @@ use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::PackageVersion;
+use pacquet_store_dir::StoreIndex;
 use pacquet_tarball::MemCache;
 use pipe_trait::Pipe;
 
@@ -59,6 +60,12 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
             resolved_packages,
         } = self;
 
+        // Open the read-only SQLite index once per install, shared across
+        // every `DownloadTarballToStore`. See the matching comment in
+        // `create_virtual_store.rs` for the why.
+        let store_index = StoreIndex::shared_readonly_in(&config.store_dir);
+        let store_index_ref = store_index.as_ref();
+
         manifest
             .dependencies(dependency_groups)
             .map(|(name, version_range)| async move {
@@ -66,6 +73,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                     tarball_mem_cache,
                     http_client,
                     config,
+                    store_index: store_index_ref,
                     node_modules_dir: &config.modules_dir,
                     name,
                     version_range,
@@ -82,7 +90,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                     dependency_groups: (),
                     resolved_packages,
                 }
-                .install_dependencies_from_registry(&dependency)
+                .install_dependencies_from_registry(&dependency, store_index_ref)
                 .await?;
 
                 Ok::<_, InstallWithoutLockfileError>(())
@@ -100,6 +108,7 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
     async fn install_dependencies_from_registry(
         &self,
         package: &PackageVersion,
+        store_index: Option<&'async_recursion pacquet_store_dir::SharedReadonlyStoreIndex>,
     ) -> Result<(), InstallWithoutLockfileError> {
         let InstallWithoutLockfile {
             tarball_mem_cache,
@@ -130,6 +139,7 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
                     tarball_mem_cache,
                     http_client,
                     config,
+                    store_index,
                     node_modules_dir: &node_modules_path,
                     name,
                     version_range,
@@ -137,7 +147,7 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
                 .run::<Version>()
                 .await
                 .map_err(InstallWithoutLockfileError::InstallPackageFromRegistry)?;
-                self.install_dependencies_from_registry(&dependency).await?;
+                self.install_dependencies_from_registry(&dependency, store_index).await?;
                 Ok::<_, InstallWithoutLockfileError>(())
             })
             .pipe(future::try_join_all)

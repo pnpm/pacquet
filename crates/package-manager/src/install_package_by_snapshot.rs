@@ -4,6 +4,7 @@ use miette::Diagnostic;
 use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
+use pacquet_store_dir::SharedReadonlyStoreIndex;
 use pacquet_tarball::{DownloadTarballToStore, TarballError};
 use pipe_trait::Pipe;
 use std::borrow::Cow;
@@ -14,6 +15,7 @@ use std::borrow::Cow;
 pub struct InstallPackageBySnapshot<'a> {
     pub http_client: &'a ThrottledClient,
     pub config: &'static Npmrc,
+    pub store_index: Option<&'a SharedReadonlyStoreIndex>,
     pub package_key: &'a PackageKey,
     pub metadata: &'a PackageMetadata,
     pub snapshot: &'a SnapshotEntry,
@@ -44,8 +46,14 @@ pub enum InstallPackageBySnapshotError {
 impl<'a> InstallPackageBySnapshot<'a> {
     /// Execute the subroutine.
     pub async fn run(self) -> Result<(), InstallPackageBySnapshotError> {
-        let InstallPackageBySnapshot { http_client, config, package_key, metadata, snapshot } =
-            self;
+        let InstallPackageBySnapshot {
+            http_client,
+            config,
+            store_index,
+            package_key,
+            metadata,
+            snapshot,
+        } = self;
 
         let (tarball_url, integrity) = match &metadata.resolution {
             LockfileResolution::Tarball(tarball_resolution) => {
@@ -84,6 +92,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
         let cas_paths = DownloadTarballToStore {
             http_client,
             store_dir: &config.store_dir,
+            store_index: store_index.cloned(),
             package_integrity: integrity,
             package_unpacked_size: None,
             package_url: &tarball_url,
