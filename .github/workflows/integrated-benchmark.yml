@@ -116,6 +116,13 @@ jobs:
         # timeout (6 h). A normal run is ~2 min — 10 min is generous
         # headroom, and a failure surfaces fast enough to iterate on.
         timeout-minutes: 10
+        # Enable pacquet's tracing at `info` so the next hang shows
+        # which phase the stalled install was in (download,
+        # extraction, import, index write …) before it went silent.
+        # Without this, `--show-output` only captures pacquet's
+        # empty stream since the default filter is off.
+        env:
+          TRACE: pacquet=info
         # `--show-output` pipes each binary's stderr through hyperfine
         # so the step log captures traces / profile output / panics
         # inline with each run. Essential for diagnosing a hang on CI
