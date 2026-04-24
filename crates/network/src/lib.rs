@@ -53,7 +53,7 @@ impl ThrottledClient {
     /// truly stuck sockets. Making these values user-configurable
     /// (npmrc / env / CLI) is follow-up once the fetch-retry story
     /// lands.
-    pub fn new_from_cpu_count() -> Self {
+    pub fn new_for_installs() -> Self {
         let client = Client::builder()
             .http1_only()
             .connect_timeout(Duration::from_secs(10))
@@ -66,7 +66,7 @@ impl ThrottledClient {
 
     /// Construct a throttled client wrapping a pre-built [`Client`].
     /// Useful for tests that want different timeout values than
-    /// [`Self::new_from_cpu_count`] sets — e.g. sub-second connect
+    /// [`Self::new_for_installs`] sets — e.g. sub-second connect
     /// timeouts so firewalled / unreachable URLs fail within the
     /// test-suite budget instead of waiting on TCP retry.
     pub fn from_client(client: Client) -> Self {
@@ -84,6 +84,6 @@ impl ThrottledClient {
 /// This is only necessary for tests.
 impl Default for ThrottledClient {
     fn default() -> Self {
-        ThrottledClient::new_from_cpu_count()
+        ThrottledClient::new_for_installs()
     }
 }

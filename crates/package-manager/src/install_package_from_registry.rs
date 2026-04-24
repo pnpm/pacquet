@@ -169,7 +169,7 @@ mod tests {
             create_config(store_dir.path(), modules_dir.path(), virtual_store_dir.path())
                 .pipe(Box::new)
                 .pipe(Box::leak);
-        let http_client = ThrottledClient::new_from_cpu_count();
+        let http_client = ThrottledClient::new_for_installs();
         let package = InstallPackageFromRegistry {
             tarball_mem_cache: &Default::default(),
             config,
