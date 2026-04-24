@@ -179,12 +179,23 @@ pub fn link_file(
 
 /// EXDEV = "cross-device link not permitted". Linux / macOS / BSD all
 /// use errno 18; Windows maps its equivalent `ERROR_NOT_SAME_DEVICE`
-/// to raw OS error 17 in Rust's `io::Error`. pnpm detects this by
-/// checking `err.message.startsWith('EXDEV: cross-device link not
-/// permitted')` — we can be a little tighter by looking at the raw
-/// errno.
+/// to raw OS error 17. pnpm detects this by checking
+/// `err.message.startsWith('EXDEV: cross-device link not permitted')` —
+/// we can be a little tighter by looking at the raw errno.
+///
+/// The `17` mapping must stay Windows-only: on Unix, raw 17 is
+/// `EEXIST` (surfaces as `ErrorKind::AlreadyExists`), which means a
+/// concurrent process created the target between our `fs::metadata`
+/// short-circuit and the link / reflink call. Falling back to
+/// `fs::copy` on that signal would overwrite the other process's
+/// freshly-installed file.
 fn is_cross_device(err: &io::Error) -> bool {
-    matches!(err.raw_os_error(), Some(18) | Some(17))
+    #[cfg(unix)]
+    return err.raw_os_error() == Some(18);
+    #[cfg(windows)]
+    return err.raw_os_error() == Some(17);
+    #[cfg(not(any(unix, windows)))]
+    return false;
 }
 
 /// Errors that indicate the call itself is malformed (missing source,
@@ -581,6 +592,37 @@ mod tests {
             LINK_STATE_CLONE,
             "AlreadyExists must not poison the cache",
         );
+    }
+
+    /// `is_cross_device` picks up EXDEV (raw 18) on every Unix we
+    /// support, but raw 17 is `EEXIST` on Unix and must NOT be
+    /// classified as cross-device — misclassifying a concurrent-create
+    /// race as EXDEV would fall back to `fs::copy` and overwrite the
+    /// other process's file. On Windows raw 17 is
+    /// `ERROR_NOT_SAME_DEVICE`, which is a genuine cross-device
+    /// signal, so the detection IS correct there.
+    #[test]
+    fn is_cross_device_distinguishes_unix_eexist_from_windows_not_same_device() {
+        let exdev = io::Error::from_raw_os_error(18);
+        assert!(is_cross_device(&exdev), "raw 18 is EXDEV on every Unix");
+
+        #[cfg(unix)]
+        {
+            let eexist = io::Error::from_raw_os_error(17);
+            assert!(
+                !is_cross_device(&eexist),
+                "Unix EEXIST (raw 17) is NOT cross-device — misclassifying would overwrite files",
+            );
+        }
+
+        #[cfg(windows)]
+        {
+            let not_same_device = io::Error::from_raw_os_error(17);
+            assert!(
+                is_cross_device(&not_same_device),
+                "Windows ERROR_NOT_SAME_DEVICE (raw 17) IS cross-device",
+            );
+        }
     }
 
     /// Pin the deny-list classifier. The state-machine tests above
