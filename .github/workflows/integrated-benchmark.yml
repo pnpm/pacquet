@@ -111,8 +111,17 @@ jobs:
 
       - name: 'Benchmark: Frozen Lockfile'
         shell: bash
+        # Hyperfine has no per-command timeout, so a single hanging
+        # install takes the whole step down with the GHA default job
+        # timeout (6 h). A normal run is ~2 min — 10 min is generous
+        # headroom, and a failure surfaces fast enough to iterate on.
+        timeout-minutes: 10
+        # `--show-output` pipes each binary's stderr through hyperfine
+        # so the step log captures traces / profile output / panics
+        # inline with each run. Essential for diagnosing a hang on CI
+        # where we can't attach a debugger.
         run: |
-          just integrated-benchmark --scenario=frozen-lockfile --verdaccio --with-pnpm HEAD main
+          just integrated-benchmark --show-output --scenario=frozen-lockfile --verdaccio --with-pnpm HEAD main
           cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.md
           cp bench-work-env/BENCHMARK_REPORT.json bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.json
 
