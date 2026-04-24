@@ -56,7 +56,16 @@ impl<'a> CreateVirtualStore<'a> {
         // A `None` here means the store has no `index.db` yet (first install
         // against an empty store), in which case every lookup would miss —
         // so we keep the handle `Option`al and short-circuit.
-        let store_index = StoreIndex::shared_readonly_in(&config.store_dir);
+        //
+        // The open itself is synchronous SQLite I/O (`Connection::open_with_flags`
+        // + a `PRAGMA busy_timeout`), so park it on the blocking pool instead
+        // of stalling the reactor thread, even for the sub-millisecond it
+        // usually takes.
+        let store_dir: &'static _ = &config.store_dir;
+        let store_index =
+            tokio::task::spawn_blocking(move || StoreIndex::shared_readonly_in(store_dir))
+                .await
+                .expect("store-index open task panicked");
         let store_index_ref = store_index.as_ref();
 
         snapshots
