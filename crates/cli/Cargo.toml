@@ -29,9 +29,9 @@ pacquet-diagnostics      = { workspace = true }
 clap        = { workspace = true }
 derive_more = { workspace = true }
 home        = { workspace = true }
+mimalloc    = { workspace = true }
 miette      = { workspace = true }
 pipe-trait  = { workspace = true }
-swc_malloc  = { workspace = true }
 tokio       = { workspace = true }
 
 [dev-dependencies]

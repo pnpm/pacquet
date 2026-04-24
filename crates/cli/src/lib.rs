@@ -1,13 +1,11 @@
-// Swap the default system allocator for `swc_malloc`, which pulls
-// in mimalloc on macOS / Windows and jemalloc on Linux. A package
+// Swap the default system allocator for `mimalloc`. A package
 // manager fan-outs thousands of short-lived `Vec<u8>` / `String` /
 // `HashMap` allocations per install (tar entry buffers, CAFS
-// paths, snapshot IDs, …); the system allocators on macOS and
-// glibc are noticeably slower than mimalloc / jemalloc on that
-// workload. Activating the crate via `extern crate` is enough —
-// `swc_malloc` embeds the `#[global_allocator]` declaration
-// itself and picks the per-target backend at compile time.
-extern crate swc_malloc;
+// paths, snapshot IDs, …); mimalloc's per-thread free lists and
+// small-object fast path are a better match for that shape than
+// the default system allocator on macOS and glibc-Linux.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod cli_args;
 mod state;

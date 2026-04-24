@@ -1575,6 +1575,7 @@ dependencies = [
  "home",
  "insta",
  "miette 7.6.0",
+ "mimalloc",
  "pacquet-diagnostics",
  "pacquet-executor",
  "pacquet-fs",
@@ -1590,7 +1591,6 @@ dependencies = [
  "pipe-trait",
  "pretty_assertions",
  "serde_json",
- "swc_malloc",
  "tempfile",
  "tokio",
  "walkdir",
@@ -2608,16 +2608,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7401a30af6cb5818bb64852270bb722533397edcfc7344954a38f420819ece2"
 
 [[package]]
-name = "swc_malloc"
-version = "1.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d222be9e55e86fd6ee32e97c7b12829692329ac8bbed652dcd6c2e1d488af935"
-dependencies = [
- "mimalloc",
- "tikv-jemallocator",
-]
-
-[[package]]
 name = "syn"
 version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2765,26 +2755,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f60246a4944f24f6e018aa17cdeffb7818b76356965d03b07d6a9886e8962185"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "tikv-jemalloc-sys"
-version = "0.5.4+5.3.0-patched"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9402443cb8fd499b6f327e40565234ff34dbda27460c5b47db0db77443dd85d1"
-dependencies = [
- "cc",
- "libc",
-]
-
-[[package]]
-name = "tikv-jemallocator"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "965fe0c26be5c56c94e38ba547249074803efd52adfb66de62107d95aab3eaca"
-dependencies = [
- "libc",
- "tikv-jemalloc-sys",
 ]
 
 [[package]]
