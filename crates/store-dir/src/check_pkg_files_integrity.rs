@@ -335,8 +335,11 @@ mod tests {
         CafsFileInfo { checked_at, digest: digest.to_string(), mode, size }
     }
 
-    /// `build_file_maps_from_index` never stats the files. Nothing on
-    /// disk → still returns a populated `files_map` with `passed = true`.
+    /// `build_file_maps_from_index` never stats the files. With a
+    /// valid digest, it returns a populated `files_map` with
+    /// `passed = true` regardless of whether anything is on disk —
+    /// the sibling `fast_path_fails_when_digest_is_malformed` covers
+    /// the "digest was not resolvable" failure case.
     #[test]
     fn fast_path_skips_filesystem_checks() {
         let tmp = tempdir().unwrap();
@@ -344,7 +347,7 @@ mod tests {
         let digest = sha512_hex(b"dummy");
         let entry = index_with("sha512", vec![("index.js", info(&digest, 5, 0o644, None))]);
         let result = build_file_maps_from_index(&store_dir, entry);
-        assert!(result.passed, "fast path always passes");
+        assert!(result.passed, "fast path passes for a valid digest without touching the disk");
         let path = result.files_map.get("index.js").expect("path inserted");
         assert!(!path.exists(), "no file was planted — fast path didn't care");
     }
