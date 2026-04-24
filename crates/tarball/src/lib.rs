@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     io::{Cursor, Read},
-    path::PathBuf,
+    path::{Component, PathBuf},
     sync::{Arc, OnceLock},
     time::UNIX_EPOCH,
 };
@@ -111,6 +111,148 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
     DeflateDecoder::new_with_options(gz_data, options)
         .decode_gzip()
         .map_err(TarballError::DecodeGzip)
+}
+
+/// Walk a decompressed tar archive, writing each regular-file entry
+/// into the CAFS and returning the `{in-tarball path → CAFS path}` map
+/// plus the per-tarball [`PackageFilesIndex`] row to hand off to the
+/// shared store-index writer.
+///
+/// Non-regular-file entries (symlinks, hardlinks, character / block
+/// devices, fifos, GNU / PAX extension headers, directories) are
+/// filtered out. Real npm-publish tarballs only carry regular files;
+/// anything else would need custom handling that pacquet doesn't yet
+/// do, and silently reading a symlink's 0-byte body into the CAFS as
+/// if it were a file would just corrupt the store.
+///
+/// Every tar-side failure — a corrupt entries iterator, a mangled
+/// header (bad mode, bad size), a short body read, a path decode error,
+/// a path whose components would escape the CAFS root — comes back as
+/// [`TarballError::ReadTarballEntries`] instead of panicking. Non-UTF-8
+/// entry paths are coerced via [`std::path::Path::to_string_lossy`],
+/// matching pnpm's string-based handling so a mixed install against the
+/// shared `index.db` stays consistent; real-world npm tarballs are
+/// UTF-8 so the coercion is almost never hit in practice.
+fn extract_tarball_entries(
+    archive: &mut Archive<Cursor<Vec<u8>>>,
+    store_dir: &StoreDir,
+) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
+    let entries = archive
+        .entries()
+        .map_err(TarballError::ReadTarballEntries)?
+        // Keep only regular-file `Ok` entries; anything else in the
+        // `Ok` arm (directories, symlinks, hardlinks, pax/gnu
+        // extension headers, …) is dropped. `Err` entries fall
+        // through so the `?` inside the loop below propagates them —
+        // previously this branch did `entry.as_ref().unwrap()` which
+        // panicked on any iterator-level error.
+        .filter(|entry| match entry {
+            Ok(entry) => entry.header().entry_type().is_file(),
+            Err(_) => true,
+        });
+
+    let ((_, Some(capacity)) | (capacity, None)) = entries.size_hint();
+    let mut cas_paths = HashMap::<String, PathBuf>::with_capacity(capacity);
+    let mut pkg_files_idx = PackageFilesIndex {
+        manifest: None,
+        requires_build: None,
+        algo: "sha512".to_string(),
+        files: HashMap::with_capacity(capacity),
+        side_effects: None,
+    };
+
+    for entry in entries {
+        let mut entry = entry.map_err(TarballError::ReadTarballEntries)?;
+
+        let file_mode = entry.header().mode().map_err(TarballError::ReadTarballEntries)?;
+        let file_is_executable = file_mode::is_executable(file_mode);
+
+        // Read the contents of the entry. `entry.size()` is the size
+        // from the tar header — untrusted input from the tarball, not
+        // from any disk-side signal we've verified. Clamp the
+        // pre-allocation hint so a corrupt or malicious tarball that
+        // claims gigabytes can't turn `Vec::with_capacity` into an OOM
+        // abort before `read_to_end` has a chance to surface the real
+        // error. The claimed size beyond the clamp is still read
+        // through `Vec`'s geometric growth. `try_reserve` propagates
+        // an allocation failure as an I/O error rather than aborting.
+        // 64 MiB is generous for any legitimate single-file entry in
+        // an npm tarball — typical entries are well under 1 MiB.
+        const MAX_ENTRY_PREALLOC_BYTES: u64 = 64 * 1024 * 1024;
+        let prealloc_hint = entry.size().min(MAX_ENTRY_PREALLOC_BYTES) as usize;
+        let mut buffer = Vec::new();
+        buffer.try_reserve(prealloc_hint).map_err(|err| {
+            TarballError::ReadTarballEntries(std::io::Error::new(
+                std::io::ErrorKind::OutOfMemory,
+                format!("failed to reserve {prealloc_hint} bytes for tar entry: {err}"),
+            ))
+        })?;
+        entry.read_to_end(&mut buffer).map_err(TarballError::ReadTarballEntries)?;
+
+        let entry_path = entry.path().map_err(TarballError::ReadTarballEntries)?;
+        // `components().skip(1)` drops the top-level package
+        // directory (`package/`). Every remaining component must be
+        // `Component::Normal`: a hostile tarball can carry `..`,
+        // absolute-root, or Windows-prefix components that — joined
+        // onto the CAFS extraction root later in `create_cas_files`
+        // — would land files outside the store (directory traversal).
+        // Reject loudly rather than silently normalize so tampering
+        // is visible.
+        let mut cleaned = PathBuf::new();
+        for component in entry_path.components().skip(1) {
+            let Component::Normal(part) = component else {
+                return Err(TarballError::ReadTarballEntries(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "tar entry path rejected (non-normal component, possible directory traversal): {entry_path:?}",
+                    ),
+                )));
+            };
+            cleaned.push(part);
+        }
+        if cleaned.as_os_str().is_empty() {
+            return Err(TarballError::ReadTarballEntries(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "tar entry path has no payload after dropping the top-level component: {entry_path:?}",
+                ),
+            )));
+        }
+        // `to_string_lossy()` coerces non-UTF-8 bytes to U+FFFD —
+        // matching pnpm's string-based path layer so a shared
+        // `index.db` stays consistent across the two tools.
+        let cleaned_entry_path = cleaned.to_string_lossy().into_owned();
+        let (file_path, file_hash) = store_dir
+            .write_cas_file(&buffer, file_is_executable)
+            .map_err(TarballError::WriteCasFile)?;
+
+        if let Some(previous) = cas_paths.insert(cleaned_entry_path.clone(), file_path) {
+            tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
+        }
+
+        // `as_millis()` returns `u128`; narrow to `u64` to match the
+        // store index schema — see `CafsFileInfo::checked_at` for why
+        // `u64` is used. Using `u64::try_from` rather than `as u64`
+        // avoids a silent wrap: even though millisecond epochs don't
+        // overflow `u64` for ~584M years, the intent should be
+        // explicit. If the clock ever reports something
+        // unrepresentable, drop the timestamp — the `checkedAt` field
+        // is optional and pnpm tolerates `None`.
+        let checked_at = UNIX_EPOCH.elapsed().ok().and_then(|x| u64::try_from(x.as_millis()).ok());
+        let file_size = entry.header().size().map_err(TarballError::ReadTarballEntries)?;
+        let file_attrs = CafsFileInfo {
+            digest: format!("{file_hash:x}"),
+            mode: file_mode,
+            size: file_size,
+            checked_at,
+        };
+
+        if let Some(previous) = pkg_files_idx.files.insert(cleaned_entry_path, file_attrs) {
+            tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
+        }
+    }
+
+    Ok((cas_paths, pkg_files_idx))
 }
 
 /// Try to reconstruct the `{filename → CAFS path}` map for a package from
@@ -385,8 +527,6 @@ impl<'a> DownloadTarballToStore<'a> {
             tokio::task::spawn_blocking(move || -> Result<HashMap<String, PathBuf>, TaskError> {
                 package_integrity.check(&response).map_err(TaskError::Checksum)?;
 
-                // TODO: move tarball extraction to its own function
-                // TODO: test it
                 // TODO: test the duplication of entries
 
                 // Extract the tarball in a scope so the decompressed
@@ -399,90 +539,7 @@ impl<'a> DownloadTarballToStore<'a> {
                         .map_err(TaskError::Other)?
                         .pipe(Cursor::new)
                         .pipe(Archive::new);
-
-                    let entries = archive
-                        .entries()
-                        .map_err(TarballError::ReadTarballEntries)
-                        .map_err(TaskError::Other)?
-                        .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir());
-
-                    let ((_, Some(capacity)) | (capacity, None)) = entries.size_hint();
-                    let mut cas_paths = HashMap::<String, PathBuf>::with_capacity(capacity);
-                    let mut pkg_files_idx = PackageFilesIndex {
-                        manifest: None,
-                        requires_build: None,
-                        algo: "sha512".to_string(),
-                        files: HashMap::with_capacity(capacity),
-                        side_effects: None,
-                    };
-
-                    for entry in entries {
-                        let mut entry = entry.unwrap();
-
-                        let file_mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
-                        let file_is_executable = file_mode::is_executable(file_mode);
-
-                        // Read the contents of the entry
-                        let mut buffer = Vec::with_capacity(entry.size() as usize);
-                        entry.read_to_end(&mut buffer).unwrap();
-
-                        let entry_path = entry.path().unwrap();
-                        let cleaned_entry_path = entry_path
-                            .components()
-                            .skip(1)
-                            .collect::<PathBuf>()
-                            .into_os_string()
-                            .into_string()
-                            .expect("entry path must be valid UTF-8");
-                        let (file_path, file_hash) = store_dir
-                            .write_cas_file(&buffer, file_is_executable)
-                            .map_err(TarballError::WriteCasFile)?;
-
-                        if let Some(previous) =
-                            cas_paths.insert(cleaned_entry_path.clone(), file_path)
-                        {
-                            tracing::warn!(
-                                ?previous,
-                                "Duplication detected. Old entry has been ejected"
-                            );
-                        }
-
-                        // `as_millis()` returns `u128`; narrow to `u64` to match
-                        // the store index schema — see `CafsFileInfo::checked_at`
-                        // for why `u64` is used. Using `u64::try_from` rather
-                        // than `as u64` avoids a silent wrap: even though
-                        // millisecond epochs don't overflow `u64` for ~584M
-                        // years, the intent should be explicit. If the clock
-                        // ever reports something unrepresentable, drop the
-                        // timestamp — the `checkedAt` field is optional and
-                        // pnpm tolerates `None`.
-                        let checked_at = UNIX_EPOCH
-                            .elapsed()
-                            .ok()
-                            .and_then(|x| u64::try_from(x.as_millis()).ok());
-                        let file_size = entry
-                            .header()
-                            .size()
-                            .map_err(TarballError::ReadTarballEntries)
-                            .map_err(TaskError::Other)?;
-                        let file_attrs = CafsFileInfo {
-                            digest: format!("{file_hash:x}"),
-                            mode: file_mode,
-                            size: file_size,
-                            checked_at,
-                        };
-
-                        if let Some(previous) =
-                            pkg_files_idx.files.insert(cleaned_entry_path, file_attrs)
-                        {
-                            tracing::warn!(
-                                ?previous,
-                                "Duplication detected. Old entry has been ejected"
-                            );
-                        }
-                    }
-
-                    (cas_paths, pkg_files_idx)
+                    extract_tarball_entries(&mut archive, store_dir)?
                 };
 
                 // Hand the per-tarball files index off to the shared
@@ -933,5 +990,95 @@ mod tests {
         );
 
         drop(store_dir);
+    }
+
+    /// The per-entry loop used to be a pile of `.unwrap()` /
+    /// `.expect()` calls that turned any tar-side failure — corrupt
+    /// header, short body read, path decode — into a panic inside a
+    /// blocking-pool task (which took the whole install with it and
+    /// occasionally left the pool with dangling permits). The loop now
+    /// lives in `extract_tarball_entries` and propagates every such
+    /// failure as [`TarballError::ReadTarballEntries`]. This test
+    /// feeds the function bytes that aren't a valid tar archive and
+    /// asserts we get that error rather than a panic.
+    ///
+    /// We don't invoke `decompress_gzip` here: the decompression layer
+    /// has its own error path and isn't the code under test. Driving
+    /// `extract_tarball_entries` directly isolates the tar iterator's
+    /// failure modes.
+    #[test]
+    fn extract_propagates_malformed_tar_instead_of_panicking() {
+        let (tempdir, store_path) = tempdir_with_leaked_path();
+
+        // 1 KiB of 0xFF: not a tar header (checksum at bytes 148..156
+        // can't possibly match), so the iterator either yields an
+        // `Err` on the first entry or errors on path decode. Either
+        // way the filter+map_err plumbing must surface the failure as
+        // `TarballError::ReadTarballEntries`.
+        let bogus: Vec<u8> = vec![0xFF; 1024];
+        let mut archive = Archive::new(Cursor::new(bogus));
+
+        let err = extract_tarball_entries(&mut archive, store_path)
+            .expect_err("malformed tar must surface a TarballError, not panic");
+
+        assert!(
+            matches!(err, TarballError::ReadTarballEntries(_)),
+            "expected ReadTarballEntries, got: {err:?}"
+        );
+
+        drop(tempdir);
+    }
+
+    /// A tarball whose entry path contains `..` (or any other
+    /// non-`Normal` path component) must be rejected, not silently
+    /// normalized. Without the guard in `extract_tarball_entries`,
+    /// `cleaned_entry_path` would later be joined onto the CAFS
+    /// extraction root by `create_cas_files` and land files outside
+    /// the store (directory traversal).
+    ///
+    /// Note: `tar::Header::set_path` refuses to write a `..` path on
+    /// its own (defense in depth on the write side). To exercise the
+    /// read-side guard we have to bypass that by writing the name
+    /// bytes directly via `as_mut_bytes()` and recomputing the
+    /// checksum. A malicious tarball in the wild could trivially be
+    /// written by any non-Rust tool that doesn't sanitize.
+    #[test]
+    fn extract_rejects_parent_dir_component_in_entry_path() {
+        let (tempdir, store_path) = tempdir_with_leaked_path();
+
+        let mut tar_bytes = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut tar_bytes);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(5);
+            header.set_mode(0o644);
+            header.set_entry_type(tar::EntryType::Regular);
+            // Bypass `set_path`'s `..` validation: write the raw
+            // name bytes directly into header[0..100]. Then
+            // `set_cksum()` recomputes the checksum over those bytes
+            // so the reader doesn't trip its own integrity check.
+            let raw = header.as_mut_bytes();
+            let name = b"package/../evil.txt";
+            raw[..name.len()].copy_from_slice(name);
+            for b in &mut raw[name.len()..100] {
+                *b = 0;
+            }
+            header.set_cksum();
+            builder.append(&header, &b"evil!"[..]).expect("append entry");
+            builder.finish().expect("finalize tar");
+        }
+
+        let mut archive = Archive::new(Cursor::new(tar_bytes));
+        let err = extract_tarball_entries(&mut archive, store_path)
+            .expect_err("parent-dir component must be rejected, not normalized");
+
+        match err {
+            TarballError::ReadTarballEntries(io_err) => {
+                assert_eq!(io_err.kind(), std::io::ErrorKind::InvalidData);
+            }
+            other => panic!("expected ReadTarballEntries(InvalidData), got: {other:?}"),
+        }
+
+        drop(tempdir);
     }
 }
