@@ -16,6 +16,7 @@ use sha2::{Digest, Sha512};
 use std::{
     collections::{HashMap, HashSet},
     fs,
+    io::{self, BufReader, Read},
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
 };
@@ -30,8 +31,10 @@ pub type FilesMap = HashMap<String, PathBuf>;
 /// CAFS file is missing, its size disagrees with the index, or its
 /// content hash fails to match — the caller treats that as "this store
 /// entry is stale, fall through to a fresh fetch". `files_map` is
-/// populated either way so the caller can log or short-circuit without
-/// re-walking the entry.
+/// returned either way as a best-effort `in-tarball filename` → `CAFS
+/// path` map; it may be partial or empty when a digest in the index
+/// row couldn't be reconstructed into a CAFS path, so callers should
+/// gate reuse on `passed` rather than on the map's size.
 #[derive(Debug)]
 pub struct VerifyResult {
     pub passed: bool,
@@ -195,22 +198,47 @@ fn check_file(path: &Path, checked_at: Option<u64>) -> Option<(bool, u64)> {
     Some((is_modified, meta.len()))
 }
 
-/// Port of pnpm's `verifyFileIntegrity`. Reads the whole file, hashes
-/// with `algo`, compares against the stored hex `digest`.
+/// Port of pnpm's `verifyFileIntegrity`. Streams the file through the
+/// hasher in 64 KiB chunks and compares the digest against the stored
+/// hex `digest`.
+///
+/// pnpm itself calls `readFileSync` + `crypto.hash`, which loads the
+/// whole blob into a `Buffer` first. On Node that's capped implicitly
+/// by `Buffer.kMaxLength`; in Rust we'd allocate the full file up
+/// front, spiking RSS for multi-MB CAS blobs when an install is
+/// verifying many entries in parallel. A `BufReader` + incremental
+/// `Digest::update` is equivalent on the wire and keeps peak memory
+/// bounded per thread.
 ///
 /// Only `sha512` is supported — pacquet always writes that algo in
 /// [`StoreDir::write_cas_file`]. Any other algo falls through to
 /// `false` ("treat as verification failure"), matching pnpm's own
-/// unknown-algo behaviour.
+/// unknown-algo behaviour. An I/O error mid-read also falls through to
+/// `false` so the caller re-fetches rather than deciding on a partial
+/// hash.
 fn verify_file_integrity(path: &Path, digest: &str, algo: &str) -> bool {
     if algo != "sha512" {
         return false;
     }
-    let Ok(data) = fs::read(path) else {
+    let Ok(file) = fs::File::open(path) else {
         return false;
     };
-    let computed = Sha512::digest(&data);
-    format!("{computed:x}") == digest
+    let mut reader = BufReader::with_capacity(64 * 1024, file);
+    let mut hasher = Sha512::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => hasher.update(&buf[..n]),
+            // `Interrupted` is the one error we retry — it's a signal,
+            // not a real IO failure. Everything else (NotFound, EIO,
+            // PermissionDenied, …) short-circuits to `false` so the
+            // caller re-fetches.
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(_) => return false,
+        }
+    }
+    format!("{:x}", hasher.finalize()) == digest
 }
 
 #[cfg(test)]
