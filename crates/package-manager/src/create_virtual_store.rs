@@ -1,4 +1,6 @@
-use crate::{InstallPackageBySnapshot, InstallPackageBySnapshotError};
+use crate::{
+    store_init::init_store_dir_best_effort, InstallPackageBySnapshot, InstallPackageBySnapshotError,
+};
 use derive_more::{Display, Error};
 use futures_util::future;
 use miette::Diagnostic;
@@ -73,35 +75,10 @@ impl<'a> CreateVirtualStore<'a> {
 
         // Eagerly create `files/00..ff` under the v11 store root so per-
         // tarball CAFS writes never pay a `create_dir_all` syscall on the
-        // hot path. Ports pnpm's `initStore` in
-        // `worker/src/start.ts`, gated by the same `files/` existence
-        // check (`StoreDir::init` handles the gating internally). Any
-        // failure here is degraded to a `warn!` — the lazy per-shard
-        // fallback inside `StoreDir::write_cas_file` will still mkdir
-        // on demand, matching pnpm's `writeFile.ts` `dirs` Set.
-        //
-        // Two error layers to handle separately: an outer `JoinError`
-        // means the blocking task panicked or was cancelled; an inner
-        // `io::Error` means `StoreDir::init` itself failed (permission
-        // denied, disk full, …). Both get the same warning so they
-        // stay diagnosable.
-        match tokio::task::spawn_blocking(move || store_dir.init()).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                tracing::warn!(
-                    target: "pacquet::install",
-                    ?error,
-                    "store-dir init failed; continuing — write-side lazy mkdir fallback will handle it",
-                );
-            }
-            Err(error) => {
-                tracing::warn!(
-                    target: "pacquet::install",
-                    ?error,
-                    "store-dir init task panicked or was cancelled; continuing — write-side lazy mkdir fallback will handle it",
-                );
-            }
-        }
+        // hot path. Ports pnpm's `initStore` in `worker/src/start.ts`.
+        // See [`init_store_dir_best_effort`] for the error-degradation
+        // policy shared with `install_without_lockfile.rs`.
+        init_store_dir_best_effort(store_dir).await;
 
         let store_index =
             match tokio::task::spawn_blocking(move || StoreIndex::shared_readonly_in(store_dir))

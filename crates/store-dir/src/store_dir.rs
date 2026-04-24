@@ -270,12 +270,11 @@ mod tests {
         std::fs::write(v11.join("files"), b"i am not a directory").unwrap();
 
         let store = StoreDir::new(tempdir.path());
-        let err = store.init().expect_err("init must fail when files/ isn't a directory");
         // Don't pin the exact ErrorKind — platforms differ
         // (`NotADirectory` on Linux, `AlreadyExists` / `Uncategorized`
-        // elsewhere). Just assert that *an* error surfaced so the
-        // caller has something to log.
-        dbg!(err);
+        // elsewhere). `expect_err` asserting that *an* error surfaced
+        // is enough; the caller has already wired it through `warn!`.
+        store.init().expect_err("init must fail when files/ isn't a directory");
         for shard in 0u8..=255 {
             assert!(
                 !store.shard_already_ensured(shard),
