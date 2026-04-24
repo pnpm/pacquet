@@ -4,9 +4,9 @@ use miette::Diagnostic;
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_registry::{Package, PackageTag, PackageVersion, RegistryError};
-use pacquet_store_dir::SharedReadonlyStoreIndex;
+use pacquet_store_dir::{SharedReadonlyStoreIndex, StoreIndexWriter};
 use pacquet_tarball::{DownloadTarballToStore, MemCache, TarballError};
-use std::{path::Path, str::FromStr};
+use std::{path::Path, str::FromStr, sync::Arc};
 
 /// This subroutine executes the following and returns the package
 /// * Retrieves the package from the registry
@@ -22,6 +22,7 @@ pub struct InstallPackageFromRegistry<'a> {
     pub http_client: &'a ThrottledClient,
     pub config: &'static Npmrc,
     pub store_index: Option<&'a SharedReadonlyStoreIndex>,
+    pub store_index_writer: Option<&'a Arc<StoreIndexWriter>>,
     pub node_modules_dir: &'a Path,
     pub name: &'a str,
     pub version_range: &'a str,
@@ -74,6 +75,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
             http_client,
             config,
             store_index,
+            store_index_writer,
             node_modules_dir,
             ..
         } = self;
@@ -86,6 +88,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
             http_client,
             store_dir: &config.store_dir,
             store_index: store_index.cloned(),
+            store_index_writer: store_index_writer.cloned(),
             package_integrity: package_version
                 .dist
                 .integrity
@@ -170,6 +173,7 @@ mod tests {
             config,
             http_client: &http_client,
             store_index: None,
+            store_index_writer: None,
             name: "fast-querystring",
             version_range: "1.0.0",
             node_modules_dir: modules_dir.path(),

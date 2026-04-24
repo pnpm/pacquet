@@ -13,7 +13,7 @@ use pacquet_fs::file_mode;
 use pacquet_network::ThrottledClient;
 use pacquet_store_dir::{
     store_index_key, CafsFileInfo, PackageFilesIndex, SharedReadonlyStoreIndex, StoreDir,
-    StoreIndex, StoreIndexError, WriteCasFileError,
+    StoreIndexError, StoreIndexWriter, WriteCasFileError,
 };
 use pipe_trait::Pipe;
 use ssri::Integrity;
@@ -209,6 +209,17 @@ pub struct DownloadTarballToStore<'a> {
     /// install and pass the same handle to every `DownloadTarballToStore`
     /// so we don't reopen the DB per package.
     pub store_index: Option<SharedReadonlyStoreIndex>,
+    /// Handle to the batched store-index writer. Each successful tarball
+    /// extraction queues one `(key, PackageFilesIndex)` row; a single
+    /// writer task drains the channel and flushes batches of up to 256 in
+    /// one transaction each, so the whole install goes through one
+    /// `Connection::open` and a handful of WAL commits instead of the old
+    /// "open + PRAGMA + insert + drop" per tarball (which ballooned
+    /// tokio's blocking pool to 500+ threads on a 1352-snapshot install —
+    /// see #263). `None` degrades to "skip index row", matching the read
+    /// side's stance: install still succeeds, the next install misses on
+    /// this cache key and re-downloads.
+    pub store_index_writer: Option<Arc<StoreIndexWriter>>,
     pub package_integrity: &'a Integrity,
     pub package_unpacked_size: Option<usize>,
     pub package_url: &'a str,
@@ -273,6 +284,7 @@ impl<'a> DownloadTarballToStore<'a> {
             ..
         } = self;
         let store_index = self.store_index.clone();
+        let store_index_writer = self.store_index_writer.clone();
 
         // Before hitting the network, check the SQLite store index: if the
         // tarball is already in the CAFS we can reuse its per-file paths
@@ -414,25 +426,26 @@ impl<'a> DownloadTarballToStore<'a> {
                 (cas_paths, pkg_files_idx)
             };
 
-            // Record the per-tarball file index in the shared SQLite index so
-            // other pacquet / pnpm processes can find these files on disk.
-            // SQLite open + PRAGMA + INSERT are blocking (and can stall for up
-            // to `busy_timeout=5000` ms when contending with a concurrent
-            // writer), so run them on the blocking pool rather than the
-            // tokio reactor. One StoreIndex per spawned task keeps the code
-            // lock-free; SQLite serializes concurrent writers via its
-            // busy_timeout.
+            // Hand the per-tarball files index off to the shared writer
+            // task. `queue` is a non-blocking `UnboundedSender::send` — no
+            // more `spawn_blocking` per tarball (the big thread-pool
+            // blowup we saw before #263 was fixed), no more reopening
+            // SQLite per row; the writer task owns one connection and
+            // batches whatever it drains in one `BEGIN IMMEDIATE; … ;
+            // COMMIT`. `None` here means we opened the writer but it
+            // failed, or the caller explicitly handed us no writer —
+            // either way the row is dropped with a `warn!` and the next
+            // install will miss on this cache key, same as the read path.
             let index_key = store_index_key(&package_integrity.to_string(), &package_id);
-            let v11_dir = store_dir.v11();
-            tokio::task::spawn_blocking(move || -> Result<(), StoreIndexError> {
-                let store_index = StoreIndex::open(&v11_dir)?;
-                store_index.set(&index_key, &pkg_files_idx)?;
-                Ok(())
-            })
-            .await
-            .expect("store-index writer task panicked")
-            .map_err(TarballError::WriteStoreIndex)
-            .map_err(TaskError::Other)?;
+            if let Some(writer) = store_index_writer {
+                writer.queue(index_key, pkg_files_idx);
+            } else {
+                tracing::warn!(
+                    target: "pacquet::download",
+                    ?index_key,
+                    "no shared store-index writer; skipping index row for this tarball",
+                );
+            }
 
             Ok(cas_paths)
         })
@@ -453,6 +466,7 @@ impl<'a> DownloadTarballToStore<'a> {
 
 #[cfg(test)]
 mod tests {
+    use pacquet_store_dir::StoreIndex;
     use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
     use tempfile::{tempdir, TempDir};
@@ -502,6 +516,7 @@ mod tests {
             http_client: &Default::default(),
             store_dir: store_path,
             store_index: None,
+            store_index_writer: None,
             package_integrity: &integrity("sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w=="),
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
@@ -543,6 +558,7 @@ mod tests {
             http_client: &Default::default(),
             store_dir: store_path,
             store_index: None,
+            store_index_writer: None,
             package_integrity: &integrity("sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w=="),
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
@@ -611,6 +627,7 @@ mod tests {
             http_client: &fast_fail_client(),
             store_dir: store_path,
             store_index: StoreIndex::shared_readonly_in(store_path),
+            store_index_writer: None,
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
             // Any request that reaches the network here would fail the
@@ -670,6 +687,7 @@ mod tests {
             http_client: &fast_fail_client(),
             store_dir: store_path,
             store_index: StoreIndex::shared_readonly_in(store_path),
+            store_index_writer: None,
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",
@@ -721,6 +739,7 @@ mod tests {
             http_client: &fast_fail_client(),
             store_dir: store_path,
             store_index: StoreIndex::shared_readonly_in(store_path),
+            store_index_writer: None,
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",
@@ -775,6 +794,7 @@ mod tests {
             http_client: &fast_fail_client(),
             store_dir: store_path,
             store_index: StoreIndex::shared_readonly_in(store_path),
+            store_index_writer: None,
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",
@@ -839,6 +859,7 @@ mod tests {
             http_client: &fast_fail_client(),
             store_dir: store_path,
             store_index: StoreIndex::shared_readonly_in(store_path),
+            store_index_writer: None,
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",

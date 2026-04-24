@@ -1778,6 +1778,8 @@ dependencies = [
  "sha2",
  "ssri",
  "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
