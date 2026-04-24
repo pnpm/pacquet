@@ -1,3 +1,5 @@
+storeDir: ./store-dir
+
 allowBuilds:
   core-js: false
   es5-ext: false
