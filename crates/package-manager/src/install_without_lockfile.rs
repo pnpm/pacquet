@@ -66,21 +66,20 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
         // `JoinError`-to-cache-miss degradation (with a `warn!` so it
         // stays diagnosable).
         let store_dir: &'static _ = &config.store_dir;
-        let store_index = match tokio::task::spawn_blocking(move || {
-            StoreIndex::shared_readonly_in(store_dir)
-        })
-        .await
-        {
-            Ok(store_index) => store_index,
-            Err(error) => {
-                tracing::warn!(
-                    target: "pacquet::install",
-                    ?error,
-                    "store-index open task failed; continuing without a shared cache index",
-                );
-                None
-            }
-        };
+        let store_index =
+            match tokio::task::spawn_blocking(move || StoreIndex::shared_readonly_in(store_dir))
+                .await
+            {
+                Ok(store_index) => store_index,
+                Err(error) => {
+                    tracing::warn!(
+                        target: "pacquet::install",
+                        ?error,
+                        "store-index open task failed; continuing without a shared cache index",
+                    );
+                    None
+                }
+            };
         let store_index_ref = store_index.as_ref();
 
         manifest
