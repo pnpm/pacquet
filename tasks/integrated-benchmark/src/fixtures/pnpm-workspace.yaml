@@ -1,10 +1,36 @@
 storeDir: ./store-dir
 
+# Force pnpm to install every optional dependency in the lockfile
+# regardless of the runner's own os/cpu/libc, so its install payload
+# matches pacquet's (which currently installs every snapshot in the
+# lockfile unconditionally — it doesn't filter optionals by platform).
+#
+# Without this, pnpm on Linux CI skips darwin-only optionals like
+# `fsevents` via its normal platform filter and ends up doing less
+# work than pacquet, which quietly tilts the benchmark in pnpm's
+# favour. Listing every OS / CPU / libc combo we realistically care
+# about removes that asymmetry; the exact set mirrors pnpm's own
+# release matrix.
+supportedArchitectures:
+  os:
+    - darwin
+    - linux
+    - win32
+  cpu:
+    - x64
+    - arm64
+  libc:
+    - glibc
+    - musl
+
 allowBuilds:
   core-js: false
   es5-ext: false
-  # macOS-only optional dep. Absent on Linux (where CI runs), present
-  # on developer macOS machines — without this entry pnpm exits 1 with
-  # `ERR_PNPM_IGNORED_BUILDS` on the first warmup run, taking the
-  # whole benchmark down. Harmless no-op on Linux.
+  # `fsevents` ships a native postinstall that would fire on macOS.
+  # The fixture's `.npmrc` sets `ignore-scripts=true`, so pnpm emits
+  # `ERR_PNPM_IGNORED_BUILDS` and exits 1 on the first warmup run,
+  # taking the whole benchmark down. Explicitly declining its build
+  # silences the error. Now reachable on Linux too because
+  # `supportedArchitectures` above pulls fsevents in on every
+  # platform — the entry is no longer a macOS-only concern.
   fsevents: false
