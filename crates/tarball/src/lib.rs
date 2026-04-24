@@ -122,10 +122,10 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
 /// header (bad mode, bad size), a short body read, a path decode error
 /// — comes back as [`TarballError::ReadTarballEntries`] instead of
 /// panicking. Non-UTF-8 entry paths are coerced via
-/// [`Path::to_string_lossy`], matching pnpm's string-based handling so
-/// a mixed install against the shared `index.db` stays consistent;
-/// real-world npm tarballs are UTF-8 so the coercion is almost never
-/// hit in practice.
+/// [`std::path::Path::to_string_lossy`], matching pnpm's string-based
+/// handling so a mixed install against the shared `index.db` stays
+/// consistent; real-world npm tarballs are UTF-8 so the coercion is
+/// almost never hit in practice.
 fn extract_tarball_entries(
     archive: &mut Archive<Cursor<Vec<u8>>>,
     store_dir: &StoreDir,
@@ -158,8 +158,26 @@ fn extract_tarball_entries(
         let file_mode = entry.header().mode().map_err(TarballError::ReadTarballEntries)?;
         let file_is_executable = file_mode::is_executable(file_mode);
 
-        // Read the contents of the entry
-        let mut buffer = Vec::with_capacity(entry.size() as usize);
+        // Read the contents of the entry. `entry.size()` is the size
+        // from the tar header — untrusted input from the tarball, not
+        // from any disk-side signal we've verified. Clamp the
+        // pre-allocation hint so a corrupt or malicious tarball that
+        // claims gigabytes can't turn `Vec::with_capacity` into an OOM
+        // abort before `read_to_end` has a chance to surface the real
+        // error. The claimed size beyond the clamp is still read
+        // through `Vec`'s geometric growth. `try_reserve` propagates
+        // an allocation failure as an I/O error rather than aborting.
+        // 64 MiB is generous for any legitimate single-file entry in
+        // an npm tarball — typical entries are well under 1 MiB.
+        const MAX_ENTRY_PREALLOC_BYTES: u64 = 64 * 1024 * 1024;
+        let prealloc_hint = entry.size().min(MAX_ENTRY_PREALLOC_BYTES) as usize;
+        let mut buffer = Vec::new();
+        buffer.try_reserve(prealloc_hint).map_err(|err| {
+            TarballError::ReadTarballEntries(std::io::Error::new(
+                std::io::ErrorKind::OutOfMemory,
+                format!("failed to reserve {prealloc_hint} bytes for tar entry: {err}"),
+            ))
+        })?;
         entry.read_to_end(&mut buffer).map_err(TarballError::ReadTarballEntries)?;
 
         let entry_path = entry.path().map_err(TarballError::ReadTarballEntries)?;
