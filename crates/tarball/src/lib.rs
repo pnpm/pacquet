@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     io::{Cursor, Read},
-    path::PathBuf,
+    path::{Component, PathBuf},
     sync::{Arc, OnceLock},
     time::UNIX_EPOCH,
 };
@@ -113,19 +113,26 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
         .map_err(TarballError::DecodeGzip)
 }
 
-/// Walk a decompressed tar archive, writing each regular-file entry into
-/// the CAFS and returning the `{in-tarball path → CAFS path}` map plus
-/// the per-tarball [`PackageFilesIndex`] row to hand off to the shared
-/// store-index writer.
+/// Walk a decompressed tar archive, writing each regular-file entry
+/// into the CAFS and returning the `{in-tarball path → CAFS path}` map
+/// plus the per-tarball [`PackageFilesIndex`] row to hand off to the
+/// shared store-index writer.
+///
+/// Non-regular-file entries (symlinks, hardlinks, character / block
+/// devices, fifos, GNU / PAX extension headers, directories) are
+/// filtered out. Real npm-publish tarballs only carry regular files;
+/// anything else would need custom handling that pacquet doesn't yet
+/// do, and silently reading a symlink's 0-byte body into the CAFS as
+/// if it were a file would just corrupt the store.
 ///
 /// Every tar-side failure — a corrupt entries iterator, a mangled
-/// header (bad mode, bad size), a short body read, a path decode error
-/// — comes back as [`TarballError::ReadTarballEntries`] instead of
-/// panicking. Non-UTF-8 entry paths are coerced via
-/// [`std::path::Path::to_string_lossy`], matching pnpm's string-based
-/// handling so a mixed install against the shared `index.db` stays
-/// consistent; real-world npm tarballs are UTF-8 so the coercion is
-/// almost never hit in practice.
+/// header (bad mode, bad size), a short body read, a path decode error,
+/// a path whose components would escape the CAFS root — comes back as
+/// [`TarballError::ReadTarballEntries`] instead of panicking. Non-UTF-8
+/// entry paths are coerced via [`std::path::Path::to_string_lossy`],
+/// matching pnpm's string-based handling so a mixed install against the
+/// shared `index.db` stays consistent; real-world npm tarballs are
+/// UTF-8 so the coercion is almost never hit in practice.
 fn extract_tarball_entries(
     archive: &mut Archive<Cursor<Vec<u8>>>,
     store_dir: &StoreDir,
@@ -133,12 +140,14 @@ fn extract_tarball_entries(
     let entries = archive
         .entries()
         .map_err(TarballError::ReadTarballEntries)?
-        // Ok entries are filtered on type. Err entries fall through so
-        // the `?` inside the loop below propagates them — previously
-        // this branch did `entry.as_ref().unwrap()` which panicked on
-        // any iterator-level error.
+        // Keep only regular-file `Ok` entries; anything else in the
+        // `Ok` arm (directories, symlinks, hardlinks, pax/gnu
+        // extension headers, …) is dropped. `Err` entries fall
+        // through so the `?` inside the loop below propagates them —
+        // previously this branch did `entry.as_ref().unwrap()` which
+        // panicked on any iterator-level error.
         .filter(|entry| match entry {
-            Ok(entry) => !entry.header().entry_type().is_dir(),
+            Ok(entry) => entry.header().entry_type().is_file(),
             Err(_) => true,
         });
 
@@ -181,12 +190,38 @@ fn extract_tarball_entries(
         entry.read_to_end(&mut buffer).map_err(TarballError::ReadTarballEntries)?;
 
         let entry_path = entry.path().map_err(TarballError::ReadTarballEntries)?;
-        // `components().skip(1)` drops the top-level package directory
-        // (e.g. `package/`). `to_string_lossy()` coerces non-UTF-8
-        // bytes to U+FFFD — matching pnpm's string-based path layer so
-        // a shared `index.db` stays consistent across the two tools.
-        let cleaned_entry_path =
-            entry_path.components().skip(1).collect::<PathBuf>().to_string_lossy().into_owned();
+        // `components().skip(1)` drops the top-level package
+        // directory (`package/`). Every remaining component must be
+        // `Component::Normal`: a hostile tarball can carry `..`,
+        // absolute-root, or Windows-prefix components that — joined
+        // onto the CAFS extraction root later in `create_cas_files`
+        // — would land files outside the store (directory traversal).
+        // Reject loudly rather than silently normalize so tampering
+        // is visible.
+        let mut cleaned = PathBuf::new();
+        for component in entry_path.components().skip(1) {
+            let Component::Normal(part) = component else {
+                return Err(TarballError::ReadTarballEntries(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "tar entry path rejected (non-normal component, possible directory traversal): {entry_path:?}",
+                    ),
+                )));
+            };
+            cleaned.push(part);
+        }
+        if cleaned.as_os_str().is_empty() {
+            return Err(TarballError::ReadTarballEntries(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "tar entry path has no payload after dropping the top-level component: {entry_path:?}",
+                ),
+            )));
+        }
+        // `to_string_lossy()` coerces non-UTF-8 bytes to U+FFFD —
+        // matching pnpm's string-based path layer so a shared
+        // `index.db` stays consistent across the two tools.
+        let cleaned_entry_path = cleaned.to_string_lossy().into_owned();
         let (file_path, file_hash) = store_dir
             .write_cas_file(&buffer, file_is_executable)
             .map_err(TarballError::WriteCasFile)?;
@@ -990,6 +1025,59 @@ mod tests {
             matches!(err, TarballError::ReadTarballEntries(_)),
             "expected ReadTarballEntries, got: {err:?}"
         );
+
+        drop(tempdir);
+    }
+
+    /// A tarball whose entry path contains `..` (or any other
+    /// non-`Normal` path component) must be rejected, not silently
+    /// normalized. Without the guard in `extract_tarball_entries`,
+    /// `cleaned_entry_path` would later be joined onto the CAFS
+    /// extraction root by `create_cas_files` and land files outside
+    /// the store (directory traversal).
+    ///
+    /// Note: `tar::Header::set_path` refuses to write a `..` path on
+    /// its own (defense in depth on the write side). To exercise the
+    /// read-side guard we have to bypass that by writing the name
+    /// bytes directly via `as_mut_bytes()` and recomputing the
+    /// checksum. A malicious tarball in the wild could trivially be
+    /// written by any non-Rust tool that doesn't sanitize.
+    #[test]
+    fn extract_rejects_parent_dir_component_in_entry_path() {
+        let (tempdir, store_path) = tempdir_with_leaked_path();
+
+        let mut tar_bytes = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut tar_bytes);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(5);
+            header.set_mode(0o644);
+            header.set_entry_type(tar::EntryType::Regular);
+            // Bypass `set_path`'s `..` validation: write the raw
+            // name bytes directly into header[0..100]. Then
+            // `set_cksum()` recomputes the checksum over those bytes
+            // so the reader doesn't trip its own integrity check.
+            let raw = header.as_mut_bytes();
+            let name = b"package/../evil.txt";
+            raw[..name.len()].copy_from_slice(name);
+            for b in &mut raw[name.len()..100] {
+                *b = 0;
+            }
+            header.set_cksum();
+            builder.append(&header, &b"evil!"[..]).expect("append entry");
+            builder.finish().expect("finalize tar");
+        }
+
+        let mut archive = Archive::new(Cursor::new(tar_bytes));
+        let err = extract_tarball_entries(&mut archive, store_path)
+            .expect_err("parent-dir component must be rejected, not normalized");
+
+        match err {
+            TarballError::ReadTarballEntries(io_err) => {
+                assert_eq!(io_err.kind(), std::io::ErrorKind::InvalidData);
+            }
+            other => panic!("expected ReadTarballEntries(InvalidData), got: {other:?}"),
+        }
 
         drop(tempdir);
     }
