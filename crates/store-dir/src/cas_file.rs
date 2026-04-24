@@ -148,8 +148,11 @@ mod tests {
     /// * the first write into a given shard populates the cache entry
     ///   for that shard (no eager seeding);
     /// * a second write of identical content is a successful noop via
-    ///   the `file_path.exists()` warm-cache branch inside
-    ///   `ensure_file`, and leaves the cache unchanged;
+    ///   `ensure_file`'s `AlreadyExists` → `verify_or_rewrite` path
+    ///   (the `O_CREAT|O_EXCL` open returns `EEXIST`, `verify_or_rewrite`
+    ///   byte-compares the existing file against the buffer and returns
+    ///   `Ok(())` once they match — so the existing CAS blob is left
+    ///   in place), and the cache is unchanged;
     /// * a later write of different content still succeeds whether it
     ///   lands in the same shard or a new one.
     ///
@@ -170,8 +173,14 @@ mod tests {
         assert!(path_a.is_file());
 
         // Second write of identical content — same hash, same path —
-        // hits the `file_path.exists()` fast path inside `ensure_file`
-        // and returns Ok without touching the filesystem further.
+        // hits `ensure_file`'s `AlreadyExists` → `verify_or_rewrite`
+        // path: the `O_CREAT|O_EXCL` open returns `EEXIST`, then
+        // `verify_or_rewrite` byte-compares the existing file against
+        // the buffer, finds them equal, and returns `Ok(())` without
+        // writing again. A torn-blob mismatch would route through
+        // `write_atomic` instead, which is covered by
+        // `existing_target_with_wrong_content_is_overwritten_atomically`
+        // over in `crates/fs/src/ensure_file.rs`.
         let (path_b, hash_b) = store_dir.write_cas_file(b"hello world", false).unwrap();
         assert_eq!(hash_a, hash_b);
         assert_eq!(path_a, path_b);

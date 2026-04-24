@@ -14,5 +14,8 @@ repository.workspace = true
 derive_more = { workspace = true }
 miette      = { workspace = true }
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [target.'cfg(windows)'.dependencies]
 junction = { workspace = true }
