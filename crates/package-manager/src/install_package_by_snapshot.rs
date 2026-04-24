@@ -4,10 +4,10 @@ use miette::Diagnostic;
 use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
-use pacquet_store_dir::SharedReadonlyStoreIndex;
+use pacquet_store_dir::{SharedReadonlyStoreIndex, StoreIndexWriter};
 use pacquet_tarball::{DownloadTarballToStore, TarballError};
 use pipe_trait::Pipe;
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
 /// This subroutine downloads a package tarball, extracts it, installs it to a virtual dir,
 /// then creates the symlink layout for the package.
@@ -16,6 +16,7 @@ pub struct InstallPackageBySnapshot<'a> {
     pub http_client: &'a ThrottledClient,
     pub config: &'static Npmrc,
     pub store_index: Option<&'a SharedReadonlyStoreIndex>,
+    pub store_index_writer: Option<&'a Arc<StoreIndexWriter>>,
     pub package_key: &'a PackageKey,
     pub metadata: &'a PackageMetadata,
     pub snapshot: &'a SnapshotEntry,
@@ -50,6 +51,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             http_client,
             config,
             store_index,
+            store_index_writer,
             package_key,
             metadata,
             snapshot,
@@ -93,6 +95,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             http_client,
             store_dir: &config.store_dir,
             store_index: store_index.cloned(),
+            store_index_writer: store_index_writer.cloned(),
             package_integrity: integrity,
             package_unpacked_size: None,
             package_url: &tarball_url,

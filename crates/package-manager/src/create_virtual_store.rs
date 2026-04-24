@@ -5,7 +5,7 @@ use miette::Diagnostic;
 use pacquet_lockfile::{PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
-use pacquet_store_dir::StoreIndex;
+use pacquet_store_dir::{StoreIndex, StoreIndexWriter};
 use pipe_trait::Pipe;
 use std::collections::HashMap;
 
@@ -86,6 +86,25 @@ impl<'a> CreateVirtualStore<'a> {
             };
         let store_index_ref = store_index.as_ref();
 
+        // Spawn the batched store-index writer. A single `spawn_blocking`
+        // task owns the writable SQLite connection for the whole install;
+        // every successfully extracted tarball just sends a row to it and
+        // the task flushes them in batched transactions. The old per-
+        // tarball `StoreIndex::open` + solo-INSERT pattern dominated
+        // install wall time on slow-metadata filesystems (#263) because
+        // each open is ~15 ms of metadata work on APFS and tokio's
+        // blocking pool grew to 500+ threads to service them.
+        //
+        // We drop our own copy of the `Arc<StoreIndexWriter>` after the
+        // `try_join_all` below so the channel can close once every tarball
+        // task has dropped its clone; then `.await` on the join handle
+        // waits for the final batch to flush before returning. A writer-
+        // side `JoinError` or open failure is surfaced at `warn!` and
+        // degraded to "no writer" — the install still succeeds, missing
+        // rows just force a re-download on the next install.
+        let (store_index_writer, writer_task) = StoreIndexWriter::spawn(store_dir);
+        let store_index_writer_ref = Some(&store_index_writer);
+
         snapshots
             .iter()
             .map(|(snapshot_key, snapshot)| async move {
@@ -100,6 +119,7 @@ impl<'a> CreateVirtualStore<'a> {
                     http_client,
                     config,
                     store_index: store_index_ref,
+                    store_index_writer: store_index_writer_ref,
                     package_key: snapshot_key,
                     metadata,
                     snapshot,
@@ -110,6 +130,25 @@ impl<'a> CreateVirtualStore<'a> {
             })
             .pipe(future::try_join_all)
             .await?;
+
+        // Drop the orchestration's sender so the channel closes once every
+        // per-tarball clone has also dropped; then wait for the writer task
+        // to flush its final batch. Swallow any error with `warn!` — we've
+        // already done the install and cache-miss degradation is fine.
+        drop(store_index_writer);
+        match writer_task.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::warn!(
+                target: "pacquet::install",
+                ?error,
+                "store-index writer task returned an error; some rows may not be persisted",
+            ),
+            Err(error) => tracing::warn!(
+                target: "pacquet::install",
+                ?error,
+                "store-index writer task panicked; some rows may not be persisted",
+            ),
+        }
 
         Ok(())
     }
