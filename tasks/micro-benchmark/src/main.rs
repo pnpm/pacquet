@@ -34,7 +34,7 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
             let dir = tempdir().unwrap();
             let store_dir =
                 dir.path().to_path_buf().pipe(StoreDir::from).pipe(Box::new).pipe(Box::leak);
-            let http_client = ThrottledClient::new_from_cpu_count();
+            let http_client = ThrottledClient::new_for_installs();
 
             let cas_map = DownloadTarballToStore {
                 http_client: &http_client,

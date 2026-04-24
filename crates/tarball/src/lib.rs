@@ -84,6 +84,13 @@ pub enum TarballError {
     #[from(ignore)]
     #[diagnostic(code(pacquet_tarball::task_join_error))]
     TaskJoin(tokio::task::JoinError),
+
+    #[from(ignore)]
+    #[display(
+        "Tarball at {url} advertised a Content-Length of {advertised_size} bytes, which exceeds what pacquet can allocate (either larger than `usize::MAX` on this target or memory pressure prevented a one-shot reservation)"
+    )]
+    #[diagnostic(code(pacquet_tarball::tarball_too_large))]
+    TarballTooLarge { url: String, advertised_size: u64 },
 }
 
 /// Value of the cache.
@@ -99,6 +106,43 @@ pub enum CacheValue {
 ///
 /// The key of this hashmap is the url of each tarball.
 pub type MemCache = DashMap<String, Arc<RwLock<CacheValue>>>;
+
+/// Build the buffer that the tarball body streams into, pre-sized
+/// from the response's advertised `Content-Length` when it fits and
+/// can actually be reserved without allocation failure.
+///
+/// `Content-Length` is untrusted input — a malicious or broken
+/// registry could advertise `u64::MAX`, which would crash the
+/// process if we passed it directly to `Vec::with_capacity`. Two
+/// guards:
+///
+/// 1. `usize::try_from(size)` — on 32-bit targets a `u64` header
+///    value may exceed `usize::MAX`; on 64-bit the two are the
+///    same width but the conversion is cheap anyway.
+/// 2. `Vec::try_reserve_exact(cap)` — if the allocator refuses
+///    (legitimate OOM, or because `cap` is absurdly large relative
+///    to available RAM), we surface `TarballTooLarge` instead of
+///    aborting via the infallible `with_capacity` path.
+///
+/// When `content_length` is absent the response uses chunked
+/// transfer encoding and we can't pre-size; return an empty
+/// growable `Vec` and let the stream loop extend it.
+fn allocate_tarball_buffer(
+    content_length: Option<u64>,
+    url: &str,
+) -> Result<Vec<u8>, TarballError> {
+    let Some(size) = content_length else {
+        return Ok(Vec::new());
+    };
+
+    let too_large =
+        || TarballError::TarballTooLarge { url: url.to_string(), advertised_size: size };
+
+    let capacity = usize::try_from(size).map_err(|_| too_large())?;
+    let mut buf = Vec::new();
+    buf.try_reserve_exact(capacity).map_err(|_| too_large())?;
+    Ok(buf)
+}
 
 #[instrument(skip(gz_data), fields(gz_data_len = gz_data.len()))]
 fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u8>, TarballError> {
@@ -482,6 +526,14 @@ impl<'a> DownloadTarballToStore<'a> {
             .await
             .map_err(network_error)?;
 
+        // Read `Content-Length` *before* we start consuming the body
+        // stream so we can pre-size the buffer. Ports pnpm v11's
+        // `fetching/tarball-fetcher/src/remoteTarballFetcher.ts:148-164`:
+        // reqwest/hyper internally grows its buffer by doubling when
+        // CL isn't used, so on a 1352-tarball cold install that's a
+        // lot of wasted alloc + copy work across the pipeline.
+        let expected_size = response_head.content_length();
+
         // Gate the memory-heavy + CPU-heavy part of the pipeline with
         // `post_download_semaphore`:
         //
@@ -489,7 +541,7 @@ impl<'a> DownloadTarballToStore<'a> {
         //   for I/O wait but disastrous for CPU work that can only
         //   really run `num_cpus` at a time, so we cap concurrent
         //   `spawn_blocking` bodies.
-        // - We also acquire the permit *before* `.bytes().await`
+        // - We also acquire the permit *before* we consume the body
         //   rather than right before `spawn_blocking`. Buffering is
         //   where the per-tarball memory spike lives (a full
         //   decompressed package can be many MB), so holding the
@@ -499,14 +551,37 @@ impl<'a> DownloadTarballToStore<'a> {
         //   up hundreds of buffered tarballs waiting for a permit to
         //   process (Copilot review on #269).
         //
-        // The permit is held across both `.bytes().await` and the
-        // `spawn_blocking.await` below, dropping at end of scope.
+        // The permit is held across both the body-stream drain and
+        // the `spawn_blocking.await` below, dropping at end of scope.
         let _post_download_permit = post_download_semaphore()
             .acquire()
             .await
             .expect("post-download semaphore shouldn't be closed this soon");
 
-        let response = response_head.bytes().await.map_err(network_error)?;
+        // Stream the body into a single pre-sized `Vec<u8>` when
+        // `Content-Length` is known. One allocation + one
+        // `extend_from_slice` per chunk, no growth-by-doubling.
+        // Falls back to empty capacity when CL is missing (chunked
+        // transfer encoding), which still avoids reqwest/hyper's
+        // intermediate-chunk-list + second-copy pass.
+        //
+        // We don't re-verify the received byte count against
+        // `Content-Length` — hyper enforces CL framing itself on the
+        // receive side (a body shorter than CL errors the stream, a
+        // body longer is truncated or queued as the next request),
+        // so the check would be dead code. Pnpm's equivalent
+        // `BadTarballError` path exists because undici in Node.js
+        // doesn't always enforce it.
+        let response = {
+            use futures_util::StreamExt;
+            let mut buf = allocate_tarball_buffer(expected_size, package_url)?;
+            let mut stream = response_head.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(network_error)?;
+                buf.extend_from_slice(&chunk);
+            }
+            buf
+        };
 
         tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
 
@@ -603,6 +678,47 @@ mod tests {
 
     fn integrity(integrity_str: &str) -> Integrity {
         integrity_str.parse().expect("parse integrity string")
+    }
+
+    /// Absent `Content-Length` (chunked transfer) returns an empty
+    /// growable buffer. The stream loop extends it as chunks arrive.
+    #[test]
+    fn allocate_tarball_buffer_returns_empty_when_content_length_is_absent() {
+        let buf = allocate_tarball_buffer(None, "https://example.test/pkg.tgz")
+            .expect("no content-length is a valid chunked-transfer response");
+        assert_eq!(buf.len(), 0);
+    }
+
+    /// Reasonable `Content-Length` pre-sizes the buffer so no
+    /// realloc happens during the stream loop. `try_reserve_exact`
+    /// succeeds; we don't assert `buf.capacity() == size` because
+    /// allocators are allowed to round up, only that it's at least
+    /// what we asked for.
+    #[test]
+    fn allocate_tarball_buffer_presizes_for_reasonable_content_length() {
+        let buf = allocate_tarball_buffer(Some(1024 * 1024), "https://example.test/pkg.tgz")
+            .expect("1 MiB pre-allocation should succeed on any dev / CI box");
+        assert!(buf.capacity() >= 1024 * 1024, "capacity = {}", buf.capacity());
+        assert_eq!(buf.len(), 0);
+    }
+
+    /// A maliciously or buggily huge `Content-Length` must not be
+    /// passed through to the infallible `Vec::with_capacity` — that
+    /// would abort the process on allocation failure. `try_reserve_exact`
+    /// surfaces the failure as `TarballTooLarge` so the install can
+    /// reject this one package and continue.
+    #[test]
+    fn allocate_tarball_buffer_rejects_absurd_content_length() {
+        let url = "https://example.test/evil.tgz";
+        let err = allocate_tarball_buffer(Some(u64::MAX), url)
+            .expect_err("u64::MAX cannot actually be reserved");
+        match err {
+            TarballError::TarballTooLarge { url: got_url, advertised_size } => {
+                assert_eq!(got_url, url);
+                assert_eq!(advertised_size, u64::MAX);
+            }
+            other => panic!("expected TarballTooLarge, got {other:?}"),
+        }
     }
 
     /// HTTP client for the fall-through tests. A default `ThrottledClient`

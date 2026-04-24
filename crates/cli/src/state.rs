@@ -58,7 +58,7 @@ impl State {
                 .map_err(InitStateError::LoadManifest)?,
             lockfile: call_load_lockfile(should_load, Lockfile::load_from_current_dir)
                 .map_err(InitStateError::LoadLockfile)?,
-            http_client: ThrottledClient::new_from_cpu_count(),
+            http_client: ThrottledClient::new_for_installs(),
             tarball_mem_cache: MemCache::new(),
             resolved_packages: ResolvedPackages::new(),
         })
