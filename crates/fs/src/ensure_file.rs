@@ -141,18 +141,49 @@ pub fn ensure_file(
 /// If they match we're done; if not, recover the torn blob by writing a
 /// fresh temp file and renaming it over the target.
 ///
-/// A `NotFound` on the re-read means the file disappeared between our
-/// `create_new` attempt and the `read` — another process cleaned it up
-/// (unusual, but possible in shared-store setups). Fall through to the
-/// atomic-write path, which will re-create it.
+/// Uses `symlink_metadata` (not `metadata`) first to reject the
+/// non-regular-file cases — symlinks in particular. On Unix,
+/// `open(O_CREAT|O_EXCL)` returns `EEXIST` even when the dirent is
+/// a symlink (POSIX `open` does not follow symlinks under `O_EXCL`),
+/// so a tampered / backed-up-and-restored store could route a symlinked
+/// dirent into this function. If we fell through directly to `fs::read`
+/// (which *does* follow symlinks), a symlink pointing at a file with
+/// matching bytes would silently return `Ok(())` without ever
+/// materialising a real CAS blob at `file_path`, and downstream
+/// `fs::hard_link` on that path would hardlink the symlink itself
+/// rather than the target. Scrub instead: `write_atomic`'s `rename`
+/// atomically replaces the symlink (or any other non-regular dirent
+/// that `rename` can overwrite) with a real regular file. Pnpm v11
+/// doesn't guard against this case either, but pacquet's CAS linking
+/// path is stricter about file-type than pnpm's, so the guard is
+/// worth adding here.
+///
+/// A `NotFound` on either syscall means the dirent disappeared
+/// between our `create_new` attempt and the metadata / read call —
+/// another process cleaned it up (unusual, but possible in shared-
+/// store setups). Fall through to the atomic-write path, which will
+/// re-create it.
 fn verify_or_rewrite(
     file_path: &Path,
     content: &[u8],
     mode: Option<u32>,
 ) -> Result<(), EnsureFileError> {
-    match fs::read(file_path) {
-        Ok(existing) if existing == content => Ok(()),
-        Ok(_) => write_atomic(file_path, content, mode),
+    match fs::symlink_metadata(file_path) {
+        Ok(meta) if !meta.file_type().is_file() => {
+            // Symlink, directory, fifo, socket, block/char device —
+            // not a regular CAS blob. Scrub via atomic rewrite.
+            write_atomic(file_path, content, mode)
+        }
+        Ok(_) => match fs::read(file_path) {
+            Ok(existing) if existing == content => Ok(()),
+            Ok(_) => write_atomic(file_path, content, mode),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                write_atomic(file_path, content, mode)
+            }
+            Err(error) => {
+                Err(EnsureFileError::ReadFile { file_path: file_path.to_path_buf(), error })
+            }
+        },
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             write_atomic(file_path, content, mode)
         }
@@ -309,7 +340,8 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    /// New-file path: contents land on disk with the requested mode.
+    /// New-file path: contents land on disk. Mode handling is covered
+    /// separately in `unix_mode_is_applied_on_new_files`.
     #[test]
     fn writes_a_new_file() {
         let tmp = tempdir().unwrap();
@@ -374,6 +406,16 @@ mod tests {
 
     /// Unix mode is honoured on the new-file path. Skipped on Windows
     /// where the `mode` argument is `#[cfg_attr(windows, allow(unused))]`.
+    ///
+    /// Asserts the **owner** bits specifically rather than the full
+    /// `0o777` triplet because `OpenOptionsExt::mode` runs through the
+    /// process umask, which strips group / other bits on systems with
+    /// a restrictive default (e.g. `umask 0o077` CI shells). Owner
+    /// bits are preserved under every sensible umask, so pinning just
+    /// those keeps the test robust without weakening what it verifies
+    /// (that `mode` is being threaded through to the syscall at all
+    /// and that the owner-exec bit survives — the observable property
+    /// that distinguishes an executable CAS blob from a data blob).
     #[cfg(unix)]
     #[test]
     fn unix_mode_is_applied_on_new_files() {
@@ -384,8 +426,8 @@ mod tests {
 
         ensure_file(&path, b"#!/bin/sh\n", Some(0o755)).expect("mode-honouring write");
 
-        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o755);
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o700;
+        assert_eq!(mode, 0o700, "owner rwx bits of 0o755 must survive any reasonable umask",);
     }
 
     /// `-exec` suffix becomes `x` in the temp name (pnpm `removeSuffix`
@@ -434,6 +476,55 @@ mod tests {
                 "{kind:?} must not be classified as transient"
             );
         }
+    }
+
+    /// A symlink at the target path — which on Unix returns `EEXIST`
+    /// from `open(O_CREAT|O_EXCL)` just like a regular file would —
+    /// must be scrubbed and replaced with a real regular file even
+    /// when its target's bytes match what we were about to write.
+    /// Leaving the symlink in place would fool downstream
+    /// `fs::hard_link` (which hardlinks the symlink itself on Linux,
+    /// not the target) and leak non-regular dirents into the CAS.
+    #[cfg(unix)]
+    #[test]
+    fn symlink_at_cas_path_is_scrubbed_to_a_regular_file() {
+        let tmp = tempdir().unwrap();
+        let real_target = tmp.path().join("other_real_file");
+        fs::write(&real_target, b"payload").unwrap();
+
+        let cas_path = tmp.path().join("cas_entry");
+        std::os::unix::fs::symlink(&real_target, &cas_path).unwrap();
+
+        ensure_file(&cas_path, b"payload", None).expect("symlink should be scrubbed");
+
+        let meta = fs::symlink_metadata(&cas_path).unwrap();
+        assert!(
+            meta.file_type().is_file(),
+            "cas_path must be a regular file after scrub, got {:?}",
+            meta.file_type(),
+        );
+        assert_eq!(fs::read(&cas_path).unwrap(), b"payload");
+        // The file the symlink used to point at is untouched — we
+        // replaced the link, not followed it.
+        assert_eq!(fs::read(&real_target).unwrap(), b"payload");
+    }
+
+    /// Dangling symlink (points nowhere) is also scrubbed to a real
+    /// file via the same `symlink_metadata` guard. Without the guard
+    /// we'd still end up in `write_atomic` via the `NotFound` branch
+    /// on `fs::read`, but this pins the expected control flow.
+    #[cfg(unix)]
+    #[test]
+    fn dangling_symlink_at_cas_path_is_scrubbed_to_a_regular_file() {
+        let tmp = tempdir().unwrap();
+        let cas_path = tmp.path().join("cas_entry");
+        std::os::unix::fs::symlink(tmp.path().join("nonexistent"), &cas_path).unwrap();
+
+        ensure_file(&cas_path, b"fresh", None).expect("dangling link should be scrubbed");
+
+        let meta = fs::symlink_metadata(&cas_path).unwrap();
+        assert!(meta.file_type().is_file(), "cas_path must end as a regular file");
+        assert_eq!(fs::read(&cas_path).unwrap(), b"fresh");
     }
 
     /// Happy-path rename (no transient errors) returns immediately
