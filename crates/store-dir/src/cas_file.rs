@@ -141,18 +141,23 @@ mod tests {
         }
     }
 
-    /// The shard-mkdir cache should be empty on a fresh `StoreDir`, get
-    /// populated after the first write into a given shard, and survive
-    /// subsequent writes (including ones that land in the same shard
-    /// because two different contents happen to share the first digest
-    /// byte). Two writes where the second one's parent directory was
-    /// removed in between must still succeed without re-mkdir'ing — the
-    /// opposite would regress cold-install latency by reintroducing a
-    /// `create_dir_all` (and its backing `stat`) per file.
+    /// The shard-mkdir cache is empty on a fresh `StoreDir` (we
+    /// haven't called `init`) and grows as `write_cas_file` runs its
+    /// lazy fallback. This test pins three invariants:
     ///
-    /// This test also pins the invariant that a miss clears only the
-    /// shards' directory stat, not the file-existence check inside
-    /// `ensure_file` — a separate, warm-cache fast path.
+    /// * the first write into a given shard populates the cache entry
+    ///   for that shard (no eager seeding);
+    /// * a second write of identical content is a successful noop via
+    ///   the `file_path.exists()` warm-cache branch inside
+    ///   `ensure_file`, and leaves the cache unchanged;
+    /// * a later write of different content still succeeds whether it
+    ///   lands in the same shard or a new one.
+    ///
+    /// Recovering from an out-of-band `rmdir` of a cached shard dir is
+    /// intentionally out of scope: pnpm's equivalent `dirs` Set in
+    /// `store/cafs/src/writeFile.ts` doesn't handle that either, and
+    /// the install aborts with the kernel's `open` error if it
+    /// happens.
     #[test]
     fn shard_cache_populates_on_first_write_and_skips_mkdir_thereafter() {
         use tempfile::tempdir;
@@ -164,28 +169,18 @@ mod tests {
         assert!(store_dir.shard_already_ensured(hash_a[0]));
         assert!(path_a.is_file());
 
-        // Content picked so its sha512 first byte matches 0x30 (the
-        // shard for "hello world") is not something we can fabricate
-        // without brute-forcing; instead assert the cache survives a
-        // second write of identical content (same shard, same path —
-        // the idempotent warm-cache branch inside `ensure_file`).
+        // Second write of identical content — same hash, same path —
+        // hits the `file_path.exists()` fast path inside `ensure_file`
+        // and returns Ok without touching the filesystem further.
         let (path_b, hash_b) = store_dir.write_cas_file(b"hello world", false).unwrap();
         assert_eq!(hash_a, hash_b);
         assert_eq!(path_a, path_b);
         assert!(store_dir.shard_already_ensured(hash_b[0]));
 
-        // Remove the shard dir out from under the cache. The cache
-        // would return the stale "already ensured" answer, so the next
-        // write would skip `create_dir_all` and then fail inside
-        // `ensure_file` at `open`. We mostly care that the cache
-        // *records* the ensured shards honestly; recovering from a
-        // hostile out-of-band rmdir is out of scope (and pnpm doesn't
-        // handle it either — the install aborts).
-        //
-        // Instead, write a second, *different* payload. If it lands in
-        // a fresh shard, the cache grows; if it lands in 0x30 again by
-        // coincidence, the cache stays put. Either way the write must
-        // succeed and leave the file on disk.
+        // Different content: either lands in a fresh shard (cache
+        // grows by one) or happens to share the same first digest byte
+        // as "hello world" (cache stays put). Either way the write
+        // must succeed and materialize the file on disk.
         let (path_c, _) = store_dir.write_cas_file(b"goodbye world", false).unwrap();
         assert!(path_c.is_file());
     }

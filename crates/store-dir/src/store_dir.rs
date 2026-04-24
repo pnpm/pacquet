@@ -139,7 +139,15 @@ impl StoreDir {
     /// write lazy mkdir.
     pub fn init(&self) -> std::io::Result<()> {
         let files = self.files();
-        if files.exists() {
+        // `is_dir()` rather than `exists()`: if `files` is present but
+        // isn't a directory (regular file, broken symlink, other
+        // corruption), a permissive `exists()` check would make `init`
+        // a silent noop and later `write_cas_file` calls would fail
+        // with cryptic per-file `open` errors. Gating on `is_dir()`
+        // lets the `create_dir_all` below surface a clear "not a
+        // directory" error from the kernel, which the caller degrades
+        // to a `warn!` at install bootstrap.
+        if files.is_dir() {
             return Ok(());
         }
         std::fs::create_dir_all(&files)?;
@@ -214,6 +222,38 @@ mod tests {
     /// `write_cas_file` responsible for materializing each shard the
     /// first time it's written, matching pnpm's `writeFile.ts` `dirs`
     /// Set.
+    /// If `v11/files/` is present but isn't a directory (store
+    /// corruption — a regular file landed there somehow), `init` must
+    /// surface a clear `io::Error` rather than silently becoming a noop
+    /// and letting each later `write_cas_file` fail with a less
+    /// actionable per-file `open` error. `create_dir_all` on a path
+    /// where a component is already a regular file returns an error
+    /// from the OS; we just need the gate to be tight enough to let it
+    /// run.
+    #[test]
+    fn init_rejects_non_directory_files_path() {
+        use tempfile::tempdir;
+
+        let tempdir = tempdir().unwrap();
+        let v11 = tempdir.path().join("v11");
+        std::fs::create_dir_all(&v11).unwrap();
+        std::fs::write(v11.join("files"), b"i am not a directory").unwrap();
+
+        let store = StoreDir::new(tempdir.path());
+        let err = store.init().expect_err("init must fail when files/ isn't a directory");
+        // Don't pin the exact ErrorKind — platforms differ
+        // (`NotADirectory` on Linux, `AlreadyExists` / `Uncategorized`
+        // elsewhere). Just assert that *an* error surfaced so the
+        // caller has something to log.
+        dbg!(err);
+        for shard in 0u8..=255 {
+            assert!(
+                !store.shard_already_ensured(shard),
+                "a failing init must not seed the shard cache"
+            );
+        }
+    }
+
     #[test]
     fn init_warm_store_is_noop_and_leaves_cache_empty() {
         use tempfile::tempdir;
