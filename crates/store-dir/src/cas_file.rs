@@ -61,6 +61,27 @@ impl StoreDir {
         executable: bool,
     ) -> Result<(PathBuf, FileHash), WriteCasFileError> {
         let file_hash = Sha512::digest(buffer);
+        self.write_cas_file_prehashed(buffer, file_hash, executable)
+            .map(|file_path| (file_path, file_hash))
+    }
+
+    /// Same as [`write_cas_file`](Self::write_cas_file) but takes a
+    /// pre-computed SHA-512 so the caller can hash the bytes as they
+    /// arrive (e.g. chunk-by-chunk out of a tar entry) and skip the
+    /// separate `Sha512::digest(buffer)` pass inside this function.
+    ///
+    /// The caller is responsible for ensuring `file_hash` is the
+    /// SHA-512 of `buffer`; passing a mismatched hash would corrupt the
+    /// CAFS (the blob would land at a path that advertises a digest its
+    /// contents don't satisfy). This isn't validated here because the
+    /// tarball entry loop that computes the hash holds the buffer for
+    /// the same scope and there's no redundant work worth paying for.
+    pub fn write_cas_file_prehashed(
+        &self,
+        buffer: &[u8],
+        file_hash: FileHash,
+        executable: bool,
+    ) -> Result<PathBuf, WriteCasFileError> {
         let file_path = self.cas_file_path(file_hash, executable);
         let mode = executable.then_some(EXEC_MODE);
 
@@ -80,7 +101,7 @@ impl StoreDir {
         }
 
         ensure_file(&file_path, buffer, mode).map_err(WriteCasFileError::WriteFile)?;
-        Ok((file_path, file_hash))
+        Ok(file_path)
     }
 }
 

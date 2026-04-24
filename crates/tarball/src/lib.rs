@@ -6,8 +6,10 @@ use std::{
     time::UNIX_EPOCH,
 };
 
+use async_compression::tokio::write::GzipDecoder;
 use dashmap::DashMap;
 use derive_more::{Display, Error, From};
+use futures_util::StreamExt;
 use miette::Diagnostic;
 use pacquet_fs::file_mode;
 use pacquet_network::ThrottledClient;
@@ -16,11 +18,13 @@ use pacquet_store_dir::{
     StoreIndexError, StoreIndexWriter, WriteCasFileError,
 };
 use pipe_trait::Pipe;
-use ssri::Integrity;
+use sha2::{Digest, Sha512};
+use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
-use tokio::sync::{Notify, RwLock, Semaphore};
-use tracing::instrument;
-use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
+use tokio::{
+    io::AsyncWriteExt,
+    sync::{Notify, RwLock, Semaphore},
+};
 
 /// Cap on concurrent post-download tarball work (SHA-512 of the whole
 /// tarball + gzip inflate + per-file SHA-512 + CAFS writes). The body is
@@ -69,7 +73,7 @@ pub enum TarballError {
     #[from(ignore)]
     #[display("Failed to decode gzip: {_0}")]
     #[diagnostic(code(pacquet_tarball::decode_gzip))]
-    DecodeGzip(InflateDecodeErrors),
+    DecodeGzip(std::io::Error),
 
     #[from(ignore)]
     #[display("Failed to write cafs: {_0}")]
@@ -99,19 +103,6 @@ pub enum CacheValue {
 ///
 /// The key of this hashmap is the url of each tarball.
 pub type MemCache = DashMap<String, Arc<RwLock<CacheValue>>>;
-
-#[instrument(skip(gz_data), fields(gz_data_len = gz_data.len()))]
-fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u8>, TarballError> {
-    let mut options = DeflateOptions::default().set_confirm_checksum(false);
-
-    if let Some(size) = unpacked_size {
-        options = options.set_size_hint(size);
-    }
-
-    DeflateDecoder::new_with_options(gz_data, options)
-        .decode_gzip()
-        .map_err(TarballError::DecodeGzip)
-}
 
 /// Walk a decompressed tar archive, writing each regular-file entry
 /// into the CAFS and returning the `{in-tarball path → CAFS path}` map
@@ -172,7 +163,7 @@ fn extract_tarball_entries(
         // from any disk-side signal we've verified. Clamp the
         // pre-allocation hint so a corrupt or malicious tarball that
         // claims gigabytes can't turn `Vec::with_capacity` into an OOM
-        // abort before `read_to_end` has a chance to surface the real
+        // abort before the read has a chance to surface the real
         // error. The claimed size beyond the clamp is still read
         // through `Vec`'s geometric growth. `try_reserve` propagates
         // an allocation failure as an I/O error rather than aborting.
@@ -187,7 +178,34 @@ fn extract_tarball_entries(
                 format!("failed to reserve {prealloc_hint} bytes for tar entry: {err}"),
             ))
         })?;
-        entry.read_to_end(&mut buffer).map_err(TarballError::ReadTarballEntries)?;
+
+        // Hash the entry bytes **while** we copy them into `buffer`,
+        // rather than doing `entry.read_to_end(&mut buffer)` followed
+        // by a second full-buffer `Sha512::digest(buffer)` inside
+        // `write_cas_file`. The buffer still has to exist — the CAFS
+        // filename is hash-derived, so the write can't begin until the
+        // digest is finalized — but collapsing two passes over the
+        // decompressed entry bytes into one is free work removed from
+        // the hot path. This interleaved-hash pattern mirrors pnpm's
+        // `parseTarball` + `addBufferToCafs` in
+        // `store/cafs/src/addFilesFromTarball.ts`, which sees each
+        // entry body exactly once before writing.
+        //
+        // 64 KiB chunks match the upper end of `tar::Entry::read`'s
+        // per-call yield and keep the hasher's per-call framing
+        // overhead amortized without tying up more stack than a typical
+        // I/O call would anyway.
+        let mut hasher = Sha512::new();
+        let mut chunk = [0u8; 64 * 1024];
+        loop {
+            let n = entry.read(&mut chunk).map_err(TarballError::ReadTarballEntries)?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&chunk[..n]);
+            buffer.extend_from_slice(&chunk[..n]);
+        }
+        let file_hash = hasher.finalize();
 
         let entry_path = entry.path().map_err(TarballError::ReadTarballEntries)?;
         // `components().skip(1)` drops the top-level package
@@ -222,8 +240,8 @@ fn extract_tarball_entries(
         // matching pnpm's string-based path layer so a shared
         // `index.db` stays consistent across the two tools.
         let cleaned_entry_path = cleaned.to_string_lossy().into_owned();
-        let (file_path, file_hash) = store_dir
-            .write_cas_file(&buffer, file_is_executable)
+        let file_path = store_dir
+            .write_cas_file_prehashed(&buffer, file_hash, file_is_executable)
             .map_err(TarballError::WriteCasFile)?;
 
         if let Some(previous) = cas_paths.insert(cleaned_entry_path.clone(), file_path) {
@@ -488,82 +506,123 @@ impl<'a> DownloadTarballToStore<'a> {
         // - The blocking pool is 512-wide by default, which is right
         //   for I/O wait but disastrous for CPU work that can only
         //   really run `num_cpus` at a time, so we cap concurrent
-        //   `spawn_blocking` bodies.
-        // - We also acquire the permit *before* `.bytes().await`
-        //   rather than right before `spawn_blocking`. Buffering is
-        //   where the per-tarball memory spike lives (a full
-        //   decompressed package can be many MB), so holding the
-        //   permit across buffering bounds the number of fully-buffered
-        //   response bodies in RAM to the post-download cap. Without
-        //   this, a fast registry + `try_join_all` fan-out could pile
-        //   up hundreds of buffered tarballs waiting for a permit to
-        //   process (Copilot review on #269).
+        //   post-download pipelines.
+        // - We acquire the permit *before* the body stream starts so
+        //   the per-tarball memory spike — the compressed bytes on the
+        //   way in plus the growing decompressed buffer — is bounded
+        //   to the post-download cap. Without this, a fast registry
+        //   + `try_join_all` fan-out could pile up hundreds of
+        //   in-flight responses all holding buffers at once (Copilot
+        //   review on #269).
         //
-        // The permit is held across both `.bytes().await` and the
-        // `spawn_blocking.await` below, dropping at end of scope.
+        // The permit is held across the streaming download, the
+        // integrity verification, and the `spawn_blocking.await` below,
+        // dropping at end of scope.
         let _post_download_permit = post_download_semaphore()
             .acquire()
             .await
             .expect("post-download semaphore shouldn't be closed this soon");
 
-        let response = response_head.bytes().await.map_err(network_error)?;
+        // Stream the response body through a gzip decoder while teeing
+        // the compressed bytes into an SHA-512 `IntegrityChecker`.
+        // Compared to the old "buffer-everything, hash, decompress"
+        // pipeline this removes one full pass over the compressed body
+        // (no separate `Integrity::check(&response)` call), never holds
+        // both the compressed and decompressed buffers at the same
+        // time, and lets decompression overlap with `await`s on the
+        // network. The blocking tar iterator still runs inside
+        // `spawn_blocking` below so per-file SHA-512 + CAFS writes
+        // stay off the reactor.
+        //
+        // Why we diverge from pnpm: upstream
+        // (`fetching/tarball-fetcher/src/remoteTarballFetcher.ts` +
+        // `worker/src/start.ts` + `store/cafs/src/addFilesFromTarball.ts`)
+        // buffers the whole tarball into a Node `SharedArrayBuffer`,
+        // then sequentially runs `crypto.hash`, `zlib.gunzipSync`, and
+        // a custom tar parser. Observable behavior is identical here:
+        // same integrity error on mismatch (same `ssri`-algorithm
+        // selection), same decompressed bytes, same CAFS layout, same
+        // `index.db` rows. Per AGENTS.md's "Internal performance
+        // divergence is allowed" clause, this topology is a pacquet-
+        // specific perf fix rather than a port of upstream shape.
+        let mut checker = IntegrityChecker::new(package_integrity.clone());
+        // Pre-size the decompressed sink when the registry reported an
+        // `unpackedSize`. On a miss the `Vec` grows geometrically.
+        let decompressed_sink = match package_unpacked_size {
+            Some(size) => Vec::with_capacity(size),
+            None => Vec::new(),
+        };
+        let mut decoder = GzipDecoder::new(decompressed_sink);
+        let mut body = response_head.bytes_stream();
+        while let Some(chunk) = body.next().await {
+            let chunk = chunk.map_err(network_error)?;
+            checker.input(&chunk);
+            decoder.write_all(&chunk).await.map_err(TarballError::DecodeGzip)?;
+        }
+        // `shutdown` finalizes the gzip stream: it flushes any
+        // still-buffered decompressed output into the inner `Vec` and
+        // rejects a truncated / malformed footer (CRC32 + ISIZE
+        // trailer) as an `io::Error`. Without this we could silently
+        // accept a cut-short tarball.
+        decoder.shutdown().await.map_err(TarballError::DecodeGzip)?;
+        let decompressed = decoder.into_inner();
 
         tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
+
+        // Verify the tee'd digest against the expected `Integrity`
+        // *before* we start writing any CAFS blobs. Matching pnpm's
+        // behavior: a mismatch here aborts the install for this
+        // tarball without touching the store.
+        checker.result().map_err(|error| {
+            TarballError::Checksum(VerifyChecksumError { url: package_url.to_string(), error })
+        })?;
+
+        tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
 
         // TODO: Cloning here is less than desirable, there are 2 possible solutions for this problem:
         // 1. Use an Arc and convert this line to Arc::clone.
         // 2. Replace ssri with base64 and serde magic (which supports Copy).
-        let package_integrity = package_integrity.clone();
+        let package_integrity_str = package_integrity.to_string();
         let package_id = package_id.to_string();
 
-        #[derive(Debug, From)]
-        enum TaskError {
-            Checksum(ssri::Error),
-            Other(TarballError),
-        }
-        // Run the whole post-download pipeline on the blocking pool. The
-        // body is a dense mix of CPU-bound work (SHA-512 over the full
-        // tarball, gzip inflate, per-file SHA-512) and blocking I/O
-        // (`write_cas_file`). Running it as a plain `tokio::task::spawn`
-        // pinned a tokio reactor worker for the entirety of each tarball
-        // — on a 2-core runner that meant at most two tarballs could
-        // make progress at a time, and the tail of large packages
-        // missed the CI step budget even though the network side was
-        // long done. `spawn_blocking` uses tokio's dedicated
-        // blocking-thread pool instead, so the tail drains in parallel.
-        // The store-index row handoff at the end stays non-blocking
-        // (`StoreIndexWriter::queue`, #265), so the closure itself does
-        // no SQLite work. Concurrency is already capped by the
-        // `_post_download_permit` acquired above.
-        let cas_paths =
-            tokio::task::spawn_blocking(move || -> Result<HashMap<String, PathBuf>, TaskError> {
-                package_integrity.check(&response).map_err(TaskError::Checksum)?;
-
+        // Tar iteration is a mix of CPU work (per-file SHA-512) and
+        // blocking I/O (`write_cas_file`). Running it as a plain
+        // `tokio::task::spawn` pinned a tokio reactor worker for the
+        // entirety of each tarball — on a 2-core runner that meant at
+        // most two tarballs could make progress at a time, and the
+        // tail of large packages missed the CI step budget even though
+        // the network side was long done. `spawn_blocking` uses
+        // tokio's dedicated blocking-thread pool instead, so the tail
+        // drains in parallel. The store-index row handoff at the end
+        // stays non-blocking (`StoreIndexWriter::queue`, #265), so
+        // the closure itself does no SQLite work. Concurrency is
+        // already capped by the `_post_download_permit` acquired
+        // above.
+        let cas_paths = tokio::task::spawn_blocking(
+            move || -> Result<HashMap<String, PathBuf>, TarballError> {
                 // TODO: test the duplication of entries
 
                 // Extract the tarball in a scope so the decompressed
-                // buffer + `tar::Archive` are released before the SQLite
-                // write — on large packages the inflated bytes can be
-                // multiple MB, and with hundreds of concurrent blocking
-                // tasks that memory adds up fast.
+                // buffer + `tar::Archive` are released before the
+                // store-index handoff — on large packages the inflated
+                // bytes can be multiple MB, and with hundreds of
+                // concurrent blocking tasks that memory adds up fast.
                 let (cas_paths, pkg_files_idx) = {
-                    let mut archive = decompress_gzip(&response, package_unpacked_size)
-                        .map_err(TaskError::Other)?
-                        .pipe(Cursor::new)
-                        .pipe(Archive::new);
+                    let mut archive = decompressed.pipe(Cursor::new).pipe(Archive::new);
                     extract_tarball_entries(&mut archive, store_dir)?
                 };
 
                 // Hand the per-tarball files index off to the shared
                 // writer task from #265. `queue` is a non-blocking
-                // `UnboundedSender::send` — no SQLite work on this thread,
-                // just a channel push; the writer task owns one
-                // connection and batches whatever it drains in one
-                // `BEGIN IMMEDIATE; … ; COMMIT`. `None` means the writer
-                // failed to open or the caller handed us none — the row
-                // is dropped with a `warn!` and the next install misses
-                // on this cache key, matching the read path's stance.
-                let index_key = store_index_key(&package_integrity.to_string(), &package_id);
+                // `UnboundedSender::send` — no SQLite work on this
+                // thread, just a channel push; the writer task owns
+                // one connection and batches whatever it drains in
+                // one `BEGIN IMMEDIATE; … ; COMMIT`. `None` means the
+                // writer failed to open or the caller handed us none
+                // — the row is dropped with a `warn!` and the next
+                // install misses on this cache key, matching the
+                // read path's stance.
+                let index_key = store_index_key(&package_integrity_str, &package_id);
                 if let Some(writer) = store_index_writer {
                     writer.queue(index_key, pkg_files_idx);
                 } else {
@@ -575,18 +634,10 @@ impl<'a> DownloadTarballToStore<'a> {
                 }
 
                 Ok(cas_paths)
-            })
-            .await
-            .map_err(TarballError::TaskJoin)?
-            .map_err(|error| match error {
-                TaskError::Checksum(error) => TarballError::Checksum(VerifyChecksumError {
-                    url: package_url.to_string(),
-                    error,
-                }),
-                TaskError::Other(error) => error,
-            })?;
-
-        tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
+            },
+        )
+        .await
+        .map_err(TarballError::TaskJoin)??;
 
         Ok(cas_paths)
     }

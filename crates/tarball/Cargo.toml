@@ -16,19 +16,21 @@ pacquet-fs          = { workspace = true }
 pacquet-network     = { workspace = true }
 pacquet-store-dir   = { workspace = true }
 
-dashmap      = { workspace = true }
-derive_more  = { workspace = true }
-miette       = { workspace = true }
-num_cpus     = { workspace = true }
-pipe-trait   = { workspace = true }
-reqwest      = { workspace = true }
-serde        = { workspace = true }
-serde_json   = { workspace = true }
-ssri         = { workspace = true }
-tar          = { workspace = true }
-tokio        = { workspace = true }
-tracing      = { workspace = true }
-zune-inflate = { workspace = true }
+async-compression = { workspace = true }
+dashmap           = { workspace = true }
+derive_more       = { workspace = true }
+futures-util      = { workspace = true }
+miette            = { workspace = true }
+num_cpus          = { workspace = true }
+pipe-trait        = { workspace = true }
+reqwest           = { workspace = true }
+serde             = { workspace = true }
+serde_json        = { workspace = true }
+sha2              = { workspace = true }
+ssri              = { workspace = true }
+tar               = { workspace = true }
+tokio             = { workspace = true }
+tracing           = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

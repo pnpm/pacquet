@@ -31,6 +31,7 @@ pacquet-store-dir        = { path = "crates/store-dir" }
 pacquet-registry-mock = { path = "tasks/registry-mock" }
 
 # Dependencies
+async-compression  = { version = "0.4.41", features = ["tokio", "gzip"] }
 async-recursion    = { version = "1.1.1" }
 clap               = { version = "4", features = ["derive", "string"] }
 command-extra      = { version = "1.0.0" }
@@ -47,7 +48,7 @@ num_cpus           = { version = "1.17.0" }
 os_display         = { version = "0.1.4" }
 reflink-copy       = { version = "0.1.29" }
 junction           = { version = "1.4.2" }
-reqwest            = { version = "0.13", default-features = false, features = ["json", "native-tls-vendored"] }
+reqwest            = { version = "0.13", default-features = false, features = ["json", "native-tls-vendored", "stream"] }
 node-semver        = { version = "2.2.0" }
 pipe-trait         = { version = "0.4.0" }
 portpicker         = { version = "0.1.1" }
@@ -70,7 +71,6 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tokio              = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 walkdir            = { version = "2.5.0" }
 which              = { version = "8.0.2" }
-zune-inflate       = { version = "0.2.54" }
 
 # Dev dependencies
 assert_cmd        = { version = "2.2.1" }
