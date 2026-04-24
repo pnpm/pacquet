@@ -70,12 +70,28 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
         // failure here is degraded to a `warn!` — the lazy per-shard
         // fallback inside `StoreDir::write_cas_file` will still mkdir
         // on demand, matching pnpm's `writeFile.ts` `dirs` Set.
-        if let Err(error) = tokio::task::spawn_blocking(move || store_dir.init()).await {
-            tracing::warn!(
-                target: "pacquet::install",
-                ?error,
-                "store-dir init task failed; continuing — write-side lazy mkdir fallback will handle it",
-            );
+        //
+        // Two error layers to handle separately: an outer `JoinError`
+        // means the blocking task panicked or was cancelled; an inner
+        // `io::Error` means `StoreDir::init` itself failed (permission
+        // denied, disk full, …). Both get the same warning so they
+        // stay diagnosable.
+        match tokio::task::spawn_blocking(move || store_dir.init()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    target: "pacquet::install",
+                    ?error,
+                    "store-dir init failed; continuing — write-side lazy mkdir fallback will handle it",
+                );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "pacquet::install",
+                    ?error,
+                    "store-dir init task panicked or was cancelled; continuing — write-side lazy mkdir fallback will handle it",
+                );
+            }
         }
 
         // Open the read-only SQLite index once per install, shared across

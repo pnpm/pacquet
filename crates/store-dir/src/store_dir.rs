@@ -111,36 +111,45 @@ impl StoreDir {
         self.v11().join("tmp")
     }
 
-    /// Eagerly create `<store>/v11/files/` plus every `files/XX/` shard
-    /// (00..ff). Ports pnpm's
-    /// [`initStore`](https://github.com/pnpm/pnpm/blob/main/worker/src/start.ts)
-    /// worker routine and its gating check in
-    /// [`createPackageStore`](https://github.com/pnpm/pnpm/blob/main/store/package-store/src/storeController/index.ts):
-    /// when `files/` doesn't exist yet, we create all 256 shards up front
-    /// so CAFS writes never pay a `create_dir_all` syscall in the hot
-    /// path. When `files/` already exists we assume the layout is intact
-    /// and just seed the shard cache so the write-side fast path
-    /// applies immediately.
+    /// On a fresh store, eagerly create `<store>/v11/files/` plus every
+    /// `files/XX/` shard (00..ff) and seed the shard cache with the
+    /// bytes we just created, so CAFS writes never pay a
+    /// `create_dir_all` syscall in the hot path.
+    ///
+    /// Gated by an `exists()` check on `files/` so we only run when the
+    /// store is truly fresh — matches pnpm's
+    /// [`createPackageStore`](https://github.com/pnpm/pnpm/blob/main/store/package-store/src/storeController/index.ts)
+    /// guard (`if !fs.existsSync(path.join(storeDir, 'files')) initStoreDir(...)`).
+    /// On a warm store this is a single stat and we return `Ok(())`
+    /// without seeding the cache: a store created by an older pacquet
+    /// that only lazily materialized shards might not have every
+    /// `files/XX/` on disk, and pre-seeding the cache would let a later
+    /// `write_cas_file` skip `ensure_parent_dir` and then fail at
+    /// `open` with `NotFound`. Leaving the cache empty on warm store
+    /// lets the lazy mkdir fallback inside
+    /// [`StoreDir::write_cas_file`] populate it per shard on first
+    /// write — the same shape pnpm uses via `writeFile.ts`'s `dirs`
+    /// Set.
     ///
     /// Errors from individual shard mkdirs are ignored when the error is
     /// [`AlreadyExists`][std::io::ErrorKind::AlreadyExists] — matching
     /// pnpm's try/catch per shard, which treats a parallel process
     /// racing the same layout as benign. Other errors propagate; the
     /// caller degrades them to a warning and falls back to the per-
-    /// write lazy mkdir in [`StoreDir::write_cas_file`].
+    /// write lazy mkdir.
     pub fn init(&self) -> std::io::Result<()> {
         let files = self.files();
-        let already_exists = files.exists();
+        if files.exists() {
+            return Ok(());
+        }
         std::fs::create_dir_all(&files)?;
         for shard in 0u8..=255 {
             // Two-char lowercase hex keyed off the first byte of the
             // sha512 digest, matching `StoreDir::file_path_by_hex_str`.
             let shard_dir = files.join(format!("{shard:02x}"));
-            if !already_exists {
-                if let Err(error) = std::fs::create_dir(&shard_dir) {
-                    if error.kind() != std::io::ErrorKind::AlreadyExists {
-                        return Err(error);
-                    }
+            if let Err(error) = std::fs::create_dir(&shard_dir) {
+                if error.kind() != std::io::ErrorKind::AlreadyExists {
+                    return Err(error);
                 }
             }
             self.mark_shard_ensured(shard);
@@ -196,23 +205,25 @@ mod tests {
         }
     }
 
-    /// `init` on a store where `files/` already exists should skip the
-    /// per-shard mkdir work and just seed the cache — pnpm's gating
-    /// `existsSync` check. A later out-of-band removal of a shard
-    /// would still resolve at write time via the lazy fallback in
-    /// `write_cas_file`, so we don't verify every shard dir here —
-    /// only that init doesn't re-create anything it doesn't have to
-    /// and that the cache is primed.
+    /// `init` on a store where `files/` already exists must be a
+    /// near-noop: don't re-create anything, don't seed the cache. A
+    /// store created by an older pacquet might be missing shard dirs
+    /// we never materialized, and pre-seeding the cache in that case
+    /// would let `write_cas_file` skip `ensure_parent_dir` and blow up
+    /// at `open`. Leaving the cache empty keeps the lazy fallback in
+    /// `write_cas_file` responsible for materializing each shard the
+    /// first time it's written, matching pnpm's `writeFile.ts` `dirs`
+    /// Set.
     #[test]
-    fn init_warm_store_seeds_cache_without_recreating_shards() {
+    fn init_warm_store_is_noop_and_leaves_cache_empty() {
         use tempfile::tempdir;
 
         let tempdir = tempdir().unwrap();
         let files = tempdir.path().join("v11/files");
         std::fs::create_dir_all(&files).unwrap();
-        // Create a sentinel inside a shard so we can prove init didn't
-        // wipe or race-recreate it; plain `mkdir` of an existing dir
-        // would fail anyway (EEXIST), but an aggressive port could
+        // Plant a sentinel inside a pre-existing shard so we can prove
+        // init didn't wipe or re-create it. Plain `mkdir` of an existing
+        // dir would fail anyway (EEXIST), but an aggressive port could
         // accidentally `remove_dir_all` + recreate, so pin the
         // invariant.
         let shard = files.join("00");
@@ -225,8 +236,8 @@ mod tests {
         assert!(shard.join("sentinel").is_file(), "pre-existing shard content must survive init");
         for shard in 0u8..=255 {
             assert!(
-                store.shard_already_ensured(shard),
-                "shard {shard:02x} must be marked ensured even on warm store"
+                !store.shard_already_ensured(shard),
+                "shard {shard:02x} must NOT be marked ensured on warm-store init — the cache is populated lazily from write_cas_file"
             );
         }
     }
