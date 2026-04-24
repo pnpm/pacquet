@@ -109,16 +109,17 @@ pub fn check_pkg_files_integrity(store_dir: &StoreDir, entry: PackageFilesIndex)
     let mut all_verified = true;
     let mut files_map = HashMap::with_capacity(files.len());
     // pnpm's `verifiedFilesCache: Set<string>` dedups within a single
-    // entry. Two different in-tarball filenames can point at the same
-    // CAFS blob (hash-collision-less dedup), so caching by digest spares
-    // the second stat.
+    // entry so two in-tarball filenames pointing at the same CAFS blob
+    // cost one stat, not two.
     //
-    // Owned `String` instead of `&str` because we move the `filename`
-    // into `files_map` at the end of each iteration, and the `info`
-    // (which owned the digest) gets consumed by `verify_file` by
-    // reference — once the iteration advances, any borrow into `info`
-    // is invalidated.
-    let mut verified: HashSet<String> = HashSet::new();
+    // Key the set by the resolved CAFS path, not by `info.digest`. The
+    // path factors in `info.mode` (via `-exec` suffix for executables
+    // in `cas_file_path_by_mode`), so the same content digest can
+    // legitimately appear under two distinct on-disk paths when the
+    // tarball ships it with different executable bits. Digest-only
+    // dedup would skip verifying the second path and happily return
+    // `passed: true` with a stale / missing blob still on disk.
+    let mut verified: HashSet<PathBuf> = HashSet::new();
     for (filename, info) in files {
         let Some(path) = store_dir.cas_file_path_by_mode(&info.digest, info.mode) else {
             tracing::debug!(
@@ -130,14 +131,12 @@ pub fn check_pkg_files_integrity(store_dir: &StoreDir, entry: PackageFilesIndex)
             all_verified = false;
             continue;
         };
-        if !verified.contains(info.digest.as_str()) {
+        if !verified.contains(&path) {
             if verify_file(&path, &filename, &info, &algo) {
-                // One digest clone per unique CAFS blob we actually
-                // verified; zero for dedup hits. On a 1352-snapshot
-                // install that's an extra allocation per *unique*
-                // blob, not per *filename* — strictly better than the
-                // old per-filename clone.
-                verified.insert(info.digest);
+                // One `PathBuf` clone per unique CAFS path we actually
+                // verified; zero for dedup hits. Strictly better than
+                // the per-filename clone the borrow-based version had.
+                verified.insert(path.clone());
             } else {
                 all_verified = false;
             }
@@ -443,6 +442,39 @@ mod tests {
         let result = check_pkg_files_integrity(&store_dir, entry);
         assert!(result.passed);
         assert_eq!(result.files_map.len(), 2);
+    }
+
+    /// Same digest with different `mode` resolves to two distinct CAFS
+    /// paths (`<hex>` vs `<hex>-exec`). Keying dedup by digest alone
+    /// would skip verifying the second path — this test plants only
+    /// the non-exec half and asserts the install still fails
+    /// verification, forcing a re-fetch, instead of returning
+    /// `passed: true` with a missing exec blob.
+    #[test]
+    fn careful_path_dedups_per_resolved_path_not_per_digest() {
+        let tmp = tempdir().unwrap();
+        let store_dir = StoreDir::new(tmp.path());
+        let content = b"polymode";
+        let digest = sha512_hex(content);
+        // Plant the non-exec variant only; leave the exec path missing.
+        let non_exec_path = plant_cafs_file(&store_dir, &digest, 0o644, content);
+        let exec_path = store_dir.cas_file_path_by_mode(&digest, 0o755).unwrap();
+        assert!(!exec_path.exists());
+        assert_ne!(non_exec_path, exec_path);
+
+        let future = now_ms() + 3_600_000;
+        let entry = index_with(
+            "sha512",
+            vec![
+                ("lib.js", info(&digest, content.len() as u64, 0o644, Some(future))),
+                ("bin/app", info(&digest, content.len() as u64, 0o755, Some(future))),
+            ],
+        );
+        let result = check_pkg_files_integrity(&store_dir, entry);
+        assert!(
+            !result.passed,
+            "same digest + different mode = different CAFS path; missing exec blob must fail",
+        );
     }
 
     /// Unknown algorithm in the row → treat as verification failure,

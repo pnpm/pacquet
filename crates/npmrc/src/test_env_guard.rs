@@ -21,6 +21,7 @@
 //! `cargo nextest run` alike.
 use std::{
     env,
+    ffi::OsString,
     sync::{Mutex, MutexGuard, OnceLock},
 };
 
@@ -36,7 +37,12 @@ fn env_mutex() -> &'static Mutex<()> {
 /// lock for that lifetime.
 #[must_use = "the guard must be held until the test ends"]
 pub struct EnvGuard {
-    saved: Vec<(&'static str, Option<String>)>,
+    // `OsString` so non-UTF-8 values round-trip. `env::var` returns
+    // `Err(NotUnicode)` for those and would silently coerce to "absent"
+    // here — then `Drop` would `remove_var` a variable the user
+    // actually had set, clobbering CI / shell state. `env::var_os` +
+    // `OsString` preserves the raw bytes.
+    saved: Vec<(&'static str, Option<OsString>)>,
     // Released on drop, last. Ignore the poison case: if another
     // env-mutating test panicked while holding the lock, the env vars
     // it touched were restored by *its* guard's `Drop` before the
@@ -55,7 +61,7 @@ impl EnvGuard {
         I: IntoIterator<Item = &'static str>,
     {
         let lock = env_mutex().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let saved = vars.into_iter().map(|name| (name, env::var(name).ok())).collect();
+        let saved = vars.into_iter().map(|name| (name, env::var_os(name))).collect();
         EnvGuard { saved, _lock: lock }
     }
 }
