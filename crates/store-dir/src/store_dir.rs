@@ -116,27 +116,31 @@ impl StoreDir {
     /// bytes we just created, so CAFS writes never pay a
     /// `create_dir_all` syscall in the hot path.
     ///
-    /// Gated by an `exists()` check on `files/` so we only run when the
-    /// store is truly fresh — matches pnpm's
+    /// Gated by an `is_dir()` check on `files/` so we only run when the
+    /// store is truly fresh — spiritually matches pnpm's
     /// [`createPackageStore`](https://github.com/pnpm/pnpm/blob/main/store/package-store/src/storeController/index.ts)
-    /// guard (`if !fs.existsSync(path.join(storeDir, 'files')) initStoreDir(...)`).
-    /// On a warm store this is a single stat and we return `Ok(())`
-    /// without seeding the cache: a store created by an older pacquet
-    /// that only lazily materialized shards might not have every
-    /// `files/XX/` on disk, and pre-seeding the cache would let a later
-    /// `write_cas_file` skip `ensure_parent_dir` and then fail at
-    /// `open` with `NotFound`. Leaving the cache empty on warm store
-    /// lets the lazy mkdir fallback inside
+    /// guard (`if !fs.existsSync(path.join(storeDir, 'files')) initStoreDir(...)`),
+    /// but tightened from `exists()` to `is_dir()` so a non-directory
+    /// entry at `files/` doesn't let `init` silently noop past store
+    /// corruption. On a warm store this is a single stat and we
+    /// return `Ok(())` without seeding the cache: a store created by
+    /// an older pacquet that only lazily materialized shards might
+    /// not have every `files/XX/` on disk, and pre-seeding the cache
+    /// would let a later `write_cas_file` skip `ensure_parent_dir`
+    /// and then fail at `open` with `NotFound`. Leaving the cache
+    /// empty on warm store lets the lazy mkdir fallback inside
     /// [`StoreDir::write_cas_file`] populate it per shard on first
     /// write — the same shape pnpm uses via `writeFile.ts`'s `dirs`
     /// Set.
     ///
     /// Errors from individual shard mkdirs are ignored when the error is
-    /// [`AlreadyExists`][std::io::ErrorKind::AlreadyExists] — matching
-    /// pnpm's try/catch per shard, which treats a parallel process
-    /// racing the same layout as benign. Other errors propagate; the
-    /// caller degrades them to a warning and falls back to the per-
-    /// write lazy mkdir.
+    /// [`AlreadyExists`][std::io::ErrorKind::AlreadyExists] **and** the
+    /// existing entry is actually a directory — matching pnpm's
+    /// try/catch per shard, which treats a parallel process racing
+    /// the same layout as benign, but *not* silently accepting a
+    /// regular file or symlink squatting on the shard path. Other
+    /// errors propagate; the caller degrades them to a warning and
+    /// falls back to the per-write lazy mkdir.
     pub fn init(&self) -> std::io::Result<()> {
         let files = self.files();
         // `is_dir()` rather than `exists()`: if `files` is present but
@@ -158,6 +162,23 @@ impl StoreDir {
             if let Err(error) = std::fs::create_dir(&shard_dir) {
                 if error.kind() != std::io::ErrorKind::AlreadyExists {
                     return Err(error);
+                }
+                // `AlreadyExists` is benign only when the existing
+                // entry is itself a directory — a parallel pnpm
+                // or pacquet process racing the same layout is
+                // fine. A regular file or non-dir symlink squatting
+                // on the shard path, on the other hand, would make
+                // `mark_shard_ensured` a lie and punt the failure
+                // to a much less actionable `open` error inside
+                // the per-file CAFS write. Reject upfront.
+                if !shard_dir.is_dir() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::AlreadyExists,
+                        format!(
+                            "CAFS shard path {} exists but is not a directory",
+                            shard_dir.display(),
+                        ),
+                    ));
                 }
             }
             self.mark_shard_ensured(shard);
