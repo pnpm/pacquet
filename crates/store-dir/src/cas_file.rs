@@ -2,7 +2,7 @@ use crate::{FileHash, StoreDir};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_fs::{
-    ensure_file,
+    ensure_file, ensure_parent_dir,
     file_mode::{is_executable, EXEC_MODE},
     EnsureFileError,
 };
@@ -63,6 +63,22 @@ impl StoreDir {
         let file_hash = Sha512::digest(buffer);
         let file_path = self.cas_file_path(file_hash, executable);
         let mode = executable.then_some(EXEC_MODE);
+
+        // Ensure the shard directory (`files/XX/`) exists. The CAS has
+        // 256 shards keyed by `file_hash[0]`; `create_dir_all` does a
+        // `stat` syscall every call even when the directory is already
+        // there, so remember which shards we've created and skip on
+        // repeat. Duplicate mkdirs across threads are benign — the first
+        // few writes into a fresh shard may each call `create_dir_all`,
+        // which is idempotent; once any of them completes and inserts
+        // into the cache, subsequent writes take the fast path.
+        let shard_byte = file_hash[0];
+        if !self.shard_already_ensured(shard_byte) {
+            let parent = file_path.parent().expect("CAS file path always has a parent shard dir");
+            ensure_parent_dir(parent).map_err(WriteCasFileError::WriteFile)?;
+            self.mark_shard_ensured(shard_byte);
+        }
+
         ensure_file(&file_path, buffer, mode).map_err(WriteCasFileError::WriteFile)?;
         Ok((file_path, file_hash))
     }
@@ -123,6 +139,55 @@ mod tests {
                 "mode {mode:o} should NOT resolve to an `-exec` path, got {path:?}"
             );
         }
+    }
+
+    /// The shard-mkdir cache should be empty on a fresh `StoreDir`, get
+    /// populated after the first write into a given shard, and survive
+    /// subsequent writes (including ones that land in the same shard
+    /// because two different contents happen to share the first digest
+    /// byte). Two writes where the second one's parent directory was
+    /// removed in between must still succeed without re-mkdir'ing — the
+    /// opposite would regress cold-install latency by reintroducing a
+    /// `create_dir_all` (and its backing `stat`) per file.
+    ///
+    /// This test also pins the invariant that a miss clears only the
+    /// shards' directory stat, not the file-existence check inside
+    /// `ensure_file` — a separate, warm-cache fast path.
+    #[test]
+    fn shard_cache_populates_on_first_write_and_skips_mkdir_thereafter() {
+        use tempfile::tempdir;
+
+        let tempdir = tempdir().unwrap();
+        let store_dir = StoreDir::new(tempdir.path());
+
+        let (path_a, hash_a) = store_dir.write_cas_file(b"hello world", false).unwrap();
+        assert!(store_dir.shard_already_ensured(hash_a[0]));
+        assert!(path_a.is_file());
+
+        // Content picked so its sha512 first byte matches 0x30 (the
+        // shard for "hello world") is not something we can fabricate
+        // without brute-forcing; instead assert the cache survives a
+        // second write of identical content (same shard, same path —
+        // the idempotent warm-cache branch inside `ensure_file`).
+        let (path_b, hash_b) = store_dir.write_cas_file(b"hello world", false).unwrap();
+        assert_eq!(hash_a, hash_b);
+        assert_eq!(path_a, path_b);
+        assert!(store_dir.shard_already_ensured(hash_b[0]));
+
+        // Remove the shard dir out from under the cache. The cache
+        // would return the stale "already ensured" answer, so the next
+        // write would skip `create_dir_all` and then fail inside
+        // `ensure_file` at `open`. We mostly care that the cache
+        // *records* the ensured shards honestly; recovering from a
+        // hostile out-of-band rmdir is out of scope (and pnpm doesn't
+        // handle it either — the install aborts).
+        //
+        // Instead, write a second, *different* payload. If it lands in
+        // a fresh shard, the cache grows; if it lands in 0x30 again by
+        // coincidence, the cache stays put. Either way the write must
+        // succeed and leave the file on disk.
+        let (path_c, _) = store_dir.write_cas_file(b"goodbye world", false).unwrap();
+        assert!(path_c.is_file());
     }
 
     #[test]

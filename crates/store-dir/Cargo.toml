@@ -13,6 +13,7 @@ repository.workspace = true
 [dependencies]
 pacquet-fs = { workspace = true }
 
+dashmap     = { workspace = true }
 derive_more = { workspace = true }
 miette      = { workspace = true }
 rmp-serde   = { workspace = true }

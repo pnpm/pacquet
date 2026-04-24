@@ -70,6 +70,23 @@ impl<'a> CreateVirtualStore<'a> {
         // surface the error at `warn!` so a silent task panic or
         // cancellation is still diagnosable in the log.
         let store_dir: &'static _ = &config.store_dir;
+
+        // Eagerly create `files/00..ff` under the v11 store root so per-
+        // tarball CAFS writes never pay a `create_dir_all` syscall on the
+        // hot path. Ports pnpm's `initStore` in
+        // `worker/src/start.ts`, gated by the same `files/` existence
+        // check (`StoreDir::init` handles the gating internally). Any
+        // failure here is degraded to a `warn!` — the lazy per-shard
+        // fallback inside `StoreDir::write_cas_file` will still mkdir
+        // on demand, matching pnpm's `writeFile.ts` `dirs` Set.
+        if let Err(error) = tokio::task::spawn_blocking(move || store_dir.init()).await {
+            tracing::warn!(
+                target: "pacquet::install",
+                ?error,
+                "store-dir init task failed; continuing — write-side lazy mkdir fallback will handle it",
+            );
+        }
+
         let store_index =
             match tokio::task::spawn_blocking(move || StoreIndex::shared_readonly_in(store_dir))
                 .await
