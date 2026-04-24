@@ -172,13 +172,16 @@ impl WorkEnv {
         }
     }
 
-    fn benchmark(&self) {
-        // hyperfine runs `--prepare` before *each* timed invocation, so
-        // cleanup must cover every bench dir we're about to measure.
-        // Previously this only wiped the pacquet revisions — if
-        // `--with-pnpm` was set, pnpm's `node_modules` survived between
-        // iterations, and after the warmup pnpm just hit a no-op
-        // "already installed" code path instead of doing real work.
+    /// Shell command that wipes every measured bench dir's
+    /// `node_modules` + `store-dir`. Hyperfine uses this as its
+    /// `--prepare` so every timed iteration starts from a cold install,
+    /// and `prewarm()` uses the same command to match.
+    ///
+    /// Covers every id we'll benchmark — pacquet revisions plus pnpm
+    /// when `--with-pnpm` is set. Dropping pnpm from the cleanup once
+    /// let it hit a no-op "already installed" code path on every run
+    /// after warmup; keep them symmetric.
+    fn cleanup_command(&self) -> String {
         let cleanup_targets = self
             .revision_ids()
             .chain(self.with_pnpm.then_some(WorkEnv::PNPM))
@@ -186,7 +189,42 @@ impl WorkEnv {
             .flat_map(|dir| [dir.join("node_modules"), dir.join("store-dir")])
             .map(|path| path.maybe_quote().to_string())
             .join(" ");
-        let cleanup_command = format!("rm -rf {cleanup_targets}");
+        format!("rm -rf {cleanup_targets}")
+    }
+
+    /// Run each benchmarked install once before hyperfine starts.
+    ///
+    /// Hyperfine runs its measured commands sequentially (no per-
+    /// iteration interleaving) with only `--warmup 1` between them,
+    /// which means the second-listed command's measured runs always
+    /// start from a state already warmed by the first command's 10
+    /// measured runs — OS page cache, verdaccio on-disk cache,
+    /// registry-mock in-memory state, etc. That systematic bias
+    /// makes the second-listed command look slightly faster in every
+    /// PR (typically 1-3%) even when the code difference is zero.
+    ///
+    /// A dedicated prewarm pass in front of hyperfine puts every
+    /// install path through the full fetch / decompress / CAFS-write
+    /// cycle once, so by the time hyperfine's first `--warmup 1`
+    /// fires, the shared state is already primed and the ordering
+    /// advantage is gone.
+    fn prewarm(&self) {
+        eprintln!("Pre-warming before hyperfine...");
+        let cleanup_command = self.cleanup_command();
+        let ids: Vec<_> =
+            self.revision_ids().chain(self.with_pnpm.then_some(WorkEnv::PNPM)).collect();
+        for id in &ids {
+            eprintln!("Pre-warm: {id}");
+            Command::new("bash").arg("-c").arg(&cleanup_command).pipe_mut(executor("cleanup"));
+            Command::new("bash").arg(self.script_path(*id)).pipe_mut(executor("prewarm install"));
+        }
+        // Final cleanup so hyperfine's first `--prepare` doesn't
+        // surface any state we leaked.
+        Command::new("bash").arg("-c").arg(&cleanup_command).pipe_mut(executor("cleanup"));
+    }
+
+    fn benchmark(&self) {
+        let cleanup_command = self.cleanup_command();
 
         let mut command = Command::new("hyperfine");
         command.current_dir(self.root()).arg("--prepare").arg(&cleanup_command);
@@ -209,6 +247,7 @@ impl WorkEnv {
     pub fn run(&self) {
         self.init();
         self.build();
+        self.prewarm();
         self.benchmark();
     }
 }
