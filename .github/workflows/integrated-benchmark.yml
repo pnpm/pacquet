@@ -127,15 +127,8 @@ jobs:
         # so the step log captures traces / profile output / panics
         # inline with each run. Essential for diagnosing a hang on CI
         # where we can't attach a debugger.
-        # Diagnostic: swap `HEAD main` → `main HEAD` to test whether
-        # the "second-listed command wins by 1-3%" pattern we've seen
-        # across PRs is hyperfine ordering bias or real code overhead.
-        # If this run shows HEAD winning, it's bias and we should
-        # randomize the order in a follow-up; if main still wins, the
-        # PR has a real regression and we dig further. Temporary edit
-        # for PR #278, revert once the signal is unambiguous.
         run: |
-          just integrated-benchmark --show-output --scenario=frozen-lockfile --verdaccio --with-pnpm main HEAD
+          just integrated-benchmark --show-output --scenario=frozen-lockfile --verdaccio --with-pnpm HEAD main
           cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.md
           cp bench-work-env/BENCHMARK_REPORT.json bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.json
 
