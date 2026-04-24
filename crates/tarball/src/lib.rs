@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     io::{Cursor, Read},
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::UNIX_EPOCH,
 };
 
@@ -18,9 +18,25 @@ use pacquet_store_dir::{
 use pipe_trait::Pipe;
 use ssri::Integrity;
 use tar::Archive;
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::{Notify, RwLock, Semaphore};
 use tracing::instrument;
 use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
+
+/// Cap on concurrent post-download tarball work (SHA-512 of the whole
+/// tarball + gzip inflate + per-file SHA-512 + CAFS writes). The body is
+/// CPU-bound with some blocking FS I/O, and putting it on
+/// `tokio::task::spawn_blocking` makes the default 512-thread blocking
+/// pool available — but async fan-out across `try_join_all` routinely
+/// fires hundreds of these at once on a 1352-snapshot install, which
+/// thrashes small CI runners. Past "Download completed" a 2-CPU GitHub
+/// Actions runner wedged between decompress-close and `Checksum verified`
+/// on #269 until the step timeout. `num_cpus * 2` (floor 4) keeps enough
+/// work in flight to overlap per-file FS writes with SHA on another task
+/// without oversubscribing the cores.
+fn post_download_semaphore() -> &'static Semaphore {
+    static SEM: OnceLock<Semaphore> = OnceLock::new();
+    SEM.get_or_init(|| Semaphore::new(num_cpus::get().saturating_mul(2).max(4)))
+}
 
 #[derive(Debug, Display, Error, Diagnostic)]
 #[display("Failed to fetch {url}: {error}")]
@@ -341,6 +357,17 @@ impl<'a> DownloadTarballToStore<'a> {
         // The store-index row handoff at the end stays non-blocking
         // (`StoreIndexWriter::queue`, #265), so the closure itself does
         // no SQLite work.
+        //
+        // Gate the in-flight count with `post_download_semaphore` — the
+        // blocking pool is 512-wide by default, which is right for I/O
+        // wait but disastrous for CPU work that can only really run
+        // `num_cpus` at a time. The permit is held across the
+        // `spawn_blocking.await` below (it drops naturally at end of
+        // scope) so no task enters the body until one is free.
+        let _post_download_permit = post_download_semaphore()
+            .acquire()
+            .await
+            .expect("post-download semaphore shouldn't be closed this soon");
         let cas_paths =
             tokio::task::spawn_blocking(move || -> Result<HashMap<String, PathBuf>, TaskError> {
                 package_integrity.check(&response).map_err(TaskError::Checksum)?;
@@ -468,7 +495,7 @@ impl<'a> DownloadTarballToStore<'a> {
                 Ok(cas_paths)
             })
             .await
-            .expect("tarball-processing blocking task panicked")
+            .map_err(TarballError::TaskJoin)?
             .map_err(|error| match error {
                 TaskError::Checksum(error) => TarballError::Checksum(VerifyChecksumError {
                     url: package_url.to_string(),
