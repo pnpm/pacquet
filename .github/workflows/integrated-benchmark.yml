@@ -121,7 +121,7 @@ jobs:
       #   run: |
       #     just integrated-benchmark --scenario=clean-install --verdaccio --with-pnpm HEAD main
       #     cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_CLEAN_INSTALL.md
-      #     cp bench-work-env/BENCHMARK_REPORT.json bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.json
+      #     cp bench-work-env/BENCHMARK_REPORT.json bench-work-env/BENCHMARK_REPORT_CLEAN_INSTALL.json
 
       - name: Generate summary
         shell: bash
