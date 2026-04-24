@@ -3,3 +3,8 @@ storeDir: ./store-dir
 allowBuilds:
   core-js: false
   es5-ext: false
+  # macOS-only optional dep. Absent on Linux (where CI runs), present
+  # on developer macOS machines — without this entry pnpm exits 1 with
+  # `ERR_PNPM_IGNORED_BUILDS` on the first warmup run, taking the
+  # whole benchmark down. Harmless no-op on Linux.
+  fsevents: false
