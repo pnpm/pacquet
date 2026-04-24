@@ -1,4 +1,4 @@
-use crate::{create_cas_files, create_symlink_layout, CreateCasFilesError};
+use crate::{create_cas_files, create_symlink_layout, CreateCasFilesError, SymlinkPackageError};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::{PackageKey, SnapshotEntry};
@@ -9,7 +9,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// This subroutine installs the files from [`cas_paths`](Self::cas_paths) then creates the symlink layout.
+/// This subroutine creates the virtual-store slot for one package and then
+/// runs the two post-extraction tasks — CAS file import and intra-package
+/// symlink creation — in parallel via `rayon::join`.
+///
+/// Symlinks don't depend on CAS file contents, only on the resolved dep graph,
+/// so overlapping them with the import saves the serial symlink time per
+/// snapshot (~1-3 ms). Across a big lockfile those savings stack up on the
+/// install's critical-path tail.
 #[must_use]
 pub struct CreateVirtualDirBySnapshot<'a> {
     pub virtual_store_dir: &'a Path,
@@ -32,6 +39,9 @@ pub enum CreateVirtualDirError {
 
     #[diagnostic(transparent)]
     CreateCasFiles(#[error(source)] CreateCasFilesError),
+
+    #[diagnostic(transparent)]
+    SymlinkPackage(#[error(source)] SymlinkPackageError),
 }
 
 impl<'a> CreateVirtualDirBySnapshot<'a> {
@@ -45,26 +55,41 @@ impl<'a> CreateVirtualDirBySnapshot<'a> {
             snapshot,
         } = self;
 
-        // node_modules/.pacquet/pkg-name@x.y.z/node_modules
         let virtual_node_modules_dir =
             virtual_store_dir.join(package_key.to_virtual_store_name()).join("node_modules");
         fs::create_dir_all(&virtual_node_modules_dir).map_err(|error| {
             CreateVirtualDirError::CreateNodeModulesDir {
-                dir: virtual_node_modules_dir.to_path_buf(),
+                dir: virtual_node_modules_dir.clone(),
                 error,
             }
         })?;
 
-        // 1. Install the files from `cas_paths`
         let save_path = virtual_node_modules_dir.join(package_key.name.to_string());
-        create_cas_files(import_method, &save_path, cas_paths)
-            .map_err(CreateVirtualDirError::CreateCasFiles)?;
 
-        // 2. Create the symlink layout
-        if let Some(dependencies) = &snapshot.dependencies {
-            create_symlink_layout(dependencies, virtual_store_dir, &virtual_node_modules_dir)
-        }
-
+        // `rayon::join` runs both closures in parallel on rayon's pool,
+        // returning only once both finish. `create_cas_files` is itself a
+        // rayon par_iter over CAS entries; `create_symlink_layout` is a
+        // small serial loop over dep refs. Overlapping them saves the
+        // symlink time from the per-snapshot critical path without any
+        // cross-thread data marshaling — both closures borrow from the
+        // current stack frame.
+        let (cas_result, symlink_result) = rayon::join(
+            || {
+                create_cas_files(import_method, &save_path, cas_paths)
+                    .map_err(CreateVirtualDirError::CreateCasFiles)
+            },
+            || match snapshot.dependencies.as_ref() {
+                Some(dependencies) => create_symlink_layout(
+                    dependencies,
+                    virtual_store_dir,
+                    &virtual_node_modules_dir,
+                )
+                .map_err(CreateVirtualDirError::SymlinkPackage),
+                None => Ok(()),
+            },
+        );
+        cas_result?;
+        symlink_result?;
         Ok(())
     }
 }

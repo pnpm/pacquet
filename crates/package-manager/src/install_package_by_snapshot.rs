@@ -9,8 +9,10 @@ use pacquet_tarball::{DownloadTarballToStore, TarballError};
 use pipe_trait::Pipe;
 use std::{borrow::Cow, sync::Arc};
 
-/// This subroutine downloads a package tarball, extracts it, installs it to a virtual dir,
-/// then creates the symlink layout for the package.
+/// This subroutine downloads a package tarball, extracts it, installs it to a
+/// virtual dir, then creates the symlink layout for the package. CAS file
+/// import and symlink creation run concurrently via `rayon::join` inside
+/// [`CreateVirtualDirBySnapshot::run`].
 #[must_use]
 pub struct InstallPackageBySnapshot<'a> {
     pub http_client: &'a ThrottledClient,

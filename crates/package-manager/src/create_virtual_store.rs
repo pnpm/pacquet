@@ -115,6 +115,14 @@ impl<'a> CreateVirtualStore<'a> {
         let (store_index_writer, writer_task) = StoreIndexWriter::spawn(store_dir);
         let store_index_writer_ref = Some(&store_index_writer);
 
+        // Each snapshot gets a tokio task that awaits its tarball fetch and
+        // then runs `CreateVirtualDirBySnapshot` — which in turn does the
+        // CAS-import / symlink-layout pair concurrently on rayon via
+        // `rayon::join`. Cross-snapshot concurrency stays with tokio's
+        // `try_join_all`; within-snapshot concurrency lives inside
+        // `CreateVirtualDirBySnapshot::run`. Pnpm's `deps-restorer`
+        // installer uses the same "fetch/import per package + overlap
+        // symlinks with import" shape (`installing/deps-restorer/src/index.ts`).
         snapshots
             .iter()
             .map(|(snapshot_key, snapshot)| async move {
