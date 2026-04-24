@@ -329,8 +329,8 @@ impl<'a> DownloadTarballToStore<'a> {
         // "Checksum verified"). `spawn_blocking` uses tokio's dedicated
         // blocking-thread pool (default 512) instead, so the tail drains
         // in parallel.
-        let cas_paths = tokio::task::spawn_blocking(
-            move || -> Result<HashMap<String, PathBuf>, TaskError> {
+        let cas_paths =
+            tokio::task::spawn_blocking(move || -> Result<HashMap<String, PathBuf>, TaskError> {
                 package_integrity.check(&response).map_err(TaskError::Checksum)?;
 
                 // TODO: move tarball extraction to its own function
@@ -447,16 +447,16 @@ impl<'a> DownloadTarballToStore<'a> {
                     .map_err(TarballError::WriteStoreIndex)?;
 
                 Ok(cas_paths)
-            },
-        )
-        .await
-        .expect("tarball-processing blocking task panicked")
-        .map_err(|error| match error {
-            TaskError::Checksum(error) => {
-                TarballError::Checksum(VerifyChecksumError { url: package_url.to_string(), error })
-            }
-            TaskError::Other(error) => error,
-        })?;
+            })
+            .await
+            .expect("tarball-processing blocking task panicked")
+            .map_err(|error| match error {
+                TaskError::Checksum(error) => TarballError::Checksum(VerifyChecksumError {
+                    url: package_url.to_string(),
+                    error,
+                }),
+                TaskError::Other(error) => error,
+            })?;
 
         tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
 
