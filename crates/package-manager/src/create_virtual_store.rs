@@ -196,14 +196,8 @@ impl<'a> CreateVirtualStore<'a> {
                     Ok(())
                 })
             });
-        let symlink_fut = async {
-            match symlink_handle.await {
-                Ok(result) => result,
-                Err(error) => Err(CreateVirtualStoreError::SymlinkTaskJoin { error }),
-            }
-        };
 
-        let fetch_fut = async {
+        let fetch_result: Result<(), CreateVirtualStoreError> =
             future::try_join_all(snapshots.keys().map(|snapshot_key| async move {
                 let metadata_key = snapshot_key.without_peer();
                 let metadata = packages.get(&metadata_key).ok_or_else(|| {
@@ -225,10 +219,27 @@ impl<'a> CreateVirtualStore<'a> {
                 .map_err(CreateVirtualStoreError::InstallPackageBySnapshot)
             }))
             .await
-            .map(drop)
+            .map(drop);
+
+        // Always await the symlink task, even if fetching failed. Dropping
+        // the `JoinHandle` would detach the `spawn_blocking` closure — tokio
+        // cannot abort a blocking task, and a detached one would keep
+        // mutating `.pacquet/*/node_modules/` in the background after
+        // `CreateVirtualStore::run` has already returned the fetch error.
+        // Letting it finish first is cheap (worst case: a handful of mkdirs
+        // and symlinks complete on a failing install) and keeps the
+        // filesystem quiescent when the caller inspects or cleans up state.
+        let symlink_result = match symlink_handle.await {
+            Ok(result) => result,
+            Err(error) => Err(CreateVirtualStoreError::SymlinkTaskJoin { error }),
         };
 
-        tokio::try_join!(symlink_fut, fetch_fut)?;
+        // Surface fetch errors first — a network / tarball failure is almost
+        // always the root cause and more actionable than a downstream
+        // symlink error that happened while the fetch branch was already
+        // failing. If only the symlink branch failed, surface that.
+        fetch_result?;
+        symlink_result?;
 
         // Drop the orchestration's sender so the channel closes once every
         // per-tarball clone has also dropped; then wait for the writer task
