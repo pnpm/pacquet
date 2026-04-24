@@ -6,7 +6,6 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-use async_compression::tokio::write::GzipDecoder;
 use dashmap::DashMap;
 use derive_more::{Display, Error, From};
 use futures_util::StreamExt;
@@ -21,10 +20,9 @@ use pipe_trait::Pipe;
 use sha2::{Digest, Sha512};
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
-use tokio::{
-    io::AsyncWriteExt,
-    sync::{Notify, RwLock, Semaphore},
-};
+use tokio::sync::{Notify, RwLock, Semaphore};
+use tracing::instrument;
+use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
 
 /// Cap on concurrent post-download tarball work (SHA-512 of the whole
 /// tarball + gzip inflate + per-file SHA-512 + CAFS writes). The body is
@@ -73,7 +71,7 @@ pub enum TarballError {
     #[from(ignore)]
     #[display("Failed to decode gzip: {_0}")]
     #[diagnostic(code(pacquet_tarball::decode_gzip))]
-    DecodeGzip(std::io::Error),
+    DecodeGzip(InflateDecodeErrors),
 
     #[from(ignore)]
     #[display("Failed to write cafs: {_0}")]
@@ -103,6 +101,19 @@ pub enum CacheValue {
 ///
 /// The key of this hashmap is the url of each tarball.
 pub type MemCache = DashMap<String, Arc<RwLock<CacheValue>>>;
+
+#[instrument(skip(gz_data), fields(gz_data_len = gz_data.len()))]
+fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u8>, TarballError> {
+    let mut options = DeflateOptions::default().set_confirm_checksum(false);
+
+    if let Some(size) = unpacked_size {
+        options = options.set_size_hint(size);
+    }
+
+    DeflateDecoder::new_with_options(gz_data, options)
+        .decode_gzip()
+        .map_err(TarballError::DecodeGzip)
+}
 
 /// Walk a decompressed tar archive, writing each regular-file entry
 /// into the CAFS and returning the `{in-tarball path → CAFS path}` map
@@ -537,100 +548,76 @@ impl<'a> DownloadTarballToStore<'a> {
             .await
             .expect("post-download semaphore shouldn't be closed this soon");
 
-        // Stream the response body through a gzip decoder while teeing
-        // the compressed bytes into an SHA-512 `IntegrityChecker`.
-        // Compared to the old "buffer-everything, hash, decompress"
-        // pipeline this removes one full pass over the compressed body
-        // (no separate `Integrity::check(&response)` call), never holds
-        // both the compressed and decompressed buffers at the same
-        // time, and lets decompression overlap with `await`s on the
-        // network. The blocking tar iterator still runs inside
-        // `spawn_blocking` below so per-file SHA-512 + CAFS writes
-        // stay off the reactor.
+        // Stream the response body so we can tee each chunk through an
+        // SHA-512 `IntegrityChecker` as it arrives, skipping the
+        // separate `Integrity::check(&buffer)` pass the pre-PR code
+        // did post-hoc. The bytes themselves still land in a single
+        // `Vec<u8>` and we run the gzip decoder synchronously on that
+        // full buffer inside `spawn_blocking` below.
         //
-        // Why we diverge from pnpm: upstream
-        // (`fetching/tarball-fetcher/src/remoteTarballFetcher.ts` +
-        // `worker/src/start.ts` + `store/cafs/src/addFilesFromTarball.ts`)
-        // buffers the whole tarball into a Node `SharedArrayBuffer`,
-        // then sequentially runs `crypto.hash`, `zlib.gunzipSync`, and
-        // a custom tar parser. Observable behavior is identical here:
-        // same integrity error on mismatch (same `ssri`-algorithm
-        // selection), same decompressed bytes, same CAFS layout, same
-        // `index.db` rows. Per AGENTS.md's "Internal performance
-        // divergence is allowed" clause, this topology is a pacquet-
-        // specific perf fix rather than a port of upstream shape.
+        // Why we do NOT stream decompression (tried and reverted):
+        // an earlier iteration of this code piped `bytes_stream()`
+        // through `async_compression::tokio::write::GzipDecoder` so
+        // the network fetch and gzip inflation could overlap. That
+        // pulled in `flate2`/`miniz_oxide` as the gzip backend (the
+        // async-compression crate's only gzip feature), which on
+        // Apple Silicon and commodity x86 is noticeably slower than
+        // the pure-Rust `zune-inflate` path we keep here, per the
+        // investigations/pacquet-macos-perf.md §7 measurements.
+        // Toxiproxy-injected latency runs of the integrated benchmark
+        // (frozen-lockfile, 1352-snapshot fixture) showed:
+        //
+        //   0 ms loopback  main 2.60 s  vs  async pipeline 2.98 s  (15% slower)
+        //   50 ms          main 16.70 s vs  async pipeline 18.94 s (13% slower)
+        //   200 ms         main 22.37 s vs  async pipeline 22.58 s (break-even)
+        //
+        // The overlap gain scales with latency but never overtakes
+        // the decompressor regression at any realistic latency;
+        // matching pnpm upstream's buffer-then-`gunzipSync` shape
+        // wins on wall-time with the current decompressor set. If a
+        // future decompressor is competitive with `zune-inflate` and
+        // async, it'd be worth revisiting; until then, the tee-hash
+        // is the only piece of the streaming pipeline that pays for
+        // itself, so that's what we keep.
         let mut checker = IntegrityChecker::new(package_integrity.clone());
-        // Pre-size the decompressed sink when the registry reported an
-        // `unpackedSize`. Registry metadata is untrusted — a malicious
-        // or corrupt `unpackedSize` of `usize::MAX` would turn
-        // `Vec::with_capacity` into an immediate abort before a single
-        // byte of the tarball arrived. Treat the hint as a best-effort
-        // optimization: clamp to a conservative ceiling and reserve
-        // fallibly, dropping the reservation on allocation failure so
-        // the `Vec` simply falls back to geometric growth. Same ceiling
-        // as `MAX_ENTRY_PREALLOC_BYTES` above — a tarball whose real
-        // decompressed size exceeds this still works, it just doesn't
-        // get the prealloc benefit.
-        const MAX_UNPACKED_SIZE_PREALLOC_BYTES: usize = 64 * 1024 * 1024;
-        let mut decompressed_sink = Vec::<u8>::new();
-        if let Some(size) = package_unpacked_size {
-            let reserve = size.min(MAX_UNPACKED_SIZE_PREALLOC_BYTES);
-            let _ = decompressed_sink.try_reserve(reserve);
+        // Pre-size the compressed-body buffer when the server
+        // advertised `Content-Length`, clamped and reserved fallibly
+        // so a malicious or corrupt length (e.g. `u64::MAX`) can't
+        // turn `Vec::with_capacity` into a hard abort before a single
+        // byte arrives.
+        const MAX_COMPRESSED_PREALLOC_BYTES: u64 = 64 * 1024 * 1024;
+        let mut compressed = Vec::<u8>::new();
+        if let Some(content_length) = response_head.content_length() {
+            let reserve = content_length.min(MAX_COMPRESSED_PREALLOC_BYTES) as usize;
+            let _ = compressed.try_reserve(reserve);
         }
-        let mut decoder = GzipDecoder::new(decompressed_sink);
         let mut body = response_head.bytes_stream();
-        // Drain the whole body into the `IntegrityChecker` regardless
-        // of what the decoder does, and defer any gzip-decode error
-        // until after the integrity verdict. pnpm's upstream pipeline
-        // (`worker/src/start.ts` → `crypto.hash` then `gunzipSync`)
-        // hashes the compressed bytes before touching zlib, so a
-        // corrupt-gzip-with-mismatched-integrity tarball surfaces as
-        // an integrity failure there; if we bailed on the first
-        // `decoder.write_all` error we'd surface `DecodeGzip` for the
-        // same input and diverge from the documented error-code
-        // contract (AGENTS.md "errors and diagnostics"). Keep feeding
-        // the hasher so the verdict is over the full bytes the server
-        // sent, then replay the decoder error after `checker.result()`
-        // only if integrity passed.
-        let mut decoder_error: Option<std::io::Error> = None;
         while let Some(chunk) = body.next().await {
             let chunk = chunk.map_err(network_error)?;
             checker.input(&chunk);
-            if decoder_error.is_none() {
-                if let Err(err) = decoder.write_all(&chunk).await {
-                    decoder_error = Some(err);
-                }
-            }
+            compressed.try_reserve(chunk.len()).map_err(|err| {
+                TarballError::ReadTarballEntries(std::io::Error::new(
+                    std::io::ErrorKind::OutOfMemory,
+                    format!(
+                        "failed to reserve {} bytes for compressed tarball body: {err}",
+                        chunk.len()
+                    ),
+                ))
+            })?;
+            compressed.extend_from_slice(&chunk);
         }
 
         tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
 
         // Verify the tee'd digest against the expected `Integrity`
-        // before we start writing any CAFS blobs. Matching pnpm's
-        // behavior: a mismatch here aborts the install for this
-        // tarball without touching the store — and takes precedence
-        // over any gzip error that may have happened on the same
-        // bytes, because an integrity failure describes the real
-        // problem (the server sent us bytes we didn't ask for) while
-        // a decode error is a second-order consequence.
+        // before we touch gzip or CAFS. Mismatch => abort without
+        // writing any blobs, matching pnpm's `crypto.hash` →
+        // `gunzipSync` ordering.
         checker.result().map_err(|error| {
             TarballError::Checksum(VerifyChecksumError { url: package_url.to_string(), error })
         })?;
 
         tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
-
-        // Integrity passed — surface any gzip error now, or finalize.
-        // `shutdown` flushes any still-buffered decompressed output
-        // into the inner `Vec` and rejects a truncated / malformed
-        // footer (CRC32 + ISIZE trailer) as an `io::Error`. Without
-        // this finalize we could silently accept a cut-short tarball
-        // that happened to match the expected integrity (degenerate,
-        // but cheap to guard).
-        if let Some(error) = decoder_error {
-            return Err(TarballError::DecodeGzip(error));
-        }
-        decoder.shutdown().await.map_err(TarballError::DecodeGzip)?;
-        let decompressed = decoder.into_inner();
 
         // These allocations move owned `String`s into the
         // `spawn_blocking` closure below so it doesn't need a lifetime
@@ -661,13 +648,17 @@ impl<'a> DownloadTarballToStore<'a> {
             move || -> Result<HashMap<String, PathBuf>, TarballError> {
                 // TODO: test the duplication of entries
 
-                // Extract the tarball in a scope so the decompressed
-                // buffer + `tar::Archive` are released before the
-                // store-index handoff — on large packages the inflated
-                // bytes can be multiple MB, and with hundreds of
-                // concurrent blocking tasks that memory adds up fast.
+                // Decompress and extract the tarball in a scope so the
+                // compressed + decompressed buffers and the
+                // `tar::Archive` are all released before the store-
+                // index handoff. On large packages the inflated bytes
+                // can be multiple MB, and with hundreds of concurrent
+                // blocking tasks that memory adds up fast.
                 let (cas_paths, pkg_files_idx) = {
-                    let mut archive = decompressed.pipe(Cursor::new).pipe(Archive::new);
+                    let mut archive = decompress_gzip(&compressed, package_unpacked_size)?
+                        .pipe(Cursor::new)
+                        .pipe(Archive::new);
+                    drop(compressed);
                     extract_tarball_entries(&mut archive, store_dir)?
                 };
 
