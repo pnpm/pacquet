@@ -258,8 +258,7 @@ mod tests {
         let src = tmp.path().join("does-not-exist");
         let dst = tmp.path().join("dst.txt");
 
-        let err =
-            link_file(PackageImportMethod::Clone, &src, &dst).expect_err("no source → error");
+        let err = link_file(PackageImportMethod::Clone, &src, &dst).expect_err("no source → error");
         assert!(matches!(err, LinkFileError::CreateLink { .. }), "got: {err:?}");
     }
 
