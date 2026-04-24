@@ -32,6 +32,24 @@ Before writing code for a feature, bug fix, or behavior change:
 If the upstream behavior is unclear or looks wrong, stop and ask the user
 rather than guessing.
 
+### Internal performance divergence is allowed
+
+The cardinal rule governs **observable behavior**: CLI flags, defaults,
+error codes, error messages, `.npmrc` semantics, lockfile format, CAS /
+store-index layout, and anything else a user or a coexisting pnpm install
+can see. Internal implementation details — pipeline topology, async vs.
+sync, streaming vs. buffering, hash-tee vs. post-hoc hashing, thread-pool
+shape, chunk sizes, parallelism strategy — are **not** observable and may
+diverge from pnpm when the divergence delivers a measured performance win
+and leaves observable outputs (bytes in the CAS, rows in `index.db`, error
+codes, exit status, stdout/stderr contents) byte-identical.
+
+When you take such a divergence, document it in the commit or the code
+with a `Why we diverge:` note: what the upstream shape is, what the pacquet
+shape is, and the benchmark delta that justifies it. That keeps the
+divergence auditable and reversible if upstream later adopts a different
+approach.
+
 When citing upstream code in a PR description or commit message, link to a
 specific commit on `main` (not a branch tip) so the reference stays stable.
 
