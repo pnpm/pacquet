@@ -83,7 +83,7 @@ static LOGGED_METHODS: AtomicU8 = AtomicU8::new(0);
 
 fn log_method_once(flag: u8, method: &'static str) {
     if LOGGED_METHODS.fetch_or(flag, Ordering::Relaxed) & flag == 0 {
-        tracing::info!(target: "pacquet::package_import_method", method);
+        tracing::info!(target: "pacquet::package_import_method", method, "selected package import method");
     }
 }
 
