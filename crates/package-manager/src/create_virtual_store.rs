@@ -9,7 +9,6 @@ use pacquet_lockfile::{PackageKey, PackageMetadata, PkgName, SnapshotDepRef, Sna
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_store_dir::{StoreIndex, StoreIndexWriter};
-use rayon::prelude::*;
 use std::{
     collections::HashMap,
     io,
@@ -172,14 +171,20 @@ impl<'a> CreateVirtualStore<'a> {
         //   await Promise.all([linkAllModules(...), linkAllPkgs(...)])
         //
         // See `pnpm/pkg-manager/headless/src/index.ts` and
-        // `pnpm/pkg-manager/core/src/install/link.ts`. We dispatch the whole
-        // symlink branch through a single `spawn_blocking` so a rayon
-        // `par_iter` over all snapshots does the real work on rayon's pool;
-        // the tokio task just awaits the join handle, which cannot starve
-        // `fetch_fut` and is safe on any runtime flavor.
+        // `pnpm/pkg-manager/core/src/install/link.ts`. We run the whole
+        // symlink pass on a single `spawn_blocking` thread using plain
+        // serial iteration — no rayon inside. That mirrors pnpm's
+        // `symlinkAllModules` (`worker/src/start.ts:493-501`), which
+        // executes a synchronous nested `for` loop inside one worker
+        // thread. Going wider with rayon would steal workers from the
+        // fetch branch's concurrent `create_cas_files` par_iter calls
+        // during the hot part of the install; pnpm already learned that
+        // lesson by shipping the symlink stage as a single-threaded
+        // coroutine. Serial on one CPU for ~6-7k symlink syscalls is
+        // still well under the cold-cache fetch budget.
         let symlink_handle =
             tokio::task::spawn_blocking(move || -> Result<(), CreateVirtualStoreError> {
-                snapshot_symlink_tasks.par_iter().try_for_each(|task| {
+                for task in &snapshot_symlink_tasks {
                     std::fs::create_dir_all(&task.virtual_node_modules_dir).map_err(|error| {
                         CreateVirtualStoreError::CreateNodeModulesDir {
                             dir: task.virtual_node_modules_dir.clone(),
@@ -194,8 +199,8 @@ impl<'a> CreateVirtualStore<'a> {
                         )
                         .map_err(CreateVirtualStoreError::SymlinkPackage)?;
                     }
-                    Ok(())
-                })
+                }
+                Ok(())
             });
 
         let fetch_result: Result<(), CreateVirtualStoreError> =
