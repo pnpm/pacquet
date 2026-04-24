@@ -258,14 +258,25 @@ fn extract_tarball_entries(
 /// Try to reconstruct the `{filename → CAFS path}` map for a package from
 /// the SQLite store index, without going to the network. Returns `None`
 /// if anything looks off — no index handed in, no row, unreadable row,
-/// malformed digest, or any referenced CAFS path that fails validation —
-/// so the caller falls through to a fresh download. Error paths are
-/// treated as cache misses because the index is a cache hint, not a
-/// source of truth. Any CAFS-path validation failure (missing blob,
-/// metadata error, directory, symlink, or other non-regular file) emits
-/// a `debug!` log to note the stale entry before re-fetching; earlier
-/// checks — row / decode / digest — are silent because they don't point
-/// at a specific on-disk artifact worth describing.
+/// failed integrity check — so the caller falls through to a fresh
+/// download.
+///
+/// The `verify_store_integrity` parameter matches pnpm's flag of the
+/// same name. When `true` (pnpm's default) each referenced CAFS file is
+/// stat'ed and compared against the stored `checkedAt`/size, with a
+/// re-hash only when the mtime has advanced. When `false` the lookup
+/// builds the filename→path map straight from the index row without any
+/// filesystem work — missing / corrupt CAFS blobs surface lazily when
+/// the caller tries to import them.
+///
+/// The previous pacquet implementation unconditionally ran a
+/// `symlink_metadata` per referenced file and rejected any non-regular
+/// dirent outright. That cost a stat syscall per file on every warm
+/// install (#260) and still diverged from pnpm: the upstream
+/// [`checkPkgFilesIntegrity`][1] catches corruption via the content hash
+/// and doesn't gate on dirent type.
+///
+/// [1]: https://github.com/pnpm/pnpm/blob/main/store/cafs/src/checkPkgFilesIntegrity.ts
 ///
 /// The `index` argument is a shared read-only handle that callers open
 /// once per install and pass in repeatedly, so we don't pay the
@@ -274,6 +285,7 @@ async fn load_cached_cas_paths(
     index: Option<SharedReadonlyStoreIndex>,
     store_dir: &'static StoreDir,
     cache_key: String,
+    verify_store_integrity: bool,
 ) -> Option<HashMap<String, PathBuf>> {
     let index = index?;
     // Hold on to a copy of the cache key for the outer `JoinError` log,
@@ -298,41 +310,27 @@ async fn load_cached_cas_paths(
             guard.get(&cache_key).ok()?
         }?;
 
-        let mut cas_paths = HashMap::with_capacity(entry.files.len());
-        // Consume `entry.files` so the owned `String` keys can move
-        // straight into `cas_paths` — cloning each filename is an extra
-        // alloc per file in the package, and on a real tarball that's
-        // hundreds of strings.
-        for (filename, info) in entry.files {
-            // `?` on `cas_file_path_by_mode` handles corrupt digests (empty,
-            // too short, or non-hex) as a cache miss. Without it the
-            // `hex[..2]` slice inside `file_path_by_hex_str` would panic.
-            let path = store_dir.cas_file_path_by_mode(&info.digest, info.mode)?;
-            // Use `symlink_metadata()` + reject symlinks so this check
-            // applies to the CAFS path itself without ever following a
-            // link. That rules out directory squatting, symlinked
-            // blobs (which could point *outside* the store — a store
-            // corruption / tampering vector), and other non-regular
-            // filesystem objects. Any metadata error also counts as a
-            // miss (blob pruned, permission issue, …).
-            if !path.symlink_metadata().is_ok_and(|m| {
-                let file_type = m.file_type();
-                !file_type.is_symlink() && file_type.is_file()
-            }) {
-                // Treat the whole entry as invalid and re-fetch — partial
-                // reuse would give the caller a broken layout.
-                tracing::debug!(
-                    target: "pacquet::download",
-                    ?cache_key,
-                    ?filename,
-                    ?path,
-                    "CAFS path missing or not a regular file; index entry is stale, re-fetching"
-                );
-                return None;
-            }
-            cas_paths.insert(filename, path);
+        let verify_result = if verify_store_integrity {
+            pacquet_store_dir::check_pkg_files_integrity(store_dir, entry)
+        } else {
+            pacquet_store_dir::build_file_maps_from_index(store_dir, entry)
+        };
+        if !verify_result.passed {
+            // Per-file reason (filename, CAS path, size mismatch, hash
+            // mismatch, …) is logged at `debug!` inside
+            // `check_pkg_files_integrity` / `build_file_maps_from_index`
+            // where the failure actually happens — this caller-side log
+            // just summarises "the row as a whole didn't verify" so log
+            // scrapers can correlate the per-file debug lines with the
+            // snapshot they belong to.
+            tracing::debug!(
+                target: "pacquet::download",
+                ?cache_key,
+                "store-index entry failed integrity check; re-fetching",
+            );
+            return None;
         }
-        Some(cas_paths)
+        Some(verify_result.files_map)
     })
     .await;
 
@@ -378,6 +376,17 @@ pub struct DownloadTarballToStore<'a> {
     /// side's stance: install still succeeds, the next install misses on
     /// this cache key and re-downloads.
     pub store_index_writer: Option<Arc<StoreIndexWriter>>,
+    /// Mirrors pnpm's `verify-store-integrity` / `verifyStoreIntegrity`
+    /// setting. When `true` (pnpm's default) each cached CAFS file is
+    /// stat'ed and optionally re-hashed before reuse. When `false` the
+    /// index is trusted and the import fails lazily if a blob is
+    /// missing — trades the per-file stat / optional rehash for the
+    /// risk that a mutated or corrupt store serves stale content until
+    /// the next integrity-full install. Whether that translates into a
+    /// wall-time win depends on the workload; the per-snapshot stat
+    /// isn't the bottleneck on the benchmarks this repo tracks (see
+    /// #273), but cutting the syscall count is still correct.
+    pub verify_store_integrity: bool,
     pub package_integrity: &'a Integrity,
     pub package_unpacked_size: Option<usize>,
     pub package_url: &'a str,
@@ -439,6 +448,7 @@ impl<'a> DownloadTarballToStore<'a> {
             package_unpacked_size,
             package_url,
             package_id,
+            verify_store_integrity,
             ..
         } = self;
         let store_index = self.store_index.clone();
@@ -455,7 +465,9 @@ impl<'a> DownloadTarballToStore<'a> {
         // an undecodable entry, or any CAFS file that has gone missing
         // from disk all fall through to the download path below.
         let cache_key = store_index_key(&package_integrity.to_string(), package_id);
-        if let Some(cas_paths) = load_cached_cas_paths(store_index, store_dir, cache_key).await {
+        if let Some(cas_paths) =
+            load_cached_cas_paths(store_index, store_dir, cache_key, verify_store_integrity).await
+        {
             tracing::info!(target: "pacquet::download", ?package_url, ?package_id, "Reusing cached CAFS entry — skipping download");
             return Ok(cas_paths);
         }
@@ -633,6 +645,7 @@ mod tests {
             store_dir: store_path,
             store_index: None,
             store_index_writer: None,
+            verify_store_integrity: true,
             package_integrity: &integrity("sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w=="),
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
@@ -675,6 +688,7 @@ mod tests {
             store_dir: store_path,
             store_index: None,
             store_index_writer: None,
+            verify_store_integrity: true,
             package_integrity: &integrity("sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w=="),
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
@@ -744,6 +758,7 @@ mod tests {
             store_dir: store_path,
             store_index: StoreIndex::shared_readonly_in(store_path),
             store_index_writer: None,
+            verify_store_integrity: true,
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
             // Any request that reaches the network here would fail the
@@ -804,6 +819,7 @@ mod tests {
             store_dir: store_path,
             store_index: StoreIndex::shared_readonly_in(store_path),
             store_index_writer: None,
+            verify_store_integrity: true,
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",
@@ -856,6 +872,7 @@ mod tests {
             store_dir: store_path,
             store_index: StoreIndex::shared_readonly_in(store_path),
             store_index_writer: None,
+            verify_store_integrity: true,
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",
@@ -911,6 +928,7 @@ mod tests {
             store_dir: store_path,
             store_index: StoreIndex::shared_readonly_in(store_path),
             store_index_writer: None,
+            verify_store_integrity: true,
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",
@@ -976,6 +994,7 @@ mod tests {
             store_dir: store_path,
             store_index: StoreIndex::shared_readonly_in(store_path),
             store_index_writer: None,
+            verify_store_integrity: true,
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",

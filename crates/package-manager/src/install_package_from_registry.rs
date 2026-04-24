@@ -89,6 +89,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
             store_dir: &config.store_dir,
             store_index: store_index.cloned(),
             store_index_writer: store_index_writer.cloned(),
+            verify_store_integrity: config.verify_store_integrity,
             package_integrity: package_version
                 .dist
                 .integrity
@@ -155,6 +156,7 @@ mod tests {
             dedupe_peer_dependents: false,
             strict_peer_dependencies: false,
             resolve_peers_from_workspace_root: false,
+            verify_store_integrity: true,
         }
     }
 
