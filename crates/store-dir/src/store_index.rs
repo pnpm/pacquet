@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
 /// SQLite-backed per-package index that pnpm v11 stores alongside the CAFS
@@ -22,6 +23,13 @@ use std::{
 pub struct StoreIndex {
     conn: Connection,
 }
+
+/// Shared handle to a read-only [`StoreIndex`] that can be cheaply cloned and
+/// sent across blocking tasks. SQLite's `Connection` is `Send` but not
+/// `Sync`, so the `Mutex` gates concurrent reads to a single query at a time
+/// — fine for our workload where every caller serializes one short query and
+/// then hands off to per-file work without holding the lock.
+pub type SharedReadonlyStoreIndex = Arc<Mutex<StoreIndex>>;
 
 /// Error type of [`StoreIndex`].
 #[derive(Debug, Display, Error, Diagnostic)]
@@ -148,6 +156,23 @@ impl StoreIndex {
     /// Read-only counterpart to [`StoreIndex::open_in`].
     pub fn open_readonly_in(store_dir: &StoreDir) -> Result<Self, StoreIndexError> {
         StoreIndex::open_readonly(&store_dir.v11())
+    }
+
+    /// Open a read-only index wrapped in `Arc<Mutex<…>>` so it can be shared
+    /// across the many cache lookups an install performs. Returns `None` if
+    /// `index.db` does not yet exist under the store — a first-time install
+    /// against an empty store — since there is nothing to read back and every
+    /// lookup would be a miss anyway.
+    ///
+    /// Reusing one connection avoids reopening the SQLite database (and
+    /// redoing its PRAGMAs) on every package, which otherwise scales
+    /// linearly with the snapshot count.
+    pub fn shared_readonly_in(store_dir: &StoreDir) -> Option<SharedReadonlyStoreIndex> {
+        let v11_dir = store_dir.v11();
+        if !v11_dir.join("index.db").exists() {
+            return None;
+        }
+        StoreIndex::open_readonly(&v11_dir).ok().map(|index| Arc::new(Mutex::new(index)))
     }
 
     /// Look up a package-files index by key. Returns `Ok(None)` if no row exists.

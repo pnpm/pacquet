@@ -9,6 +9,7 @@ use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::PackageVersion;
+use pacquet_store_dir::StoreIndex;
 use pacquet_tarball::MemCache;
 use pipe_trait::Pipe;
 
@@ -59,6 +60,28 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
             resolved_packages,
         } = self;
 
+        // Open the read-only SQLite index once per install, shared across
+        // every `DownloadTarballToStore`. See the matching comment in
+        // `create_virtual_store.rs` for the full rationale, including the
+        // `JoinError`-to-cache-miss degradation (with a `warn!` so it
+        // stays diagnosable).
+        let store_dir: &'static _ = &config.store_dir;
+        let store_index =
+            match tokio::task::spawn_blocking(move || StoreIndex::shared_readonly_in(store_dir))
+                .await
+            {
+                Ok(store_index) => store_index,
+                Err(error) => {
+                    tracing::warn!(
+                        target: "pacquet::install",
+                        ?error,
+                        "store-index open task failed; continuing without a shared cache index",
+                    );
+                    None
+                }
+            };
+        let store_index_ref = store_index.as_ref();
+
         manifest
             .dependencies(dependency_groups)
             .map(|(name, version_range)| async move {
@@ -66,6 +89,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                     tarball_mem_cache,
                     http_client,
                     config,
+                    store_index: store_index_ref,
                     node_modules_dir: &config.modules_dir,
                     name,
                     version_range,
@@ -82,7 +106,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                     dependency_groups: (),
                     resolved_packages,
                 }
-                .install_dependencies_from_registry(&dependency)
+                .install_dependencies_from_registry(&dependency, store_index_ref)
                 .await?;
 
                 Ok::<_, InstallWithoutLockfileError>(())
@@ -100,6 +124,7 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
     async fn install_dependencies_from_registry(
         &self,
         package: &PackageVersion,
+        store_index: Option<&'async_recursion pacquet_store_dir::SharedReadonlyStoreIndex>,
     ) -> Result<(), InstallWithoutLockfileError> {
         let InstallWithoutLockfile {
             tarball_mem_cache,
@@ -123,21 +148,23 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
 
         tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Start subset");
 
+        let node_modules_path_ref = &node_modules_path;
         package
             .dependencies(self.config.auto_install_peers)
-            .map(|(name, version_range)| async {
+            .map(|(name, version_range)| async move {
                 let dependency = InstallPackageFromRegistry {
                     tarball_mem_cache,
                     http_client,
                     config,
-                    node_modules_dir: &node_modules_path,
+                    store_index,
+                    node_modules_dir: node_modules_path_ref,
                     name,
                     version_range,
                 }
                 .run::<Version>()
                 .await
                 .map_err(InstallWithoutLockfileError::InstallPackageFromRegistry)?;
-                self.install_dependencies_from_registry(&dependency).await?;
+                self.install_dependencies_from_registry(&dependency, store_index).await?;
                 Ok::<_, InstallWithoutLockfileError>(())
             })
             .pipe(future::try_join_all)

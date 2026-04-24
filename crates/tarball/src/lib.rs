@@ -12,8 +12,8 @@ use miette::Diagnostic;
 use pacquet_fs::file_mode;
 use pacquet_network::ThrottledClient;
 use pacquet_store_dir::{
-    store_index_key, CafsFileInfo, PackageFilesIndex, StoreDir, StoreIndex, StoreIndexError,
-    WriteCasFileError,
+    store_index_key, CafsFileInfo, PackageFilesIndex, SharedReadonlyStoreIndex, StoreDir,
+    StoreIndex, StoreIndexError, WriteCasFileError,
 };
 use pipe_trait::Pipe;
 use ssri::Integrity;
@@ -99,22 +99,46 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
 
 /// Try to reconstruct the `{filename → CAFS path}` map for a package from
 /// the SQLite store index, without going to the network. Returns `None`
-/// if anything looks off — no db, no row, unreadable row, malformed
-/// digest, or any referenced CAFS path that fails validation — so the
-/// caller falls through to a fresh download. Error paths are treated as
-/// cache misses because the index is a cache hint, not a source of
-/// truth. Any CAFS-path validation failure (missing blob, metadata
-/// error, directory, symlink, or other non-regular file) emits a
-/// `debug!` log to note the stale entry before re-fetching; earlier
-/// checks — db / row / decode / digest — are silent because they don't
-/// point at a specific on-disk artifact worth describing.
+/// if anything looks off — no index handed in, no row, unreadable row,
+/// malformed digest, or any referenced CAFS path that fails validation —
+/// so the caller falls through to a fresh download. Error paths are
+/// treated as cache misses because the index is a cache hint, not a
+/// source of truth. Any CAFS-path validation failure (missing blob,
+/// metadata error, directory, symlink, or other non-regular file) emits
+/// a `debug!` log to note the stale entry before re-fetching; earlier
+/// checks — row / decode / digest — are silent because they don't point
+/// at a specific on-disk artifact worth describing.
+///
+/// The `index` argument is a shared read-only handle that callers open
+/// once per install and pass in repeatedly, so we don't pay the
+/// `Connection::open` + PRAGMA cost per package.
 async fn load_cached_cas_paths(
+    index: Option<SharedReadonlyStoreIndex>,
     store_dir: &'static StoreDir,
     cache_key: String,
 ) -> Option<HashMap<String, PathBuf>> {
-    tokio::task::spawn_blocking(move || -> Option<HashMap<String, PathBuf>> {
-        let index = StoreIndex::open_readonly_in(store_dir).ok()?;
-        let entry = index.get(&cache_key).ok()??;
+    let index = index?;
+    // Hold on to a copy of the cache key for the outer `JoinError` log,
+    // since the task body moves the original in.
+    let outer_cache_key = cache_key.clone();
+    let result = tokio::task::spawn_blocking(move || -> Option<HashMap<String, PathBuf>> {
+        // Treat a poisoned mutex as a cache miss rather than propagating the
+        // panic: the `SELECT` is stateless, so the prior panic couldn't have
+        // left the index in an inconsistent shape, and cache lookups are a
+        // best-effort hint anyway — failing over to a fresh download is the
+        // more resilient default than turning every subsequent snapshot into
+        // a crash.
+        let entry = {
+            let Ok(guard) = index.lock() else {
+                tracing::debug!(
+                    target: "pacquet::download",
+                    ?cache_key,
+                    "store-index mutex poisoned; treating cache lookup as a miss",
+                );
+                return None;
+            };
+            guard.get(&cache_key).ok()?
+        }?;
 
         let mut cas_paths = HashMap::with_capacity(entry.files.len());
         // Consume `entry.files` so the owned `String` keys can move
@@ -152,9 +176,24 @@ async fn load_cached_cas_paths(
         }
         Some(cas_paths)
     })
-    .await
-    .ok()
-    .flatten()
+    .await;
+
+    match result {
+        Ok(cas_paths) => cas_paths,
+        Err(error) => {
+            // `JoinError` — the blocking task panicked, or the runtime was
+            // cancelled mid-install. Degrade to a cache miss so the caller
+            // falls through to a fresh download, but surface the error so
+            // the panic / cancellation stays diagnosable.
+            tracing::warn!(
+                target: "pacquet::download",
+                ?error,
+                cache_key = ?outer_cache_key,
+                "store-index lookup task failed; treating cache lookup as a miss",
+            );
+            None
+        }
+    }
 }
 
 /// This subroutine downloads and extracts a tarball to the store directory.
@@ -164,6 +203,12 @@ async fn load_cached_cas_paths(
 pub struct DownloadTarballToStore<'a> {
     pub http_client: &'a ThrottledClient,
     pub store_dir: &'static StoreDir,
+    /// Shared read-only handle to the SQLite store index. `None` when the
+    /// store does not (yet) have an `index.db`, in which case every cache
+    /// lookup short-circuits to a network fetch. Callers open this once per
+    /// install and pass the same handle to every `DownloadTarballToStore`
+    /// so we don't reopen the DB per package.
+    pub store_index: Option<SharedReadonlyStoreIndex>,
     pub package_integrity: &'a Integrity,
     pub package_unpacked_size: Option<usize>,
     pub package_url: &'a str,
@@ -225,7 +270,9 @@ impl<'a> DownloadTarballToStore<'a> {
             package_unpacked_size,
             package_url,
             package_id,
+            ..
         } = self;
+        let store_index = self.store_index.clone();
 
         // Before hitting the network, check the SQLite store index: if the
         // tarball is already in the CAFS we can reuse its per-file paths
@@ -235,12 +282,10 @@ impl<'a> DownloadTarballToStore<'a> {
         // entry we can read back here.
         //
         // The lookup is best-effort. A missing `index.db`, a missing row,
-        // an unreadable entry (e.g. written by pnpm's msgpackr record
-        // encoding — decoding support for that is a follow-up), or any
-        // CAFS file that has gone missing from disk all fall through to
-        // the download path below.
+        // an undecodable entry, or any CAFS file that has gone missing
+        // from disk all fall through to the download path below.
         let cache_key = store_index_key(&package_integrity.to_string(), package_id);
-        if let Some(cas_paths) = load_cached_cas_paths(store_dir, cache_key).await {
+        if let Some(cas_paths) = load_cached_cas_paths(store_index, store_dir, cache_key).await {
             tracing::info!(target: "pacquet::download", ?package_url, ?package_id, "Reusing cached CAFS entry — skipping download");
             return Ok(cas_paths);
         }
@@ -456,6 +501,7 @@ mod tests {
         let cas_files = DownloadTarballToStore {
             http_client: &Default::default(),
             store_dir: store_path,
+            store_index: None,
             package_integrity: &integrity("sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w=="),
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
@@ -496,6 +542,7 @@ mod tests {
         DownloadTarballToStore {
             http_client: &Default::default(),
             store_dir: store_path,
+            store_index: None,
             package_integrity: &integrity("sha512-aaaan1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w=="),
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
@@ -563,6 +610,7 @@ mod tests {
         let cas_paths = DownloadTarballToStore {
             http_client: &fast_fail_client(),
             store_dir: store_path,
+            store_index: StoreIndex::shared_readonly_in(store_path),
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
             // Any request that reaches the network here would fail the
@@ -621,6 +669,7 @@ mod tests {
         let err = DownloadTarballToStore {
             http_client: &fast_fail_client(),
             store_dir: store_path,
+            store_index: StoreIndex::shared_readonly_in(store_path),
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",
@@ -671,6 +720,7 @@ mod tests {
         let err = DownloadTarballToStore {
             http_client: &fast_fail_client(),
             store_dir: store_path,
+            store_index: StoreIndex::shared_readonly_in(store_path),
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",
@@ -724,6 +774,7 @@ mod tests {
         let err = DownloadTarballToStore {
             http_client: &fast_fail_client(),
             store_dir: store_path,
+            store_index: StoreIndex::shared_readonly_in(store_path),
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",
@@ -787,6 +838,7 @@ mod tests {
         let err = DownloadTarballToStore {
             http_client: &fast_fail_client(),
             store_dir: store_path,
+            store_index: StoreIndex::shared_readonly_in(store_path),
             package_integrity: &pkg_integrity,
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",
