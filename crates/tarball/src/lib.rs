@@ -30,12 +30,26 @@ use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
 /// fires hundreds of these at once on a 1352-snapshot install, which
 /// thrashes small CI runners. Past "Download completed" a 2-CPU GitHub
 /// Actions runner wedged between decompress-close and `Checksum verified`
-/// on #269 until the step timeout. `num_cpus * 2` (floor 4) keeps enough
-/// work in flight to overlap per-file FS writes with SHA on another task
-/// without oversubscribing the cores.
+/// on #269 until the step timeout.
+///
+/// Sizing matches pnpm v11's `worker/src/index.ts:71`
+/// `Math.max(1, availableParallelism() - 1)` (#280, item 4), lifted to a
+/// floor of 2 so a single-CPU or 2-CPU GHA runner still has two tasks in
+/// flight and can overlap per-file FS writes with SHA on another task:
+///
+/// ```text
+/// num_cpus.saturating_sub(1).max(2)
+/// ```
+///
+/// On a 10P-core M3 that's 9 concurrent bodies instead of the old 20.
+/// Each body is CPU-bound, so oversubscription on Apple Silicon (where
+/// some tasks land on the slower efficiency cores and stretch the tail)
+/// costs more than the extra parallelism buys. The #269 2-CPU floor
+/// still holds — 2 tasks is enough for the SHA/FS overlap we need to
+/// avoid the decompress wedge.
 fn post_download_semaphore() -> &'static Semaphore {
     static SEM: OnceLock<Semaphore> = OnceLock::new();
-    SEM.get_or_init(|| Semaphore::new(num_cpus::get().saturating_mul(2).max(4)))
+    SEM.get_or_init(|| Semaphore::new(num_cpus::get().saturating_sub(1).max(2)))
 }
 
 #[derive(Debug, Display, Error, Diagnostic)]
