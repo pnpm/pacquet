@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     io::{Cursor, Read},
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::UNIX_EPOCH,
 };
 
@@ -18,9 +18,25 @@ use pacquet_store_dir::{
 use pipe_trait::Pipe;
 use ssri::Integrity;
 use tar::Archive;
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::{Notify, RwLock, Semaphore};
 use tracing::instrument;
 use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
+
+/// Cap on concurrent post-download tarball work (SHA-512 of the whole
+/// tarball + gzip inflate + per-file SHA-512 + CAFS writes). The body is
+/// CPU-bound with some blocking FS I/O, and putting it on
+/// `tokio::task::spawn_blocking` makes the default 512-thread blocking
+/// pool available — but async fan-out across `try_join_all` routinely
+/// fires hundreds of these at once on a 1352-snapshot install, which
+/// thrashes small CI runners. Past "Download completed" a 2-CPU GitHub
+/// Actions runner wedged between decompress-close and `Checksum verified`
+/// on #269 until the step timeout. `num_cpus * 2` (floor 4) keeps enough
+/// work in flight to overlap per-file FS writes with SHA on another task
+/// without oversubscribing the cores.
+fn post_download_semaphore() -> &'static Semaphore {
+    static SEM: OnceLock<Semaphore> = OnceLock::new();
+    SEM.get_or_init(|| Semaphore::new(num_cpus::get().saturating_mul(2).max(4)))
+}
 
 #[derive(Debug, Display, Error, Diagnostic)]
 #[display("Failed to fetch {url}: {error}")]
@@ -307,13 +323,36 @@ impl<'a> DownloadTarballToStore<'a> {
         let network_error = |error| {
             TarballError::FetchTarball(NetworkError { url: package_url.to_string(), error })
         };
-        let response = http_client
+        let response_head = http_client
             .run_with_permit(|client| client.get(package_url).send())
             .await
-            .map_err(network_error)?
-            .bytes()
-            .await
             .map_err(network_error)?;
+
+        // Gate the memory-heavy + CPU-heavy part of the pipeline with
+        // `post_download_semaphore`:
+        //
+        // - The blocking pool is 512-wide by default, which is right
+        //   for I/O wait but disastrous for CPU work that can only
+        //   really run `num_cpus` at a time, so we cap concurrent
+        //   `spawn_blocking` bodies.
+        // - We also acquire the permit *before* `.bytes().await`
+        //   rather than right before `spawn_blocking`. Buffering is
+        //   where the per-tarball memory spike lives (a full
+        //   decompressed package can be many MB), so holding the
+        //   permit across buffering bounds the number of fully-buffered
+        //   response bodies in RAM to the post-download cap. Without
+        //   this, a fast registry + `try_join_all` fan-out could pile
+        //   up hundreds of buffered tarballs waiting for a permit to
+        //   process (Copilot review on #269).
+        //
+        // The permit is held across both `.bytes().await` and the
+        // `spawn_blocking.await` below, dropping at end of scope.
+        let _post_download_permit = post_download_semaphore()
+            .acquire()
+            .await
+            .expect("post-download semaphore shouldn't be closed this soon");
+
+        let response = response_head.bytes().await.map_err(network_error)?;
 
         tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
 
@@ -328,135 +367,155 @@ impl<'a> DownloadTarballToStore<'a> {
             Checksum(ssri::Error),
             Other(TarballError),
         }
-        let cas_paths = tokio::task::spawn(async move {
-            package_integrity.check(&response).map_err(TaskError::Checksum)?;
+        // Run the whole post-download pipeline on the blocking pool. The
+        // body is a dense mix of CPU-bound work (SHA-512 over the full
+        // tarball, gzip inflate, per-file SHA-512) and blocking I/O
+        // (`write_cas_file`). Running it as a plain `tokio::task::spawn`
+        // pinned a tokio reactor worker for the entirety of each tarball
+        // — on a 2-core runner that meant at most two tarballs could
+        // make progress at a time, and the tail of large packages
+        // missed the CI step budget even though the network side was
+        // long done. `spawn_blocking` uses tokio's dedicated
+        // blocking-thread pool instead, so the tail drains in parallel.
+        // The store-index row handoff at the end stays non-blocking
+        // (`StoreIndexWriter::queue`, #265), so the closure itself does
+        // no SQLite work. Concurrency is already capped by the
+        // `_post_download_permit` acquired above.
+        let cas_paths =
+            tokio::task::spawn_blocking(move || -> Result<HashMap<String, PathBuf>, TaskError> {
+                package_integrity.check(&response).map_err(TaskError::Checksum)?;
 
-            // TODO: move tarball extraction to its own function
-            // TODO: test it
-            // TODO: test the duplication of entries
+                // TODO: move tarball extraction to its own function
+                // TODO: test it
+                // TODO: test the duplication of entries
 
-            // Extract the tarball in a scope so the `!Send` `tar::Archive`
-            // (it holds `RefCell<_>` / `Cell<_>`) is dropped before the
-            // `spawn_blocking` await below.
-            let (cas_paths, pkg_files_idx) = {
-                let mut archive = decompress_gzip(&response, package_unpacked_size)
-                    .map_err(TaskError::Other)?
-                    .pipe(Cursor::new)
-                    .pipe(Archive::new);
+                // Extract the tarball in a scope so the decompressed
+                // buffer + `tar::Archive` are released before the SQLite
+                // write — on large packages the inflated bytes can be
+                // multiple MB, and with hundreds of concurrent blocking
+                // tasks that memory adds up fast.
+                let (cas_paths, pkg_files_idx) = {
+                    let mut archive = decompress_gzip(&response, package_unpacked_size)
+                        .map_err(TaskError::Other)?
+                        .pipe(Cursor::new)
+                        .pipe(Archive::new);
 
-                let entries = archive
-                    .entries()
-                    .map_err(TarballError::ReadTarballEntries)
-                    .map_err(TaskError::Other)?
-                    .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir());
-
-                let ((_, Some(capacity)) | (capacity, None)) = entries.size_hint();
-                let mut cas_paths = HashMap::<String, PathBuf>::with_capacity(capacity);
-                let mut pkg_files_idx = PackageFilesIndex {
-                    manifest: None,
-                    requires_build: None,
-                    algo: "sha512".to_string(),
-                    files: HashMap::with_capacity(capacity),
-                    side_effects: None,
-                };
-
-                for entry in entries {
-                    let mut entry = entry.unwrap();
-
-                    let file_mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
-                    let file_is_executable = file_mode::is_executable(file_mode);
-
-                    // Read the contents of the entry
-                    let mut buffer = Vec::with_capacity(entry.size() as usize);
-                    entry.read_to_end(&mut buffer).unwrap();
-
-                    let entry_path = entry.path().unwrap();
-                    let cleaned_entry_path = entry_path
-                        .components()
-                        .skip(1)
-                        .collect::<PathBuf>()
-                        .into_os_string()
-                        .into_string()
-                        .expect("entry path must be valid UTF-8");
-                    let (file_path, file_hash) = store_dir
-                        .write_cas_file(&buffer, file_is_executable)
-                        .map_err(TarballError::WriteCasFile)?;
-
-                    if let Some(previous) = cas_paths.insert(cleaned_entry_path.clone(), file_path)
-                    {
-                        tracing::warn!(
-                            ?previous,
-                            "Duplication detected. Old entry has been ejected"
-                        );
-                    }
-
-                    // `as_millis()` returns `u128`; narrow to `u64` to match
-                    // the store index schema — see `CafsFileInfo::checked_at`
-                    // for why `u64` is used. Using `u64::try_from` rather
-                    // than `as u64` avoids a silent wrap: even though
-                    // millisecond epochs don't overflow `u64` for ~584M
-                    // years, the intent should be explicit. If the clock
-                    // ever reports something unrepresentable, drop the
-                    // timestamp — the `checkedAt` field is optional and
-                    // pnpm tolerates `None`.
-                    let checked_at =
-                        UNIX_EPOCH.elapsed().ok().and_then(|x| u64::try_from(x.as_millis()).ok());
-                    let file_size = entry
-                        .header()
-                        .size()
+                    let entries = archive
+                        .entries()
                         .map_err(TarballError::ReadTarballEntries)
-                        .map_err(TaskError::Other)?;
-                    let file_attrs = CafsFileInfo {
-                        digest: format!("{file_hash:x}"),
-                        mode: file_mode,
-                        size: file_size,
-                        checked_at,
+                        .map_err(TaskError::Other)?
+                        .filter(|entry| !entry.as_ref().unwrap().header().entry_type().is_dir());
+
+                    let ((_, Some(capacity)) | (capacity, None)) = entries.size_hint();
+                    let mut cas_paths = HashMap::<String, PathBuf>::with_capacity(capacity);
+                    let mut pkg_files_idx = PackageFilesIndex {
+                        manifest: None,
+                        requires_build: None,
+                        algo: "sha512".to_string(),
+                        files: HashMap::with_capacity(capacity),
+                        side_effects: None,
                     };
 
-                    if let Some(previous) =
-                        pkg_files_idx.files.insert(cleaned_entry_path, file_attrs)
-                    {
-                        tracing::warn!(
-                            ?previous,
-                            "Duplication detected. Old entry has been ejected"
-                        );
+                    for entry in entries {
+                        let mut entry = entry.unwrap();
+
+                        let file_mode = entry.header().mode().expect("get mode"); // TODO: properly propagate this error
+                        let file_is_executable = file_mode::is_executable(file_mode);
+
+                        // Read the contents of the entry
+                        let mut buffer = Vec::with_capacity(entry.size() as usize);
+                        entry.read_to_end(&mut buffer).unwrap();
+
+                        let entry_path = entry.path().unwrap();
+                        let cleaned_entry_path = entry_path
+                            .components()
+                            .skip(1)
+                            .collect::<PathBuf>()
+                            .into_os_string()
+                            .into_string()
+                            .expect("entry path must be valid UTF-8");
+                        let (file_path, file_hash) = store_dir
+                            .write_cas_file(&buffer, file_is_executable)
+                            .map_err(TarballError::WriteCasFile)?;
+
+                        if let Some(previous) =
+                            cas_paths.insert(cleaned_entry_path.clone(), file_path)
+                        {
+                            tracing::warn!(
+                                ?previous,
+                                "Duplication detected. Old entry has been ejected"
+                            );
+                        }
+
+                        // `as_millis()` returns `u128`; narrow to `u64` to match
+                        // the store index schema — see `CafsFileInfo::checked_at`
+                        // for why `u64` is used. Using `u64::try_from` rather
+                        // than `as u64` avoids a silent wrap: even though
+                        // millisecond epochs don't overflow `u64` for ~584M
+                        // years, the intent should be explicit. If the clock
+                        // ever reports something unrepresentable, drop the
+                        // timestamp — the `checkedAt` field is optional and
+                        // pnpm tolerates `None`.
+                        let checked_at = UNIX_EPOCH
+                            .elapsed()
+                            .ok()
+                            .and_then(|x| u64::try_from(x.as_millis()).ok());
+                        let file_size = entry
+                            .header()
+                            .size()
+                            .map_err(TarballError::ReadTarballEntries)
+                            .map_err(TaskError::Other)?;
+                        let file_attrs = CafsFileInfo {
+                            digest: format!("{file_hash:x}"),
+                            mode: file_mode,
+                            size: file_size,
+                            checked_at,
+                        };
+
+                        if let Some(previous) =
+                            pkg_files_idx.files.insert(cleaned_entry_path, file_attrs)
+                        {
+                            tracing::warn!(
+                                ?previous,
+                                "Duplication detected. Old entry has been ejected"
+                            );
+                        }
                     }
+
+                    (cas_paths, pkg_files_idx)
+                };
+
+                // Hand the per-tarball files index off to the shared
+                // writer task from #265. `queue` is a non-blocking
+                // `UnboundedSender::send` — no SQLite work on this thread,
+                // just a channel push; the writer task owns one
+                // connection and batches whatever it drains in one
+                // `BEGIN IMMEDIATE; … ; COMMIT`. `None` means the writer
+                // failed to open or the caller handed us none — the row
+                // is dropped with a `warn!` and the next install misses
+                // on this cache key, matching the read path's stance.
+                let index_key = store_index_key(&package_integrity.to_string(), &package_id);
+                if let Some(writer) = store_index_writer {
+                    writer.queue(index_key, pkg_files_idx);
+                } else {
+                    tracing::warn!(
+                        target: "pacquet::download",
+                        ?index_key,
+                        "no shared store-index writer; skipping index row for this tarball",
+                    );
                 }
 
-                (cas_paths, pkg_files_idx)
-            };
-
-            // Hand the per-tarball files index off to the shared writer
-            // task. `queue` is a non-blocking `UnboundedSender::send` — no
-            // more `spawn_blocking` per tarball (the per-write blocking
-            // thread churn described in #263), no more reopening SQLite
-            // per row; the writer task owns one connection and batches
-            // whatever it drains in one `BEGIN IMMEDIATE; … ; COMMIT`.
-            // `None` here means we opened the writer but it failed, or
-            // the caller explicitly handed us no writer — either way the
-            // row is dropped with a `warn!` and the next install will
-            // miss on this cache key, same as the read path.
-            let index_key = store_index_key(&package_integrity.to_string(), &package_id);
-            if let Some(writer) = store_index_writer {
-                writer.queue(index_key, pkg_files_idx);
-            } else {
-                tracing::warn!(
-                    target: "pacquet::download",
-                    ?index_key,
-                    "no shared store-index writer; skipping index row for this tarball",
-                );
-            }
-
-            Ok(cas_paths)
-        })
-        .await
-        .expect("no join error")
-        .map_err(|error| match error {
-            TaskError::Checksum(error) => {
-                TarballError::Checksum(VerifyChecksumError { url: package_url.to_string(), error })
-            }
-            TaskError::Other(error) => error,
-        })?;
+                Ok(cas_paths)
+            })
+            .await
+            .map_err(TarballError::TaskJoin)?
+            .map_err(|error| match error {
+                TaskError::Checksum(error) => TarballError::Checksum(VerifyChecksumError {
+                    url: package_url.to_string(),
+                    error,
+                }),
+                TaskError::Other(error) => error,
+            })?;
 
         tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
 
