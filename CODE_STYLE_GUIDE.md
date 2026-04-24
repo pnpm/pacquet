@@ -4,7 +4,7 @@
 
 Clippy cannot yet detect all suboptimal code. This guide supplements that.
 
-This guide is incomplete. More may be added as more pull requests are going to be reviewed.
+This guide is incomplete. More may be added as more pull requests are reviewed.
 
 This is a guide, not a rule. Contributors may break them if they have a good reason to do so.
 
@@ -59,13 +59,13 @@ fn push_path(list: &mut Vec<PathBuf>, item: &Path) {
     list.push(item.to_path_buf());
 }
 
-push_path(my_list, my_path_buf);
-push_path(my_list, my_path_ref.to_path_buf());
+push_path(my_list, &my_path_buf);
+push_path(my_list, my_path_ref);
 ```
 
 The above code is suboptimal because it forces the [copying] of `my_path_buf` even though the type of `my_path_buf` is already `PathBuf`.
 
-Changing the signature of `item` to `PathBuf` would help remove `.to_path_buf()` inside the `push_back` function, eliminate the cloning of `my_path_buf` (the ownership of `my_path_buf` is transferred to `push_path`).
+Changing the signature of `item` to `PathBuf` would help remove `.to_path_buf()` inside the `push_path` function, eliminate the cloning of `my_path_buf` (the ownership of `my_path_buf` is transferred to `push_path`).
 
 ```rust
 fn push_path(list: &mut Vec<PathBuf>, item: PathBuf) {
@@ -156,7 +156,7 @@ assert!(message.contains("expected segment"));
 let output = execute_my_command();
 let received = output.stdout.to_string_lossy(); // could have multiple lines
 eprintln!("STDOUT:\n{received}\n");
-assert_eq!(received, expected)
+assert_eq!(received, expected);
 ```
 
 ```rust
@@ -175,7 +175,7 @@ assert_eq!(received, 5);
 
 If the assertion fails, the value of `received` will appear alongside the error message.
 
-### Cloning an atomic counter
+### Cloning `Arc` and `Rc`
 
 Prefer using `Arc::clone` or `Rc::clone` to vague `.clone()` or `Clone::clone`.
 
@@ -185,21 +185,21 @@ Prefer using `Arc::clone` or `Rc::clone` to vague `.clone()` or `Clone::clone`.
 fn my_function(value: Arc<Vec<u8>>) {
     // ... do many things here
     let value_clone = value.clone(); // inexpensive clone
-    tokio::task::spawn(async {
+    tokio::task::spawn(async move {
         // ... do stuff with value_clone
-    })
+    });
 }
 ```
 
-The above function could easily refactored into the following code:
+The above function could easily be refactored into the following code:
 
 ```rust
 fn my_function(value: &Vec<u8>) {
     // ... do many things here
     let value_clone = value.clone(); // expensive clone, oops
-    tokio::task::spawn(async {
+    tokio::task::spawn(async move {
         // ... do stuff with value_clone
-    })
+    });
 }
 ```
 
@@ -209,9 +209,9 @@ With an explicit `Arc::clone`, however, the performance characteristic will neve
 fn my_function(value: Arc<Vec<u8>>) {
     // ... do many things here
     let value_clone = Arc::clone(&value); // no compile error
-    tokio::task::spawn(async {
+    tokio::task::spawn(async move {
         // ... do stuff with value_clone
-    })
+    });
 }
 ```
 
@@ -219,12 +219,12 @@ fn my_function(value: Arc<Vec<u8>>) {
 fn my_function(value: &Vec<u8>) {
     // ... do many things here
     let value_clone = Arc::clone(&value); // compile error
-    tokio::task::spawn(async {
+    tokio::task::spawn(async move {
         // ... do stuff with value_clone
-    })
+    });
 }
 ```
 
 The above code is still valid code, and the Rust compiler doesn't error, but it has a different performance characteristic now.
 
-**Readability:** The generic `.clone()` or `Clone::clone` often implies an expensive operation (for example: cloning a `Vec`), but `Arc` and `Rc` are not as expensive as the generic `.clone()`. Explicitly mark the cloned type would aid in future refactoring.
+**Readability:** The generic `.clone()` or `Clone::clone` often implies an expensive operation (for example: cloning a `Vec`), but `Arc` and `Rc` are not as expensive as the generic `.clone()`. Explicitly marking the cloned type aids future refactoring.
