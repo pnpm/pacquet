@@ -1704,6 +1704,7 @@ dependencies = [
  "pretty_assertions",
  "rayon",
  "reflink-copy",
+ "serde_yaml",
  "ssri",
  "tempfile",
  "tokio",
