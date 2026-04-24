@@ -31,6 +31,7 @@ derive_more = { workspace = true }
 home        = { workspace = true }
 miette      = { workspace = true }
 pipe-trait  = { workspace = true }
+swc_malloc  = { workspace = true }
 tokio       = { workspace = true }
 
 [dev-dependencies]
