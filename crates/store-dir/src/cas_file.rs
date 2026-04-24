@@ -148,8 +148,9 @@ mod tests {
     /// * the first write into a given shard populates the cache entry
     ///   for that shard (no eager seeding);
     /// * a second write of identical content is a successful noop via
-    ///   the `file_path.exists()` warm-cache branch inside
-    ///   `ensure_file`, and leaves the cache unchanged;
+    ///   the `AlreadyExists` branch inside `ensure_file` (the open
+    ///   with `O_CREAT|O_EXCL` returns `EEXIST`, which we map to `Ok(())`),
+    ///   and leaves the cache unchanged;
     /// * a later write of different content still succeeds whether it
     ///   lands in the same shard or a new one.
     ///
@@ -170,8 +171,9 @@ mod tests {
         assert!(path_a.is_file());
 
         // Second write of identical content — same hash, same path —
-        // hits the `file_path.exists()` fast path inside `ensure_file`
-        // and returns Ok without touching the filesystem further.
+        // hits the `AlreadyExists` branch inside `ensure_file` (the
+        // `O_CREAT|O_EXCL` open returns `EEXIST`, which we swallow as
+        // `Ok(())`) and returns without writing again.
         let (path_b, hash_b) = store_dir.write_cas_file(b"hello world", false).unwrap();
         assert_eq!(hash_a, hash_b);
         assert_eq!(path_a, path_b);
