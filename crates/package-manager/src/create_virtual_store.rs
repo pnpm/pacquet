@@ -146,24 +146,33 @@ impl<'a> CreateVirtualStore<'a> {
                 let virtual_node_modules_dir =
                     virtual_node_modules_dir_for(virtual_store_dir, snapshot_key);
                 async move {
-                    std::fs::create_dir_all(&virtual_node_modules_dir).map_err(|error| {
-                        CreateVirtualStoreError::CreateNodeModulesDir {
-                            dir: virtual_node_modules_dir.clone(),
-                            error,
+                    // The per-snapshot body is entirely synchronous — mkdir
+                    // plus a rayon-parallel symlink sweep — with no `.await`
+                    // points. `try_join_all` polls its children on the same
+                    // task, so without a blocking hint every symlink future
+                    // would run to completion on the worker thread before
+                    // the runtime got a chance to poll `fetch_fut`. That
+                    // couples download progress to symlink wall-time on a
+                    // multi-threaded runtime and defeats the whole point of
+                    // forking the two branches. `block_in_place` signals
+                    // the executor to hand `fetch_fut` (and any other tasks)
+                    // off to sibling workers while this thread blocks.
+                    tokio::task::block_in_place(|| {
+                        std::fs::create_dir_all(&virtual_node_modules_dir).map_err(|error| {
+                            CreateVirtualStoreError::CreateNodeModulesDir {
+                                dir: virtual_node_modules_dir.clone(),
+                                error,
+                            }
+                        })?;
+                        if let Some(dependencies) = &snapshot.dependencies {
+                            create_symlink_layout(
+                                dependencies,
+                                virtual_store_dir,
+                                &virtual_node_modules_dir,
+                            );
                         }
-                    })?;
-                    if let Some(dependencies) = &snapshot.dependencies {
-                        // `create_symlink_layout` is synchronous + rayon-parallel
-                        // internally. It runs on rayon's worker threads, so the
-                        // current tokio task just parks until rayon finishes —
-                        // same blocking behavior the old per-snapshot code had.
-                        create_symlink_layout(
-                            dependencies,
-                            virtual_store_dir,
-                            &virtual_node_modules_dir,
-                        );
-                    }
-                    Ok::<_, CreateVirtualStoreError>(())
+                        Ok::<_, CreateVirtualStoreError>(())
+                    })
                 }
             }))
             .await
