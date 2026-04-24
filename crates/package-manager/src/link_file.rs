@@ -99,27 +99,36 @@ pub fn link_file(
     // If the target resolves to a live file (directly or via a
     // symlink), a prior install placed it and there's nothing to do.
     // `fs::metadata` follows symlinks and returns `Err(NotFound)` for
-    // dangling ones, which is exactly what we want here.
-    if fs::metadata(target_link).is_ok() {
-        return Ok(());
-    }
-    // `metadata` above can also fail when the dirent itself is a
-    // dangling symlink — left behind by an interrupted prior install.
-    // `symlink_metadata` doesn't follow, so it'll succeed in that
-    // case. Scrub the broken link so the subsequent link / copy
-    // doesn't collide with `AlreadyExists` and so the installed
-    // package isn't left with a silently-missing file.
-    if let Ok(meta) = fs::symlink_metadata(target_link) {
-        if meta.file_type().is_symlink() {
-            fs::remove_file(target_link).map_err(|error| LinkFileError::RemoveStale {
-                path: target_link.to_path_buf(),
-                error,
-            })?;
+    // dangling ones — so only treat `NotFound` as the "might need
+    // cleanup" case. For anything else (`PermissionDenied`, transient
+    // NFS errors, …) fall through to the import call below without
+    // touching the existing dirent: deleting a potentially live
+    // symlink on a stat error would be more destructive than letting
+    // the real error surface.
+    match fs::metadata(target_link) {
+        Ok(_) => return Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            // A dangling symlink left behind by an interrupted prior
+            // install still returns a dirent from `symlink_metadata`
+            // (which doesn't follow). Scrub it so the subsequent link
+            // / copy doesn't collide with `AlreadyExists` and so the
+            // installed package isn't left with a silently-missing
+            // file.
+            if let Ok(meta) = fs::symlink_metadata(target_link) {
+                if meta.file_type().is_symlink() {
+                    fs::remove_file(target_link).map_err(|error| {
+                        LinkFileError::RemoveStale {
+                            path: target_link.to_path_buf(),
+                            error,
+                        }
+                    })?;
+                }
+            }
         }
-        // Non-symlink dirent present but `metadata` failed — rare
-        // (permissions, stale NFS handle, …). Let the link / copy
-        // below surface the specific error rather than guess at a
-        // recovery here.
+        Err(_) => {
+            // Non-`NotFound` stat error. Leave the dirent alone; the
+            // import call below will surface the real problem.
+        }
     }
 
     if let Some(parent_dir) = target_link.parent() {
