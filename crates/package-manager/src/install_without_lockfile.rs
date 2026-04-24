@@ -138,15 +138,16 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
 
         tracing::info!(target: "pacquet::install", node_modules = ?node_modules_path, "Start subset");
 
+        let node_modules_path_ref = &node_modules_path;
         package
             .dependencies(self.config.auto_install_peers)
-            .map(|(name, version_range)| async {
+            .map(|(name, version_range)| async move {
                 let dependency = InstallPackageFromRegistry {
                     tarball_mem_cache,
                     http_client,
                     config,
                     store_index,
-                    node_modules_dir: &node_modules_path,
+                    node_modules_dir: node_modules_path_ref,
                     name,
                     version_range,
                 }
