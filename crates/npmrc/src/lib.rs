@@ -166,9 +166,14 @@ pub struct Npmrc {
     /// lookup skips that verification entirely and trusts the index — a
     /// missing blob is discovered lazily at link time instead.
     ///
-    /// Matches pnpm's `verify-store-integrity` / `verifyStoreIntegrity`
-    /// setting (see `installing/deps-installer/src/install/extendInstallOptions.ts`
-    /// for the same default of `true`).
+    /// Matches pnpm's `verifyStoreIntegrity` camelCase key in
+    /// `pnpm-workspace.yaml` (same `true` default as pnpm's
+    /// `installing/deps-installer/src/install/extendInstallOptions.ts`).
+    /// Only `pnpm-workspace.yaml` is wired up today — [`Npmrc::current`]
+    /// applies auth/registry from `.npmrc` and reads project-structural
+    /// settings from `pnpm-workspace.yaml`, matching pnpm 11's own
+    /// split. A `verify-store-integrity=…` line in `.npmrc` is
+    /// silently ignored.
     #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
     pub verify_store_integrity: bool,
 }

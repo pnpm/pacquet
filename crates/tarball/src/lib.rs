@@ -174,6 +174,13 @@ async fn load_cached_cas_paths(
             pacquet_store_dir::build_file_maps_from_index(store_dir, entry)
         };
         if !verify_result.passed {
+            // Per-file reason (filename, CAS path, size mismatch, hash
+            // mismatch, …) is logged at `debug!` inside
+            // `check_pkg_files_integrity` / `build_file_maps_from_index`
+            // where the failure actually happens — this caller-side log
+            // just summarises "the row as a whole didn't verify" so log
+            // scrapers can correlate the per-file debug lines with the
+            // snapshot they belong to.
             tracing::debug!(
                 target: "pacquet::download",
                 ?cache_key,

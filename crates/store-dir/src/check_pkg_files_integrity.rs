@@ -67,6 +67,12 @@ pub fn build_file_maps_from_index(store_dir: &StoreDir, entry: PackageFilesIndex
             // install. Flipping `passed` to `false` sends the whole
             // entry back through the re-fetch path so the install stays
             // consistent.
+            tracing::debug!(
+                target: "pacquet::store_index",
+                ?filename,
+                digest = %info.digest,
+                "malformed CAFS digest in store-index row; re-fetching",
+            );
             passed = false;
             continue;
         };
@@ -115,11 +121,17 @@ pub fn check_pkg_files_integrity(store_dir: &StoreDir, entry: PackageFilesIndex)
     let mut verified: HashSet<String> = HashSet::new();
     for (filename, info) in files {
         let Some(path) = store_dir.cas_file_path_by_mode(&info.digest, info.mode) else {
+            tracing::debug!(
+                target: "pacquet::store_index",
+                ?filename,
+                digest = %info.digest,
+                "malformed CAFS digest in store-index row; re-fetching",
+            );
             all_verified = false;
             continue;
         };
         if !verified.contains(info.digest.as_str()) {
-            if verify_file(&path, &info, &algo) {
+            if verify_file(&path, &filename, &info, &algo) {
                 // One digest clone per unique CAFS blob we actually
                 // verified; zero for dedup hits. On a 1352-snapshot
                 // install that's an extra allocation per *unique*
@@ -138,8 +150,19 @@ pub fn check_pkg_files_integrity(store_dir: &StoreDir, entry: PackageFilesIndex)
 /// Port of pnpm's `verifyFile`. `true` when the on-disk file is either
 /// unmodified since the last verified check or modified but still
 /// content-hashes to the stored digest.
-fn verify_file(path: &Path, info: &CafsFileInfo, algo: &str) -> bool {
+///
+/// `filename` is the in-tarball path the caller is trying to reuse; it
+/// doesn't affect behaviour, only the `debug!` log when verification
+/// fails, so operators can see *which* package file invalidated the
+/// store-index row in the log.
+fn verify_file(path: &Path, filename: &str, info: &CafsFileInfo, algo: &str) -> bool {
     let Some((is_modified, size)) = check_file(path, info.checked_at) else {
+        tracing::debug!(
+            target: "pacquet::store_index",
+            ?filename,
+            ?path,
+            "CAFS file missing or unreadable; re-fetching",
+        );
         return false;
     };
     if !is_modified {
@@ -149,11 +172,25 @@ fn verify_file(path: &Path, info: &CafsFileInfo, algo: &str) -> bool {
         // Wrong size → content definitely changed. Remove so the next
         // caller fetches a clean copy. See `remove_stale_cafs_entry`
         // for why this has to cover dirs too.
+        tracing::debug!(
+            target: "pacquet::store_index",
+            ?filename,
+            ?path,
+            expected_size = info.size,
+            actual_size = size,
+            "CAFS file size mismatch; scrubbing and re-fetching",
+        );
         remove_stale_cafs_entry(path);
         return false;
     }
     let passed = verify_file_integrity(path, &info.digest, algo);
     if !passed {
+        tracing::debug!(
+            target: "pacquet::store_index",
+            ?filename,
+            ?path,
+            "CAFS file digest mismatch or unknown algo; scrubbing and re-fetching",
+        );
         remove_stale_cafs_entry(path);
     }
     passed
