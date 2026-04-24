@@ -342,8 +342,12 @@ impl StoreIndex {
     /// turns 1352 per-row fsyncs into ⌈1352/batch_size⌉ — on APFS this is
     /// the single biggest lever for `pacquet install` wall time (#263).
     ///
-    /// Errors during the batch roll the transaction back before returning,
+    /// SQLite errors during the transaction roll it back before returning,
     /// so a partial apply never leaves the index in a half-written state.
+    /// A per-row msgpack encoding error is logged at `warn!` and skipped
+    /// — one malformed `PackageFilesIndex` shouldn't cost every other row
+    /// in the batch the chance to commit, matching the "best-effort
+    /// index" stance the writer task and the read path already take.
     /// Encoding is done up front into a `Vec<(String, Vec<u8>)>` so the
     /// transaction body is pure SQLite — the caller's producer thread pays
     /// the msgpack cost, not the single writer thread.
@@ -352,15 +356,21 @@ impl StoreIndex {
         entries: impl IntoIterator<Item = (String, PackageFilesIndex)>,
     ) -> Result<(), StoreIndexError> {
         // Encode outside the transaction so a single malformed row can't
-        // hold `BEGIN IMMEDIATE`'s write lock while we serialize msgpack.
-        let encoded: Vec<(String, Vec<u8>)> = entries
-            .into_iter()
-            .map(|(key, value)| {
-                crate::msgpackr_records::encode_package_files_index(&value)
-                    .map(|buf| (key, buf))
-                    .map_err(|source| StoreIndexError::Encode { source })
-            })
-            .collect::<Result<_, _>>()?;
+        // hold `BEGIN IMMEDIATE`'s write lock while we serialize msgpack,
+        // and skip individual encoding failures with a log so one bad
+        // entry doesn't drop the rest of the batch on the floor.
+        let mut encoded: Vec<(String, Vec<u8>)> = Vec::new();
+        for (key, value) in entries {
+            match crate::msgpackr_records::encode_package_files_index(&value) {
+                Ok(buf) => encoded.push((key, buf)),
+                Err(source) => tracing::warn!(
+                    target: "pacquet::store_index",
+                    ?key,
+                    error = ?source,
+                    "failed to encode package_index row; skipping",
+                ),
+            }
+        }
         if encoded.is_empty() {
             return Ok(());
         }
