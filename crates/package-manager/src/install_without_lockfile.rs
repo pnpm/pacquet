@@ -63,13 +63,24 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
         // Open the read-only SQLite index once per install, shared across
         // every `DownloadTarballToStore`. See the matching comment in
         // `create_virtual_store.rs` for the full rationale, including the
-        // `JoinError`-to-cache-miss degradation.
+        // `JoinError`-to-cache-miss degradation (with a `warn!` so it
+        // stays diagnosable).
         let store_dir: &'static _ = &config.store_dir;
-        let store_index =
-            tokio::task::spawn_blocking(move || StoreIndex::shared_readonly_in(store_dir))
-                .await
-                .ok()
-                .flatten();
+        let store_index = match tokio::task::spawn_blocking(move || {
+            StoreIndex::shared_readonly_in(store_dir)
+        })
+        .await
+        {
+            Ok(store_index) => store_index,
+            Err(error) => {
+                tracing::warn!(
+                    target: "pacquet::install",
+                    ?error,
+                    "store-index open task failed; continuing without a shared cache index",
+                );
+                None
+            }
+        };
         let store_index_ref = store_index.as_ref();
 
         manifest

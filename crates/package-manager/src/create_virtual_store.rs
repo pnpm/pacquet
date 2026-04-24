@@ -66,13 +66,25 @@ impl<'a> CreateVirtualStore<'a> {
         // runtime shutdown) is degraded into `None` so the install still
         // makes progress — cache lookups just miss. `shared_readonly_in`
         // already yields `None` for a first-time install against an empty
-        // store, and downstream callers handle that shape correctly.
+        // store, and downstream callers handle that shape correctly. We
+        // surface the error at `warn!` so a silent task panic or
+        // cancellation is still diagnosable in the log.
         let store_dir: &'static _ = &config.store_dir;
-        let store_index =
-            tokio::task::spawn_blocking(move || StoreIndex::shared_readonly_in(store_dir))
-                .await
-                .ok()
-                .flatten();
+        let store_index = match tokio::task::spawn_blocking(move || {
+            StoreIndex::shared_readonly_in(store_dir)
+        })
+        .await
+        {
+            Ok(store_index) => store_index,
+            Err(error) => {
+                tracing::warn!(
+                    target: "pacquet::install",
+                    ?error,
+                    "store-index open task failed; continuing without a shared cache index",
+                );
+                None
+            }
+        };
         let store_index_ref = store_index.as_ref();
 
         snapshots
