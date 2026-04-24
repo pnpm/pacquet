@@ -1,5 +1,6 @@
 use crate::{
-    store_init::init_store_dir_best_effort, InstallPackageBySnapshot, InstallPackageBySnapshotError,
+    create_symlink_layout, store_init::init_store_dir_best_effort, InstallPackageBySnapshot,
+    InstallPackageBySnapshotError,
 };
 use derive_more::{Display, Error};
 use futures_util::future;
@@ -8,8 +9,11 @@ use pacquet_lockfile::{PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_store_dir::{StoreIndex, StoreIndexWriter};
-use pipe_trait::Pipe;
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    io,
+    path::{Path, PathBuf},
+};
 
 /// This subroutine generates filesystem layout for the virtual store at `node_modules/.pacquet`.
 #[must_use]
@@ -25,6 +29,14 @@ pub struct CreateVirtualStore<'a> {
 pub enum CreateVirtualStoreError {
     #[diagnostic(transparent)]
     InstallPackageBySnapshot(#[error(source)] InstallPackageBySnapshotError),
+
+    #[display("Failed to recursively create node_modules directory at {dir:?}: {error}")]
+    #[diagnostic(code(pacquet_package_manager::create_node_modules_dir))]
+    CreateNodeModulesDir {
+        dir: PathBuf,
+        #[error(source)]
+        error: io::Error,
+    },
 
     #[display("Lockfile has a snapshot entry `{snapshot_key}` with no matching metadata entry (`{metadata_key}`) in `packages:`.")]
     #[diagnostic(code(pacquet_package_manager::missing_package_metadata))]
@@ -106,7 +118,7 @@ impl<'a> CreateVirtualStore<'a> {
         // blocking pool grew to 500+ threads to service them.
         //
         // We drop our own copy of the `Arc<StoreIndexWriter>` after the
-        // `try_join_all` below so the channel can close once every tarball
+        // `try_join!` below so the channel can close once every tarball
         // task has dropped its clone; then `.await` on the join handle
         // waits for the final batch to flush before returning. A writer-
         // side `JoinError` or open failure is surfaced at `warn!` and
@@ -115,9 +127,51 @@ impl<'a> CreateVirtualStore<'a> {
         let (store_index_writer, writer_task) = StoreIndexWriter::spawn(store_dir);
         let store_index_writer_ref = Some(&store_index_writer);
 
-        snapshots
-            .iter()
-            .map(|(snapshot_key, snapshot)| async move {
+        let virtual_store_dir: &Path = &config.virtual_store_dir;
+
+        // Run intra-package symlink creation concurrently with tarball fetch
+        // + CAS import. Symlinks only depend on the resolved dep graph
+        // (already in `snapshots`), not on any tarball contents, so there's
+        // no reason to serialise them behind downloads.
+        //
+        // Matches pnpm's `headless` installer, which forks the same two
+        // branches off the resolved graph:
+        //
+        //   await Promise.all([linkAllModules(...), linkAllPkgs(...)])
+        //
+        // See `pnpm/pkg-manager/headless/src/index.ts` and
+        // `pnpm/pkg-manager/core/src/install/link.ts`.
+        let symlink_fut = async {
+            future::try_join_all(snapshots.iter().map(|(snapshot_key, snapshot)| {
+                let virtual_node_modules_dir =
+                    virtual_node_modules_dir_for(virtual_store_dir, snapshot_key);
+                async move {
+                    std::fs::create_dir_all(&virtual_node_modules_dir).map_err(|error| {
+                        CreateVirtualStoreError::CreateNodeModulesDir {
+                            dir: virtual_node_modules_dir.clone(),
+                            error,
+                        }
+                    })?;
+                    if let Some(dependencies) = &snapshot.dependencies {
+                        // `create_symlink_layout` is synchronous + rayon-parallel
+                        // internally. It runs on rayon's worker threads, so the
+                        // current tokio task just parks until rayon finishes —
+                        // same blocking behavior the old per-snapshot code had.
+                        create_symlink_layout(
+                            dependencies,
+                            virtual_store_dir,
+                            &virtual_node_modules_dir,
+                        );
+                    }
+                    Ok::<_, CreateVirtualStoreError>(())
+                }
+            }))
+            .await
+            .map(drop)
+        };
+
+        let fetch_fut = async {
+            future::try_join_all(snapshots.keys().map(|snapshot_key| async move {
                 let metadata_key = snapshot_key.without_peer();
                 let metadata = packages.get(&metadata_key).ok_or_else(|| {
                     CreateVirtualStoreError::MissingPackageMetadata {
@@ -132,14 +186,16 @@ impl<'a> CreateVirtualStore<'a> {
                     store_index_writer: store_index_writer_ref,
                     package_key: snapshot_key,
                     metadata,
-                    snapshot,
                 }
                 .run()
                 .await
                 .map_err(CreateVirtualStoreError::InstallPackageBySnapshot)
-            })
-            .pipe(future::try_join_all)
-            .await?;
+            }))
+            .await
+            .map(drop)
+        };
+
+        tokio::try_join!(symlink_fut, fetch_fut)?;
 
         // Drop the orchestration's sender so the channel closes once every
         // per-tarball clone has also dropped; then wait for the writer task
@@ -162,4 +218,8 @@ impl<'a> CreateVirtualStore<'a> {
 
         Ok(())
     }
+}
+
+fn virtual_node_modules_dir_for(virtual_store_dir: &Path, package_key: &PackageKey) -> PathBuf {
+    virtual_store_dir.join(package_key.to_virtual_store_name()).join("node_modules")
 }
