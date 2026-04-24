@@ -50,9 +50,9 @@ impl ThrottledClient {
 
     /// Construct a throttled client wrapping a pre-built [`Client`].
     /// Useful for tests that want different timeout values than
-    /// [`new_from_cpu_count`] sets — e.g. sub-second connect timeouts
-    /// so firewalled / unreachable URLs fail within the test-suite
-    /// budget instead of waiting on TCP retry.
+    /// [`Self::new_from_cpu_count`] sets — e.g. sub-second connect
+    /// timeouts so firewalled / unreachable URLs fail within the
+    /// test-suite budget instead of waiting on TCP retry.
     pub fn from_client(client: Client) -> Self {
         const MIN_PERMITS: usize = 16;
         let semaphore = num_cpus::get().max(MIN_PERMITS).pipe(Semaphore::new);
