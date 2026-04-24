@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 
 /// SQLite-backed per-package index that pnpm v11 stores alongside the CAFS
@@ -38,14 +41,22 @@ pub type SharedReadonlyStoreIndex = Arc<Mutex<StoreIndex>>;
 /// (see `store/index/src/index.ts`): producers don't touch SQLite, they
 /// just push `(key, value)` onto an unbounded channel. A single
 /// [`spawn_blocking`][tokio::task::spawn_blocking] task drains the channel,
-/// collects each non-blocking burst into a batch (capped at
-/// [`MAX_BATCH_SIZE`]), and flushes it with one `BEGIN IMMEDIATE` …
+/// collects each non-blocking burst into a batch (capped at 256 entries —
+/// see `MAX_BATCH_SIZE`), and flushes it with one `BEGIN IMMEDIATE` …
 /// `COMMIT`. That turns the per-snapshot `Connection::open` + 7-PRAGMA +
 /// solo-INSERT pattern into one open + N transactions, amortizes the WAL
 /// commit fsync across the batch, and leaves tokio's blocking pool alone
 /// (one writer thread, not one per tarball).
 pub struct StoreIndexWriter {
     tx: tokio::sync::mpsc::UnboundedSender<(String, PackageFilesIndex)>,
+    /// One-shot log guard for the "channel closed" case in [`Self::queue`].
+    /// A dead writer (task panicked, [`StoreIndex::open`] failed) means
+    /// every subsequent `queue` call fails — without this guard that
+    /// spams 1352+ identical warnings into the install log. Once the
+    /// first failure has been logged, further failures go silent;
+    /// subsequent installs will still observe the missing index rows
+    /// and re-download, which is the only actionable signal anyway.
+    warn_on_send_failure: AtomicBool,
 }
 
 /// Batch cap for [`StoreIndexWriter`]. Big enough that a 1352-snapshot
@@ -108,7 +119,7 @@ impl StoreIndexWriter {
             }
             Ok(())
         });
-        (Arc::new(StoreIndexWriter { tx }), handle)
+        (Arc::new(StoreIndexWriter { tx, warn_on_send_failure: AtomicBool::new(true) }), handle)
     }
 
     /// Queue one `(key, value)` to be flushed in the next transaction.
@@ -116,14 +127,20 @@ impl StoreIndexWriter {
     /// Silently drops the entry if the writer task has exited (closed
     /// channel). Matches pnpm's graceful-degradation on failed writes:
     /// the install in flight still completes, the next install misses on
-    /// this cache-key and re-downloads.
+    /// this cache-key and re-downloads. The "channel closed" warning is
+    /// logged only on the first failure per writer instance — every
+    /// subsequent call would emit the same message, and on a 1352-
+    /// snapshot install that's a thousand identical warnings drowning
+    /// out real diagnostics.
     pub fn queue(&self, key: String, value: PackageFilesIndex) {
         if let Err(error) = self.tx.send((key, value)) {
-            tracing::warn!(
-                target: "pacquet::store_index",
-                ?error,
-                "store-index writer channel closed; dropping queued row",
-            );
+            if self.warn_on_send_failure.swap(false, Ordering::Relaxed) {
+                tracing::warn!(
+                    target: "pacquet::store_index",
+                    ?error,
+                    "store-index writer channel closed; dropping queued row (further failures silenced)",
+                );
+            }
         }
     }
 }

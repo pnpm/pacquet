@@ -428,14 +428,14 @@ impl<'a> DownloadTarballToStore<'a> {
 
             // Hand the per-tarball files index off to the shared writer
             // task. `queue` is a non-blocking `UnboundedSender::send` — no
-            // more `spawn_blocking` per tarball (the big thread-pool
-            // blowup we saw before #263 was fixed), no more reopening
-            // SQLite per row; the writer task owns one connection and
-            // batches whatever it drains in one `BEGIN IMMEDIATE; … ;
-            // COMMIT`. `None` here means we opened the writer but it
-            // failed, or the caller explicitly handed us no writer —
-            // either way the row is dropped with a `warn!` and the next
-            // install will miss on this cache key, same as the read path.
+            // more `spawn_blocking` per tarball (the per-write blocking
+            // thread churn described in #263), no more reopening SQLite
+            // per row; the writer task owns one connection and batches
+            // whatever it drains in one `BEGIN IMMEDIATE; … ; COMMIT`.
+            // `None` here means we opened the writer but it failed, or
+            // the caller explicitly handed us no writer — either way the
+            // row is dropped with a `warn!` and the next install will
+            // miss on this cache key, same as the read path.
             let index_key = store_index_key(&package_integrity.to_string(), &package_id);
             if let Some(writer) = store_index_writer {
                 writer.queue(index_key, pkg_files_idx);
