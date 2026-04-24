@@ -7,7 +7,46 @@ use pacquet_npmrc::Npmrc;
 use pacquet_store_dir::{SharedReadonlyStoreIndex, StoreIndexWriter};
 use pacquet_tarball::{DownloadTarballToStore, TarballError};
 use pipe_trait::Pipe;
-use std::{borrow::Cow, sync::Arc};
+use std::{
+    borrow::Cow,
+    sync::{Arc, OnceLock},
+};
+use tokio::sync::Semaphore;
+
+/// Cap on concurrent CAS-to-`node_modules` imports — the
+/// `create_cas_files` → `link_file` chain inside
+/// [`CreateVirtualDirBySnapshot::run`] that reflinks / hardlinks / copies
+/// each package's files out of the store shards and into the per-
+/// package `.pacquet/{pkg}@{ver}/node_modules/{pkg}/` slot.
+///
+/// Ports pnpm v11's `limitImportingPackage = pLimit(4)` from
+/// `worker/src/index.ts:281`, where pnpm records the following
+/// empirical finding:
+///
+/// > The workers are doing lots of file system operations so,
+/// > running them in parallel helps only to a point. With local
+/// > experimenting it was discovered that running 4 workers gives
+/// > the best results. Adding more workers actually makes
+/// > installation slower.
+///
+/// In pnpm this cap is independent of (and tighter than) the
+/// worker-pool size; a 16-core machine still caps imports at 4. The
+/// reasoning holds for pacquet too — each import call does a flurry
+/// of syscalls (stat → link/reflink/copy) that serialise at the
+/// filesystem's metadata journal, and past 4 concurrent packages
+/// the contention dominates any additional parallelism. Ports the
+/// absolute number; widening or narrowing is empirical work for a
+/// follow-up.
+///
+/// Gates only the node_modules import stage, not the upstream
+/// tarball fetch or decompress. Those have their own caps in
+/// `pacquet_tarball` (HTTP socket throttle, post-download
+/// semaphore) that operate on an earlier, less FS-contentious
+/// slice of the install.
+fn cas_import_semaphore() -> &'static Semaphore {
+    static SEM: OnceLock<Semaphore> = OnceLock::new();
+    SEM.get_or_init(|| Semaphore::new(4))
+}
 
 /// This subroutine downloads a package tarball, extracts it, installs it to a
 /// virtual dir, then creates the symlink layout for the package. CAS file
@@ -107,6 +146,18 @@ impl<'a> InstallPackageBySnapshot<'a> {
         .run_without_mem_cache()
         .await
         .map_err(InstallPackageBySnapshotError::DownloadTarball)?;
+
+        // Acquire the CAS-import permit *after* the tarball is on
+        // disk, so the network + decompress + CAS-write stages (all
+        // capped upstream by `post_download_semaphore`) don't also
+        // serialise behind this tighter gate. The permit is held
+        // across the synchronous `CreateVirtualDirBySnapshot::run`
+        // call, which does the `create_cas_files` → `link_file`
+        // sweep + symlink layout.
+        let _import_permit = cas_import_semaphore()
+            .acquire()
+            .await
+            .expect("cas-import semaphore shouldn't be closed this soon");
 
         CreateVirtualDirBySnapshot {
             virtual_store_dir: &config.virtual_store_dir,
