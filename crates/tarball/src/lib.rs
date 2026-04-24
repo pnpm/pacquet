@@ -561,11 +561,22 @@ impl<'a> DownloadTarballToStore<'a> {
         // specific perf fix rather than a port of upstream shape.
         let mut checker = IntegrityChecker::new(package_integrity.clone());
         // Pre-size the decompressed sink when the registry reported an
-        // `unpackedSize`. On a miss the `Vec` grows geometrically.
-        let decompressed_sink = match package_unpacked_size {
-            Some(size) => Vec::with_capacity(size),
-            None => Vec::new(),
-        };
+        // `unpackedSize`. Registry metadata is untrusted — a malicious
+        // or corrupt `unpackedSize` of `usize::MAX` would turn
+        // `Vec::with_capacity` into an immediate abort before a single
+        // byte of the tarball arrived. Treat the hint as a best-effort
+        // optimization: clamp to a conservative ceiling and reserve
+        // fallibly, dropping the reservation on allocation failure so
+        // the `Vec` simply falls back to geometric growth. Same ceiling
+        // as `MAX_ENTRY_PREALLOC_BYTES` above — a tarball whose real
+        // decompressed size exceeds this still works, it just doesn't
+        // get the prealloc benefit.
+        const MAX_UNPACKED_SIZE_PREALLOC_BYTES: usize = 64 * 1024 * 1024;
+        let mut decompressed_sink = Vec::<u8>::new();
+        if let Some(size) = package_unpacked_size {
+            let reserve = size.min(MAX_UNPACKED_SIZE_PREALLOC_BYTES);
+            let _ = decompressed_sink.try_reserve(reserve);
+        }
         let mut decoder = GzipDecoder::new(decompressed_sink);
         let mut body = response_head.bytes_stream();
         // Drain the whole body into the `IntegrityChecker` regardless
