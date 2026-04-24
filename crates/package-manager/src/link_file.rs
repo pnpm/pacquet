@@ -187,38 +187,27 @@ fn is_cross_device(err: &io::Error) -> bool {
     matches!(err.raw_os_error(), Some(18) | Some(17))
 }
 
-/// Errors that indicate "this filesystem can't reflink" — the kernel
-/// rejected the ioctl, not the file. The downgrade cache uses this to
-/// skip the reflink tier for subsequent files, while letting
-/// `NotFound` / `PermissionDenied` / `AlreadyExists` and other real
-/// errors propagate (a one-off missing-source file must not
-/// permanently disable reflink for the rest of the process).
+/// Errors that indicate the call itself is malformed (missing source,
+/// permission denied, target already exists) — propagate these from
+/// the downgrade cache instead of advancing to the next tier. A
+/// different tier won't fix an invalid call, and downgrading on a
+/// one-off `NotFound` would permanently disable reflink / hardlink for
+/// every other file in the install.
 ///
-/// `ErrorKind::Unsupported` covers Rust's portable layer when newer
-/// standards lands; the raw-errno list covers platforms where the
-/// kernel reports the capability gap as a bare `Err(_)` without
-/// mapping to a kind:
-/// * `ENOSYS` (38) — syscall not implemented
-/// * `EOPNOTSUPP` / `ENOTSUP` (95 Linux, 102 FreeBSD, 45 macOS) —
-///   operation not supported on this fd
-/// * `ENOTTY` (25) — what ext4 returns for `ioctl_ficlone` when the
-///   filesystem doesn't implement reflink; without this, ext4 would
-///   never downgrade and every file would pay the failed-ioctl cost
-///
-/// We additionally treat `EXDEV` as a fallback trigger — a cross-device
-/// reflink can't possibly succeed no matter how many times we retry.
-fn is_reflink_fallback_error(err: &io::Error) -> bool {
-    matches!(err.kind(), io::ErrorKind::Unsupported)
-        || is_cross_device(err)
-        || matches!(err.raw_os_error(), Some(38) | Some(95) | Some(102) | Some(45) | Some(25))
-}
-
-/// Errors that indicate "this filesystem / device pair can't
-/// hardlink". In practice this is `EXDEV` (cross-device) and
-/// `ErrorKind::Unsupported` (some exotic FSes refuse hardlinks
-/// altogether). Everything else propagates.
-fn is_hardlink_fallback_error(err: &io::Error) -> bool {
-    is_cross_device(err) || matches!(err.kind(), io::ErrorKind::Unsupported)
+/// Everything else — including the grab-bag of errno / Windows codes
+/// kernels use to signal "filesystem can't do this operation"
+/// (`EOPNOTSUPP`, `ENOTTY`, `ENOSYS`, `ERROR_INVALID_FUNCTION`, …) —
+/// triggers the fallback. This is the same deny-list the `reflink-copy`
+/// crate uses in its own `reflink_or_copy` fallback logic, so it's
+/// battle-tested across the platform matrix. The allow-list flavour we
+/// tried initially missed Windows's `ERROR_INVALID_FUNCTION` (raw OS
+/// `1`, which Rust surfaces as `ErrorKind::InvalidInput`) for NTFS's
+/// rejection of `FSCTL_DUPLICATE_EXTENTS_TO_FILE`, breaking Windows CI.
+fn is_call_error(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied | io::ErrorKind::AlreadyExists
+    )
 }
 
 /// `Auto`'s clone → hardlink → copy chain, using `state` to skip tiers
@@ -237,20 +226,20 @@ fn auto_link(state: &AtomicU8, source: &Path, target: &Path) -> io::Result<()> {
                     log_method_once(LOG_FLAG_CLONE, "clone");
                     return Ok(());
                 }
-                Err(err) if is_reflink_fallback_error(&err) => {
+                Err(err) if is_call_error(&err) => return Err(err),
+                Err(_) => {
                     state.fetch_max(LINK_STATE_HARDLINK, Ordering::Relaxed);
                 }
-                Err(err) => return Err(err),
             },
             LINK_STATE_HARDLINK => match fs::hard_link(source, target) {
                 Ok(()) => {
                     log_method_once(LOG_FLAG_HARDLINK, "hardlink");
                     return Ok(());
                 }
-                Err(err) if is_hardlink_fallback_error(&err) => {
+                Err(err) if is_call_error(&err) => return Err(err),
+                Err(_) => {
                     state.fetch_max(LINK_STATE_COPY, Ordering::Relaxed);
                 }
-                Err(err) => return Err(err),
             },
             _ => {
                 log_method_once(LOG_FLAG_COPY, "copy");
@@ -274,10 +263,10 @@ fn clone_or_copy_link(state: &AtomicU8, source: &Path, target: &Path) -> io::Res
                     log_method_once(LOG_FLAG_CLONE, "clone");
                     return Ok(());
                 }
-                Err(err) if is_reflink_fallback_error(&err) => {
+                Err(err) if is_call_error(&err) => return Err(err),
+                Err(_) => {
                     state.fetch_max(LINK_STATE_COPY, Ordering::Relaxed);
                 }
-                Err(err) => return Err(err),
             },
             _ => {
                 log_method_once(LOG_FLAG_COPY, "copy");
@@ -557,28 +546,34 @@ mod tests {
         );
     }
 
-    /// Pin the classification helper directly — the state-machine
-    /// tests above exercise the common kinds (`NotFound` →
-    /// propagate), but we also care that the capability codes we
-    /// added ENOTTY and EOPNOTSUPP for actually trigger the fallback.
+    /// Pin the deny-list classifier. The state-machine tests above
+    /// exercise `NotFound` on the common path, but we also care that
+    /// the capability-style errors we see on real filesystems —
+    /// notably Windows NTFS's `ERROR_INVALID_FUNCTION` for
+    /// `FSCTL_DUPLICATE_EXTENTS_TO_FILE`, which Rust maps to
+    /// `InvalidInput` — fall through to the next tier instead of
+    /// propagating.
     #[test]
-    fn is_reflink_fallback_error_classifies_capability_codes() {
-        // NotFound must NOT be a capability error.
-        let not_found = io::Error::from(io::ErrorKind::NotFound);
-        assert!(!is_reflink_fallback_error(&not_found));
+    fn is_call_error_rejects_capability_codes() {
+        // Call-shape errors: must propagate.
+        for kind in
+            [io::ErrorKind::NotFound, io::ErrorKind::PermissionDenied, io::ErrorKind::AlreadyExists]
+        {
+            let err = io::Error::from(kind);
+            assert!(is_call_error(&err), "kind {kind:?} should be a call error");
+        }
 
-        // Unsupported IS a capability error.
-        let unsupported = io::Error::from(io::ErrorKind::Unsupported);
-        assert!(is_reflink_fallback_error(&unsupported));
-
-        // ENOTTY (25) — what ext4 returns for ioctl_ficlone on a FS
-        // without reflink support. This is the CI-critical case.
-        let enotty = io::Error::from_raw_os_error(25);
-        assert!(is_reflink_fallback_error(&enotty));
-
-        // EXDEV (18) is cross-device — also a fallback trigger.
-        let exdev = io::Error::from_raw_os_error(18);
-        assert!(is_reflink_fallback_error(&exdev));
+        // Capability / cross-device / weird OS codes: must fall
+        // through, so they must NOT be classified as call errors.
+        for err in [
+            io::Error::from(io::ErrorKind::Unsupported),
+            io::Error::from(io::ErrorKind::InvalidInput), // Windows ERROR_INVALID_FUNCTION lands here
+            io::Error::from_raw_os_error(18),             // EXDEV
+            io::Error::from_raw_os_error(25),             // ENOTTY — ext4 reflink rejection
+            io::Error::from_raw_os_error(95),             // EOPNOTSUPP
+        ] {
+            assert!(!is_call_error(&err), "{err:?} should trigger fallback, not propagate");
+        }
     }
 
     /// Pre-seed `CloneOrCopy` state to `COPY` and verify it uses
