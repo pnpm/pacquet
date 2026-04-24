@@ -28,20 +28,29 @@ impl ThrottledClient {
     /// If the number of CPUs is greater than 16, the number of permits will be equal to the number of CPUs.
     /// Otherwise, the number of permits will be 16.
     ///
-    /// The returned [`Client`] has explicit `connect` / `request` /
-    /// `pool_idle` timeouts set. A default `reqwest::Client` has none of
-    /// these, and on CI the bench's single-process verdaccio occasionally
-    /// stops responding (GC pause, uplink stall, TCP packet loss without
-    /// RST) — without a request deadline pacquet just sits on the
-    /// half-open socket forever, which is how `integrated-benchmark`
-    /// ends up hanging at "Benchmark 1: pacquet@HEAD" until the GHA step
-    /// timeout (see #263). 60 s per request is generous for localhost
-    /// tarballs (typical npm tarball is <5 MB) but short enough that a
-    /// real hang fails fast and hyperfine surfaces the error.
+    /// The returned [`Client`] carries explicit `connect` / `request` /
+    /// `pool_idle` deadlines. A default `reqwest::Client` has none of
+    /// these, and the CLI uses this constructor for real registry
+    /// traffic as well as the bench's local verdaccio — without a
+    /// request deadline pacquet just sits on a half-open socket
+    /// forever when an upstream stalls (GC pause, uplink stall, TCP
+    /// packet loss without RST). That's how `integrated-benchmark`
+    /// ends up hanging at "Benchmark 1: pacquet@HEAD" until the GHA
+    /// step timeout, see #263.
+    ///
+    /// The 5-minute `timeout` is deliberately generous: npm tarballs
+    /// are usually under 5 MB but can reach tens or even hundreds of
+    /// MB on slow connections, and there's no retry on transient
+    /// network errors yet (#259). 5 min keeps slow-but-progressing
+    /// downloads succeeding while still catching truly stuck sockets
+    /// inside the bench's step budget. Making these values
+    /// user-configurable (npmrc / env / CLI) is the natural next step
+    /// once the fetch-retry story is in place — left as follow-up so
+    /// this stays a minimal, PR-reviewable fix for the CI hang.
     pub fn new_from_cpu_count() -> Self {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(60))
+            .timeout(Duration::from_secs(300))
             .pool_idle_timeout(Duration::from_secs(30))
             .build()
             .expect("build reqwest client with default timeouts");
