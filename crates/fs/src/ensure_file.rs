@@ -174,9 +174,13 @@ fn verify_or_rewrite(
             // not a regular CAS blob. Scrub via atomic rewrite.
             write_atomic(file_path, content, mode)
         }
-        Ok(_) => match fs::read(file_path) {
-            Ok(existing) if existing == content => Ok(()),
-            Ok(_) => write_atomic(file_path, content, mode),
+        // Cheap size-mismatch reject before we read a single byte —
+        // a CAS file whose length doesn't match the buffer we were
+        // about to write cannot possibly have matching contents.
+        Ok(meta) if meta.len() != content.len() as u64 => write_atomic(file_path, content, mode),
+        Ok(_) => match file_equals_bytes(file_path, content) {
+            Ok(true) => Ok(()),
+            Ok(false) => write_atomic(file_path, content, mode),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 write_atomic(file_path, content, mode)
             }
@@ -191,49 +195,148 @@ fn verify_or_rewrite(
     }
 }
 
+/// Stream `file_path` and byte-compare against `content` without
+/// buffering the whole file in memory.
+///
+/// `fs::read` (previous shape) allocated a `Vec<u8>` the size of the
+/// file; on a CAS entry for a large binary (10–30 MB isn't unusual in
+/// `@napi-rs/*`, `esbuild`, etc.) and many concurrent rayon workers
+/// hitting this branch, the extra allocation stacked up. Streaming in
+/// 8 KB chunks holds a fixed stack buffer regardless of file size.
+///
+/// Any chunk mismatch returns `Ok(false)` immediately — we don't
+/// finish reading the file once we know it differs. An
+/// `UnexpectedEof` from `read_exact` is returned as `Ok(false)` too:
+/// the file shrunk under us (another process truncated it or the
+/// metadata was stale), which by definition means its contents don't
+/// match `content`. Other errors propagate.
+fn file_equals_bytes(file_path: &Path, content: &[u8]) -> io::Result<bool> {
+    use std::io::Read;
+
+    let mut file = fs::File::open(file_path)?;
+    let mut buf = [0u8; 8 * 1024];
+    let mut offset = 0;
+
+    while offset < content.len() {
+        let chunk_len = (content.len() - offset).min(buf.len());
+        match file.read_exact(&mut buf[..chunk_len]) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(false),
+            Err(error) => return Err(error),
+        }
+        if buf[..chunk_len] != content[offset..offset + chunk_len] {
+            return Ok(false);
+        }
+        offset += chunk_len;
+    }
+
+    // Confirm the file ends where `content` ends — if there's a
+    // trailing byte the size-check earlier missed (shouldn't happen
+    // given the size-match guard in `verify_or_rewrite`, but cheap
+    // to assert), treat it as not-equal.
+    let mut overflow = [0u8; 1];
+    match file.read(&mut overflow) {
+        Ok(0) => Ok(true),
+        Ok(_) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 /// Write `content` to a unique temporary path next to `file_path` and
 /// `rename` it over the target. Matches pnpm v11's `writeFileAtomic` +
 /// `renameOverwriteSync`. The rename is the only atomic step; an
 /// observer sees either the old contents or the new ones, never a
 /// half-written blob.
 ///
-/// If either the write or the rename fails we best-effort remove the
-/// temp file to avoid leaking stale files into the store shard.
+/// The temp file itself is opened with `O_CREAT|O_EXCL`
+/// (`create_new(true)`) rather than `create+truncate` so we never
+/// follow a symlink or truncate a file an attacker (or a crashed
+/// prior install) pre-seeded at our predicted temp path. If we hit
+/// `AlreadyExists` anyway — collisions are vanishingly rare given the
+/// pid + per-process atomic counter temp scheme, but cross-container
+/// shared-store setups can re-use pids — we advance the counter and
+/// try again, up to `MAX_TEMP_ATTEMPTS` times.
+///
+/// Open errors are classified as `CreateFile`; write errors as
+/// `WriteFile`. On any failure the partially-created temp file is
+/// removed best-effort so stale files don't leak into the store
+/// shard.
 fn write_atomic(
     file_path: &Path,
     content: &[u8],
     #[cfg_attr(windows, allow(unused))] mode: Option<u32>,
 ) -> Result<(), EnsureFileError> {
-    let tmp_path = temp_path_for(file_path);
+    /// Retries after `AlreadyExists` on the temp path. Sixteen fresh
+    /// counter values is plenty — under benign conditions we never
+    /// collide; under shared-store-across-containers the chance of
+    /// 16 consecutive same-pid same-counter collisions is negligible.
+    const MAX_TEMP_ATTEMPTS: usize = 16;
 
-    let mut options = OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    let mut last_already_exists: Option<io::Error> = None;
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        if let Some(mode) = mode {
-            options.mode(mode);
+    for _ in 0..MAX_TEMP_ATTEMPTS {
+        let tmp_path = temp_path_for(file_path);
+
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            if let Some(mode) = mode {
+                options.mode(mode);
+            }
         }
+
+        let mut file = match options.open(&tmp_path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                // Stale temp file or adversarial / concurrent pre-seed.
+                // Retry with a fresh counter; don't touch whatever is
+                // at the colliding path.
+                last_already_exists = Some(error);
+                continue;
+            }
+            Err(error) => {
+                return Err(EnsureFileError::CreateFile { file_path: tmp_path, error });
+            }
+        };
+
+        if let Err(error) = file.write_all(content) {
+            drop(file);
+            let _ = fs::remove_file(&tmp_path);
+            return Err(EnsureFileError::WriteFile { file_path: tmp_path, error });
+        }
+        // Close the handle before `rename`. Windows `MoveFileEx` over
+        // an open source file can fail with sharing-violation; Unix
+        // doesn't care but an early `close` lets the kernel commit
+        // dirty buffers before the rename commits the dirent change.
+        drop(file);
+
+        if let Err(error) = rename_with_retry(&tmp_path, file_path) {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(EnsureFileError::RenameFile {
+                tmp_path,
+                file_path: file_path.to_path_buf(),
+                error,
+            });
+        }
+        return Ok(());
     }
 
-    let write_result = options.open(&tmp_path).and_then(|mut file| file.write_all(content));
-
-    if let Err(error) = write_result {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(EnsureFileError::WriteFile { file_path: tmp_path, error });
-    }
-
-    if let Err(error) = rename_with_retry(&tmp_path, file_path) {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(EnsureFileError::RenameFile {
-            tmp_path,
-            file_path: file_path.to_path_buf(),
-            error,
-        });
-    }
-
-    Ok(())
+    // Ran out of temp-name attempts. Surface the last `AlreadyExists`
+    // so the operator can see what happened; pick the file_path as
+    // the best-effort context since we can't enumerate every temp
+    // name we tried.
+    Err(EnsureFileError::CreateFile {
+        file_path: file_path.to_path_buf(),
+        error: last_already_exists.unwrap_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "exhausted temp-path attempts for atomic CAS rewrite",
+            )
+        }),
+    })
 }
 
 /// Total budget for retrying a rename that keeps hitting transient
@@ -284,15 +387,31 @@ fn rename_with_retry(src: &Path, dst: &Path) -> io::Result<()> {
     }
 }
 
-/// Windows AV / indexer interference surfaces as `PermissionDenied`
-/// (`ERROR_ACCESS_DENIED`) or `ResourceBusy`
-/// (`ERROR_SHARING_VIOLATION`). `ResourceBusy` is the Rust 1.84+
-/// mapping; on older toolchains it came through as `Other` instead,
-/// but pacquet's MSRV is well past that. Unix never hits these codes
-/// for our same-directory file rename, so the retry loop is
-/// effectively a no-op there.
-fn is_transient_rename_error(error: &io::Error) -> bool {
-    matches!(error.kind(), io::ErrorKind::PermissionDenied | io::ErrorKind::ResourceBusy)
+/// Classify a `rename` error as transient-retry-worthy.
+///
+/// On Windows, AV / indexer interference briefly holds the
+/// destination open and surfaces as `ERROR_ACCESS_DENIED` (→
+/// `PermissionDenied`) or `ERROR_SHARING_VIOLATION` (→
+/// `ResourceBusy`, Rust 1.84+ mapping). Both clear on their own
+/// within tens-to-hundreds of ms, which is exactly what the retry
+/// loop is for.
+///
+/// On Unix, `rename` returning `EACCES`/`EPERM` is essentially
+/// always a permanent permission issue (non-writable directory,
+/// sticky-bit conflict, AppArmor deny) — retrying for 60 s just
+/// stretches out the failure. `EBUSY` on Unix also tends to be
+/// permanent (mount-point conflicts). So on non-Windows the
+/// classifier is disabled and any `rename` error propagates
+/// immediately.
+fn is_transient_rename_error(#[cfg_attr(not(windows), allow(unused))] error: &io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        matches!(error.kind(), io::ErrorKind::PermissionDenied | io::ErrorKind::ResourceBusy)
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
 }
 
 /// Build a unique temp path next to `file_path`. Mirrors pnpm v11's
@@ -452,17 +571,38 @@ mod tests {
     }
 
     /// Windows AV / indexer interference surfaces as
-    /// `PermissionDenied` or `ResourceBusy`; both must trigger the
-    /// retry loop. Any other kind must propagate immediately.
+    /// `PermissionDenied` or `ResourceBusy` and must trigger the
+    /// retry loop there. On non-Windows those codes are essentially
+    /// always permanent (permission / mount-point issues), so the
+    /// classifier must return `false` to avoid pathologically
+    /// spinning for 60 s on a misconfigured store dir. Any other
+    /// kind must propagate immediately on every platform.
     #[test]
     fn transient_rename_error_classifier() {
-        assert!(is_transient_rename_error(&io::Error::from(io::ErrorKind::PermissionDenied)));
-        assert!(is_transient_rename_error(&io::Error::from(io::ErrorKind::ResourceBusy)));
+        let permission_denied = io::Error::from(io::ErrorKind::PermissionDenied);
+        let resource_busy = io::Error::from(io::ErrorKind::ResourceBusy);
 
-        // Non-transient kinds: must not trigger the retry loop. A
-        // regression that classified e.g. `NotFound` as transient
-        // would pathologically spin for 60 seconds on a legitimately
-        // missing source.
+        #[cfg(windows)]
+        {
+            assert!(is_transient_rename_error(&permission_denied));
+            assert!(is_transient_rename_error(&resource_busy));
+        }
+        #[cfg(not(windows))]
+        {
+            assert!(
+                !is_transient_rename_error(&permission_denied),
+                "Unix PermissionDenied is permanent, must not retry",
+            );
+            assert!(
+                !is_transient_rename_error(&resource_busy),
+                "Unix ResourceBusy is effectively permanent, must not retry",
+            );
+        }
+
+        // Non-transient kinds must never trigger the retry loop on
+        // any platform — a regression classifying e.g. `NotFound` as
+        // transient would spin for 60 s on a legitimately missing
+        // source.
         for kind in [
             io::ErrorKind::NotFound,
             io::ErrorKind::AlreadyExists,
@@ -527,24 +667,68 @@ mod tests {
         assert_eq!(fs::read(&cas_path).unwrap(), b"fresh");
     }
 
-    /// Happy-path rename (no transient errors) returns immediately
-    /// via the `Ok(())` branch without sleeping. Pins that the retry
-    /// loop doesn't accidentally delay successful renames.
+    /// Happy-path rename (no transient errors) moves the payload
+    /// atomically and removes the source. Correctness only — we
+    /// deliberately don't assert a wall-clock bound because rename
+    /// latency on loaded CI / slow filesystems can exceed any
+    /// reasonable timing threshold without the retry path actually
+    /// being taken.
     #[test]
-    fn rename_with_retry_succeeds_fast_when_no_error() {
+    fn rename_with_retry_succeeds_when_no_error() {
         let tmp = tempdir().unwrap();
         let src = tmp.path().join("src");
         let dst = tmp.path().join("dst");
         fs::write(&src, b"payload").unwrap();
 
-        let start = Instant::now();
         rename_with_retry(&src, &dst).expect("rename should succeed");
-        let elapsed = start.elapsed();
 
         assert_eq!(fs::read(&dst).unwrap(), b"payload");
         assert!(!src.exists(), "source should be gone after rename");
-        // The retry loop's minimum sleep is 10 ms; a successful
-        // first attempt must not hit that, so elapsed << 10 ms.
-        assert!(elapsed < Duration::from_millis(10), "took {elapsed:?}");
+    }
+
+    /// Streaming byte-compare returns `true` iff the file on disk is
+    /// identical to `content`. Pins the three cases
+    /// `verify_or_rewrite` routes through it: exact match (skip
+    /// path), same length but different bytes (atomic rewrite),
+    /// different length (atomic rewrite).
+    #[test]
+    fn file_equals_bytes_classifies_match_mismatch_and_length_mismatch() {
+        let tmp = tempdir().unwrap();
+
+        let equal = tmp.path().join("equal");
+        fs::write(&equal, b"hello world").unwrap();
+        assert!(file_equals_bytes(&equal, b"hello world").unwrap());
+
+        let content_diff = tmp.path().join("content_diff");
+        fs::write(&content_diff, b"hello world").unwrap();
+        assert!(!file_equals_bytes(&content_diff, b"hello WORLD").unwrap());
+
+        // `verify_or_rewrite`'s size-check short-circuits before
+        // reaching this function in practice, but the function
+        // itself still has to classify correctly if called directly.
+        let length_diff = tmp.path().join("length_diff");
+        fs::write(&length_diff, b"short").unwrap();
+        assert!(!file_equals_bytes(&length_diff, b"longer payload").unwrap());
+    }
+
+    /// Multi-chunk files exercise the inner `read_exact` loop rather
+    /// than landing entirely in the first 8 KB read. Guards against
+    /// off-by-one regressions in the chunk-offset math, and confirms
+    /// a byte flipped in the *last* chunk isn't masked by an early
+    /// "first-chunk-matched" short-circuit.
+    #[test]
+    fn file_equals_bytes_handles_multi_chunk_files() {
+        let tmp = tempdir().unwrap();
+        let path = tmp.path().join("big");
+
+        // 20 KB: at least three 8 KB chunks.
+        let content: Vec<u8> = (0..20_000).map(|i| (i % 251) as u8).collect();
+        fs::write(&path, &content).unwrap();
+
+        assert!(file_equals_bytes(&path, &content).unwrap());
+
+        let mut perturbed = content.clone();
+        *perturbed.last_mut().unwrap() ^= 0xff;
+        assert!(!file_equals_bytes(&path, &perturbed).unwrap());
     }
 }
