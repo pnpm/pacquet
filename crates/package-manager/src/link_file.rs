@@ -4,6 +4,7 @@ use pacquet_npmrc::PackageImportMethod;
 use std::{
     fs, io,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU8, Ordering},
 };
 
 /// Error type for [`link_file`].
@@ -23,6 +24,23 @@ pub enum LinkFileError {
         error: io::Error,
     },
 }
+
+// Cached downgrade state for `PackageImportMethod::Auto`.
+//
+// Whether reflink / hardlink work is a property of the (source fs,
+// target fs) pair, not of individual files. Once we observe a tier
+// failing we stop trying it for the rest of the process — otherwise
+// an install of a package with hundreds of files on a non-reflink FS
+// would pay the "try reflink, fail" cost hundreds of times.
+//
+// The state is monotonic (`CLONE` → `HARDLINK` → `COPY`) and updated
+// with `fetch_max`, so concurrent rayon workers racing on the first
+// failure all converge to the same downgraded value without a lock.
+// Worst case cost on startup is `N` stale attempts per tier where `N`
+// is the rayon thread count — bounded, not per-file.
+const AUTO_STATE_CLONE: u8 = 0;
+const AUTO_STATE_HARDLINK: u8 = 1;
+const AUTO_STATE_COPY: u8 = 2;
 
 /// Materialize a CAFS file into `target_link` using `method`.
 ///
@@ -44,12 +62,6 @@ pub fn link_file(
         })?;
     }
 
-    // pnpm's documented Auto fallback chain: clone → hardlink → copy.
-    // Each step broad-catches because "operation not supported" surfaces
-    // as different `io::ErrorKind`s depending on platform and filesystem
-    // (EOPNOTSUPP, EXDEV, EPERM, …) and pnpm itself doesn't try to
-    // enumerate them.
-    //
     // Hardlinking a file from the store into `node_modules` means any
     // package that edits its own files at runtime (postinstall scripts
     // are the usual offender) ends up mutating the shared store copy.
@@ -58,9 +70,10 @@ pub fn link_file(
     // scripts yet, so there's nothing to gate on here — revisit when
     // script execution lands.
     let result = match method {
-        PackageImportMethod::Auto => reflink_copy::reflink(source_file, target_link)
-            .or_else(|_| fs::hard_link(source_file, target_link))
-            .or_else(|_| fs::copy(source_file, target_link).map(drop)),
+        PackageImportMethod::Auto => {
+            static AUTO_STATE: AtomicU8 = AtomicU8::new(AUTO_STATE_CLONE);
+            auto_link(&AUTO_STATE, source_file, target_link)
+        }
         PackageImportMethod::Hardlink => fs::hard_link(source_file, target_link),
         PackageImportMethod::Clone => reflink_copy::reflink(source_file, target_link),
         PackageImportMethod::CloneOrCopy => {
@@ -74,6 +87,34 @@ pub fn link_file(
         to: target_link.to_path_buf(),
         error,
     })
+}
+
+/// Auto's clone → hardlink → copy chain, using `state` to skip tiers
+/// that have already failed in this process. Factored out so tests can
+/// pass their own `AtomicU8` and exercise the downgrade logic in
+/// isolation — the production path uses a `static` declared inside
+/// [`link_file`]. Broad-catches each tier's errors because "operation
+/// not supported" surfaces as different `io::ErrorKind`s depending on
+/// platform and filesystem (`EOPNOTSUPP`, `EXDEV`, `EPERM`, …) and pnpm
+/// itself doesn't try to enumerate them.
+fn auto_link(state: &AtomicU8, source: &Path, target: &Path) -> io::Result<()> {
+    loop {
+        match state.load(Ordering::Relaxed) {
+            AUTO_STATE_CLONE => match reflink_copy::reflink(source, target) {
+                Ok(()) => return Ok(()),
+                Err(_) => {
+                    state.fetch_max(AUTO_STATE_HARDLINK, Ordering::Relaxed);
+                }
+            },
+            AUTO_STATE_HARDLINK => match fs::hard_link(source, target) {
+                Ok(()) => return Ok(()),
+                Err(_) => {
+                    state.fetch_max(AUTO_STATE_COPY, Ordering::Relaxed);
+                }
+            },
+            _ => return fs::copy(source, target).map(drop),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -180,5 +221,73 @@ mod tests {
         let err =
             link_file(PackageImportMethod::Hardlink, &src, &dst).expect_err("no source → error");
         assert!(matches!(err, LinkFileError::CreateLink { .. }), "got: {err:?}");
+    }
+
+    /// Core caching property: once Auto observes reflink failing, the
+    /// state downgrades and subsequent calls skip reflink entirely.
+    /// Using a non-existent source to force both reflink and hardlink
+    /// to fail deterministically on every platform — we just want to
+    /// drive the state machine to its terminal `COPY` state.
+    #[test]
+    fn auto_state_downgrades_monotonically_on_failure() {
+        let state = AtomicU8::new(AUTO_STATE_CLONE);
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("does-not-exist");
+        let dst = tmp.path().join("dst");
+
+        // First call: reflink fails → downgrade to HARDLINK; hardlink
+        // fails → downgrade to COPY; copy fails → error bubbles up.
+        // Final state = COPY.
+        let _ = auto_link(&state, &src, &dst);
+        assert_eq!(state.load(Ordering::Relaxed), AUTO_STATE_COPY);
+    }
+
+    /// Once state is `COPY`, Auto must use `fs::copy` and must not
+    /// re-attempt reflink / hardlink. We can't observe the negative
+    /// directly, but using a cross-file-type source that only `fs::copy`
+    /// handles cleanly would be platform-sensitive — instead, assert on
+    /// the observable: a successful link with a fresh state=COPY has
+    /// independent inodes (copy semantics), not shared ones (hardlink).
+    #[test]
+    #[cfg(unix)]
+    fn auto_respects_cached_copy_state() {
+        use std::os::unix::fs::MetadataExt;
+
+        let state = AtomicU8::new(AUTO_STATE_COPY);
+        let tmp = tempdir().unwrap();
+        let src = write_source(tmp.path(), "src.txt", b"cached-copy");
+        let dst = tmp.path().join("dst.txt");
+
+        auto_link(&state, &src, &dst).expect("copy should succeed");
+
+        assert_eq!(fs::read(&dst).unwrap(), b"cached-copy");
+        assert_ne!(
+            fs::metadata(&src).unwrap().ino(),
+            fs::metadata(&dst).unwrap().ino(),
+            "state=COPY must not hardlink",
+        );
+        assert_eq!(state.load(Ordering::Relaxed), AUTO_STATE_COPY, "state must not drift");
+    }
+
+    /// State=HARDLINK means Auto skips the reflink attempt and jumps
+    /// straight to `fs::hard_link`. Observable: shared inode on unix.
+    #[test]
+    #[cfg(unix)]
+    fn auto_respects_cached_hardlink_state() {
+        use std::os::unix::fs::MetadataExt;
+
+        let state = AtomicU8::new(AUTO_STATE_HARDLINK);
+        let tmp = tempdir().unwrap();
+        let src = write_source(tmp.path(), "src.txt", b"cached-hardlink");
+        let dst = tmp.path().join("dst.txt");
+
+        auto_link(&state, &src, &dst).expect("hardlink should succeed on same-FS tempdir");
+
+        assert_eq!(
+            fs::metadata(&src).unwrap().ino(),
+            fs::metadata(&dst).unwrap().ino(),
+            "state=HARDLINK must hardlink, not copy",
+        );
+        assert_eq!(state.load(Ordering::Relaxed), AUTO_STATE_HARDLINK, "state must not drift");
     }
 }
