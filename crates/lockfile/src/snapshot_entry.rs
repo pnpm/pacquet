@@ -1,4 +1,4 @@
-use crate::{PkgName, PkgVerPeer};
+use crate::{PkgName, SnapshotDepRef};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -16,9 +16,9 @@ pub struct SnapshotEntry {
     pub id: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub dependencies: Option<HashMap<PkgName, PkgVerPeer>>,
+    pub dependencies: Option<HashMap<PkgName, SnapshotDepRef>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub optional_dependencies: Option<HashMap<PkgName, PkgVerPeer>>,
+    pub optional_dependencies: Option<HashMap<PkgName, SnapshotDepRef>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transitive_peer_dependencies: Option<Vec<String>>,
