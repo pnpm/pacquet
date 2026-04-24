@@ -67,40 +67,54 @@ where
 
         tracing::info!(target: "pacquet::install", "Start all");
 
-        match (config.lockfile, frozen_lockfile, lockfile) {
-            (false, _, _) => {
-                InstallWithoutLockfile {
-                    tarball_mem_cache,
-                    resolved_packages,
-                    http_client,
-                    config,
-                    manifest,
-                    dependency_groups,
-                }
-                .run()
-                .await
-                .map_err(InstallError::WithoutLockfile)?;
-            }
-            (true, true, None) => return Err(InstallError::NoLockfile),
-            (true, false, Some(_)) | (true, false, None) => {
-                return Err(InstallError::UnsupportedLockfileMode);
-            }
-            (true, true, Some(lockfile)) => {
-                let Lockfile { lockfile_version, importers, packages, snapshots, .. } = lockfile;
-                assert_eq!(lockfile_version.major, 9); // compatibility check already happens at serde, but this still helps preventing programmer mistakes.
+        // Dispatch priority, matching pnpm's CLI semantics:
+        //
+        // 1. `--frozen-lockfile` is the strongest signal. If the user
+        //    passed the flag, use the frozen-lockfile path regardless of
+        //    `config.lockfile`. The prior `match` treated
+        //    `config.lockfile=false` as "skip the lockfile entirely" and
+        //    silently dropped the CLI flag — so pacquet's new-config
+        //    default (lockfile unset → `false`) turned every
+        //    `--frozen-lockfile` install into a registry-resolving
+        //    no-lockfile install, which is also what the integrated
+        //    benchmark has been measuring.
+        //
+        // 2. Otherwise follow `config.lockfile`. `true` means we'd
+        //    normally generate / update a lockfile, which pacquet
+        //    doesn't support yet → `UnsupportedLockfileMode`. `false`
+        //    means "lockfile disabled, resolve from registry".
+        if frozen_lockfile {
+            let Some(lockfile) = lockfile else {
+                return Err(InstallError::NoLockfile);
+            };
+            let Lockfile { lockfile_version, importers, packages, snapshots, .. } = lockfile;
+            assert_eq!(lockfile_version.major, 9); // compatibility check already happens at serde, but this still helps preventing programmer mistakes.
 
-                InstallFrozenLockfile {
-                    http_client,
-                    config,
-                    importers,
-                    packages: packages.as_ref(),
-                    snapshots: snapshots.as_ref(),
-                    dependency_groups,
-                }
-                .run()
-                .await
-                .map_err(InstallError::FrozenLockfile)?;
+            InstallFrozenLockfile {
+                http_client,
+                config,
+                importers,
+                packages: packages.as_ref(),
+                snapshots: snapshots.as_ref(),
+                dependency_groups,
             }
+            .run()
+            .await
+            .map_err(InstallError::FrozenLockfile)?;
+        } else if config.lockfile {
+            return Err(InstallError::UnsupportedLockfileMode);
+        } else {
+            InstallWithoutLockfile {
+                tarball_mem_cache,
+                resolved_packages,
+                http_client,
+                config,
+                manifest,
+                dependency_groups,
+            }
+            .run()
+            .await
+            .map_err(InstallError::WithoutLockfile)?;
         }
 
         tracing::info!(target: "pacquet::install", "Complete all");
@@ -245,6 +259,111 @@ mod tests {
         .await;
 
         assert!(matches!(result, Err(InstallError::UnsupportedLockfileMode)));
+        drop(dir);
+    }
+
+    /// `--frozen-lockfile` passed on the CLI must take precedence over
+    /// `config.lockfile=false`. Before this fix the dispatch matched on
+    /// `(config.lockfile, frozen_lockfile, lockfile)` in an order that
+    /// treated `config.lockfile=false` as "skip lockfile entirely",
+    /// silently dropping the CLI flag and resolving from the registry
+    /// instead — the very regression the integrated benchmark was
+    /// measuring. Pin the new priority: frozen flag + lockfile present
+    /// → `InstallFrozenLockfile`, regardless of `config.lockfile`.
+    ///
+    /// We don't need the full install to succeed here — any error that
+    /// *isn't* `NoLockfile` / `UnsupportedLockfileMode` proves the
+    /// dispatch picked the frozen path. Passing a malformed lockfile
+    /// integrity surfaces as `FrozenLockfile(...)`.
+    #[tokio::test]
+    async fn frozen_lockfile_flag_overrides_config_lockfile_false() {
+        use pacquet_lockfile::Lockfile;
+
+        let dir = tempdir().unwrap();
+        let store_dir = dir.path().join("pacquet-store");
+        let project_root = dir.path().join("project");
+        let modules_dir = project_root.join("node_modules");
+        let virtual_store_dir = modules_dir.join(".pacquet");
+
+        let manifest_path = dir.path().join("package.json");
+        let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+        let mut config = Npmrc::new();
+        // Explicitly disabled — this is the pacquet default today. The
+        // CLI flag must still take over.
+        config.lockfile = false;
+        config.store_dir = store_dir.into();
+        config.modules_dir = modules_dir.to_path_buf();
+        config.virtual_store_dir = virtual_store_dir;
+        let config = config.leak();
+
+        // Minimal v9 lockfile with no snapshots — the frozen path will
+        // run through `CreateVirtualStore` with an empty snapshot set,
+        // which is a successful no-op. That's enough to prove we took
+        // the frozen branch.
+        let lockfile: Lockfile = serde_yaml::from_str(concat!(
+            "lockfileVersion: '9.0'\n",
+            "importers:\n",
+            "  .:\n",
+            "    dependencies: {}\n",
+            "packages: {}\n",
+            "snapshots: {}\n",
+        ))
+        .expect("parse minimal v9 lockfile");
+
+        Install {
+            tarball_mem_cache: &Default::default(),
+            http_client: &Default::default(),
+            config,
+            manifest: &manifest,
+            lockfile: Some(&lockfile),
+            dependency_groups: [DependencyGroup::Prod],
+            frozen_lockfile: true,
+            resolved_packages: &Default::default(),
+        }
+        .run()
+        .await
+        .expect("--frozen-lockfile + empty lockfile should succeed via InstallFrozenLockfile");
+
+        drop(dir);
+    }
+
+    /// Symmetric negative: `--frozen-lockfile` with no lockfile
+    /// loadable must surface `NoLockfile`, even when `config.lockfile`
+    /// is `false` (which used to fall through to the no-lockfile path
+    /// and silently succeed).
+    #[tokio::test]
+    async fn frozen_lockfile_flag_with_no_lockfile_errors() {
+        let dir = tempdir().unwrap();
+        let store_dir = dir.path().join("pacquet-store");
+        let project_root = dir.path().join("project");
+        let modules_dir = project_root.join("node_modules");
+        let virtual_store_dir = modules_dir.join(".pacquet");
+
+        let manifest_path = dir.path().join("package.json");
+        let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+        let mut config = Npmrc::new();
+        config.lockfile = false;
+        config.store_dir = store_dir.into();
+        config.modules_dir = modules_dir.to_path_buf();
+        config.virtual_store_dir = virtual_store_dir;
+        let config = config.leak();
+
+        let result = Install {
+            tarball_mem_cache: &Default::default(),
+            http_client: &Default::default(),
+            config,
+            manifest: &manifest,
+            lockfile: None,
+            dependency_groups: [DependencyGroup::Prod],
+            frozen_lockfile: true,
+            resolved_packages: &Default::default(),
+        }
+        .run()
+        .await;
+
+        assert!(matches!(result, Err(InstallError::NoLockfile)));
         drop(dir);
     }
 }

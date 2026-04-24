@@ -55,14 +55,26 @@ impl CliArgs {
         let CliArgs { command, dir } = self;
         let manifest_path = || dir.join("package.json");
         let npmrc = || Npmrc::current(env::current_dir, home::home_dir, Default::default).leak();
-        let state = || State::init(manifest_path(), npmrc()).wrap_err("initialize the state");
+        // `require_lockfile` is the "this subcommand cannot run without a
+        // lockfile loaded" signal, used by `State::init` to override
+        // `config.lockfile=false`. Only `install --frozen-lockfile` needs
+        // it today; other subcommands follow `config.lockfile`. Matches
+        // pnpm's CLI: `--frozen-lockfile` is the strongest signal and
+        // must not be silently dropped because `lockfile=false` was set
+        // (or defaulted) in config.
+        let state = |require_lockfile: bool| {
+            State::init(manifest_path(), npmrc(), require_lockfile).wrap_err("initialize the state")
+        };
 
         match command {
             CliCommand::Init => {
                 PackageManifest::init(&manifest_path()).wrap_err("initialize package.json")?;
             }
-            CliCommand::Add(args) => args.run(state()?).await?,
-            CliCommand::Install(args) => args.run(state()?).await?,
+            CliCommand::Add(args) => args.run(state(false)?).await?,
+            CliCommand::Install(args) => {
+                let require_lockfile = args.frozen_lockfile;
+                args.run(state(require_lockfile)?).await?
+            }
             CliCommand::Test => {
                 let manifest = PackageManifest::from_path(manifest_path())
                     .wrap_err("getting the package.json in current directory")?;

@@ -38,6 +38,7 @@ pacquet-testing-utils = { workspace = true }
 node-semver       = { workspace = true }
 insta             = { workspace = true }
 pretty_assertions = { workspace = true }
+serde_yaml        = { workspace = true }
 ssri              = { workspace = true }
 tempfile          = { workspace = true }
 tokio             = { workspace = true }
