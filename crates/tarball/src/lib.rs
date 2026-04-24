@@ -118,7 +118,10 @@ async fn load_cached_cas_paths(
     cache_key: String,
 ) -> Option<HashMap<String, PathBuf>> {
     let index = index?;
-    tokio::task::spawn_blocking(move || -> Option<HashMap<String, PathBuf>> {
+    // Hold on to a copy of the cache key for the outer `JoinError` log,
+    // since the task body moves the original in.
+    let outer_cache_key = cache_key.clone();
+    let result = tokio::task::spawn_blocking(move || -> Option<HashMap<String, PathBuf>> {
         // Treat a poisoned mutex as a cache miss rather than propagating the
         // panic: the `SELECT` is stateless, so the prior panic couldn't have
         // left the index in an inconsistent shape, and cache lookups are a
@@ -173,9 +176,24 @@ async fn load_cached_cas_paths(
         }
         Some(cas_paths)
     })
-    .await
-    .ok()
-    .flatten()
+    .await;
+
+    match result {
+        Ok(cas_paths) => cas_paths,
+        Err(error) => {
+            // `JoinError` — the blocking task panicked, or the runtime was
+            // cancelled mid-install. Degrade to a cache miss so the caller
+            // falls through to a fresh download, but surface the error so
+            // the panic / cancellation stays diagnosable.
+            tracing::warn!(
+                target: "pacquet::download",
+                ?error,
+                cache_key = ?outer_cache_key,
+                "store-index lookup task failed; treating cache lookup as a miss",
+            );
+            None
+        }
+    }
 }
 
 /// This subroutine downloads and extracts a tarball to the store directory.
@@ -264,10 +282,8 @@ impl<'a> DownloadTarballToStore<'a> {
         // entry we can read back here.
         //
         // The lookup is best-effort. A missing `index.db`, a missing row,
-        // an unreadable entry (e.g. written by pnpm's msgpackr record
-        // encoding — decoding support for that is a follow-up), or any
-        // CAFS file that has gone missing from disk all fall through to
-        // the download path below.
+        // an undecodable entry, or any CAFS file that has gone missing
+        // from disk all fall through to the download path below.
         let cache_key = store_index_key(&package_integrity.to_string(), package_id);
         if let Some(cas_paths) = load_cached_cas_paths(store_index, store_dir, cache_key).await {
             tracing::info!(target: "pacquet::download", ?package_url, ?package_id, "Reusing cached CAFS entry — skipping download");
