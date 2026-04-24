@@ -17,7 +17,6 @@ use pacquet_store_dir::{
     StoreIndexError, StoreIndexWriter, WriteCasFileError,
 };
 use pipe_trait::Pipe;
-use sha2::{Digest, Sha512};
 use ssri::{Integrity, IntegrityChecker};
 use tar::Archive;
 use tokio::sync::{Notify, RwLock, Semaphore};
@@ -189,48 +188,7 @@ fn extract_tarball_entries(
                 format!("failed to reserve {prealloc_hint} bytes for tar entry: {err}"),
             ))
         })?;
-
-        // Hash the entry bytes **while** we copy them into `buffer`,
-        // rather than doing `entry.read_to_end(&mut buffer)` followed
-        // by a second full-buffer `Sha512::digest(buffer)` inside
-        // `write_cas_file`. The buffer still has to exist — the CAFS
-        // filename is hash-derived, so the write can't begin until the
-        // digest is finalized — but collapsing two passes over the
-        // decompressed entry bytes into one is free work removed from
-        // the hot path. This interleaved-hash pattern mirrors pnpm's
-        // `parseTarball` + `addBufferToCafs` in
-        // `store/cafs/src/addFilesFromTarball.ts`, which sees each
-        // entry body exactly once before writing.
-        //
-        // 64 KiB chunks match the upper end of `tar::Entry::read`'s
-        // per-call yield and keep the hasher's per-call framing
-        // overhead amortized without tying up more stack than a typical
-        // I/O call would anyway.
-        let mut hasher = Sha512::new();
-        let mut chunk = [0u8; 64 * 1024];
-        loop {
-            let n = entry.read(&mut chunk).map_err(TarballError::ReadTarballEntries)?;
-            if n == 0 {
-                break;
-            }
-            // `try_reserve` before every `extend_from_slice` keeps the
-            // same OOM-safety as the initial `try_reserve(prealloc_hint)`
-            // above — the prealloc is only a hint (clamped to 64 MiB
-            // even if the header claims more), so an entry whose real
-            // size exceeds the clamp must keep allocating without
-            // aborting. `Vec::extend_from_slice` falls back to
-            // `Vec::reserve`, which aborts on allocation failure, so
-            // we opt into the fallible path explicitly here.
-            buffer.try_reserve(n).map_err(|err| {
-                TarballError::ReadTarballEntries(std::io::Error::new(
-                    std::io::ErrorKind::OutOfMemory,
-                    format!("failed to reserve {n} bytes while reading tar entry: {err}"),
-                ))
-            })?;
-            hasher.update(&chunk[..n]);
-            buffer.extend_from_slice(&chunk[..n]);
-        }
-        let file_hash = hasher.finalize();
+        entry.read_to_end(&mut buffer).map_err(TarballError::ReadTarballEntries)?;
 
         let entry_path = entry.path().map_err(TarballError::ReadTarballEntries)?;
         // `components().skip(1)` drops the top-level package
@@ -265,8 +223,8 @@ fn extract_tarball_entries(
         // matching pnpm's string-based path layer so a shared
         // `index.db` stays consistent across the two tools.
         let cleaned_entry_path = cleaned.to_string_lossy().into_owned();
-        let file_path = store_dir
-            .write_cas_file_prehashed(&buffer, file_hash, file_is_executable)
+        let (file_path, file_hash) = store_dir
+            .write_cas_file(&buffer, file_is_executable)
             .map_err(TarballError::WriteCasFile)?;
 
         if let Some(previous) = cas_paths.insert(cleaned_entry_path.clone(), file_path) {
