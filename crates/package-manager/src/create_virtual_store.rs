@@ -61,11 +61,18 @@ impl<'a> CreateVirtualStore<'a> {
         // + a `PRAGMA busy_timeout`), so park it on the blocking pool instead
         // of stalling the reactor thread, even for the sub-millisecond it
         // usually takes.
+        //
+        // A `JoinError` here (blocking-task panic, or cancellation during
+        // runtime shutdown) is degraded into `None` so the install still
+        // makes progress — cache lookups just miss. `shared_readonly_in`
+        // already yields `None` for a first-time install against an empty
+        // store, and downstream callers handle that shape correctly.
         let store_dir: &'static _ = &config.store_dir;
         let store_index =
             tokio::task::spawn_blocking(move || StoreIndex::shared_readonly_in(store_dir))
                 .await
-                .expect("store-index open task panicked");
+                .ok()
+                .flatten();
         let store_index_ref = store_index.as_ref();
 
         snapshots
