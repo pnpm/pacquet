@@ -119,8 +119,21 @@ async fn load_cached_cas_paths(
 ) -> Option<HashMap<String, PathBuf>> {
     let index = index?;
     tokio::task::spawn_blocking(move || -> Option<HashMap<String, PathBuf>> {
+        // Treat a poisoned mutex as a cache miss rather than propagating the
+        // panic: the `SELECT` is stateless, so the prior panic couldn't have
+        // left the index in an inconsistent shape, and cache lookups are a
+        // best-effort hint anyway — failing over to a fresh download is the
+        // more resilient default than turning every subsequent snapshot into
+        // a crash.
         let entry = {
-            let guard = index.lock().expect("store-index mutex poisoned");
+            let Ok(guard) = index.lock() else {
+                tracing::debug!(
+                    target: "pacquet::download",
+                    ?cache_key,
+                    "store-index mutex poisoned; treating cache lookup as a miss",
+                );
+                return None;
+            };
             guard.get(&cache_key).ok()?
         }?;
 

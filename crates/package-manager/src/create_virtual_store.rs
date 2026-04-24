@@ -57,10 +57,11 @@ impl<'a> CreateVirtualStore<'a> {
         // against an empty store), in which case every lookup would miss —
         // so we keep the handle `Option`al and short-circuit.
         let store_index = StoreIndex::shared_readonly_in(&config.store_dir);
+        let store_index_ref = store_index.as_ref();
 
         snapshots
             .iter()
-            .map(|(snapshot_key, snapshot)| async {
+            .map(|(snapshot_key, snapshot)| async move {
                 let metadata_key = snapshot_key.without_peer();
                 let metadata = packages.get(&metadata_key).ok_or_else(|| {
                     CreateVirtualStoreError::MissingPackageMetadata {
@@ -71,7 +72,7 @@ impl<'a> CreateVirtualStore<'a> {
                 InstallPackageBySnapshot {
                     http_client,
                     config,
-                    store_index: store_index.as_ref(),
+                    store_index: store_index_ref,
                     package_key: snapshot_key,
                     metadata,
                     snapshot,
