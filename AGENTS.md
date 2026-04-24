@@ -49,7 +49,9 @@ specific commit on `main` (not a branch tip) so the reference stays stable.
 
 ## Commands
 
-Use `just` — do not invent alternative invocations.
+Prefer `just` recipes when one fits; drop down to `cargo` / `taplo` / etc.
+directly when you need flags the recipe doesn't expose (e.g. filtering tests
+by crate or name — see below).
 
 - `just ready` — run the same checks CI runs (typos, fmt, check, test, lint).
   Run this before declaring a task complete.
@@ -68,8 +70,8 @@ Warnings are errors (`--deny warnings` in lint). Do not silence them with
 ## Tests
 
 - Tests live alongside the code they exercise (standard Cargo layout) plus
-  integration tests under each crate's `tests/` and fixtures under
-  `__fixtures__` directories.
+  integration tests under each crate's `tests/`. Shared test fixtures live
+  under `crates/testing-utils/src/fixtures/`.
 - Snapshot tests use `insta`. When an intentional change alters a snapshot,
   review the diff carefully, then accept with `cargo insta review`. Never
   accept snapshot changes blindly.
