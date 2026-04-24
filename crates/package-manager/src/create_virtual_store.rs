@@ -129,12 +129,13 @@ impl<'a> CreateVirtualStore<'a> {
         // blocking pool grew to 500+ threads to service them.
         //
         // We drop our own copy of the `Arc<StoreIndexWriter>` after the
-        // `try_join!` below so the channel can close once every tarball
-        // task has dropped its clone; then `.await` on the join handle
-        // waits for the final batch to flush before returning. A writer-
-        // side `JoinError` or open failure is surfaced at `warn!` and
-        // degraded to "no writer" — the install still succeeds, missing
-        // rows just force a re-download on the next install.
+        // fetch `try_join_all` and the symlink `spawn_blocking` have both
+        // been awaited, so the channel can close once every tarball task
+        // has dropped its clone; then `.await` on `writer_task` waits for
+        // the final batch to flush before returning. A writer-side
+        // `JoinError` or open failure is surfaced at `warn!` and degraded
+        // to "no writer" — the install still succeeds, missing rows just
+        // force a re-download on the next install.
         let (store_index_writer, writer_task) = StoreIndexWriter::spawn(store_dir);
         let store_index_writer_ref = Some(&store_index_writer);
 
