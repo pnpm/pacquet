@@ -181,11 +181,28 @@ pub fn link_file(
         }
     };
 
-    result.map_err(|error| LinkFileError::Import {
-        from: source_file.to_path_buf(),
-        to: target_link.to_path_buf(),
-        error,
-    })
+    match result {
+        Ok(()) => Ok(()),
+        // TOCTOU: another writer created the target between our
+        // `fs::metadata` short-circuit and the import syscall. The
+        // file is now there, which is exactly what our docstring
+        // promises, so honour the "existing target is a no-op"
+        // contract instead of failing the install. Verify via
+        // `fs::metadata` (follows symlinks; returns NotFound for
+        // dangling) so a newly-appeared broken symlink doesn't
+        // quietly pass as success.
+        Err(error)
+            if error.kind() == io::ErrorKind::AlreadyExists
+                && fs::metadata(target_link).is_ok() =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(LinkFileError::Import {
+            from: source_file.to_path_buf(),
+            to: target_link.to_path_buf(),
+            error,
+        }),
+    }
 }
 
 /// EXDEV = "cross-device link not permitted". Linux / macOS / BSD all
