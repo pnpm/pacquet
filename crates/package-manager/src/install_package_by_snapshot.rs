@@ -1,7 +1,7 @@
 use crate::{CreateVirtualDirBySnapshot, CreateVirtualDirError};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata};
+use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_store_dir::{SharedReadonlyStoreIndex, StoreIndexWriter};
@@ -9,13 +9,10 @@ use pacquet_tarball::{DownloadTarballToStore, TarballError};
 use pipe_trait::Pipe;
 use std::{borrow::Cow, sync::Arc};
 
-/// Download a package tarball, extract it, and import the extracted files into
-/// the package's slot in the virtual store.
-///
-/// The virtual-store package directory and its intra-package symlinks are
-/// created separately by [`CreateVirtualStore`](crate::CreateVirtualStore) so
-/// that symlinking can run concurrently with fetching — see that module's
-/// `run` method for the pnpm reference.
+/// This subroutine downloads a package tarball, extracts it, installs it to a
+/// virtual dir, then creates the symlink layout for the package. CAS file
+/// import and symlink creation run concurrently via `rayon::join` inside
+/// [`CreateVirtualDirBySnapshot::run`].
 #[must_use]
 pub struct InstallPackageBySnapshot<'a> {
     pub http_client: &'a ThrottledClient,
@@ -24,6 +21,7 @@ pub struct InstallPackageBySnapshot<'a> {
     pub store_index_writer: Option<&'a Arc<StoreIndexWriter>>,
     pub package_key: &'a PackageKey,
     pub metadata: &'a PackageMetadata,
+    pub snapshot: &'a SnapshotEntry,
 }
 
 /// Error type of [`InstallPackageBySnapshot`].
@@ -58,6 +56,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             store_index_writer,
             package_key,
             metadata,
+            snapshot,
         } = self;
 
         let (tarball_url, integrity) = match &metadata.resolution {
@@ -114,6 +113,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             cas_paths: &cas_paths,
             import_method: config.package_import_method,
             package_key,
+            snapshot,
         }
         .run()
         .map_err(InstallPackageBySnapshotError::CreateVirtualDir)?;

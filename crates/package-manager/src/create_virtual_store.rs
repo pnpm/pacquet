@@ -1,19 +1,15 @@
 use crate::{
-    create_symlink_layout, store_init::init_store_dir_best_effort, InstallPackageBySnapshot,
-    InstallPackageBySnapshotError, SymlinkPackageError,
+    store_init::init_store_dir_best_effort, InstallPackageBySnapshot, InstallPackageBySnapshotError,
 };
 use derive_more::{Display, Error};
 use futures_util::future;
 use miette::Diagnostic;
-use pacquet_lockfile::{PackageKey, PackageMetadata, PkgName, SnapshotDepRef, SnapshotEntry};
+use pacquet_lockfile::{PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_store_dir::{StoreIndex, StoreIndexWriter};
-use std::{
-    collections::HashMap,
-    io,
-    path::{Path, PathBuf},
-};
+use pipe_trait::Pipe;
+use std::collections::HashMap;
 
 /// This subroutine generates filesystem layout for the virtual store at `node_modules/.pacquet`.
 #[must_use]
@@ -29,24 +25,6 @@ pub struct CreateVirtualStore<'a> {
 pub enum CreateVirtualStoreError {
     #[diagnostic(transparent)]
     InstallPackageBySnapshot(#[error(source)] InstallPackageBySnapshotError),
-
-    #[display("Failed to recursively create node_modules directory at {dir:?}: {error}")]
-    #[diagnostic(code(pacquet_package_manager::create_node_modules_dir))]
-    CreateNodeModulesDir {
-        dir: PathBuf,
-        #[error(source)]
-        error: io::Error,
-    },
-
-    #[diagnostic(transparent)]
-    SymlinkPackage(#[error(source)] SymlinkPackageError),
-
-    #[display("Symlink task panicked or was cancelled: {error}")]
-    #[diagnostic(code(pacquet_package_manager::symlink_task_join))]
-    SymlinkTaskJoin {
-        #[error(source)]
-        error: tokio::task::JoinError,
-    },
 
     #[display("Lockfile has a snapshot entry `{snapshot_key}` with no matching metadata entry (`{metadata_key}`) in `packages:`.")]
     #[diagnostic(code(pacquet_package_manager::missing_package_metadata))]
@@ -128,83 +106,26 @@ impl<'a> CreateVirtualStore<'a> {
         // blocking pool grew to 500+ threads to service them.
         //
         // We drop our own copy of the `Arc<StoreIndexWriter>` after the
-        // fetch `try_join_all` and the symlink `spawn_blocking` have both
-        // been awaited, so the channel can close once every tarball task
-        // has dropped its clone; then `.await` on `writer_task` waits for
-        // the final batch to flush before returning. A writer-side
-        // `JoinError` or open failure is surfaced at `warn!` and degraded
-        // to "no writer" — the install still succeeds, missing rows just
-        // force a re-download on the next install.
+        // `try_join_all` below so the channel can close once every tarball
+        // task has dropped its clone; then `.await` on the join handle
+        // waits for the final batch to flush before returning. A writer-
+        // side `JoinError` or open failure is surfaced at `warn!` and
+        // degraded to "no writer" — the install still succeeds, missing
+        // rows just force a re-download on the next install.
         let (store_index_writer, writer_task) = StoreIndexWriter::spawn(store_dir);
         let store_index_writer_ref = Some(&store_index_writer);
 
-        // `config: &'static Npmrc`, so `virtual_store_dir` is borrowable for
-        // the full process lifetime — we lean on that to move the whole
-        // symlink pass into a `spawn_blocking` task below without having to
-        // clone the root path per snapshot.
-        let virtual_store_dir: &'static Path = &config.virtual_store_dir;
-
-        // Collect owned per-snapshot data for the symlink branch. Only the
-        // dep map (`Option<HashMap<PkgName, SnapshotDepRef>>`) is cloned;
-        // the rest is small owned values. For the 1352-package fixture
-        // this adds up to a few tens of ms of one-off clone work and moves
-        // the whole symlink pass onto the blocking pool with no 'static /
-        // runtime-flavor fragility. `SnapshotDepRef::resolve` and path
-        // composition stay inside `create_symlink_layout` so the per-dep
-        // logic is trivial to cross-reference against pnpm.
-        let snapshot_symlink_tasks: Vec<SnapshotSymlinkTask> = snapshots
+        // Each snapshot gets a tokio task that awaits its tarball fetch and
+        // then runs `CreateVirtualDirBySnapshot` — which in turn does the
+        // CAS-import / symlink-layout pair concurrently on rayon via
+        // `rayon::join`. Cross-snapshot concurrency stays with tokio's
+        // `try_join_all`; within-snapshot concurrency lives inside
+        // `CreateVirtualDirBySnapshot::run`. Pnpm's `deps-restorer`
+        // installer uses the same "fetch/import per package + overlap
+        // symlinks with import" shape (`installing/deps-restorer/src/index.ts`).
+        snapshots
             .iter()
-            .map(|(key, snapshot)| SnapshotSymlinkTask {
-                virtual_node_modules_dir: virtual_node_modules_dir_for(virtual_store_dir, key),
-                dependencies: snapshot.dependencies.clone(),
-            })
-            .collect();
-
-        // Run intra-package symlink creation concurrently with tarball fetch
-        // + CAS import. Symlinks only depend on the resolved dep graph, not
-        // on any tarball contents, so there's no reason to serialise them
-        // behind downloads.
-        //
-        // Matches pnpm's `headless` installer, which forks the same two
-        // branches off the resolved graph:
-        //
-        //   await Promise.all([linkAllModules(...), linkAllPkgs(...)])
-        //
-        // See `pnpm/pkg-manager/headless/src/index.ts` and
-        // `pnpm/pkg-manager/core/src/install/link.ts`. We run the whole
-        // symlink pass on a single `spawn_blocking` thread using plain
-        // serial iteration — no rayon inside. That mirrors pnpm's
-        // `symlinkAllModules` (`worker/src/start.ts:493-501`), which
-        // executes a synchronous nested `for` loop inside one worker
-        // thread. Going wider with rayon would steal workers from the
-        // fetch branch's concurrent `create_cas_files` par_iter calls
-        // during the hot part of the install; pnpm already learned that
-        // lesson by shipping the symlink stage as a single-threaded
-        // coroutine. Serial on one CPU for ~6-7k symlink syscalls is
-        // still well under the cold-cache fetch budget.
-        let symlink_handle =
-            tokio::task::spawn_blocking(move || -> Result<(), CreateVirtualStoreError> {
-                for task in &snapshot_symlink_tasks {
-                    std::fs::create_dir_all(&task.virtual_node_modules_dir).map_err(|error| {
-                        CreateVirtualStoreError::CreateNodeModulesDir {
-                            dir: task.virtual_node_modules_dir.clone(),
-                            error,
-                        }
-                    })?;
-                    if let Some(dependencies) = &task.dependencies {
-                        create_symlink_layout(
-                            dependencies,
-                            virtual_store_dir,
-                            &task.virtual_node_modules_dir,
-                        )
-                        .map_err(CreateVirtualStoreError::SymlinkPackage)?;
-                    }
-                }
-                Ok(())
-            });
-
-        let fetch_result: Result<(), CreateVirtualStoreError> =
-            future::try_join_all(snapshots.keys().map(|snapshot_key| async move {
+            .map(|(snapshot_key, snapshot)| async move {
                 let metadata_key = snapshot_key.without_peer();
                 let metadata = packages.get(&metadata_key).ok_or_else(|| {
                     CreateVirtualStoreError::MissingPackageMetadata {
@@ -219,33 +140,14 @@ impl<'a> CreateVirtualStore<'a> {
                     store_index_writer: store_index_writer_ref,
                     package_key: snapshot_key,
                     metadata,
+                    snapshot,
                 }
                 .run()
                 .await
                 .map_err(CreateVirtualStoreError::InstallPackageBySnapshot)
-            }))
-            .await
-            .map(drop);
-
-        // Always await the symlink task, even if fetching failed. Dropping
-        // the `JoinHandle` would detach the `spawn_blocking` closure — tokio
-        // cannot abort a blocking task, and a detached one would keep
-        // mutating `.pacquet/*/node_modules/` in the background after
-        // `CreateVirtualStore::run` has already returned the fetch error.
-        // Letting it finish first is cheap (worst case: a handful of mkdirs
-        // and symlinks complete on a failing install) and keeps the
-        // filesystem quiescent when the caller inspects or cleans up state.
-        let symlink_result = match symlink_handle.await {
-            Ok(result) => result,
-            Err(error) => Err(CreateVirtualStoreError::SymlinkTaskJoin { error }),
-        };
-
-        // Surface fetch errors first — a network / tarball failure is almost
-        // always the root cause and more actionable than a downstream
-        // symlink error that happened while the fetch branch was already
-        // failing. If only the symlink branch failed, surface that.
-        fetch_result?;
-        symlink_result?;
+            })
+            .pipe(future::try_join_all)
+            .await?;
 
         // Drop the orchestration's sender so the channel closes once every
         // per-tarball clone has also dropped; then wait for the writer task
@@ -268,19 +170,4 @@ impl<'a> CreateVirtualStore<'a> {
 
         Ok(())
     }
-}
-
-/// Owned snapshot data handed off to the symlink `spawn_blocking` task.
-///
-/// Kept deliberately small: just the virtual-store package dir path and a
-/// cloned copy of the snapshot's `dependencies` map. The rest of the data
-/// `create_symlink_layout` needs (virtual store root, `PkgName`/`SnapshotDepRef`
-/// resolution) is either `'static`-borrowable or lives inside this clone.
-struct SnapshotSymlinkTask {
-    virtual_node_modules_dir: PathBuf,
-    dependencies: Option<HashMap<PkgName, SnapshotDepRef>>,
-}
-
-fn virtual_node_modules_dir_for(virtual_store_dir: &Path, package_key: &PackageKey) -> PathBuf {
-    virtual_store_dir.join(package_key.to_virtual_store_name()).join("node_modules")
 }
