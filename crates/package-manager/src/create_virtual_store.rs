@@ -196,11 +196,13 @@ impl<'a> CreateVirtualStore<'a> {
         // returns; that ordering is intentional — warm-cache work has
         // no network dependency, so we'd be racing a cold download
         // against a CPU/syscall-bound rayon batch for nothing.
-        type CasPathsArc = std::sync::Arc<HashMap<String, std::path::PathBuf>>;
-        type WarmEntry<'a> = (&'a PackageKey, &'a SnapshotEntry, &'a CasPathsArc);
-        type ColdEntry<'a> = (&'a PackageKey, &'a SnapshotEntry);
-        let mut warm: Vec<WarmEntry<'_>> = Vec::with_capacity(snapshot_entries.len());
-        let mut cold: Vec<ColdEntry<'_>> = Vec::new();
+        // Element types are inferred from the push calls below — no
+        // explicit alias, so the warm tuple's third field stays bound
+        // to whatever value type `pacquet_tarball::PrefetchedCasPaths`
+        // exposes. A future change there propagates here without a
+        // local alias drifting (Copilot review on #292).
+        let mut warm = Vec::with_capacity(snapshot_entries.len());
+        let mut cold: Vec<(&PackageKey, &SnapshotEntry)> = Vec::new();
         for (snapshot_key, snapshot, cache_key) in &snapshot_entries {
             match cache_key.as_deref().and_then(|k| prefetched.get(k)) {
                 Some(cas_paths) => warm.push((snapshot_key, snapshot, cas_paths)),

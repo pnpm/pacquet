@@ -10,8 +10,14 @@ use state::State;
 pub async fn main() -> miette::Result<()> {
     enable_tracing_by_env();
     set_panic_hook();
+    // Run argument parsing *before* sizing the rayon pool so
+    // `pacquet --help` / `--version` (and any clap parse error) exit
+    // without spinning up worker threads. `clap::Parser::parse` calls
+    // `std::process::exit` on those paths, so we never reach
+    // `configure_rayon_pool` for them (Copilot review on #292).
+    let args = CliArgs::parse();
     configure_rayon_pool();
-    CliArgs::parse().run().await
+    args.run().await
 }
 
 /// Size rayon's global pool at `2 × available_parallelism`. The link

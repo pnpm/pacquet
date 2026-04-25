@@ -1079,6 +1079,166 @@ mod tests {
         assert_eq!(cas_paths.get("bin/cli.js"), files.get("bin/cli.js"));
     }
 
+    /// `prefetch_cas_paths` against an index row whose CAFS blobs
+    /// exist on disk and verify cleanly must return a hit for the
+    /// requested key. Mirrors the warm-cache install shape: we
+    /// pre-write a row, then ask the prefetch to look it up.
+    #[tokio::test]
+    async fn prefetch_cas_paths_returns_hits_for_live_index_rows() {
+        let (store_dir, store_path) = tempdir_with_leaked_path();
+
+        let (pkg_json_path, pkg_json_hash) =
+            store_path.write_cas_file(b"{\"name\":\"fake\"}", false).unwrap();
+
+        let pkg_integrity =
+            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_id = "fake@1.0.0";
+        let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
+
+        let mut files = HashMap::new();
+        files.insert(
+            "package.json".to_string(),
+            CafsFileInfo {
+                digest: format!("{pkg_json_hash:x}"),
+                mode: 0o644,
+                size: 15,
+                checked_at: None,
+            },
+        );
+        let entry = PackageFilesIndex {
+            manifest: None,
+            requires_build: Some(false),
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let index = StoreIndex::open_in(store_path).unwrap();
+        index.set(&index_key, &entry).unwrap();
+        drop(index);
+
+        let prefetched = prefetch_cas_paths(
+            StoreIndex::shared_readonly_in(store_path),
+            store_path,
+            vec![index_key.clone()],
+            true,
+        )
+        .await;
+
+        let map = prefetched.get(&index_key).expect("hit");
+        assert_eq!(map.get("package.json"), Some(&pkg_json_path));
+        drop(store_dir);
+    }
+
+    /// `prefetch_cas_paths` must omit entries whose integrity check
+    /// fails — same policy as the per-snapshot `load_cached_cas_paths`
+    /// path. We seed an index row that points at a digest no file on
+    /// disk matches; the prefetch should drop the row from its result
+    /// rather than return a half-populated map (which would mislead
+    /// the warm-batch path into thinking the package was ready).
+    #[tokio::test]
+    async fn prefetch_cas_paths_omits_failed_integrity_entries() {
+        let (store_dir, store_path) = tempdir_with_leaked_path();
+
+        let pkg_integrity =
+            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_id = "fake@1.0.0";
+        let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
+
+        let mut files = HashMap::new();
+        files.insert(
+            "package.json".to_string(),
+            CafsFileInfo {
+                // Digest of a file that was never written to disk.
+                digest: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".to_string(),
+                mode: 0o644,
+                size: 15,
+                checked_at: None,
+            },
+        );
+        let entry = PackageFilesIndex {
+            manifest: None,
+            requires_build: Some(false),
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let index = StoreIndex::open_in(store_path).unwrap();
+        index.set(&index_key, &entry).unwrap();
+        drop(index);
+
+        let prefetched = prefetch_cas_paths(
+            StoreIndex::shared_readonly_in(store_path),
+            store_path,
+            vec![index_key.clone()],
+            // Verification on: the missing CAFS blob trips
+            // `check_pkg_files_integrity`'s "scrub & re-fetch" path,
+            // which turns the row into a miss.
+            true,
+        )
+        .await;
+
+        assert!(
+            prefetched.get(&index_key).is_none(),
+            "row that fails integrity must not appear in prefetch result",
+        );
+        drop(store_dir);
+    }
+
+    /// With `verify_store_integrity = false`, `prefetch_cas_paths`
+    /// goes through `build_file_maps_from_index` instead of
+    /// `check_pkg_files_integrity` — the index row is trusted and
+    /// no `fs::metadata` syscalls run per file. The result must
+    /// still surface an entry for the requested key, even when no
+    /// CAFS blob exists on disk; correctness is left to the caller's
+    /// downstream import step (matches pnpm's behaviour with
+    /// `verify-store-integrity: false`).
+    #[tokio::test]
+    async fn prefetch_cas_paths_skips_filesystem_checks_when_verify_disabled() {
+        let (store_dir, store_path) = tempdir_with_leaked_path();
+
+        let pkg_integrity =
+            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_id = "fake@1.0.0";
+        let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
+
+        let mut files = HashMap::new();
+        files.insert(
+            "package.json".to_string(),
+            CafsFileInfo {
+                // Digest matches no on-disk file, but with
+                // `verify_store_integrity = false` we never check.
+                digest: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789".to_string(),
+                mode: 0o644,
+                size: 15,
+                checked_at: None,
+            },
+        );
+        let entry = PackageFilesIndex {
+            manifest: None,
+            requires_build: Some(false),
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let index = StoreIndex::open_in(store_path).unwrap();
+        index.set(&index_key, &entry).unwrap();
+        drop(index);
+
+        let prefetched = prefetch_cas_paths(
+            StoreIndex::shared_readonly_in(store_path),
+            store_path,
+            vec![index_key.clone()],
+            false,
+        )
+        .await;
+
+        let map = prefetched.get(&index_key).expect(
+            "verify=false should trust the index row and surface the entry without checking disk",
+        );
+        assert!(map.contains_key("package.json"));
+        drop(store_dir);
+    }
+
     /// If the index row points at a CAFS blob that no longer exists on
     /// disk (pruned out-of-band, say), the cache lookup must reject the
     /// entry and fall through to a download. We don't want to do the
