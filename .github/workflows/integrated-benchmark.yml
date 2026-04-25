@@ -13,6 +13,7 @@ on:
       - 'tasks/registry-mock/package.json'
       - 'tasks/registry-mock/pnpm-lock.yaml'
       - 'tasks/registry-mock/pnpm-workspace.yaml'
+      - 'tasks/integrated-benchmark/src/fixtures/**'
       - '.github/actions/**'
       - '.github/workflows/integrated-benchmark.yml'
 
