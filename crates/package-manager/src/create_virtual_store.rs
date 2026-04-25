@@ -133,22 +133,35 @@ impl<'a> CreateVirtualStore<'a> {
         // Directory and Git resolutions don't go through CAFS at all,
         // so skipping them here matches the per-snapshot path's check.
         // [`snapshot_cache_key`] is the shared key-derivation helper —
-        // both this loop and the warm/cold partition below call it,
-        // so a future change to the resolution-type handling or key
+        // a future change to the resolution-type handling or key
         // shape stays in one place (Copilot review on #292).
+        //
+        // Walk `snapshots` once, stash the per-snapshot cache key
+        // alongside its `(snapshot_key, snapshot)` tuple, and reuse
+        // the stashed key for both the prefetch input and the
+        // warm/cold partition below. A separate pass to recompute
+        // each key would re-allocate two strings per snapshot for
+        // nothing (Copilot follow-up review on #292).
         //
         // Lockfiles with peer-dependency variants of the same package
         // (e.g. `react-dom@17.0.2(react@17.0.2)` plus
         // `react-dom@17.0.2(react@18.2.0)`) collapse to one cache key
-        // here because the key is built from `metadata_key.without_peer()`.
-        // Sort + dedup so `prefetch_cas_paths` doesn't redo identical
-        // SELECT + integrity-check work for every peer variant.
-        let mut cache_keys: Vec<String> = snapshots
-            .keys()
-            .filter_map(|snapshot_key| snapshot_cache_key(snapshot_key, packages))
+        // because the key is built from `metadata_key.without_peer()`.
+        // Sort + dedup the prefetch input so `prefetch_cas_paths`
+        // doesn't redo identical SELECT + integrity-check work for
+        // every peer variant.
+        type SnapshotWithCacheKey<'a> = (&'a PackageKey, &'a SnapshotEntry, Option<String>);
+        let snapshot_entries: Vec<SnapshotWithCacheKey<'_>> = snapshots
+            .iter()
+            .map(|(snapshot_key, snapshot)| {
+                (snapshot_key, snapshot, snapshot_cache_key(snapshot_key, packages))
+            })
             .collect();
-        cache_keys.sort_unstable();
-        cache_keys.dedup();
+        let mut cache_key_refs: Vec<&str> =
+            snapshot_entries.iter().filter_map(|(_, _, k)| k.as_deref()).collect();
+        cache_key_refs.sort_unstable();
+        cache_key_refs.dedup();
+        let cache_keys: Vec<String> = cache_key_refs.into_iter().map(String::from).collect();
         let prefetched = prefetch_cas_paths(
             store_index.clone(),
             store_dir,
@@ -186,12 +199,10 @@ impl<'a> CreateVirtualStore<'a> {
         type CasPathsArc = std::sync::Arc<HashMap<String, std::path::PathBuf>>;
         type WarmEntry<'a> = (&'a PackageKey, &'a SnapshotEntry, &'a CasPathsArc);
         type ColdEntry<'a> = (&'a PackageKey, &'a SnapshotEntry);
-        let mut warm: Vec<WarmEntry<'_>> = Vec::with_capacity(snapshots.len());
+        let mut warm: Vec<WarmEntry<'_>> = Vec::with_capacity(snapshot_entries.len());
         let mut cold: Vec<ColdEntry<'_>> = Vec::new();
-        for (snapshot_key, snapshot) in snapshots.iter() {
-            let cas_paths =
-                snapshot_cache_key(snapshot_key, packages).as_ref().and_then(|k| prefetched.get(k));
-            match cas_paths {
+        for (snapshot_key, snapshot, cache_key) in &snapshot_entries {
+            match cache_key.as_deref().and_then(|k| prefetched.get(k)) {
                 Some(cas_paths) => warm.push((snapshot_key, snapshot, cas_paths)),
                 None => cold.push((snapshot_key, snapshot)),
             }
