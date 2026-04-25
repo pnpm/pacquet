@@ -1580,6 +1580,7 @@ dependencies = [
  "pacquet-testing-utils",
  "pipe-trait",
  "pretty_assertions",
+ "rayon",
  "serde_json",
  "tempfile",
  "tokio",

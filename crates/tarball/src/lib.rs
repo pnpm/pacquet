@@ -322,6 +322,99 @@ fn extract_tarball_entries(
 ///
 /// [1]: https://github.com/pnpm/pnpm/blob/main/store/cafs/src/checkPkgFilesIntegrity.ts
 ///
+/// Pre-fetched cas-paths map shared across all per-snapshot futures.
+/// Built once at install start by [`prefetch_cas_paths`]; downloads
+/// consult it before falling through to a per-snapshot SQLite lookup.
+///
+/// Values are `Arc`-wrapped so the cold-batch fallback can hand a hit
+/// back as a cheap pointer-clone rather than memcpy-ing the whole
+/// per-file map (each entry is a `HashMap<String, PathBuf>` with up
+/// to ~hundred entries, and Copilot reasonably flagged the deep clone
+/// as a hot-path cost).
+pub type PrefetchedCasPaths = HashMap<String, Arc<HashMap<String, PathBuf>>>;
+
+/// Batch the entire warm-cache lookup phase into one `spawn_blocking`
+/// task at install start: collect every row the lockfile is going to
+/// ask about under a single `index.lock()` round-trip, drop the lock,
+/// then run the per-package integrity checks unlocked. Returns a
+/// `cache_key → Arc<cas_paths>` map the per-snapshot futures can hit
+/// synchronously.
+///
+/// **Locking shape (per Copilot review on #292):** the SQLite mutex
+/// is held only for the SELECT loop. Integrity checks (`fs::metadata`
+/// per file, optional re-hash) happen after the guard drops, so a
+/// concurrent reader on the same `SharedReadonlyStoreIndex` doesn't
+/// have to wait through the whole batch's filesystem work.
+///
+/// **Why one batched task instead of 1352 spawn_blockings:** the
+/// per-snapshot path fans out one `tokio::task::spawn_blocking` per
+/// snapshot. With 1352 snapshots all firing into the default
+/// 512-thread blocking pool, threads compete for CPU and get
+/// preempted between fs ops — sample-profiling showed cache-lookup
+/// bodies averaging 20-60 ms each (sum 26-82 s) almost entirely
+/// blocked, even though the actual SELECT (≈40 µs) and per-file
+/// integrity stats (≈ms each) shouldn't take that long. Doing the
+/// whole batch on one thread avoids the OS-scheduler / kernel-journal
+/// thrash and makes each query fast in CPU-time. Pnpm's piscina pool
+/// achieves the same shape implicitly with 4 dedicated workers.
+///
+/// Cache misses (no row, malformed row, integrity-check failure)
+/// just don't appear in the result. The caller then falls through
+/// to [`DownloadTarballToStore::run_without_mem_cache`] for those
+/// keys, which still has its own cache check as a backstop.
+pub async fn prefetch_cas_paths(
+    index: Option<SharedReadonlyStoreIndex>,
+    store_dir: &'static StoreDir,
+    cache_keys: Vec<String>,
+    verify_store_integrity: bool,
+) -> PrefetchedCasPaths {
+    let Some(index) = index else { return HashMap::new() };
+    if cache_keys.is_empty() {
+        return HashMap::new();
+    }
+    let result = tokio::task::spawn_blocking(move || -> PrefetchedCasPaths {
+        // Phase 1: read every row under the mutex; drop the guard
+        // before running any filesystem work.
+        let entries: Vec<(String, PackageFilesIndex)> = {
+            let Ok(guard) = index.lock() else {
+                tracing::debug!(
+                    target: "pacquet::download",
+                    "store-index mutex poisoned at prefetch start; falling back to per-snapshot lookups",
+                );
+                return HashMap::new();
+            };
+            let mut entries = Vec::with_capacity(cache_keys.len());
+            for cache_key in cache_keys {
+                let Ok(Some(entry)) = guard.get(&cache_key) else { continue };
+                entries.push((cache_key, entry));
+            }
+            entries
+        };
+        // Phase 2: integrity-check each entry without holding the lock.
+        let mut out = HashMap::with_capacity(entries.len());
+        for (cache_key, entry) in entries {
+            let verify_result = if verify_store_integrity {
+                pacquet_store_dir::check_pkg_files_integrity(store_dir, entry)
+            } else {
+                pacquet_store_dir::build_file_maps_from_index(store_dir, entry)
+            };
+            if verify_result.passed {
+                out.insert(cache_key, Arc::new(verify_result.files_map));
+            }
+        }
+        out
+    })
+    .await;
+    result.unwrap_or_else(|error| {
+        tracing::warn!(
+            target: "pacquet::download",
+            ?error,
+            "store-index prefetch task failed; falling back to per-snapshot lookups",
+        );
+        HashMap::new()
+    })
+}
+
 /// The `index` argument is a shared read-only handle that callers open
 /// once per install and pass in repeatedly, so we don't pay the
 /// `Connection::open` + PRAGMA cost per package.
@@ -438,6 +531,11 @@ pub struct DownloadTarballToStore<'a> {
     /// with `package_integrity` to form the SQLite index key per pnpm v11's
     /// `storeIndexKey`.
     pub package_id: &'a str,
+    /// Pre-fetched cache lookups built once at install start
+    /// ([`prefetch_cas_paths`]). When `Some`, this is consulted first;
+    /// the per-snapshot SQLite + integrity-check round-trip is skipped
+    /// for every key already resolved by the prefetch.
+    pub prefetched_cas_paths: Option<&'a PrefetchedCasPaths>,
 }
 
 impl<'a> DownloadTarballToStore<'a> {
@@ -493,6 +591,7 @@ impl<'a> DownloadTarballToStore<'a> {
             package_url,
             package_id,
             verify_store_integrity,
+            prefetched_cas_paths,
             ..
         } = self;
         let store_index = self.store_index.clone();
@@ -509,6 +608,36 @@ impl<'a> DownloadTarballToStore<'a> {
         // an undecodable entry, or any CAFS file that has gone missing
         // from disk all fall through to the download path below.
         let cache_key = store_index_key(&package_integrity.to_string(), package_id);
+        // Hot path on warm installs: the install-scoped `prefetch_cas_paths`
+        // task already ran one batched SELECT + integrity-check pass for
+        // every (integrity, pkg_id) the lockfile mentions. If our key is
+        // there, the per-snapshot future skips both the SQLite round-trip
+        // and the per-file stat work.
+        //
+        // We still deep-clone the inner per-file `HashMap` here because
+        // `run_without_mem_cache` returns an owned `HashMap<…, …>`;
+        // `(**cas_paths).clone()` walks every entry and clones each
+        // `String`/`PathBuf`, not the `Arc`. The Arc wrapping in
+        // `PrefetchedCasPaths` is what saves the deep clone on the *new*
+        // warm-batch path in `create_virtual_store::run` (which uses
+        // `cas_paths.as_ref()` to borrow the inner map directly); this
+        // fallback path is the per-snapshot tokio-future flow which
+        // only fires for cache-miss snapshots, where the deep clone
+        // cost is dwarfed by the cold download that would otherwise
+        // run. Propagating the `Arc` through this signature would
+        // require a wider refactor of `DownloadTarballToStore`'s
+        // return type.
+        if let Some(prefetched) = prefetched_cas_paths {
+            if let Some(cas_paths) = prefetched.get(&cache_key) {
+                tracing::info!(
+                    target: "pacquet::download",
+                    ?package_url,
+                    ?package_id,
+                    "Reusing prefetched CAFS entry — skipping download",
+                );
+                return Ok((**cas_paths).clone());
+            }
+        }
         if let Some(cas_paths) =
             load_cached_cas_paths(store_index, store_dir, cache_key, verify_store_integrity).await
         {
@@ -766,6 +895,7 @@ mod tests {
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
             package_id: "@fastify/error@3.3.0",
+            prefetched_cas_paths: None,
         }
         .run_without_mem_cache()
         .await
@@ -809,6 +939,7 @@ mod tests {
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
             package_id: "@fastify/error@3.3.0",
+            prefetched_cas_paths: None,
         }
         .run_without_mem_cache()
         .await
@@ -883,6 +1014,7 @@ mod tests {
             // case a firewalled runner drops the packet silently.
             package_url: "http://127.0.0.1:1/unreachable.tgz",
             package_id: pkg_id,
+            prefetched_cas_paths: None,
         }
         .run_without_mem_cache()
         .await
@@ -892,6 +1024,218 @@ mod tests {
         assert_eq!(cas_paths.get("package.json"), Some(&pkg_json_path));
         assert_eq!(cas_paths.get("bin/cli.js"), Some(&bin_path));
 
+        drop(store_dir);
+    }
+
+    /// When `prefetched_cas_paths` already covers the requested
+    /// `(integrity, pkg_id)`, `run_without_mem_cache` must short-circuit
+    /// to the prefetched map and never touch the SQLite index or the
+    /// network. `store_index: None` proves it doesn't fall through to
+    /// the per-snapshot SQLite lookup, and the unreachable
+    /// `package_url` proves the network path is also bypassed.
+    #[tokio::test]
+    async fn reuses_prefetched_cas_paths_when_provided() {
+        let pkg_integrity =
+            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_id = "fake@1.0.0";
+        let cache_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
+
+        // Synthetic cas-path map — its values just need to be returned
+        // verbatim by the prefetched short-circuit. They don't need to
+        // resolve to anything on disk because no integrity check runs
+        // on this path.
+        let mut files: HashMap<String, PathBuf> = HashMap::new();
+        files.insert("package.json".to_string(), PathBuf::from("/synthetic/package.json"));
+        files.insert("bin/cli.js".to_string(), PathBuf::from("/synthetic/bin/cli.js"));
+        let mut prefetched: PrefetchedCasPaths = HashMap::new();
+        prefetched.insert(cache_key, Arc::new(files.clone()));
+
+        // Use a leaked tempdir for `store_dir` so the helper has
+        // somewhere to point even though we never read it.
+        let (_keep, store_path) = tempdir_with_leaked_path();
+
+        let cas_paths = DownloadTarballToStore {
+            http_client: &fast_fail_client(),
+            store_dir: store_path,
+            // No SQLite handle: any fall-through to the per-snapshot
+            // SQLite lookup would just miss, so a network attempt
+            // would follow — and that would fail against the
+            // unreachable URL below, failing the test.
+            store_index: None,
+            store_index_writer: None,
+            verify_store_integrity: true,
+            package_integrity: &pkg_integrity,
+            package_unpacked_size: None,
+            package_url: "http://127.0.0.1:1/unreachable.tgz",
+            package_id: pkg_id,
+            prefetched_cas_paths: Some(&prefetched),
+        }
+        .run_without_mem_cache()
+        .await
+        .expect("prefetched short-circuit should succeed without network");
+
+        assert_eq!(cas_paths.len(), 2);
+        assert_eq!(cas_paths.get("package.json"), files.get("package.json"));
+        assert_eq!(cas_paths.get("bin/cli.js"), files.get("bin/cli.js"));
+    }
+
+    /// `prefetch_cas_paths` against an index row whose CAFS blobs
+    /// exist on disk and verify cleanly must return a hit for the
+    /// requested key. Mirrors the warm-cache install shape: we
+    /// pre-write a row, then ask the prefetch to look it up.
+    #[tokio::test]
+    async fn prefetch_cas_paths_returns_hits_for_live_index_rows() {
+        let (store_dir, store_path) = tempdir_with_leaked_path();
+
+        let (pkg_json_path, pkg_json_hash) =
+            store_path.write_cas_file(b"{\"name\":\"fake\"}", false).unwrap();
+
+        let pkg_integrity =
+            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_id = "fake@1.0.0";
+        let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
+
+        let mut files = HashMap::new();
+        files.insert(
+            "package.json".to_string(),
+            CafsFileInfo {
+                digest: format!("{pkg_json_hash:x}"),
+                mode: 0o644,
+                size: 15,
+                checked_at: None,
+            },
+        );
+        let entry = PackageFilesIndex {
+            manifest: None,
+            requires_build: Some(false),
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let index = StoreIndex::open_in(store_path).unwrap();
+        index.set(&index_key, &entry).unwrap();
+        drop(index);
+
+        let prefetched = prefetch_cas_paths(
+            StoreIndex::shared_readonly_in(store_path),
+            store_path,
+            vec![index_key.clone()],
+            true,
+        )
+        .await;
+
+        let map = prefetched.get(&index_key).expect("hit");
+        assert_eq!(map.get("package.json"), Some(&pkg_json_path));
+        drop(store_dir);
+    }
+
+    /// `prefetch_cas_paths` must omit entries whose integrity check
+    /// fails — same policy as the per-snapshot `load_cached_cas_paths`
+    /// path. We seed an index row that points at a digest no file on
+    /// disk matches; the prefetch should drop the row from its result
+    /// rather than return a half-populated map (which would mislead
+    /// the warm-batch path into thinking the package was ready).
+    #[tokio::test]
+    async fn prefetch_cas_paths_omits_failed_integrity_entries() {
+        let (store_dir, store_path) = tempdir_with_leaked_path();
+
+        let pkg_integrity =
+            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_id = "fake@1.0.0";
+        let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
+
+        let mut files = HashMap::new();
+        files.insert(
+            "package.json".to_string(),
+            CafsFileInfo {
+                // Digest of a file that was never written to disk.
+                digest: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".to_string(),
+                mode: 0o644,
+                size: 15,
+                checked_at: None,
+            },
+        );
+        let entry = PackageFilesIndex {
+            manifest: None,
+            requires_build: Some(false),
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let index = StoreIndex::open_in(store_path).unwrap();
+        index.set(&index_key, &entry).unwrap();
+        drop(index);
+
+        let prefetched = prefetch_cas_paths(
+            StoreIndex::shared_readonly_in(store_path),
+            store_path,
+            vec![index_key.clone()],
+            // Verification on: the missing CAFS blob trips
+            // `check_pkg_files_integrity`'s "scrub & re-fetch" path,
+            // which turns the row into a miss.
+            true,
+        )
+        .await;
+
+        assert!(
+            prefetched.get(&index_key).is_none(),
+            "row that fails integrity must not appear in prefetch result",
+        );
+        drop(store_dir);
+    }
+
+    /// With `verify_store_integrity = false`, `prefetch_cas_paths`
+    /// goes through `build_file_maps_from_index` instead of
+    /// `check_pkg_files_integrity` — the index row is trusted and
+    /// no `fs::metadata` syscalls run per file. The result must
+    /// still surface an entry for the requested key, even when no
+    /// CAFS blob exists on disk; correctness is left to the caller's
+    /// downstream import step (matches pnpm's behaviour with
+    /// `verify-store-integrity: false`).
+    #[tokio::test]
+    async fn prefetch_cas_paths_skips_filesystem_checks_when_verify_disabled() {
+        let (store_dir, store_path) = tempdir_with_leaked_path();
+
+        let pkg_integrity =
+            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_id = "fake@1.0.0";
+        let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
+
+        let mut files = HashMap::new();
+        files.insert(
+            "package.json".to_string(),
+            CafsFileInfo {
+                // Digest matches no on-disk file, but with
+                // `verify_store_integrity = false` we never check.
+                digest: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789".to_string(),
+                mode: 0o644,
+                size: 15,
+                checked_at: None,
+            },
+        );
+        let entry = PackageFilesIndex {
+            manifest: None,
+            requires_build: Some(false),
+            algo: "sha512".to_string(),
+            files,
+            side_effects: None,
+        };
+        let index = StoreIndex::open_in(store_path).unwrap();
+        index.set(&index_key, &entry).unwrap();
+        drop(index);
+
+        let prefetched = prefetch_cas_paths(
+            StoreIndex::shared_readonly_in(store_path),
+            store_path,
+            vec![index_key.clone()],
+            false,
+        )
+        .await;
+
+        let map = prefetched.get(&index_key).expect(
+            "verify=false should trust the index row and surface the entry without checking disk",
+        );
+        assert!(map.contains_key("package.json"));
         drop(store_dir);
     }
 
@@ -940,6 +1284,7 @@ mod tests {
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",
             package_id: pkg_id,
+            prefetched_cas_paths: None,
         }
         .run_without_mem_cache()
         .await
@@ -993,6 +1338,7 @@ mod tests {
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",
             package_id: pkg_id,
+            prefetched_cas_paths: None,
         }
         .run_without_mem_cache()
         .await
@@ -1049,6 +1395,7 @@ mod tests {
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",
             package_id: pkg_id,
+            prefetched_cas_paths: None,
         }
         .run_without_mem_cache()
         .await
@@ -1115,6 +1462,7 @@ mod tests {
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",
             package_id: pkg_id,
+            prefetched_cas_paths: None,
         }
         .run_without_mem_cache()
         .await

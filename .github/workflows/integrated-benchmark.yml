@@ -4,6 +4,18 @@ on:
   workflow_dispatch:
   pull_request:
     types: [opened, synchronize]
+    paths:
+      - '**/*.rs'
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'justfile'
+      - 'tasks/registry-mock/package.json'
+      - 'tasks/registry-mock/pnpm-lock.yaml'
+      - 'tasks/registry-mock/pnpm-workspace.yaml'
+      - 'tasks/integrated-benchmark/src/fixtures/**'
+      - '.github/actions/**'
+      - '.github/workflows/integrated-benchmark.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
@@ -132,6 +144,22 @@ jobs:
           cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.md
           cp bench-work-env/BENCHMARK_REPORT.json bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.json
 
+      - name: 'Benchmark: Frozen Lockfile (Hot Cache)'
+        shell: bash
+        # Same timeout / tracing rationale as the cold-cache step above.
+        # Mirrors pnpm's "Headless install (frozen lockfile, warm
+        # store+cache)" benchmark: each timed run wipes only
+        # `node_modules`, the per-revision store survives, and
+        # hyperfine's warmup run is what populates it on the first
+        # iteration so timed runs all see a hot store.
+        timeout-minutes: 10
+        env:
+          TRACE: pacquet=info
+        run: |
+          just integrated-benchmark --show-output --scenario=frozen-lockfile-hot-cache --verdaccio --with-pnpm HEAD main
+          cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE_HOT_CACHE.md
+          cp bench-work-env/BENCHMARK_REPORT.json bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE_HOT_CACHE.json
+
       # - name: 'Benchmark: Clean Install'
       #   shell: bash
       #   run: |
@@ -153,6 +181,18 @@ jobs:
             echo
             echo '```json'
             cat bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.json
+            echo '```'
+            echo
+            echo '</details>'
+            echo
+            echo '### Scenario: Frozen Lockfile (Hot Cache)'
+            echo
+            cat bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE_HOT_CACHE.md
+            echo
+            echo '<details><summary>BENCHMARK_REPORT.json</summary>'
+            echo
+            echo '```json'
+            cat bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE_HOT_CACHE.json
             echo '```'
             echo
             echo '</details>'
