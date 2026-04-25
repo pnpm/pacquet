@@ -47,6 +47,14 @@ pub enum BenchmarkScenario {
     CleanInstall,
     /// Benchmark install with a frozen lockfile and without local cache.
     FrozenLockfile,
+    /// Benchmark install with a frozen lockfile and a *warm* local store —
+    /// the "fresh clone of an existing repo" / "CI install where the
+    /// runner-level store cache is hit" path. Mirrors pnpm's
+    /// `Headless install (frozen lockfile, warm store+cache)` benchmark
+    /// in [`pnpm/v11/benchmarks/bench.sh`](https://github.com/pnpm/pnpm/blob/main/benchmarks/bench.sh).
+    /// Hyperfine's `--warmup` run primes the store; subsequent timed
+    /// runs delete only `node_modules` and reuse the populated store.
+    FrozenLockfileHotCache,
 }
 
 impl BenchmarkScenario {
@@ -54,7 +62,9 @@ impl BenchmarkScenario {
     pub fn install_args(self) -> impl IntoIterator<Item = &'static str> {
         match self {
             BenchmarkScenario::CleanInstall => Vec::new(),
-            BenchmarkScenario::FrozenLockfile => vec!["--frozen-lockfile"],
+            BenchmarkScenario::FrozenLockfile | BenchmarkScenario::FrozenLockfileHotCache => {
+                vec!["--frozen-lockfile"]
+            }
         }
     }
 
@@ -62,7 +72,9 @@ impl BenchmarkScenario {
     pub fn npmrc_lockfile_setting(self) -> &'static str {
         match self {
             BenchmarkScenario::CleanInstall => "lockfile=false",
-            BenchmarkScenario::FrozenLockfile => "lockfile=true",
+            BenchmarkScenario::FrozenLockfile | BenchmarkScenario::FrozenLockfileHotCache => {
+                "lockfile=true"
+            }
         }
     }
 
@@ -74,7 +86,24 @@ impl BenchmarkScenario {
     {
         match self {
             BenchmarkScenario::CleanInstall => None,
-            BenchmarkScenario::FrozenLockfile => load_lockfile().into().pipe(Some),
+            BenchmarkScenario::FrozenLockfile | BenchmarkScenario::FrozenLockfileHotCache => {
+                load_lockfile().into().pipe(Some)
+            }
+        }
+    }
+
+    /// Per-iteration cleanup paths that hyperfine's `--prepare` command
+    /// will `rm -rf` before each timed run (and before each warmup).
+    /// Cold-cache scenarios wipe the per-revision store along with
+    /// `node_modules` so every iteration starts from scratch; the
+    /// hot-cache scenario only wipes `node_modules`, letting the
+    /// warmup populate the store and timed iterations reuse it.
+    pub fn cleanup_paths(self) -> &'static [&'static str] {
+        match self {
+            BenchmarkScenario::CleanInstall | BenchmarkScenario::FrozenLockfile => {
+                &["node_modules", "store-dir"]
+            }
+            BenchmarkScenario::FrozenLockfileHotCache => &["node_modules"],
         }
     }
 }
