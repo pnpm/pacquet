@@ -261,20 +261,68 @@ fn create_package_json(dst_dir: &Path, src_dir: Option<&Path>) {
 /// would have fired — the workspace file's `allowBuilds: {core-js: false,
 /// es5-ext: false}` silences those specific warnings and keeps pnpm's
 /// output clean so hyperfine doesn't see stderr noise.
+///
+/// Always guarantees `storeDir: ./store-dir` ends up in the destination.
+/// Both pnpm and pacquet read the store path from this file (pacquet
+/// since the `.npmrc` parser explicitly ignores `store-dir`); without
+/// that key, both fall through to the global default store and the
+/// benchmark's per-iteration / pre-benchmark cleanup wipes a directory
+/// the install never wrote to. That silently invalidates cold/hot-cache
+/// semantics and lets state from previous runs leak in (Copilot review
+/// on #296).
+///
+/// If a custom fixture's workspace file already declares `storeDir`,
+/// trust it — that's the user opting into a different store layout
+/// (e.g. shared store across revisions to test a specific scenario).
+/// Only inject our default when the key is absent.
 fn create_pnpm_workspace(dst_dir: &Path, src_dir: Option<&Path>) {
     let dst = dst_dir.join("pnpm-workspace.yaml");
-    if let Some(src_dir) = src_dir {
+    let base = if let Some(src_dir) = src_dir {
         let src = src_dir.join("pnpm-workspace.yaml");
-        // The workspace file is optional when a custom fixture directory
-        // is provided — only copy if present, so existing fixture dirs
-        // that predate this helper don't start erroring out.
         if src.is_file() {
             assert_ne!(src, dst);
-            fs::copy(src, dst).expect("copy pnpm-workspace.yaml for the revision");
+            fs::read_to_string(src).expect("read fixture pnpm-workspace.yaml")
+        } else {
+            String::new()
         }
     } else {
-        fs::write(dst, PNPM_WORKSPACE).expect("write pnpm-workspace.yaml for the revision");
-    }
+        PNPM_WORKSPACE.to_string()
+    };
+    let content = if has_top_level_store_dir(&base) {
+        base
+    } else {
+        if !base.is_empty() {
+            eprintln!(
+                "warn: fixture's pnpm-workspace.yaml has no top-level `storeDir:` — \
+                 prepending `storeDir: ./store-dir` so per-revision store isolation works"
+            );
+        }
+        if base.is_empty() {
+            "storeDir: ./store-dir\n".to_string()
+        } else {
+            format!("storeDir: ./store-dir\n{base}")
+        }
+    };
+    fs::write(dst, content).expect("write pnpm-workspace.yaml for the revision");
+}
+
+/// Detect a top-level `storeDir:` key in a YAML document. We only look
+/// at lines whose first byte is a non-whitespace, non-`#` character so
+/// nested keys (`foo:\n  storeDir: …`) and comments don't count. This
+/// is a deliberately tiny scan, not a real YAML parse — the workspace
+/// files we ship and accept are flat enough that line-level matching
+/// covers the practical cases.
+fn has_top_level_store_dir(yaml: &str) -> bool {
+    yaml.lines().any(|line| {
+        let first = match line.as_bytes().first() {
+            Some(&b) => b,
+            None => return false,
+        };
+        if first.is_ascii_whitespace() || first == b'#' {
+            return false;
+        }
+        line.starts_with("storeDir:")
+    })
 }
 
 fn create_npmrc(dir: &Path, registry: &str, scenario: BenchmarkScenario) {
