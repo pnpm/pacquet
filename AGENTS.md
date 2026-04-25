@@ -35,6 +35,11 @@ rather than guessing.
 When citing upstream code in a PR description or commit message, link to a
 specific commit on `main` (not a branch tip) so the reference stays stable.
 
+## Follow the project guides
+
+1. Follow the contributing guide in [`CONTRIBUTING.md`](./CONTRIBUTING.md). It covers commit message format, writing style, setup, and the automated checks to run before committing.
+2. Follow the code style guide in [`CODE_STYLE_GUIDE.md`](./CODE_STYLE_GUIDE.md). It covers code-level conventions not enforced by tooling: imports, modules, naming, ownership and borrowing, parameter type selection, trait bounds, pattern matching, `pipe-trait`, error handling, test layout, logging during tests, and cloning of `Arc` and `Rc`.
+
 ## Repo layout
 
 - `crates/` — library and binary crates that make up pacquet.
@@ -43,8 +48,13 @@ specific commit on `main` (not a branch tip) so the reference stays stable.
     `diagnostics`, `testing-utils`.
 - `tasks/` — developer tooling: `integrated-benchmark`, `micro-benchmark`,
   `registry-mock`.
-- `CODE_STYLE_GUIDE.md` — Rust style conventions beyond what clippy enforces.
-  Read it before submitting code.
+- `CONTRIBUTING.md` — commit-message format, writing style, setup, and the
+  automated checks to run before submitting. Read it before submitting code.
+- `CODE_STYLE_GUIDE.md` — manual code-style conventions beyond what `cargo
+  fmt`, `taplo`, and clippy enforce: imports, modules, naming, ownership
+  and borrowing, trait bounds, pattern matching, `pipe-trait`, error
+  handling, test layout, and `Arc`/`Rc` cloning. Read it before submitting
+  code.
 - `justfile` — canonical commands (see below).
 
 ## Commands
