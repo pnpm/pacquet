@@ -404,7 +404,7 @@ fn unix_permissions() { /* uses PermissionsExt which only exists on unix */ }
 
 ### When or when not to log during tests? What to log? How to log?
 
-The goal is to enable the programmer to quickly inspect the test subject should a test fails.
+The goal is to enable the programmer to quickly inspect the test subject should a test fail.
 
 Logging is almost always necessary when the assertion is not `assert_eq!`. For example: `assert!`, `assert_ne!`, etc.
 
