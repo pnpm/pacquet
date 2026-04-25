@@ -5,7 +5,6 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
-    thread,
     time::{Duration, Instant},
 };
 
@@ -48,7 +47,7 @@ where
             match op() {
                 Ok(value) => return Ok(value),
                 Err(error) if matches!(error.raw_os_error(), Some(EMFILE) | Some(ENFILE)) => {
-                    thread::sleep(backoff);
+                    std::thread::sleep(backoff);
                     backoff = (backoff * 2).min(Duration::from_millis(200));
                 }
                 Err(error) => return Err(error),
