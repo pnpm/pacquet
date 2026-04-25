@@ -4,10 +4,6 @@ on:
   workflow_dispatch:
   pull_request:
     types: [opened, synchronize]
-    # Criterion only sees Rust code, the workspace lockfile, the
-    # toolchain version, and the local tarball fixture. Everything
-    # else (docs, the npm wrapper, other workflows, justfile recipes,
-    # registry-mock fixtures) is invisible to the benchmark.
     paths:
       - '**/*.rs'
       - '**/Cargo.toml'

@@ -4,9 +4,6 @@ on:
   workflow_dispatch:
   pull_request:
     types: [opened, synchronize]
-    # Only run when something that can affect install timings changes.
-    # Docs, the npm wrapper, other workflows, and editor/lint config
-    # never reach the benchmark binary or the verdaccio fixtures.
     paths:
       - '**/*.rs'
       - '**/Cargo.toml'
