@@ -4,6 +4,14 @@ on:
   workflow_dispatch:
   pull_request:
     types: [opened, synchronize]
+    paths:
+      - '**/*.rs'
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'tasks/micro-benchmark/fixtures/**'
+      - '.github/actions/**'
+      - '.github/workflows/micro-benchmark.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
