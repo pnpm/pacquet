@@ -374,7 +374,11 @@ pub async fn prefetch_cas_paths(
     }
     let result = tokio::task::spawn_blocking(move || -> PrefetchedCasPaths {
         // Phase 1: read every row under the mutex; drop the guard
-        // before running any filesystem work.
+        // before running any filesystem work. One batched
+        // `SELECT … WHERE key IN (?, ?, …)` per `GET_MANY_CHUNK`
+        // (see `StoreIndex::get_many`) collapses what used to be N
+        // round-trips into one — see #294 for the cold-cache regression
+        // the per-key loop introduced when every key missed.
         let entries: Vec<(String, PackageFilesIndex)> = {
             let Ok(guard) = index.lock() else {
                 tracing::debug!(
@@ -383,12 +387,17 @@ pub async fn prefetch_cas_paths(
                 );
                 return HashMap::new();
             };
-            let mut entries = Vec::with_capacity(cache_keys.len());
-            for cache_key in cache_keys {
-                let Ok(Some(entry)) = guard.get(&cache_key) else { continue };
-                entries.push((cache_key, entry));
+            match guard.get_many(&cache_keys) {
+                Ok(map) => map.into_iter().collect(),
+                Err(error) => {
+                    tracing::debug!(
+                        target: "pacquet::download",
+                        ?error,
+                        "store-index batched read failed at prefetch start; falling back to per-snapshot lookups",
+                    );
+                    return HashMap::new();
+                }
             }
-            entries
         };
         // Phase 2: integrity-check each entry without holding the lock.
         let mut out = HashMap::with_capacity(entries.len());
