@@ -12,14 +12,39 @@
 //! cheap.
 
 use crate::{CafsFileInfo, PackageFilesIndex, StoreDir};
+use dashmap::DashSet;
 use sha2::{Digest, Sha512};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs,
     io::{self, BufReader, Read},
     path::{Path, PathBuf},
+    sync::Arc,
     time::UNIX_EPOCH,
 };
+
+/// Set of CAFS paths whose on-disk integrity has already been verified
+/// during the current install. Mirrors pnpm's
+/// [`verifiedFilesCache: Set<string>`](https://github.com/pnpm/pnpm/blob/main/store/cafs/src/checkPkgFilesIntegrity.ts):
+/// the caller threads one cache through every
+/// [`check_pkg_files_integrity`] invocation so a CAFS blob that has
+/// already been verified by package A doesn't get stat'd / re-hashed
+/// again by package B.
+///
+/// Concurrent: the install fans `check_pkg_files_integrity` calls out
+/// across tokio's blocking pool, so the cache must tolerate parallel
+/// readers and writers. `DashSet` gives us that without any external
+/// locking. Race-window duplicate verifies are benign (the `verify_file`
+/// path is idempotent) and rare in practice.
+pub type VerifiedFilesCache = DashSet<PathBuf>;
+
+/// Shared handle to a [`VerifiedFilesCache`] — what every install-scope
+/// caller passes around. `Arc` so the same cache survives across the
+/// lockfile-driven and registry-driven install loops without
+/// per-call clones, and so the value lives long enough to outlive the
+/// individual `tokio::task::spawn_blocking` closures the verifier
+/// dispatches into.
+pub type SharedVerifiedFilesCache = Arc<VerifiedFilesCache>;
 
 /// `in-tarball filename` → `CAFS path`. Return value of the two verify
 /// entry points below.
@@ -101,16 +126,22 @@ pub fn build_file_maps_from_index(store_dir: &StoreDir, entry: PackageFilesIndex
 /// reject non-regular-file dirents preemptively — the integrity hash
 /// catches real corruption, and pnpm doesn't guard against it in this
 /// function either.
-pub fn check_pkg_files_integrity(store_dir: &StoreDir, entry: PackageFilesIndex) -> VerifyResult {
+pub fn check_pkg_files_integrity(
+    store_dir: &StoreDir,
+    entry: PackageFilesIndex,
+    verified_files_cache: &VerifiedFilesCache,
+) -> VerifyResult {
     // Destructure so the owned `files` HashMap and `algo` String can be
     // consumed below; moving beats the extra per-file `filename.clone()`
     // the old borrow-based signature forced on the hot path.
     let PackageFilesIndex { files, algo, .. } = entry;
     let mut all_verified = true;
     let mut files_map = HashMap::with_capacity(files.len());
-    // pnpm's `verifiedFilesCache: Set<string>` dedups within a single
-    // entry so two in-tarball filenames pointing at the same CAFS blob
-    // cost one stat, not two.
+    // `verified_files_cache` is the install-scoped
+    // [`VerifiedFilesCache`] — pnpm's `verifiedFilesCache: Set<string>`.
+    // Threading it through every call dedups across packages, not just
+    // within one entry: a CAFS blob seen by package A's verify pass
+    // skips the stat / re-hash when package B references it later.
     //
     // Key the set by the resolved CAFS path, not by `info.digest`. The
     // path factors in `info.mode` (via `-exec` suffix for executables
@@ -119,7 +150,6 @@ pub fn check_pkg_files_integrity(store_dir: &StoreDir, entry: PackageFilesIndex)
     // tarball ships it with different executable bits. Digest-only
     // dedup would skip verifying the second path and happily return
     // `passed: true` with a stale / missing blob still on disk.
-    let mut verified: HashSet<PathBuf> = HashSet::new();
     for (filename, info) in files {
         let Some(path) = store_dir.cas_file_path_by_mode(&info.digest, info.mode) else {
             tracing::debug!(
@@ -131,12 +161,19 @@ pub fn check_pkg_files_integrity(store_dir: &StoreDir, entry: PackageFilesIndex)
             all_verified = false;
             continue;
         };
-        if !verified.contains(&path) {
+        if !verified_files_cache.contains(&path) {
             if verify_file(&path, &filename, &info, &algo) {
                 // One `PathBuf` clone per unique CAFS path we actually
                 // verified; zero for dedup hits. Strictly better than
                 // the per-filename clone the borrow-based version had.
-                verified.insert(path.clone());
+                //
+                // Concurrency note: another thread may verify the same
+                // path between the `contains` check and our `insert`,
+                // doing the stat twice. That's benign — `verify_file`
+                // is idempotent and the cache converges to the same
+                // state either way. Pnpm's worker_threads cache has
+                // the same race-window for the same reason.
+                verified_files_cache.insert(path.clone());
             } else {
                 all_verified = false;
             }
@@ -371,7 +408,7 @@ mod tests {
             "sha512",
             vec![("index.js", info(&digest, content.len() as u64, 0o644, Some(future)))],
         );
-        let result = check_pkg_files_integrity(&store_dir, entry);
+        let result = check_pkg_files_integrity(&store_dir, entry, &VerifiedFilesCache::new());
         assert!(result.passed);
         assert_eq!(result.files_map.len(), 1);
     }
@@ -384,7 +421,7 @@ mod tests {
         let store_dir = StoreDir::new(tmp.path());
         let digest = sha512_hex(b"nope");
         let entry = index_with("sha512", vec![("README", info(&digest, 4, 0o644, None))]);
-        let result = check_pkg_files_integrity(&store_dir, entry);
+        let result = check_pkg_files_integrity(&store_dir, entry, &VerifiedFilesCache::new());
         assert!(!result.passed, "missing file → fail");
         assert_eq!(result.files_map.len(), 1);
     }
@@ -405,7 +442,7 @@ mod tests {
             "sha512",
             vec![("whatever", info(&fake_digest, actual.len() as u64, 0o644, Some(0)))],
         );
-        let result = check_pkg_files_integrity(&store_dir, entry);
+        let result = check_pkg_files_integrity(&store_dir, entry, &VerifiedFilesCache::new());
         assert!(!result.passed, "bad hash → fail");
         assert!(!path.exists(), "mismatched file is removed so the next call re-fetches");
     }
@@ -422,7 +459,7 @@ mod tests {
         let digest = sha512_hex(content);
         let path = plant_cafs_file(&store_dir, &digest, 0o644, content);
         let entry = index_with("sha512", vec![("mismatch", info(&digest, 999, 0o644, Some(0)))]);
-        let result = check_pkg_files_integrity(&store_dir, entry);
+        let result = check_pkg_files_integrity(&store_dir, entry, &VerifiedFilesCache::new());
         assert!(!result.passed);
         assert!(!path.exists(), "size mismatch removes the file so a re-fetch starts clean");
     }
@@ -442,9 +479,50 @@ mod tests {
             "sha512",
             vec![("a.txt", info_shared.clone_for_test()), ("b.txt", info_shared.clone_for_test())],
         );
-        let result = check_pkg_files_integrity(&store_dir, entry);
+        let result = check_pkg_files_integrity(&store_dir, entry, &VerifiedFilesCache::new());
         assert!(result.passed);
         assert_eq!(result.files_map.len(), 2);
+    }
+
+    /// A CAFS path verified during one `check_pkg_files_integrity` call
+    /// must not be re-verified by the next call when both share the
+    /// same `VerifiedFilesCache`. Ports pnpm's install-scoped
+    /// `verifiedFilesCache: Set<string>` semantics.
+    ///
+    /// The proof: plant the file, run a successful first verify against
+    /// it (populates the cache), then *delete* the file and run a
+    /// second verify. If the cache short-circuits the second call, it
+    /// returns `passed: true` despite the missing file — that's the
+    /// observable signal that the stat was skipped. Real installs
+    /// don't delete files mid-install, so this artificial setup is
+    /// purely a test handle for the dedup behaviour.
+    #[test]
+    fn careful_path_dedups_across_calls_via_shared_cache() {
+        let tmp = tempdir().unwrap();
+        let store_dir = StoreDir::new(tmp.path());
+        let content = b"shared-across-packages";
+        let digest = sha512_hex(content);
+        let path = plant_cafs_file(&store_dir, &digest, 0o644, content);
+        let future = now_ms() + 3_600_000;
+        let info_shared = info(&digest, content.len() as u64, 0o644, Some(future));
+
+        let cache = VerifiedFilesCache::new();
+
+        let entry_a = index_with("sha512", vec![("a-pkg/index.js", info_shared.clone_for_test())]);
+        let result_a = check_pkg_files_integrity(&store_dir, entry_a, &cache);
+        assert!(result_a.passed, "first call verifies the live file");
+        assert!(cache.contains(&path), "successful verify populates the shared cache");
+
+        // Pull the rug out from under the second call. Without the
+        // shared cache we'd stat-and-fail; with it, the path is
+        // already in `cache` so the inner `verify_file` is skipped.
+        std::fs::remove_file(&path).unwrap();
+        let entry_b = index_with("sha512", vec![("b-pkg/index.js", info_shared.clone_for_test())]);
+        let result_b = check_pkg_files_integrity(&store_dir, entry_b, &cache);
+        assert!(
+            result_b.passed,
+            "second call should short-circuit via the shared cache and skip the now-missing file",
+        );
     }
 
     /// Same digest with different `mode` resolves to two distinct CAFS
@@ -473,7 +551,7 @@ mod tests {
                 ("bin/app", info(&digest, content.len() as u64, 0o755, Some(future))),
             ],
         );
-        let result = check_pkg_files_integrity(&store_dir, entry);
+        let result = check_pkg_files_integrity(&store_dir, entry, &VerifiedFilesCache::new());
         assert!(
             !result.passed,
             "same digest + different mode = different CAFS path; missing exec blob must fail",
@@ -493,7 +571,7 @@ mod tests {
         let path = plant_cafs_file(&store_dir, &digest, 0o644, content);
         let entry =
             index_with("sha256", vec![("x", info(&digest, content.len() as u64, 0o644, Some(0)))]);
-        let result = check_pkg_files_integrity(&store_dir, entry);
+        let result = check_pkg_files_integrity(&store_dir, entry, &VerifiedFilesCache::new());
         assert!(!result.passed);
         assert!(!path.exists(), "unknown algo → treated as corrupt → removed");
     }
@@ -516,7 +594,7 @@ mod tests {
         // mismatches the row, we hit the `remove_stale_cafs_entry` path.
         let entry =
             index_with("sha512", vec![("impostor", info(&digest, 1_000_000, 0o644, Some(0)))]);
-        let result = check_pkg_files_integrity(&store_dir, entry);
+        let result = check_pkg_files_integrity(&store_dir, entry, &VerifiedFilesCache::new());
         assert!(!result.passed);
         assert!(
             !cafs_path.exists(),

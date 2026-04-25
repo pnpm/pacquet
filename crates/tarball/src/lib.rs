@@ -12,8 +12,8 @@ use miette::Diagnostic;
 use pacquet_fs::file_mode;
 use pacquet_network::ThrottledClient;
 use pacquet_store_dir::{
-    CafsFileInfo, PackageFilesIndex, SharedReadonlyStoreIndex, StoreDir, StoreIndexError,
-    StoreIndexWriter, WriteCasFileError, store_index_key,
+    CafsFileInfo, PackageFilesIndex, SharedReadonlyStoreIndex, SharedVerifiedFilesCache, StoreDir,
+    StoreIndexError, StoreIndexWriter, WriteCasFileError, store_index_key,
 };
 use pipe_trait::Pipe;
 use smart_default::SmartDefault;
@@ -479,6 +479,7 @@ pub async fn prefetch_cas_paths(
     store_dir: &'static StoreDir,
     cache_keys: Vec<String>,
     verify_store_integrity: bool,
+    verified_files_cache: SharedVerifiedFilesCache,
 ) -> PrefetchedCasPaths {
     let Some(index) = index else { return HashMap::new() };
     if cache_keys.is_empty() {
@@ -515,7 +516,11 @@ pub async fn prefetch_cas_paths(
         let mut out = HashMap::with_capacity(entries.len());
         for (cache_key, entry) in entries {
             let verify_result = if verify_store_integrity {
-                pacquet_store_dir::check_pkg_files_integrity(store_dir, entry)
+                pacquet_store_dir::check_pkg_files_integrity(
+                    store_dir,
+                    entry,
+                    &verified_files_cache,
+                )
             } else {
                 pacquet_store_dir::build_file_maps_from_index(store_dir, entry)
             };
@@ -544,6 +549,7 @@ async fn load_cached_cas_paths(
     store_dir: &'static StoreDir,
     cache_key: String,
     verify_store_integrity: bool,
+    verified_files_cache: SharedVerifiedFilesCache,
 ) -> Option<HashMap<String, PathBuf>> {
     let index = index?;
     // Hold on to a copy of the cache key for the outer `JoinError` log,
@@ -569,7 +575,7 @@ async fn load_cached_cas_paths(
         }?;
 
         let verify_result = if verify_store_integrity {
-            pacquet_store_dir::check_pkg_files_integrity(store_dir, entry)
+            pacquet_store_dir::check_pkg_files_integrity(store_dir, entry, &verified_files_cache)
         } else {
             pacquet_store_dir::build_file_maps_from_index(store_dir, entry)
         };
@@ -645,6 +651,16 @@ pub struct DownloadTarballToStore<'a> {
     /// isn't the bottleneck on the benchmarks this repo tracks (see
     /// #273), but cutting the syscall count is still correct.
     pub verify_store_integrity: bool,
+    /// Install-scoped dedup cache shared across every cached-tarball
+    /// lookup. Ports pnpm's `verifiedFilesCache: Set<string>`: a CAFS
+    /// path that one snapshot's verify pass has already stat'ed (and
+    /// optionally re-hashed) gets skipped when the next snapshot
+    /// touches the same blob. Without it pacquet was paying the
+    /// per-file stat in `check_pkg_files_integrity` once per
+    /// (snapshot × file) instead of once per (file). Allocate one
+    /// `Arc<DashSet<PathBuf>>` at install bootstrap and pass the same
+    /// handle to every `DownloadTarballToStore`.
+    pub verified_files_cache: SharedVerifiedFilesCache,
     pub package_integrity: &'a Integrity,
     pub package_unpacked_size: Option<usize>,
     pub package_url: &'a str,
@@ -947,6 +963,7 @@ impl<'a> DownloadTarballToStore<'a> {
         } = self;
         let store_index = self.store_index.clone();
         let store_index_writer = self.store_index_writer.clone();
+        let verified_files_cache = Arc::clone(&self.verified_files_cache);
 
         // Before hitting the network, check the SQLite store index: if the
         // tarball is already in the CAFS we can reuse its per-file paths
@@ -989,8 +1006,14 @@ impl<'a> DownloadTarballToStore<'a> {
             );
             return Ok((**cas_paths).clone());
         }
-        if let Some(cas_paths) =
-            load_cached_cas_paths(store_index, store_dir, cache_key, verify_store_integrity).await
+        if let Some(cas_paths) = load_cached_cas_paths(
+            store_index,
+            store_dir,
+            cache_key,
+            verify_store_integrity,
+            verified_files_cache,
+        )
+        .await
         {
             tracing::info!(target: "pacquet::download", ?package_url, ?package_id, "Reusing cached CAFS entry — skipping download");
             return Ok(cas_paths);

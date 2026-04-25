@@ -6,7 +6,7 @@ use miette::Diagnostic;
 use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
-use pacquet_store_dir::{SharedReadonlyStoreIndex, StoreIndexWriter};
+use pacquet_store_dir::{SharedReadonlyStoreIndex, SharedVerifiedFilesCache, StoreIndexWriter};
 use pacquet_tarball::{DownloadTarballToStore, PrefetchedCasPaths, TarballError};
 use pipe_trait::Pipe;
 use std::{borrow::Cow, sync::Arc};
@@ -24,6 +24,10 @@ pub struct InstallPackageBySnapshot<'a> {
     /// Install-scoped batched cache lookup result. See
     /// [`pacquet_tarball::prefetch_cas_paths`].
     pub prefetched_cas_paths: Option<&'a PrefetchedCasPaths>,
+    /// Install-scoped `verifiedFilesCache` shared across every
+    /// per-snapshot fetch. See `DownloadTarballToStore::verified_files_cache`
+    /// for the rationale.
+    pub verified_files_cache: &'a SharedVerifiedFilesCache,
     pub package_key: &'a PackageKey,
     pub metadata: &'a PackageMetadata,
     pub snapshot: &'a SnapshotEntry,
@@ -60,6 +64,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             store_index,
             store_index_writer,
             prefetched_cas_paths,
+            verified_files_cache,
             package_key,
             metadata,
             snapshot,
@@ -105,6 +110,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             store_index: store_index.cloned(),
             store_index_writer: store_index_writer.cloned(),
             verify_store_integrity: config.verify_store_integrity,
+            verified_files_cache: Arc::clone(verified_files_cache),
             package_integrity: integrity,
             package_unpacked_size: None,
             package_url: &tarball_url,
