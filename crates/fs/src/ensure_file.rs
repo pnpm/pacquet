@@ -1,12 +1,62 @@
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use std::{
-    fs::{self, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
+    thread,
     time::{Duration, Instant},
 };
+
+/// POSIX `EMFILE` — process has hit `RLIMIT_NOFILE`. Hardcoded
+/// instead of pulling in `libc` for a single integer that's been
+/// stable across every Unix since 4.2BSD.
+#[cfg(unix)]
+const EMFILE: i32 = 24;
+
+/// POSIX `ENFILE` — system-wide file table is full. Same rationale
+/// as [`EMFILE`].
+#[cfg(unix)]
+const ENFILE: i32 = 23;
+
+/// Run `op`, retrying on `EMFILE` / `ENFILE` with exponential
+/// backoff so a transient fd-table exhaustion under heavy
+/// concurrency doesn't fail the whole install. Matches pnpm's
+/// `graceful-fs` shape — pnpm has run this way for years and the
+/// fan-out shape (many concurrent rayon workers each holding fds
+/// during CAS extraction + verification) is the same in pacquet.
+///
+/// Backoff doubles starting at 2 ms and caps at 200 ms; the
+/// 32-attempt budget gives roughly 6 s of total wait before we
+/// surface the error. Real fd-pressure resolves in tens of ms once
+/// other workers finish their writes and close fds, so we hit the
+/// cap rarely.
+///
+/// On Windows the error codes don't map (Win32 returns its own
+/// numeric space) and the runtime fd limits work differently, so
+/// the helper is a thin pass-through there. Pacquet's Windows
+/// build path otherwise stays unchanged.
+fn retry_on_fd_pressure<F, T>(mut op: F) -> io::Result<T>
+where
+    F: FnMut() -> io::Result<T>,
+{
+    #[cfg(unix)]
+    {
+        let mut backoff = Duration::from_millis(2);
+        for _ in 0..32 {
+            match op() {
+                Ok(value) => return Ok(value),
+                Err(error) if matches!(error.raw_os_error(), Some(EMFILE) | Some(ENFILE)) => {
+                    thread::sleep(backoff);
+                    backoff = (backoff * 2).min(Duration::from_millis(200));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    op()
+}
 
 /// Error type of [`ensure_file`].
 #[derive(Debug, Display, Error, Diagnostic)]
@@ -123,7 +173,7 @@ pub fn ensure_file(
         }
     }
 
-    match options.open(file_path) {
+    match retry_on_fd_pressure(|| options.open(file_path)) {
         Ok(mut file) => file.write_all(content).map_err(|error| EnsureFileError::WriteFile {
             file_path: file_path.to_path_buf(),
             error,
@@ -213,7 +263,7 @@ fn verify_or_rewrite(
 fn file_equals_bytes(file_path: &Path, content: &[u8]) -> io::Result<bool> {
     use std::io::Read;
 
-    let mut file = fs::File::open(file_path)?;
+    let mut file = retry_on_fd_pressure(|| File::open(file_path))?;
     let mut buf = [0u8; 8 * 1024];
     let mut offset = 0;
 
@@ -288,7 +338,7 @@ fn write_atomic(
             }
         }
 
-        let mut file = match options.open(&tmp_path) {
+        let mut file = match retry_on_fd_pressure(|| options.open(&tmp_path)) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 // Stale temp file or adversarial / concurrent pre-seed.
