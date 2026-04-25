@@ -40,7 +40,7 @@ just init
 
 `just init` requires [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall). It installs `cargo-nextest`, `cargo-watch`, `cargo-insta`, `typos-cli`, `taplo-cli`, `wasm-pack`, and `cargo-llvm-cov`, then points `git` at the tracked `.githooks/` directory so the pre-push format check runs on `git push`.
 
-Install the registry-mock dependencies before running tests:
+Install the test dependencies:
 
 ```sh
 just install
