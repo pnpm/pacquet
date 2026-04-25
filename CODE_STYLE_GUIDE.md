@@ -106,7 +106,7 @@ Use **descriptive names** for variables and closure parameters by default. Singl
 
   ```rust
   // OK: short closure
-  rows.zip(cols).map(|(i, j)| matrix[i][j])
+  left_indices.zip(right_indices).map(|(i, j)| matrix[i][j])
 
   // OK: index-based loop
   for i in 0..len { /* ... */ }
@@ -228,7 +228,7 @@ fn show_path(path: &Path) {
     println!("The path is {path:?}");
 }
 
-show_path(my_path_buf);
+show_path(&my_path_buf);
 show_path(my_path_ref);
 ```
 
@@ -306,10 +306,10 @@ entries.into_iter().collect::<HashMap<_, _>>().pipe(Store)
 
 ```rust
 // Nested calls are harder to read
-let parsed = serde_json::from_slice::<Manifest>(&bytes)?;
+let result = Some(InstallError::MissingPackage(name.to_string()));
 
 // Prefer piping instead
-let parsed = bytes.as_slice().pipe(serde_json::from_slice::<Manifest>)?;
+let result = name.to_string().pipe(InstallError::MissingPackage).pipe(Some);
 ```
 
 **Chaining through multiple unary functions:**
@@ -330,7 +330,10 @@ url
 
 ```rust
 // Good: pipe_as_ref calls .as_ref() then passes to the function
-path_buf.pipe_as_ref(Path::exists)
+path_buf.pipe_as_ref(is_within_store)
+
+// Without pipe, you'd need a temporary or nested call
+is_within_store(path_buf.as_ref())
 ```
 
 #### When NOT to use pipe
