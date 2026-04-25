@@ -179,11 +179,17 @@ impl WorkEnv {
         // `--with-pnpm` was set, pnpm's `node_modules` survived between
         // iterations, and after the warmup pnpm just hit a no-op
         // "already installed" code path instead of doing real work.
+        //
+        // Per-iteration cleanup paths come from the scenario: cold-cache
+        // scenarios wipe `node_modules` and `store-dir`, hot-cache wipes
+        // only `node_modules` so the warmup-populated store survives
+        // into the timed runs.
+        let cleanup_paths = self.scenario.cleanup_paths();
         let cleanup_targets = self
             .revision_ids()
             .chain(self.with_pnpm.then_some(WorkEnv::PNPM))
             .map(|id| self.bench_dir(id))
-            .flat_map(|dir| [dir.join("node_modules"), dir.join("store-dir")])
+            .flat_map(|dir| cleanup_paths.iter().map(move |name| dir.join(name)))
             .map(|path| path.maybe_quote().to_string())
             .join(" ");
         let cleanup_command = format!("rm -rf {cleanup_targets}");
