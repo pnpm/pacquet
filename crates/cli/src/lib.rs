@@ -31,6 +31,17 @@ pub async fn main() -> miette::Result<()> {
 /// runner can spin up far more rayon threads than the kernel will
 /// actually schedule onto our cores (Copilot review on #292).
 ///
+/// **Floor of 4 threads is intentional.** A 1-2-CPU CI runner left
+/// at `2 × parallelism` would be capped to 2-4 rayon threads, and
+/// at that point we go back to the original "one rayon thread is
+/// blocked on a `clonefile` while the next fully-ready snapshot
+/// can't even start" pattern that the 2× tuning is trying to
+/// avoid. The kernel metadata journal is the bottleneck even on
+/// small hosts, so a small intentional oversubscription
+/// (max(4, 2 × parallelism)) is a better trade than respecting the
+/// quota literally — Copilot's follow-up flagged the tension; we're
+/// keeping the floor and documenting it explicitly.
+///
 /// Honours an explicit `RAYON_NUM_THREADS` env var by skipping our
 /// override (rayon's `build_global` errors if a pool is already set,
 /// but env vars don't pre-init it — so we just apply a smaller
@@ -45,6 +56,10 @@ fn configure_rayon_pool() {
         .map(std::num::NonZeroUsize::get)
         .unwrap_or(1)
         .saturating_mul(2)
+        // `.max(4)` is an intentional minimum: even on quota-limited
+        // 1-2-CPU runners, dropping below 4 puts us back into the
+        // "rayon worker stalls on `clonefile` while the next snapshot
+        // can't start" regime. See the function-level doc.
         .max(4);
     let _ = rayon::ThreadPoolBuilder::new().num_threads(n).build_global();
 }

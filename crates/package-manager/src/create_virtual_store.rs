@@ -132,27 +132,21 @@ impl<'a> CreateVirtualStore<'a> {
         // Tarball-and-Registry resolutions both ship an `Integrity`;
         // Directory and Git resolutions don't go through CAFS at all,
         // so skipping them here matches the per-snapshot path's check.
+        // [`snapshot_cache_key`] is the shared key-derivation helper —
+        // both this loop and the warm/cold partition below call it,
+        // so a future change to the resolution-type handling or key
+        // shape stays in one place (Copilot review on #292).
         //
         // Lockfiles with peer-dependency variants of the same package
         // (e.g. `react-dom@17.0.2(react@17.0.2)` plus
         // `react-dom@17.0.2(react@18.2.0)`) collapse to one cache key
         // here because the key is built from `metadata_key.without_peer()`.
         // Sort + dedup so `prefetch_cas_paths` doesn't redo identical
-        // SELECT + integrity-check work for every peer variant
-        // (Copilot review on #292).
-        let mut cache_keys: Vec<String> = Vec::with_capacity(snapshots.len());
-        for snapshot_key in snapshots.keys() {
-            let metadata_key = snapshot_key.without_peer();
-            let Some(metadata) = packages.get(&metadata_key) else { continue };
-            let integrity_string = match &metadata.resolution {
-                LockfileResolution::Tarball(t) => t.integrity.as_ref().map(|i| i.to_string()),
-                LockfileResolution::Registry(r) => Some(r.integrity.to_string()),
-                LockfileResolution::Directory(_) | LockfileResolution::Git(_) => continue,
-            };
-            let Some(integrity) = integrity_string else { continue };
-            let pkg_id = metadata_key.to_string();
-            cache_keys.push(store_index_key(&integrity, &pkg_id));
-        }
+        // SELECT + integrity-check work for every peer variant.
+        let mut cache_keys: Vec<String> = snapshots
+            .keys()
+            .filter_map(|snapshot_key| snapshot_cache_key(snapshot_key, packages))
+            .collect();
         cache_keys.sort_unstable();
         cache_keys.dedup();
         let prefetched = prefetch_cas_paths(
@@ -195,26 +189,11 @@ impl<'a> CreateVirtualStore<'a> {
         let mut warm: Vec<WarmEntry<'_>> = Vec::with_capacity(snapshots.len());
         let mut cold: Vec<ColdEntry<'_>> = Vec::new();
         for (snapshot_key, snapshot) in snapshots.iter() {
-            let metadata_key = snapshot_key.without_peer();
-            let Some(metadata) = packages.get(&metadata_key) else {
-                cold.push((snapshot_key, snapshot));
-                continue;
-            };
-            let integrity_string = match &metadata.resolution {
-                LockfileResolution::Tarball(t) => t.integrity.as_ref().map(|i| i.to_string()),
-                LockfileResolution::Registry(r) => Some(r.integrity.to_string()),
-                LockfileResolution::Directory(_) | LockfileResolution::Git(_) => None,
-            };
-            let Some(integrity) = integrity_string else {
-                cold.push((snapshot_key, snapshot));
-                continue;
-            };
-            let pkg_id = metadata_key.to_string();
-            let cache_key = store_index_key(&integrity, &pkg_id);
-            if let Some(cas_paths) = prefetched.get(&cache_key) {
-                warm.push((snapshot_key, snapshot, cas_paths));
-            } else {
-                cold.push((snapshot_key, snapshot));
+            let cas_paths =
+                snapshot_cache_key(snapshot_key, packages).as_ref().and_then(|k| prefetched.get(k));
+            match cas_paths {
+                Some(cas_paths) => warm.push((snapshot_key, snapshot, cas_paths)),
+                None => cold.push((snapshot_key, snapshot)),
             }
         }
 
@@ -313,4 +292,28 @@ impl<'a> CreateVirtualStore<'a> {
 
         Ok(())
     }
+}
+
+/// Build the store-index cache key for a snapshot, or return `None`
+/// when the snapshot doesn't go through CAFS at all (directory / git
+/// resolution, missing metadata, missing integrity).
+///
+/// Shared by the upfront prefetch-keys loop and the warm/cold partition
+/// in [`CreateVirtualStore::run`] so the two stay consistent — if a
+/// new resolution type or key shape is added, both call sites pick
+/// it up automatically. A drift between the two loops would silently
+/// misclassify warm entries as cold and quietly halve install speed.
+fn snapshot_cache_key(
+    snapshot_key: &PackageKey,
+    packages: &HashMap<PackageKey, PackageMetadata>,
+) -> Option<String> {
+    let metadata_key = snapshot_key.without_peer();
+    let metadata = packages.get(&metadata_key)?;
+    let integrity = match &metadata.resolution {
+        LockfileResolution::Tarball(t) => t.integrity.as_ref()?.to_string(),
+        LockfileResolution::Registry(r) => r.integrity.to_string(),
+        LockfileResolution::Directory(_) | LockfileResolution::Git(_) => return None,
+    };
+    let pkg_id = metadata_key.to_string();
+    Some(store_index_key(&integrity, &pkg_id))
 }
