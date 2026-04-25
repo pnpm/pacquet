@@ -1,5 +1,7 @@
 mod custom_deserializer;
 mod npmrc_auth;
+#[cfg(test)]
+mod test_env_guard;
 mod workspace_yaml;
 
 use pacquet_store_dir::StoreDir;
@@ -45,13 +47,13 @@ pub enum PackageImportMethod {
     /// hard link packages from the store
     Hardlink,
 
-    /// try to clone packages from the store. If cloning is not supported then fall back to copying
+    /// copy packages from the store
     Copy,
 
-    /// copy packages from the store
+    /// clone (AKA copy-on-write or reference link) packages from the store
     Clone,
 
-    /// clone (AKA copy-on-write or reference link) packages from the store
+    /// try to clone packages from the store. If cloning is not supported then fall back to copying
     CloneOrCopy,
 }
 
@@ -156,6 +158,24 @@ pub struct Npmrc {
     /// projects in the workspace use the same versions of the peer dependencies.
     #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
     pub resolve_peers_from_workspace_root: bool,
+
+    /// Whether to verify each CAFS file's on-disk integrity before reusing it
+    /// for an install. When `true` (pnpm's default), the store-index cache
+    /// lookup stats each referenced file and re-hashes any whose mtime has
+    /// advanced past the stored `checkedAt` timestamp. When `false`, the
+    /// lookup skips that verification entirely and trusts the index — a
+    /// missing blob is discovered lazily at link time instead.
+    ///
+    /// Matches pnpm's `verifyStoreIntegrity` camelCase key in
+    /// `pnpm-workspace.yaml` (same `true` default as pnpm's
+    /// `installing/deps-installer/src/install/extendInstallOptions.ts`).
+    /// Only `pnpm-workspace.yaml` is wired up today — [`Npmrc::current`]
+    /// applies auth/registry from `.npmrc` and reads project-structural
+    /// settings from `pnpm-workspace.yaml`, matching pnpm 11's own
+    /// split. A `verify-store-integrity=…` line in `.npmrc` is
+    /// silently ignored.
+    #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
+    pub verify_store_integrity: bool,
 }
 
 impl Npmrc {
@@ -241,6 +261,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+    use crate::test_env_guard::EnvGuard;
 
     fn display_store_dir(store_dir: &StoreDir) -> String {
         store_dir.display().to_string().replace('\\', "/")
@@ -284,18 +305,26 @@ mod tests {
 
     #[test]
     pub fn should_use_pnpm_home_env_var() {
+        let _g = EnvGuard::snapshot(["PNPM_HOME"]);
         env::set_var("PNPM_HOME", "/hello"); // TODO: change this to dependency injection
         let value: Npmrc = serde_ini::from_str("").unwrap();
         assert_eq!(display_store_dir(&value.store_dir), "/hello/store");
-        env::remove_var("PNPM_HOME");
     }
 
     #[test]
     pub fn should_use_xdg_data_home_env_var() {
-        env::set_var("XDG_DATA_HOME", "/hello"); // TODO: change this to dependency injection
+        // Clear `PNPM_HOME` first — `default_store_dir` checks it
+        // before `XDG_DATA_HOME`, so running the test suite with pnpm
+        // installed (common) would otherwise hit the `PNPM_HOME`
+        // branch and fail the assertion. Snapshot both so the test
+        // cleans up after itself even when parallel peers observe the
+        // temporarily-unset state. See the companion fix in
+        // `custom_deserializer::tests::test_default_store_dir_with_xdg_env`.
+        let _g = EnvGuard::snapshot(["PNPM_HOME", "XDG_DATA_HOME"]);
+        env::remove_var("PNPM_HOME"); // TODO: change this to dependency injection
+        env::set_var("XDG_DATA_HOME", "/hello");
         let value: Npmrc = serde_ini::from_str("").unwrap();
         assert_eq!(display_store_dir(&value.store_dir), "/hello/pnpm/store");
-        env::remove_var("XDG_DATA_HOME");
     }
 
     #[test]

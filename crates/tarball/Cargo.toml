@@ -18,7 +18,9 @@ pacquet-store-dir   = { workspace = true }
 
 dashmap      = { workspace = true }
 derive_more  = { workspace = true }
+futures-util = { workspace = true }
 miette       = { workspace = true }
+num_cpus     = { workspace = true }
 pipe-trait   = { workspace = true }
 reqwest      = { workspace = true }
 serde        = { workspace = true }

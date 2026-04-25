@@ -38,32 +38,46 @@ pub enum InitStateError {
 
 impl State {
     /// Initialize the application state.
-    pub fn init(manifest_path: PathBuf, config: &'static Npmrc) -> Result<Self, InitStateError> {
+    ///
+    /// `require_lockfile` is `true` when the caller has committed to the
+    /// frozen-lockfile install path (via `--frozen-lockfile`) and needs
+    /// the lockfile loaded even when `config.lockfile` is `false`.
+    /// Matches pnpm's CLI: `--frozen-lockfile` is the strongest signal,
+    /// it must not be silently dropped because `lockfile` is disabled
+    /// (or unset) in config.
+    pub fn init(
+        manifest_path: PathBuf,
+        config: &'static Npmrc,
+        require_lockfile: bool,
+    ) -> Result<Self, InitStateError> {
+        let should_load = config.lockfile || require_lockfile;
         Ok(State {
             config,
             manifest: manifest_path
                 .pipe(PackageManifest::create_if_needed)
                 .map_err(InitStateError::LoadManifest)?,
-            lockfile: call_load_lockfile(config.lockfile, Lockfile::load_from_current_dir)
+            lockfile: call_load_lockfile(should_load, Lockfile::load_from_current_dir)
                 .map_err(InitStateError::LoadLockfile)?,
-            http_client: ThrottledClient::new_from_cpu_count(),
+            http_client: ThrottledClient::new_for_installs(),
             tarball_mem_cache: MemCache::new(),
             resolved_packages: ResolvedPackages::new(),
         })
     }
 }
 
-/// Private function to load lockfile from current directory should `config.lockfile` is `true`.
+/// Load the lockfile from the current directory when `should_load` is
+/// `true`. Callers compose `should_load` from `config.lockfile ||
+/// --frozen-lockfile` so the CLI flag is always honoured.
 ///
 /// This function was extracted to be tested independently.
 fn call_load_lockfile<LoadLockfile, Lockfile, Error>(
-    config_lockfile: bool,
+    should_load: bool,
     load_lockfile: LoadLockfile,
 ) -> Result<Option<Lockfile>, Error>
 where
     LoadLockfile: FnOnce() -> Result<Option<Lockfile>, Error>,
 {
-    config_lockfile.then(load_lockfile).transpose().map(Option::flatten)
+    should_load.then(load_lockfile).transpose().map(Option::flatten)
 }
 
 #[cfg(test)]
@@ -74,15 +88,15 @@ mod tests {
     #[test]
     fn test_call_load_lockfile() {
         macro_rules! case {
-            ($config_lockfile:expr, $load_lockfile:expr => $output:expr) => {{
-                let config_lockfile = $config_lockfile;
+            ($should_load:expr, $load_lockfile:expr => $output:expr) => {{
+                let should_load = $should_load;
                 let load_lockfile = $load_lockfile;
                 let output: Result<Option<&str>, &str> = $output;
                 eprintln!(
-                    "CASE: {config_lockfile:?}, {load_lockfile} => {output:?}",
+                    "CASE: {should_load:?}, {load_lockfile} => {output:?}",
                     load_lockfile = stringify!($load_lockfile),
                 );
-                assert_eq!(call_load_lockfile(config_lockfile, load_lockfile), output);
+                assert_eq!(call_load_lockfile(should_load, load_lockfile), output);
             }};
         }
 

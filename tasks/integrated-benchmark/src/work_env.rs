@@ -1,6 +1,6 @@
 use crate::{
     cli_args::{BenchmarkScenario, HyperfineOptions},
-    fixtures::{LOCKFILE, PACKAGE_JSON},
+    fixtures::{LOCKFILE, PACKAGE_JSON, PNPM_WORKSPACE},
     verify::executor,
 };
 use itertools::Itertools;
@@ -102,6 +102,7 @@ impl WorkEnv {
             let for_pnpm = matches!(id, BenchId::Static(_));
             fs::create_dir_all(&dir).expect("create directory for the revision");
             create_package_json(&dir, self.fixture_dir.as_deref());
+            create_pnpm_workspace(&dir, self.fixture_dir.as_deref());
             create_install_script(&dir, self.scenario, for_pnpm);
             create_npmrc(&dir, self.registry(), self.scenario);
             may_create_lockfile(&dir, self.scenario, self.fixture_dir.as_deref());
@@ -221,6 +222,28 @@ fn create_package_json(dst_dir: &Path, src_dir: Option<&Path>) {
         fs::copy(src, dst).expect("copy package.json for the revision");
     } else {
         fs::write(dst, PACKAGE_JSON).expect("write package.json for the revision");
+    }
+}
+
+/// Copy or write the fixture's `pnpm-workspace.yaml`. Pacquet's `.npmrc`
+/// sets `ignore-scripts=true` so no scripts actually run, but pnpm still
+/// warns about `ERR_PNPM_IGNORED_BUILDS` for packages whose postinstalls
+/// would have fired — the workspace file's `allowBuilds: {core-js: false,
+/// es5-ext: false}` silences those specific warnings and keeps pnpm's
+/// output clean so hyperfine doesn't see stderr noise.
+fn create_pnpm_workspace(dst_dir: &Path, src_dir: Option<&Path>) {
+    let dst = dst_dir.join("pnpm-workspace.yaml");
+    if let Some(src_dir) = src_dir {
+        let src = src_dir.join("pnpm-workspace.yaml");
+        // The workspace file is optional when a custom fixture directory
+        // is provided — only copy if present, so existing fixture dirs
+        // that predate this helper don't start erroring out.
+        if src.is_file() {
+            assert_ne!(src, dst);
+            fs::copy(src, dst).expect("copy pnpm-workspace.yaml for the revision");
+        }
+    } else {
+        fs::write(dst, PNPM_WORKSPACE).expect("write pnpm-workspace.yaml for the revision");
     }
 }
 

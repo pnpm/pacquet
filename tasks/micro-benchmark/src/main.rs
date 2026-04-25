@@ -34,11 +34,14 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
             let dir = tempdir().unwrap();
             let store_dir =
                 dir.path().to_path_buf().pipe(StoreDir::from).pipe(Box::new).pipe(Box::leak);
-            let http_client = ThrottledClient::new_from_cpu_count();
+            let http_client = ThrottledClient::new_for_installs();
 
             let cas_map = DownloadTarballToStore {
                 http_client: &http_client,
                 store_dir,
+                store_index: None,
+                store_index_writer: None,
+                verify_store_integrity: true,
                 package_integrity: &package_integrity,
                 package_unpacked_size: Some(16697),
                 package_url: url,

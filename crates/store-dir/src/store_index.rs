@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 
 /// SQLite-backed per-package index that pnpm v11 stores alongside the CAFS
@@ -21,6 +25,124 @@ use std::{
 /// so that the two tools can read each other's entries.
 pub struct StoreIndex {
     conn: Connection,
+}
+
+/// Shared handle to a read-only [`StoreIndex`] that can be cheaply cloned and
+/// sent across blocking tasks. SQLite's `Connection` is `Send` but not
+/// `Sync`, so the `Mutex` gates concurrent reads to a single query at a time
+/// — fine for our workload where every caller serializes one short query and
+/// then hands off to per-file work without holding the lock.
+pub type SharedReadonlyStoreIndex = Arc<Mutex<StoreIndex>>;
+
+/// Handle producers use to hand rows off to the batched writer task. Clone
+/// cheaply via [`Arc`] to share across tokio tasks.
+///
+/// The design mirrors pnpm's `queueWrites` / `flush` / `setRawMany` pattern
+/// (see `store/index/src/index.ts`): producers don't touch SQLite, they
+/// just push `(key, value)` onto an unbounded channel. A single
+/// [`spawn_blocking`][tokio::task::spawn_blocking] task drains the channel,
+/// collects each non-blocking burst into a batch (capped at 256 entries —
+/// see `MAX_BATCH_SIZE`), and flushes it with one `BEGIN IMMEDIATE` …
+/// `COMMIT`. That turns the per-snapshot `Connection::open` + 7-PRAGMA +
+/// solo-INSERT pattern into one open + N transactions, amortizes the WAL
+/// commit fsync across the batch, and leaves tokio's blocking pool alone
+/// (one writer thread, not one per tarball).
+pub struct StoreIndexWriter {
+    tx: tokio::sync::mpsc::UnboundedSender<(String, PackageFilesIndex)>,
+    /// One-shot log guard for the "channel closed" case in [`Self::queue`].
+    /// A dead writer (task panicked, [`StoreIndex::open`] failed) means
+    /// every subsequent `queue` call fails — without this guard that
+    /// spams 1352+ identical warnings into the install log. Once the
+    /// first failure has been logged, further failures go silent;
+    /// subsequent installs will still observe the missing index rows
+    /// and re-download, which is the only actionable signal anyway.
+    warn_on_send_failure: AtomicBool,
+}
+
+/// Batch cap for [`StoreIndexWriter`]. Big enough that a 1352-snapshot
+/// install flushes in a handful of transactions (so the fsync cost is
+/// amortized), small enough that a single failing row doesn't cost
+/// thousands of predecessors' worth of redo work on rollback. pnpm's
+/// `setRawMany` has no explicit cap (it drains whatever `nextTick`
+/// scheduled) but in practice its batches stay in the low hundreds.
+const MAX_BATCH_SIZE: usize = 256;
+
+impl StoreIndexWriter {
+    /// Spawn the batched writer task. Returns the handle producers push
+    /// rows to, and a [`JoinHandle`][tokio::task::JoinHandle] the caller
+    /// must `await` after dropping the last `Arc` to the handle so the
+    /// final batch flushes before the install returns.
+    ///
+    /// The writer task owns the [`StoreIndex`] connection for its entire
+    /// lifetime; on DB open failure the task returns the error and the
+    /// channel closes on the first producer send.
+    pub fn spawn(
+        store_dir: &StoreDir,
+    ) -> (Arc<StoreIndexWriter>, tokio::task::JoinHandle<Result<(), StoreIndexError>>) {
+        let v11_dir = store_dir.v11();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(String, PackageFilesIndex)>();
+        let handle = tokio::task::spawn_blocking(move || -> Result<(), StoreIndexError> {
+            let mut index = StoreIndex::open(&v11_dir)?;
+            let mut batch: Vec<(String, PackageFilesIndex)> = Vec::with_capacity(MAX_BATCH_SIZE);
+            while let Some(first) = rx.blocking_recv() {
+                batch.push(first);
+                // Drain whatever else is already queued to maximize batch
+                // size without ever blocking on the channel — a single
+                // `recv` above is the only blocking wait per transaction.
+                // Cap at `MAX_BATCH_SIZE` so a producer storm doesn't grow
+                // an unbounded buffer on the writer side.
+                while batch.len() < MAX_BATCH_SIZE {
+                    match rx.try_recv() {
+                        Ok(item) => batch.push(item),
+                        // `Empty` / `Disconnected` both mean "nothing more
+                        // to drain right now" — we flush the current batch
+                        // and loop back; if the channel is disconnected
+                        // the outer `blocking_recv` returns `None` next
+                        // and the task exits cleanly.
+                        Err(_) => break,
+                    }
+                }
+                if let Err(error) = index.set_many(batch.drain(..)) {
+                    // Drop the batch and keep going. One failed flush
+                    // (e.g. a disk-full hiccup) shouldn't silently drop
+                    // the rest of the install's entries; the next install
+                    // will cache-miss those rows and re-populate them,
+                    // matching the "best-effort index" stance the read
+                    // path already takes.
+                    tracing::warn!(
+                        target: "pacquet::store_index",
+                        ?error,
+                        "batched store-index write failed; dropping this batch and continuing",
+                    );
+                    batch.clear();
+                }
+            }
+            Ok(())
+        });
+        (Arc::new(StoreIndexWriter { tx, warn_on_send_failure: AtomicBool::new(true) }), handle)
+    }
+
+    /// Queue one `(key, value)` to be flushed in the next transaction.
+    ///
+    /// Silently drops the entry if the writer task has exited (closed
+    /// channel). Matches pnpm's graceful-degradation on failed writes:
+    /// the install in flight still completes, the next install misses on
+    /// this cache-key and re-downloads. The "channel closed" warning is
+    /// logged only on the first failure per writer instance — every
+    /// subsequent call would emit the same message, and on a 1352-
+    /// snapshot install that's a thousand identical warnings drowning
+    /// out real diagnostics.
+    pub fn queue(&self, key: String, value: PackageFilesIndex) {
+        if let Err(error) = self.tx.send((key, value)) {
+            if self.warn_on_send_failure.swap(false, Ordering::Relaxed) {
+                tracing::warn!(
+                    target: "pacquet::store_index",
+                    ?error,
+                    "store-index writer channel closed; dropping queued row (further failures silenced)",
+                );
+            }
+        }
+    }
 }
 
 /// Error type of [`StoreIndex`].
@@ -150,6 +272,23 @@ impl StoreIndex {
         StoreIndex::open_readonly(&store_dir.v11())
     }
 
+    /// Open a read-only index wrapped in `Arc<Mutex<…>>` so it can be shared
+    /// across the many cache lookups an install performs. Returns `None` if
+    /// `index.db` does not yet exist under the store — a first-time install
+    /// against an empty store — since there is nothing to read back and every
+    /// lookup would be a miss anyway.
+    ///
+    /// Reusing one connection avoids reopening the SQLite database (and
+    /// redoing its PRAGMAs) on every package, which otherwise scales
+    /// linearly with the snapshot count.
+    pub fn shared_readonly_in(store_dir: &StoreDir) -> Option<SharedReadonlyStoreIndex> {
+        let v11_dir = store_dir.v11();
+        if !v11_dir.join("index.db").exists() {
+            return None;
+        }
+        StoreIndex::open_readonly(&v11_dir).ok().map(|index| Arc::new(Mutex::new(index)))
+    }
+
     /// Look up a package-files index by key. Returns `Ok(None)` if no row exists.
     ///
     /// Rows come in three flavours and all three decode through one
@@ -210,6 +349,63 @@ impl StoreIndex {
             )
             .map(|_| ())
             .map_err(|source| StoreIndexError::Write { source })
+    }
+
+    /// Insert-or-replace a batch of rows in a single transaction.
+    ///
+    /// Matches pnpm's `setRawMany` (see `store/index/src/index.ts`): one
+    /// `BEGIN IMMEDIATE` … `COMMIT` around the inserts, which amortizes the
+    /// WAL commit fsync across the whole batch. At 1352 snapshots that
+    /// turns 1352 per-row fsyncs into ⌈1352/batch_size⌉ — on APFS this is
+    /// the single biggest lever for `pacquet install` wall time (#263).
+    ///
+    /// SQLite errors during the transaction roll it back before returning,
+    /// so a partial apply never leaves the index in a half-written state.
+    /// A per-row msgpack encoding error is logged at `warn!` and skipped
+    /// — one malformed `PackageFilesIndex` shouldn't cost every other row
+    /// in the batch the chance to commit, matching the "best-effort
+    /// index" stance the writer task and the read path already take.
+    /// Encoding is done up front into a `Vec<(String, Vec<u8>)>` so the
+    /// transaction body is pure SQLite — the caller's producer thread pays
+    /// the msgpack cost, not the single writer thread.
+    pub fn set_many(
+        &mut self,
+        entries: impl IntoIterator<Item = (String, PackageFilesIndex)>,
+    ) -> Result<(), StoreIndexError> {
+        // Encode outside the transaction so a single malformed row can't
+        // hold `BEGIN IMMEDIATE`'s write lock while we serialize msgpack,
+        // and skip individual encoding failures with a log so one bad
+        // entry doesn't drop the rest of the batch on the floor.
+        let mut encoded: Vec<(String, Vec<u8>)> = Vec::new();
+        for (key, value) in entries {
+            match crate::msgpackr_records::encode_package_files_index(&value) {
+                Ok(buf) => encoded.push((key, buf)),
+                Err(source) => tracing::warn!(
+                    target: "pacquet::store_index",
+                    ?key,
+                    error = ?source,
+                    "failed to encode package_index row; skipping",
+                ),
+            }
+        }
+        if encoded.is_empty() {
+            return Ok(());
+        }
+
+        let tx = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|source| StoreIndexError::Write { source })?;
+        {
+            let mut stmt = tx
+                .prepare_cached("INSERT OR REPLACE INTO package_index (key, data) VALUES (?1, ?2)")
+                .map_err(|source| StoreIndexError::Write { source })?;
+            for (key, buf) in &encoded {
+                stmt.execute(rusqlite::params![key, buf])
+                    .map_err(|source| StoreIndexError::Write { source })?;
+            }
+        }
+        tx.commit().map_err(|source| StoreIndexError::Write { source })
     }
 
     /// `true` iff a row with this key exists.

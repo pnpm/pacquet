@@ -2,7 +2,7 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::{
     LockfileResolution, PackageKey, PackageMetadata, ParsePkgVerPeerError, PkgName, PkgNameVerPeer,
-    PkgVerPeer, RegistryResolution, SnapshotEntry,
+    PkgVerPeer, RegistryResolution, SnapshotDepRef, SnapshotEntry,
 };
 use pacquet_registry::PackageVersion;
 use std::collections::HashMap;
@@ -80,11 +80,11 @@ pub fn build_package_snapshot(
             version: package.version.to_string(),
         })?;
 
-    let mut dependencies: HashMap<PkgName, PkgVerPeer> = HashMap::new();
+    let mut dependencies: HashMap<PkgName, SnapshotDepRef> = HashMap::new();
     for (dep_name, ver_peer) in resolved_dependencies {
         let parsed = PkgName::parse(dep_name.as_str())
             .map_err(|source| BuildSnapshotError::ParseName { name: dep_name.clone(), source })?;
-        dependencies.insert(parsed, ver_peer.clone());
+        dependencies.insert(parsed, SnapshotDepRef::Plain(ver_peer.clone()));
     }
 
     let metadata = PackageMetadata {
