@@ -42,6 +42,7 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
                 store_index: None,
                 store_index_writer: None,
                 verify_store_integrity: true,
+                verified_files_cache: pacquet_store_dir::SharedVerifiedFilesCache::default(),
                 package_integrity: &package_integrity,
                 package_unpacked_size: Some(16697),
                 package_url: url,

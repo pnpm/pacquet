@@ -7,7 +7,7 @@ use miette::Diagnostic;
 use pacquet_lockfile::{PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
-use pacquet_store_dir::{StoreIndex, StoreIndexWriter};
+use pacquet_store_dir::{SharedVerifiedFilesCache, StoreIndex, StoreIndexWriter};
 use pipe_trait::Pipe;
 use std::collections::HashMap;
 
@@ -115,6 +115,14 @@ impl<'a> CreateVirtualStore<'a> {
         let (store_index_writer, writer_task) = StoreIndexWriter::spawn(store_dir);
         let store_index_writer_ref = Some(&store_index_writer);
 
+        // Install-scoped `verifiedFilesCache`. One `Arc<DashSet>` lives
+        // for the duration of the install; every per-snapshot fetch
+        // gets the same handle. A CAFS path verified on snapshot A
+        // populates the set so snapshot B's verify pass skips the stat
+        // / re-hash cost. Ports pnpm's `verifiedFilesCache: Set<string>`
+        // threading in `store/cafs/src/checkPkgFilesIntegrity.ts`.
+        let verified_files_cache = SharedVerifiedFilesCache::default();
+
         // Each snapshot gets a tokio task that awaits its tarball fetch and
         // then runs `CreateVirtualDirBySnapshot` — which in turn does the
         // CAS-import / symlink-layout pair concurrently on rayon via
@@ -125,26 +133,36 @@ impl<'a> CreateVirtualStore<'a> {
         // symlinks with import" shape (`installing/deps-restorer/src/index.ts`).
         snapshots
             .iter()
-            .map(|(snapshot_key, snapshot)| async move {
-                let metadata_key = snapshot_key.without_peer();
-                let metadata = packages.get(&metadata_key).ok_or_else(|| {
-                    CreateVirtualStoreError::MissingPackageMetadata {
-                        snapshot_key: snapshot_key.to_string(),
-                        metadata_key: metadata_key.to_string(),
+            .map(|(snapshot_key, snapshot)| {
+                // The closure runs once per snapshot before any future
+                // is awaited, so a borrow into the surrounding scope
+                // would need to outlive the resulting `async move`.
+                // Bind a same-Arc copy here instead — the inner `async
+                // move` then captures an owned `SharedVerifiedFilesCache`
+                // that all per-snapshot futures still share.
+                let verified_files_cache = SharedVerifiedFilesCache::clone(&verified_files_cache);
+                async move {
+                    let metadata_key = snapshot_key.without_peer();
+                    let metadata = packages.get(&metadata_key).ok_or_else(|| {
+                        CreateVirtualStoreError::MissingPackageMetadata {
+                            snapshot_key: snapshot_key.to_string(),
+                            metadata_key: metadata_key.to_string(),
+                        }
+                    })?;
+                    InstallPackageBySnapshot {
+                        http_client,
+                        config,
+                        store_index: store_index_ref,
+                        store_index_writer: store_index_writer_ref,
+                        verified_files_cache: &verified_files_cache,
+                        package_key: snapshot_key,
+                        metadata,
+                        snapshot,
                     }
-                })?;
-                InstallPackageBySnapshot {
-                    http_client,
-                    config,
-                    store_index: store_index_ref,
-                    store_index_writer: store_index_writer_ref,
-                    package_key: snapshot_key,
-                    metadata,
-                    snapshot,
+                    .run()
+                    .await
+                    .map_err(CreateVirtualStoreError::InstallPackageBySnapshot)
                 }
-                .run()
-                .await
-                .map_err(CreateVirtualStoreError::InstallPackageBySnapshot)
             })
             .pipe(future::try_join_all)
             .await?;

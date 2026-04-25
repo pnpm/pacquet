@@ -12,7 +12,7 @@ use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::PackageVersion;
-use pacquet_store_dir::{StoreIndex, StoreIndexWriter};
+use pacquet_store_dir::{SharedVerifiedFilesCache, StoreIndex, StoreIndexWriter};
 use pacquet_tarball::MemCache;
 use pipe_trait::Pipe;
 
@@ -99,39 +99,54 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
         let (store_index_writer, writer_task) = StoreIndexWriter::spawn(store_dir);
         let store_index_writer_ref = Some(&store_index_writer);
 
+        // Install-scoped `verifiedFilesCache`. See the matching block
+        // in `create_virtual_store.rs` for the full rationale — pnpm
+        // threads one `Set<string>` through every package's verify
+        // pass so a CAFS path stat'd for one package skips the stat
+        // for any later package referencing the same blob.
+        let verified_files_cache = SharedVerifiedFilesCache::default();
+
         manifest
             .dependencies(dependency_groups)
-            .map(|(name, version_range)| async move {
-                let dependency = InstallPackageFromRegistry {
-                    tarball_mem_cache,
-                    http_client,
-                    config,
-                    store_index: store_index_ref,
-                    store_index_writer: store_index_writer_ref,
-                    node_modules_dir: &config.modules_dir,
-                    name,
-                    version_range,
-                }
-                .run::<Version>()
-                .await
-                .map_err(InstallWithoutLockfileError::InstallPackageFromRegistry)?;
+            .map(|(name, version_range)| {
+                // Same pattern as `create_virtual_store.rs`: an
+                // `async move` can't borrow into the surrounding
+                // scope, so bind a same-Arc copy outside the future.
+                let verified_files_cache = SharedVerifiedFilesCache::clone(&verified_files_cache);
+                async move {
+                    let dependency = InstallPackageFromRegistry {
+                        tarball_mem_cache,
+                        http_client,
+                        config,
+                        store_index: store_index_ref,
+                        store_index_writer: store_index_writer_ref,
+                        verified_files_cache: &verified_files_cache,
+                        node_modules_dir: &config.modules_dir,
+                        name,
+                        version_range,
+                    }
+                    .run::<Version>()
+                    .await
+                    .map_err(InstallWithoutLockfileError::InstallPackageFromRegistry)?;
 
-                InstallWithoutLockfile {
-                    tarball_mem_cache,
-                    http_client,
-                    config,
-                    manifest,
-                    dependency_groups: (),
-                    resolved_packages,
-                }
-                .install_dependencies_from_registry(
-                    &dependency,
-                    store_index_ref,
-                    store_index_writer_ref,
-                )
-                .await?;
+                    InstallWithoutLockfile {
+                        tarball_mem_cache,
+                        http_client,
+                        config,
+                        manifest,
+                        dependency_groups: (),
+                        resolved_packages,
+                    }
+                    .install_dependencies_from_registry(
+                        &dependency,
+                        store_index_ref,
+                        store_index_writer_ref,
+                        &verified_files_cache,
+                    )
+                    .await?;
 
-                Ok::<_, InstallWithoutLockfileError>(())
+                    Ok::<_, InstallWithoutLockfileError>(())
+                }
             })
             .pipe(future::try_join_all)
             .await?;
@@ -168,6 +183,7 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
         store_index_writer: Option<
             &'async_recursion std::sync::Arc<pacquet_store_dir::StoreIndexWriter>,
         >,
+        verified_files_cache: &'async_recursion SharedVerifiedFilesCache,
     ) -> Result<(), InstallWithoutLockfileError> {
         let InstallWithoutLockfile {
             tarball_mem_cache,
@@ -201,6 +217,7 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
                     config,
                     store_index,
                     store_index_writer,
+                    verified_files_cache,
                     node_modules_dir: node_modules_path_ref,
                     name,
                     version_range,
@@ -212,6 +229,7 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
                     &dependency,
                     store_index,
                     store_index_writer,
+                    verified_files_cache,
                 )
                 .await?;
                 Ok::<_, InstallWithoutLockfileError>(())
