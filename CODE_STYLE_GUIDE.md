@@ -75,23 +75,6 @@ use std::{path::PathBuf, sync::Arc};
 use std::os::unix::fs::PermissionsExt;
 ```
 
-### Derive Macro Ordering
-
-When deriving multiple traits, use this order and split across multiple `#[derive(...)]` lines for readability:
-
-1. **Standard traits:** `Debug`, `Default`, `Clone`, `Copy`
-2. **Comparison traits:** `PartialEq`, `Eq`, `PartialOrd`, `Ord`
-3. **Hash**
-4. **`derive_more` traits:** `Display`, `From`, `Into`, `Add`, `AddAssign`, etc.
-5. **Feature-gated derives** on a separate `#[cfg_attr(...)]` line
-
-```rust
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[derive(From, Into, Display)]
-#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-pub struct PackageSize(u64);
-```
-
 ### Generic Parameter Naming
 
 Use **descriptive names** for type parameters, not single letters:
