@@ -132,6 +132,14 @@ impl<'a> CreateVirtualStore<'a> {
         // Tarball-and-Registry resolutions both ship an `Integrity`;
         // Directory and Git resolutions don't go through CAFS at all,
         // so skipping them here matches the per-snapshot path's check.
+        //
+        // Lockfiles with peer-dependency variants of the same package
+        // (e.g. `react-dom@17.0.2(react@17.0.2)` plus
+        // `react-dom@17.0.2(react@18.2.0)`) collapse to one cache key
+        // here because the key is built from `metadata_key.without_peer()`.
+        // Sort + dedup so `prefetch_cas_paths` doesn't redo identical
+        // SELECT + integrity-check work for every peer variant
+        // (Copilot review on #292).
         let mut cache_keys: Vec<String> = Vec::with_capacity(snapshots.len());
         for snapshot_key in snapshots.keys() {
             let metadata_key = snapshot_key.without_peer();
@@ -145,6 +153,8 @@ impl<'a> CreateVirtualStore<'a> {
             let pkg_id = metadata_key.to_string();
             cache_keys.push(store_index_key(&integrity, &pkg_id));
         }
+        cache_keys.sort_unstable();
+        cache_keys.dedup();
         let prefetched = prefetch_cas_paths(
             store_index.clone(),
             store_dir,
@@ -179,9 +189,11 @@ impl<'a> CreateVirtualStore<'a> {
         // returns; that ordering is intentional — warm-cache work has
         // no network dependency, so we'd be racing a cold download
         // against a CPU/syscall-bound rayon batch for nothing.
-        let mut warm: Vec<(&PackageKey, &SnapshotEntry, &HashMap<String, std::path::PathBuf>)> =
-            Vec::with_capacity(snapshots.len());
-        let mut cold: Vec<(&PackageKey, &SnapshotEntry)> = Vec::new();
+        type CasPathsArc = std::sync::Arc<HashMap<String, std::path::PathBuf>>;
+        type WarmEntry<'a> = (&'a PackageKey, &'a SnapshotEntry, &'a CasPathsArc);
+        type ColdEntry<'a> = (&'a PackageKey, &'a SnapshotEntry);
+        let mut warm: Vec<WarmEntry<'_>> = Vec::with_capacity(snapshots.len());
+        let mut cold: Vec<ColdEntry<'_>> = Vec::new();
         for (snapshot_key, snapshot) in snapshots.iter() {
             let metadata_key = snapshot_key.without_peer();
             let Some(metadata) = packages.get(&metadata_key) else {
@@ -213,7 +225,7 @@ impl<'a> CreateVirtualStore<'a> {
             warm.par_iter().try_for_each(|(snapshot_key, snapshot, cas_paths)| {
                 crate::CreateVirtualDirBySnapshot {
                     virtual_store_dir,
-                    cas_paths,
+                    cas_paths: cas_paths.as_ref(),
                     import_method,
                     package_key: snapshot_key,
                     snapshot,

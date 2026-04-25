@@ -14,15 +14,22 @@ pub async fn main() -> miette::Result<()> {
     CliArgs::parse().run().await
 }
 
-/// Size rayon's global pool at `2 × availableParallelism`. The link
-/// phase is dominated by clonefile / hardlink syscalls that block the
-/// calling thread on the kernel's metadata journal, not by CPU work,
-/// so oversubscribing CPUs gives more in-flight syscalls and a higher
+/// Size rayon's global pool at `2 × num_cpus::get()`. The link phase is
+/// dominated by clonefile / hardlink syscalls that block the calling
+/// thread on the kernel's metadata journal, not by CPU work, so
+/// oversubscribing CPUs gives more in-flight syscalls and a higher
 /// effective throughput. Empirically sweeping 4-200 threads on a
 /// 1352-package warm install on macOS APFS, 2× was the knee — fewer
 /// threads underutilize the journal, way more (100+) loses to context
 /// switching and per-thread fixed costs (`user` time scales linearly
 /// past 50 without any wall-time payoff).
+///
+/// Sticking with `num_cpus::get()` rather than
+/// `std::thread::available_parallelism()` matches the rest of the
+/// workspace (e.g. `tarball::post_download_semaphore`); both report
+/// the host's logical CPU count on the platforms pacquet supports,
+/// and the workspace already pulls `num_cpus` in for its `Vec`-style
+/// API.
 ///
 /// Honours an explicit `RAYON_NUM_THREADS` env var by skipping our
 /// override (rayon's `build_global` errors if a pool is already set,
