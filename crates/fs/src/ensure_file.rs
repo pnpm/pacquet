@@ -1,12 +1,63 @@
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use std::{
-    fs::{self, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
 };
+
+/// POSIX `EMFILE` — process has hit `RLIMIT_NOFILE`. Hardcoded
+/// instead of pulling in `libc` for a single integer that's been
+/// stable across every Unix since 4.2BSD.
+#[cfg(unix)]
+const EMFILE: i32 = 24;
+
+/// POSIX `ENFILE` — system-wide file table is full. Same rationale
+/// as [`EMFILE`].
+#[cfg(unix)]
+const ENFILE: i32 = 23;
+
+/// Run `op`, retrying on `EMFILE` / `ENFILE` with exponential
+/// backoff so a transient fd-table exhaustion under heavy
+/// concurrency doesn't fail the whole install. Matches pnpm's
+/// `graceful-fs` shape — pnpm has run this way for years and the
+/// fan-out shape (many concurrent rayon workers each holding fds
+/// during CAS extraction + verification) is the same in pacquet.
+///
+/// Backoff doubles starting at 2 ms and caps at 200 ms; the budget
+/// is 32 sleep-and-retry rounds followed by a final attempt (33
+/// total calls) for roughly 5–6 s of total wait before we surface
+/// the error. Real fd-pressure resolves in tens of ms once other
+/// workers finish their writes and close fds, so we hit the cap
+/// rarely.
+///
+/// On Windows the error codes don't map (Win32 returns its own
+/// numeric space) and the runtime fd limits work differently, so
+/// the helper is a thin pass-through there — the trailing `op()`
+/// after the `cfg(unix)` block is the one and only attempt on that
+/// platform. Pacquet's Windows build path otherwise stays unchanged.
+fn retry_on_fd_pressure<F, T>(mut op: F) -> io::Result<T>
+where
+    F: FnMut() -> io::Result<T>,
+{
+    #[cfg(unix)]
+    {
+        let mut backoff = Duration::from_millis(2);
+        for _ in 0..32 {
+            match op() {
+                Ok(value) => return Ok(value),
+                Err(error) if matches!(error.raw_os_error(), Some(EMFILE) | Some(ENFILE)) => {
+                    std::thread::sleep(backoff);
+                    backoff = (backoff * 2).min(Duration::from_millis(200));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    op()
+}
 
 /// Error type of [`ensure_file`].
 #[derive(Debug, Display, Error, Diagnostic)]
@@ -123,7 +174,7 @@ pub fn ensure_file(
         }
     }
 
-    match options.open(file_path) {
+    match retry_on_fd_pressure(|| options.open(file_path)) {
         Ok(mut file) => file.write_all(content).map_err(|error| EnsureFileError::WriteFile {
             file_path: file_path.to_path_buf(),
             error,
@@ -213,7 +264,7 @@ fn verify_or_rewrite(
 fn file_equals_bytes(file_path: &Path, content: &[u8]) -> io::Result<bool> {
     use std::io::Read;
 
-    let mut file = fs::File::open(file_path)?;
+    let mut file = retry_on_fd_pressure(|| File::open(file_path))?;
     let mut buf = [0u8; 8 * 1024];
     let mut offset = 0;
 
@@ -288,7 +339,7 @@ fn write_atomic(
             }
         }
 
-        let mut file = match options.open(&tmp_path) {
+        let mut file = match retry_on_fd_pressure(|| options.open(&tmp_path)) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 // Stale temp file or adversarial / concurrent pre-seed.
@@ -730,5 +781,44 @@ mod tests {
         let mut perturbed = content.clone();
         *perturbed.last_mut().unwrap() ^= 0xff;
         assert!(!file_equals_bytes(&path, &perturbed).unwrap());
+    }
+
+    /// Transient `EMFILE` / `ENFILE` failures must be retried until
+    /// the underlying op succeeds. Cell-counts attempts so we can
+    /// pin both the predicate ("retries on these errnos") and the
+    /// loop control flow ("returns the first `Ok` value the closure
+    /// produces").
+    #[cfg(unix)]
+    #[test]
+    fn retry_on_fd_pressure_retries_emfile_and_enfile_until_success() {
+        for errno in [EMFILE, ENFILE] {
+            let attempts = std::cell::Cell::new(0);
+            let result = retry_on_fd_pressure(|| {
+                let attempt = attempts.get();
+                attempts.set(attempt + 1);
+                if attempt < 2 {
+                    Err(io::Error::from_raw_os_error(errno))
+                } else {
+                    Ok("ok")
+                }
+            });
+            assert_eq!(result.unwrap(), "ok");
+            assert_eq!(attempts.get(), 3, "errno {errno} should have been retried twice");
+        }
+    }
+
+    /// Errors that aren't fd-pressure must propagate immediately —
+    /// retrying would just delay surfacing a real failure (e.g. a
+    /// genuine `NotFound` on the parent dir).
+    #[cfg(unix)]
+    #[test]
+    fn retry_on_fd_pressure_propagates_non_fd_errors() {
+        let attempts = std::cell::Cell::new(0);
+        let result: io::Result<()> = retry_on_fd_pressure(|| {
+            attempts.set(attempts.get() + 1);
+            Err(io::Error::from(io::ErrorKind::NotFound))
+        });
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::NotFound);
+        assert_eq!(attempts.get(), 1, "non-fd-pressure errors must not retry");
     }
 }
