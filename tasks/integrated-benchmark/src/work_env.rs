@@ -173,6 +173,30 @@ impl WorkEnv {
     }
 
     fn benchmark(&self) {
+        // Pre-benchmark wipe of `node_modules` *and* `store-dir` for
+        // every benchmark target, regardless of scenario. The
+        // hot-cache scenario's per-iteration `--prepare` intentionally
+        // preserves `store-dir` so subsequent iterations can reuse
+        // it, which means whatever a previous run / scenario / partial
+        // invocation left in `store-dir` would otherwise carry into
+        // the warmup — and the warmup wouldn't actually be what
+        // primes the store. Wiping once upfront makes the warmup the
+        // priming run no matter what state the work-env was in. For
+        // cold-cache scenarios this is redundant with the per-iteration
+        // wipe but harmless (Copilot review on #296).
+        for dir in self
+            .revision_ids()
+            .chain(self.with_pnpm.then_some(WorkEnv::PNPM))
+            .map(|id| self.bench_dir(id))
+        {
+            for name in ["node_modules", "store-dir"] {
+                let path = dir.join(name);
+                if path.exists() {
+                    fs::remove_dir_all(&path).expect("pre-benchmark wipe");
+                }
+            }
+        }
+
         // hyperfine runs `--prepare` before *each* timed invocation, so
         // cleanup must cover every bench dir we're about to measure.
         // Previously this only wiped the pacquet revisions — if
