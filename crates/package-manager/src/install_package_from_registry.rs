@@ -98,6 +98,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
             package_unpacked_size: package_version.dist.unpacked_size,
             package_url: package_version.as_tarball_url(),
             package_id: &package_id,
+            prefetched_cas_paths: None,
         }
         .run_with_mem_cache(tarball_mem_cache)
         .await
