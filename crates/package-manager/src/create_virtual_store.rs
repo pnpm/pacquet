@@ -4,10 +4,11 @@ use crate::{
 use derive_more::{Display, Error};
 use futures_util::future;
 use miette::Diagnostic;
-use pacquet_lockfile::{PackageKey, PackageMetadata, SnapshotEntry};
+use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
-use pacquet_store_dir::{StoreIndex, StoreIndexWriter};
+use pacquet_store_dir::{store_index_key, StoreIndex, StoreIndexWriter};
+use pacquet_tarball::prefetch_cas_paths;
 use pipe_trait::Pipe;
 use std::collections::HashMap;
 
@@ -115,39 +116,147 @@ impl<'a> CreateVirtualStore<'a> {
         let (store_index_writer, writer_task) = StoreIndexWriter::spawn(store_dir);
         let store_index_writer_ref = Some(&store_index_writer);
 
-        // Each snapshot gets a tokio task that awaits its tarball fetch and
-        // then runs `CreateVirtualDirBySnapshot` — which in turn does the
-        // CAS-import / symlink-layout pair concurrently on rayon via
-        // `rayon::join`. Cross-snapshot concurrency stays with tokio's
-        // `try_join_all`; within-snapshot concurrency lives inside
-        // `CreateVirtualDirBySnapshot::run`. Pnpm's `deps-restorer`
-        // installer uses the same "fetch/import per package + overlap
-        // symlinks with import" shape (`installing/deps-restorer/src/index.ts`).
-        snapshots
-            .iter()
-            .map(|(snapshot_key, snapshot)| async move {
-                let metadata_key = snapshot_key.without_peer();
-                let metadata = packages.get(&metadata_key).ok_or_else(|| {
-                    CreateVirtualStoreError::MissingPackageMetadata {
-                        snapshot_key: snapshot_key.to_string(),
-                        metadata_key: metadata_key.to_string(),
-                    }
-                })?;
-                InstallPackageBySnapshot {
-                    http_client,
-                    config,
-                    store_index: store_index_ref,
-                    store_index_writer: store_index_writer_ref,
+        // Batch every cache lookup the per-snapshot futures would otherwise
+        // each fan into `tokio::task::spawn_blocking`. With 1352 snapshots
+        // hitting the default 512-thread blocking pool, each task's actual
+        // work (≈40 µs SELECT + per-file integrity stats) gets dwarfed by
+        // OS context-switching among hundreds of competing threads
+        // (sample-profiling: 20-60 ms wall per call, sum 26-82 s). Doing
+        // the same `SELECT`s and integrity checks on one thread holding the
+        // index mutex once is dramatically faster — and turns each
+        // per-snapshot future's cache lookup into a synchronous
+        // `HashMap::get`.
+        //
+        // Compute the cache keys upfront from `(integrity, pkg_id)` for
+        // every snapshot whose metadata has a tarball-style resolution.
+        // Tarball-and-Registry resolutions both ship an `Integrity`;
+        // Directory and Git resolutions don't go through CAFS at all,
+        // so skipping them here matches the per-snapshot path's check.
+        let mut cache_keys: Vec<String> = Vec::with_capacity(snapshots.len());
+        for snapshot_key in snapshots.keys() {
+            let metadata_key = snapshot_key.without_peer();
+            let Some(metadata) = packages.get(&metadata_key) else { continue };
+            let integrity_string = match &metadata.resolution {
+                LockfileResolution::Tarball(t) => t.integrity.as_ref().map(|i| i.to_string()),
+                LockfileResolution::Registry(r) => Some(r.integrity.to_string()),
+                LockfileResolution::Directory(_) | LockfileResolution::Git(_) => continue,
+            };
+            let Some(integrity) = integrity_string else { continue };
+            let pkg_id = metadata_key.to_string();
+            cache_keys.push(store_index_key(&integrity, &pkg_id));
+        }
+        let prefetched = prefetch_cas_paths(
+            store_index.clone(),
+            store_dir,
+            cache_keys,
+            config.verify_store_integrity,
+        )
+        .await;
+
+        // Partition snapshots by whether the prefetch covered them. The
+        // warm batch — every snapshot whose tarball is already in the
+        // CAFS — runs entirely on rayon: no tokio futures, no
+        // `try_join_all` polling overhead, no `spawn_blocking` round-trip
+        // per snapshot. The cold batch (cache miss → download needed)
+        // keeps the existing `try_join_all` + download path.
+        //
+        // **Why this beats per-snapshot tokio futures:** profiling at
+        // 1352 prefetched / 0 cold on a 10-core Mac showed `sum-of-link
+        // ≈ wall` (~10 s sum on a 10 s wall, i.e. effectively 1×
+        // parallelism) even though `try_join_all` was meant to fan
+        // futures across tokio's 10 worker threads. Each future's sync
+        // `rayon::join` pinned one tokio worker; with up to 10 such
+        // futures progressing concurrently, each one's inner par_iter
+        // saturated rayon's pool, and the pool ended up processing one
+        // snapshot at a time. Going straight to rayon via a single
+        // `par_iter` lets the pool schedule across all 1352 snapshots
+        // as one work-stealing graph — the shape pnpm's piscina pool
+        // gives implicitly. On the same benchmark, wall dropped from
+        // ~10 s to ~6.5 s.
+        //
+        // The `par_iter` blocks the calling thread for the duration of
+        // the warm batch. The cold-batch fetches run *after* this
+        // returns; that ordering is intentional — warm-cache work has
+        // no network dependency, so we'd be racing a cold download
+        // against a CPU/syscall-bound rayon batch for nothing.
+        let mut warm: Vec<(&PackageKey, &SnapshotEntry, &HashMap<String, std::path::PathBuf>)> =
+            Vec::with_capacity(snapshots.len());
+        let mut cold: Vec<(&PackageKey, &SnapshotEntry)> = Vec::new();
+        for (snapshot_key, snapshot) in snapshots.iter() {
+            let metadata_key = snapshot_key.without_peer();
+            let Some(metadata) = packages.get(&metadata_key) else {
+                cold.push((snapshot_key, snapshot));
+                continue;
+            };
+            let integrity_string = match &metadata.resolution {
+                LockfileResolution::Tarball(t) => t.integrity.as_ref().map(|i| i.to_string()),
+                LockfileResolution::Registry(r) => Some(r.integrity.to_string()),
+                LockfileResolution::Directory(_) | LockfileResolution::Git(_) => None,
+            };
+            let Some(integrity) = integrity_string else {
+                cold.push((snapshot_key, snapshot));
+                continue;
+            };
+            let pkg_id = metadata_key.to_string();
+            let cache_key = store_index_key(&integrity, &pkg_id);
+            if let Some(cas_paths) = prefetched.get(&cache_key) {
+                warm.push((snapshot_key, snapshot, cas_paths));
+            } else {
+                cold.push((snapshot_key, snapshot));
+            }
+        }
+
+        let virtual_store_dir = &config.virtual_store_dir;
+        let import_method = config.package_import_method;
+        {
+            use rayon::prelude::*;
+            warm.par_iter().try_for_each(|(snapshot_key, snapshot, cas_paths)| {
+                crate::CreateVirtualDirBySnapshot {
+                    virtual_store_dir,
+                    cas_paths,
+                    import_method,
                     package_key: snapshot_key,
-                    metadata,
                     snapshot,
                 }
                 .run()
-                .await
-                .map_err(CreateVirtualStoreError::InstallPackageBySnapshot)
-            })
-            .pipe(future::try_join_all)
-            .await?;
+                .map_err(|e| {
+                    CreateVirtualStoreError::InstallPackageBySnapshot(
+                        InstallPackageBySnapshotError::CreateVirtualDir(e),
+                    )
+                })
+            })?;
+        }
+
+        // Cold batch: snapshots that didn't prefetch — fall through to the
+        // existing tokio + download path.
+        if !cold.is_empty() {
+            let prefetched_ref = Some(&prefetched);
+            cold.iter()
+                .map(|(snapshot_key, snapshot)| async move {
+                    let metadata_key = snapshot_key.without_peer();
+                    let metadata = packages.get(&metadata_key).ok_or_else(|| {
+                        CreateVirtualStoreError::MissingPackageMetadata {
+                            snapshot_key: snapshot_key.to_string(),
+                            metadata_key: metadata_key.to_string(),
+                        }
+                    })?;
+                    InstallPackageBySnapshot {
+                        http_client,
+                        config,
+                        store_index: store_index_ref,
+                        store_index_writer: store_index_writer_ref,
+                        prefetched_cas_paths: prefetched_ref,
+                        package_key: snapshot_key,
+                        metadata,
+                        snapshot,
+                    }
+                    .run()
+                    .await
+                    .map_err(CreateVirtualStoreError::InstallPackageBySnapshot)
+                })
+                .pipe(future::try_join_all)
+                .await?;
+        }
 
         // Drop the orchestration's sender so the channel closes once every
         // per-tarball clone has also dropped; then wait for the writer task

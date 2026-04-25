@@ -30,7 +30,9 @@ clap        = { workspace = true }
 derive_more = { workspace = true }
 home        = { workspace = true }
 miette      = { workspace = true }
+num_cpus    = { workspace = true }
 pipe-trait  = { workspace = true }
+rayon       = { workspace = true }
 tokio       = { workspace = true }
 
 [dev-dependencies]

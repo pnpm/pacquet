@@ -5,7 +5,7 @@ use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, Snapshot
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_store_dir::{SharedReadonlyStoreIndex, StoreIndexWriter};
-use pacquet_tarball::{DownloadTarballToStore, TarballError};
+use pacquet_tarball::{DownloadTarballToStore, PrefetchedCasPaths, TarballError};
 use pipe_trait::Pipe;
 use std::{borrow::Cow, sync::Arc};
 
@@ -19,6 +19,9 @@ pub struct InstallPackageBySnapshot<'a> {
     pub config: &'static Npmrc,
     pub store_index: Option<&'a SharedReadonlyStoreIndex>,
     pub store_index_writer: Option<&'a Arc<StoreIndexWriter>>,
+    /// Install-scoped batched cache lookup result. See
+    /// [`pacquet_tarball::prefetch_cas_paths`].
+    pub prefetched_cas_paths: Option<&'a PrefetchedCasPaths>,
     pub package_key: &'a PackageKey,
     pub metadata: &'a PackageMetadata,
     pub snapshot: &'a SnapshotEntry,
@@ -54,6 +57,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             config,
             store_index,
             store_index_writer,
+            prefetched_cas_paths,
             package_key,
             metadata,
             snapshot,
@@ -103,6 +107,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             package_unpacked_size: None,
             package_url: &tarball_url,
             package_id: &package_id,
+            prefetched_cas_paths,
         }
         .run_without_mem_cache()
         .await

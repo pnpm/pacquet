@@ -322,6 +322,77 @@ fn extract_tarball_entries(
 ///
 /// [1]: https://github.com/pnpm/pnpm/blob/main/store/cafs/src/checkPkgFilesIntegrity.ts
 ///
+/// Pre-fetched cas-paths map shared across all per-snapshot futures.
+/// Built once at install start by [`prefetch_cas_paths`]; downloads
+/// consult it before falling through to a per-snapshot SQLite lookup.
+pub type PrefetchedCasPaths = HashMap<String, HashMap<String, PathBuf>>;
+
+/// Batch the entire warm-cache lookup phase into one `spawn_blocking`
+/// task at install start: walk every `(integrity, pkg_id)` the lockfile
+/// is going to ask about, run the SELECT + integrity-check on a single
+/// thread holding the index mutex once per query, and return a
+/// `cache_key → cas_paths` map the per-snapshot futures can hit
+/// synchronously.
+///
+/// **Why one batched task instead of 1352 spawn_blockings:** the
+/// per-snapshot path fans out one `tokio::task::spawn_blocking` per
+/// snapshot. With 1352 snapshots all firing into the default
+/// 512-thread blocking pool, threads compete for CPU and get
+/// preempted between fs ops — sample-profiling showed cache-lookup
+/// bodies averaging 20-60 ms each (sum 26-82 s) almost entirely
+/// blocked, even though the actual SELECT (≈40 µs) and per-file
+/// integrity stats (≈ms each) shouldn't take that long. Doing the
+/// whole batch on one thread avoids the OS-scheduler / kernel-journal
+/// thrash and makes each query fast in CPU-time. Pnpm's piscina pool
+/// achieves the same shape implicitly with 4 dedicated workers.
+///
+/// Cache misses (no row, malformed row, integrity-check failure)
+/// just don't appear in the result. The caller then falls through
+/// to [`DownloadTarballToStore::run_without_mem_cache`] for those
+/// keys, which still has its own cache check as a backstop.
+pub async fn prefetch_cas_paths(
+    index: Option<SharedReadonlyStoreIndex>,
+    store_dir: &'static StoreDir,
+    cache_keys: Vec<String>,
+    verify_store_integrity: bool,
+) -> PrefetchedCasPaths {
+    let Some(index) = index else { return HashMap::new() };
+    if cache_keys.is_empty() {
+        return HashMap::new();
+    }
+    let result = tokio::task::spawn_blocking(move || -> PrefetchedCasPaths {
+        let mut out = HashMap::with_capacity(cache_keys.len());
+        let Ok(guard) = index.lock() else {
+            tracing::debug!(
+                target: "pacquet::download",
+                "store-index mutex poisoned at prefetch start; falling back to per-snapshot lookups",
+            );
+            return out;
+        };
+        for cache_key in cache_keys {
+            let Ok(Some(entry)) = guard.get(&cache_key) else { continue };
+            let verify_result = if verify_store_integrity {
+                pacquet_store_dir::check_pkg_files_integrity(store_dir, entry)
+            } else {
+                pacquet_store_dir::build_file_maps_from_index(store_dir, entry)
+            };
+            if verify_result.passed {
+                out.insert(cache_key, verify_result.files_map);
+            }
+        }
+        out
+    })
+    .await;
+    result.unwrap_or_else(|error| {
+        tracing::warn!(
+            target: "pacquet::download",
+            ?error,
+            "store-index prefetch task failed; falling back to per-snapshot lookups",
+        );
+        HashMap::new()
+    })
+}
+
 /// The `index` argument is a shared read-only handle that callers open
 /// once per install and pass in repeatedly, so we don't pay the
 /// `Connection::open` + PRAGMA cost per package.
@@ -438,6 +509,11 @@ pub struct DownloadTarballToStore<'a> {
     /// with `package_integrity` to form the SQLite index key per pnpm v11's
     /// `storeIndexKey`.
     pub package_id: &'a str,
+    /// Pre-fetched cache lookups built once at install start
+    /// ([`prefetch_cas_paths`]). When `Some`, this is consulted first;
+    /// the per-snapshot SQLite + integrity-check round-trip is skipped
+    /// for every key already resolved by the prefetch.
+    pub prefetched_cas_paths: Option<&'a PrefetchedCasPaths>,
 }
 
 impl<'a> DownloadTarballToStore<'a> {
@@ -493,6 +569,7 @@ impl<'a> DownloadTarballToStore<'a> {
             package_url,
             package_id,
             verify_store_integrity,
+            prefetched_cas_paths,
             ..
         } = self;
         let store_index = self.store_index.clone();
@@ -509,6 +586,23 @@ impl<'a> DownloadTarballToStore<'a> {
         // an undecodable entry, or any CAFS file that has gone missing
         // from disk all fall through to the download path below.
         let cache_key = store_index_key(&package_integrity.to_string(), package_id);
+        // Hot path on warm installs: the install-scoped `prefetch_cas_paths`
+        // task already ran one batched SELECT + integrity-check pass for
+        // every (integrity, pkg_id) the lockfile mentions. If our key is
+        // there, the per-snapshot future skips both the SQLite round-trip
+        // and the per-file stat work — the whole cache-lookup phase
+        // collapses into a single `HashMap::get`.
+        if let Some(prefetched) = prefetched_cas_paths {
+            if let Some(cas_paths) = prefetched.get(&cache_key) {
+                tracing::info!(
+                    target: "pacquet::download",
+                    ?package_url,
+                    ?package_id,
+                    "Reusing prefetched CAFS entry — skipping download",
+                );
+                return Ok(cas_paths.clone());
+            }
+        }
         if let Some(cas_paths) =
             load_cached_cas_paths(store_index, store_dir, cache_key, verify_store_integrity).await
         {
@@ -766,6 +860,7 @@ mod tests {
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
             package_id: "@fastify/error@3.3.0",
+            prefetched_cas_paths: None,
         }
         .run_without_mem_cache()
         .await
@@ -809,6 +904,7 @@ mod tests {
             package_unpacked_size: Some(16697),
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
             package_id: "@fastify/error@3.3.0",
+            prefetched_cas_paths: None,
         }
         .run_without_mem_cache()
         .await
@@ -883,6 +979,7 @@ mod tests {
             // case a firewalled runner drops the packet silently.
             package_url: "http://127.0.0.1:1/unreachable.tgz",
             package_id: pkg_id,
+            prefetched_cas_paths: None,
         }
         .run_without_mem_cache()
         .await
@@ -940,6 +1037,7 @@ mod tests {
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",
             package_id: pkg_id,
+            prefetched_cas_paths: None,
         }
         .run_without_mem_cache()
         .await
@@ -993,6 +1091,7 @@ mod tests {
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",
             package_id: pkg_id,
+            prefetched_cas_paths: None,
         }
         .run_without_mem_cache()
         .await
@@ -1049,6 +1148,7 @@ mod tests {
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",
             package_id: pkg_id,
+            prefetched_cas_paths: None,
         }
         .run_without_mem_cache()
         .await
@@ -1115,6 +1215,7 @@ mod tests {
             package_unpacked_size: None,
             package_url: "http://127.0.0.1:1/unreachable.tgz",
             package_id: pkg_id,
+            prefetched_cas_paths: None,
         }
         .run_without_mem_cache()
         .await
