@@ -150,13 +150,20 @@ impl<'a> CreateVirtualStore<'a> {
         // Sort + dedup the prefetch input so `prefetch_cas_paths`
         // doesn't redo identical SELECT + integrity-check work for
         // every peer variant.
+        // Validate every snapshot upfront so a malformed lockfile
+        // (missing metadata, missing tarball integrity, currently-
+        // unsupported directory / git resolution) errors out *before*
+        // we start the warm batch. Previously we collapsed those
+        // cases into `None` and let them fall through to the cold
+        // batch, which meant the warm rayon batch ran to completion
+        // (~6 s on `alot7`) before the actual error fired.
         type SnapshotWithCacheKey<'a> = (&'a PackageKey, &'a SnapshotEntry, Option<String>);
         let snapshot_entries: Vec<SnapshotWithCacheKey<'_>> = snapshots
             .iter()
             .map(|(snapshot_key, snapshot)| {
-                (snapshot_key, snapshot, snapshot_cache_key(snapshot_key, packages))
+                snapshot_cache_key(snapshot_key, packages).map(|key| (snapshot_key, snapshot, key))
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
         let mut cache_key_refs: Vec<&str> =
             snapshot_entries.iter().filter_map(|(_, _, k)| k.as_deref()).collect();
         cache_key_refs.sort_unstable();
@@ -307,26 +314,71 @@ impl<'a> CreateVirtualStore<'a> {
     }
 }
 
-/// Build the store-index cache key for a snapshot, or return `None`
-/// when the snapshot doesn't go through CAFS at all (directory / git
-/// resolution, missing metadata, missing integrity).
+/// Build the store-index cache key for a snapshot.
 ///
-/// Shared by the upfront prefetch-keys loop and the warm/cold partition
-/// in [`CreateVirtualStore::run`] so the two stay consistent — if a
-/// new resolution type or key shape is added, both call sites pick
-/// it up automatically. A drift between the two loops would silently
-/// misclassify warm entries as cold and quietly halve install speed.
+/// Returns:
+/// - `Ok(Some(key))` for tarball / registry resolutions with a valid
+///   integrity, the only shape that participates in the CAFS prefetch
+///   today.
+/// - `Err(...)` for any condition the install was previously going to
+///   fail on anyway — missing metadata, missing tarball integrity, or
+///   a directory / git resolution this build doesn't support yet —
+///   so the orchestrator can short-circuit *before* the warm rayon
+///   batch runs (Copilot review on #292). The previous shape collapsed
+///   these into `None` and shoved them into the cold batch, which
+///   meant a malformed lockfile would do up to ~6 s of warm-batch
+///   linking before the actual error fired.
+/// - `Ok(None)` is currently unused but reserved for any future
+///   resolution variant that legitimately doesn't go through CAFS
+///   (e.g. workspace `link:`-style deps when those land); without
+///   it, adding such a variant later would force a wider refactor.
+///
+/// Shared by the upfront prefetch-keys loop and the warm/cold
+/// partition in [`CreateVirtualStore::run`], so a future change to
+/// the resolution-type handling or key shape stays in one place.
+/// A drift between the two loops would silently misclassify warm
+/// entries as cold and quietly halve install speed.
 fn snapshot_cache_key(
     snapshot_key: &PackageKey,
     packages: &HashMap<PackageKey, PackageMetadata>,
-) -> Option<String> {
+) -> Result<Option<String>, CreateVirtualStoreError> {
     let metadata_key = snapshot_key.without_peer();
-    let metadata = packages.get(&metadata_key)?;
+    let metadata = packages.get(&metadata_key).ok_or_else(|| {
+        CreateVirtualStoreError::MissingPackageMetadata {
+            snapshot_key: snapshot_key.to_string(),
+            metadata_key: metadata_key.to_string(),
+        }
+    })?;
     let integrity = match &metadata.resolution {
-        LockfileResolution::Tarball(t) => t.integrity.as_ref()?.to_string(),
+        LockfileResolution::Tarball(t) => t
+            .integrity
+            .as_ref()
+            .ok_or_else(|| {
+                CreateVirtualStoreError::InstallPackageBySnapshot(
+                    InstallPackageBySnapshotError::MissingTarballIntegrity {
+                        package_key: snapshot_key.to_string(),
+                    },
+                )
+            })?
+            .to_string(),
         LockfileResolution::Registry(r) => r.integrity.to_string(),
-        LockfileResolution::Directory(_) | LockfileResolution::Git(_) => return None,
+        LockfileResolution::Directory(_) => {
+            return Err(CreateVirtualStoreError::InstallPackageBySnapshot(
+                InstallPackageBySnapshotError::UnsupportedResolution {
+                    package_key: snapshot_key.to_string(),
+                    resolution_kind: "directory",
+                },
+            ));
+        }
+        LockfileResolution::Git(_) => {
+            return Err(CreateVirtualStoreError::InstallPackageBySnapshot(
+                InstallPackageBySnapshotError::UnsupportedResolution {
+                    package_key: snapshot_key.to_string(),
+                    resolution_kind: "git",
+                },
+            ));
+        }
     };
     let pkg_id = metadata_key.to_string();
-    Some(store_index_key(&integrity, &pkg_id))
+    Ok(Some(store_index_key(&integrity, &pkg_id)))
 }
