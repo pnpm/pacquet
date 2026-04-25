@@ -95,14 +95,14 @@ Use **descriptive names** for variables and closure parameters by default. Singl
   packages.sort_by(|a, b| a.name.cmp(&b.name));
   ```
 
-- **Conventional single-letter names:** `n` for a natural number such as an unsigned integer or count, `f` for a `fmt::Formatter`, and similar well-established conventions from math or the Rust standard library. Note: for indices, use `index`, `idx`, or `*_index` such as `row_index`, not `n`. For `i`/`j`/`k`, see the dedicated rule below.
+- **Conventional single-letter names:** `n` for a natural number such as an unsigned integer or count, `f` for a `fmt::Formatter`, and similar well-established conventions from math or the Rust standard library. Note: for indices, use `index`, or `*_index` such as `row_index`, not `n`. For `i`/`j`/`k`, see the dedicated rule below.
 
   ```rust
   fn with_capacity(n: usize) -> Self { todo!() }
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { todo!() }
   ```
 
-- **Index variables (`i`, `j`, `k`):** These may only be used in two contexts: short closures, and index-based loops or iterations. The latter is rare in Rust. In all other cases, use `index`, `idx`, or `*_index`.
+- **Index variables (`i`, `j`, `k`):** These may only be used in two contexts: short closures, and index-based loops or iterations. The latter is rare in Rust. In all other cases, use `index` or `*_index`.
 
   ```rust
   // OK: short closure
