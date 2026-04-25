@@ -279,12 +279,16 @@ fn create_pnpm_workspace(dst_dir: &Path, src_dir: Option<&Path>) {
 
 fn create_npmrc(dir: &Path, registry: &str, scenario: BenchmarkScenario) {
     let path = dir.join(".npmrc");
-    let store_dir = dir.join("store-dir");
-    let store_dir = store_dir.to_str().expect("path to store-dir is valid UTF-8");
     eprintln!("Creating config file {path:?}...");
     let mut file = File::create(path).expect("create .npmrc");
     writeln!(file, "registry={registry}").unwrap();
-    writeln!(file, "store-dir={store_dir}").unwrap();
+    // `store-dir` is read from `pnpm-workspace.yaml` (`storeDir`) by both
+    // pnpm and pacquet, not from `.npmrc`. Pacquet's `.npmrc` parser
+    // (`crates/npmrc/src/npmrc_auth.rs`) explicitly ignores `store-dir`
+    // and a test there pins that behaviour. The static fixture's
+    // `storeDir: ./store-dir` already resolves to `{bench_dir}/store-dir`
+    // under each per-revision CWD, which gives the same per-revision
+    // isolation the redundant `.npmrc` line was supposedly providing.
     writeln!(file, "auto-install-peers=false").unwrap();
     writeln!(file, "ignore-scripts=true").unwrap();
     writeln!(file, "{}", scenario.npmrc_lockfile_setting()).unwrap();
