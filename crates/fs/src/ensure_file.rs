@@ -796,7 +796,11 @@ mod tests {
             let result = retry_on_fd_pressure(|| {
                 let attempt = attempts.get();
                 attempts.set(attempt + 1);
-                if attempt < 2 { Err(io::Error::from_raw_os_error(errno)) } else { Ok("ok") }
+                if attempt < 2 {
+                    Err(io::Error::from_raw_os_error(errno))
+                } else {
+                    Ok("ok")
+                }
             });
             assert_eq!(result.unwrap(), "ok");
             assert_eq!(attempts.get(), 3, "errno {errno} should have been retried twice");
