@@ -167,8 +167,8 @@ Use **descriptive names** for variables and closure parameters by default. Singl
 - **Closures with non-obvious context:** When the type or purpose is not immediately clear from the surrounding method chain, use a descriptive name.
 
   ```rust
-  // Good: not obvious what the closure receives
-  .filter_map(|entry| match entry { _ => todo!() })
+  // Good: descriptive name makes the closure self-documenting
+  .filter(|entry| entry.is_published())
 
   // Bad: reader must look up what .filter receives
   .filter(|x| x.is_published())
