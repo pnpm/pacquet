@@ -1,4 +1,4 @@
-use crate::{LinkFileError, link_file};
+use crate::{EnsuredDirsCache, LinkFileError, link_file};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_npmrc::PackageImportMethod;
@@ -27,10 +27,19 @@ pub fn create_cas_files(
         return Ok(());
     }
 
+    // Per-package parent-dir cache: every file in the same package
+    // hangs off `dir_path`, and most of them share intermediate dirs
+    // (`lib/`, `dist/`, `src/index.js`'s `src/`, …). Allocating once
+    // per `create_cas_files` call lets rayon workers share dedup
+    // state without ballooning into a process-wide cache that would
+    // need install-scope teardown to stay correct under bench-style
+    // `rm -rf node_modules`.
+    let ensured_dirs_cache = EnsuredDirsCache::new();
+
     cas_paths
         .par_iter()
         .try_for_each(|(cleaned_entry, store_path)| {
-            link_file(import_method, store_path, &dir_path.join(cleaned_entry))
+            link_file(import_method, store_path, &dir_path.join(cleaned_entry), &ensured_dirs_cache)
         })
         .map_err(CreateCasFilesError::LinkFile)
 }
