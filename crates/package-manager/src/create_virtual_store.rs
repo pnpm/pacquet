@@ -222,21 +222,43 @@ impl<'a> CreateVirtualStore<'a> {
         let import_method = config.package_import_method;
         {
             use rayon::prelude::*;
-            warm.par_iter().try_for_each(|(snapshot_key, snapshot, cas_paths)| {
-                crate::CreateVirtualDirBySnapshot {
-                    virtual_store_dir,
-                    cas_paths: cas_paths.as_ref(),
-                    import_method,
-                    package_key: snapshot_key,
-                    snapshot,
-                }
-                .run()
-                .map_err(|e| {
-                    CreateVirtualStoreError::InstallPackageBySnapshot(
-                        InstallPackageBySnapshotError::CreateVirtualDir(e),
-                    )
+            // Driving the warm batch from inside an `async fn` means
+            // the `par_iter` blocks the calling tokio worker for the
+            // duration. On the production multi-thread runtime that's
+            // fine — `block_in_place` tells the runtime to migrate any
+            // other futures off this worker first, so async progress
+            // continues on the other workers — but `block_in_place`
+            // panics on `current_thread` runtimes, which is what
+            // `#[tokio::test]` defaults to. Detect the flavor and only
+            // call `block_in_place` when it's safe; on
+            // `current_thread` we fall back to a plain inline call,
+            // matching how the rest of the test suite already runs
+            // sync work directly on the test thread (Copilot review on
+            // #292).
+            let warm_work = move || {
+                warm.par_iter().try_for_each(|(snapshot_key, snapshot, cas_paths)| {
+                    crate::CreateVirtualDirBySnapshot {
+                        virtual_store_dir,
+                        cas_paths: cas_paths.as_ref(),
+                        import_method,
+                        package_key: snapshot_key,
+                        snapshot,
+                    }
+                    .run()
+                    .map_err(|e| {
+                        CreateVirtualStoreError::InstallPackageBySnapshot(
+                            InstallPackageBySnapshotError::CreateVirtualDir(e),
+                        )
+                    })
                 })
-            })?;
+            };
+            let on_multi_thread = tokio::runtime::Handle::try_current()
+                .is_ok_and(|h| h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread);
+            if on_multi_thread {
+                tokio::task::block_in_place(warm_work)?;
+            } else {
+                warm_work()?;
+            }
         }
 
         // Cold batch: snapshots that didn't prefetch — fall through to the

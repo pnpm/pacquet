@@ -1566,7 +1566,6 @@ dependencies = [
  "home",
  "insta",
  "miette 7.6.0",
- "num_cpus",
  "pacquet-diagnostics",
  "pacquet-executor",
  "pacquet-fs",

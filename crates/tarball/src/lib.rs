@@ -612,14 +612,21 @@ impl<'a> DownloadTarballToStore<'a> {
         // task already ran one batched SELECT + integrity-check pass for
         // every (integrity, pkg_id) the lockfile mentions. If our key is
         // there, the per-snapshot future skips both the SQLite round-trip
-        // and the per-file stat work — the whole cache-lookup phase
-        // collapses into a single `HashMap::get` plus a clone of the
-        // inner per-file map. The map is `Arc`-wrapped on the prefetch
-        // side so this `(*Arc).clone()` is one heap allocation, not a
-        // walk of the per-file entries; the caller's
-        // `run_without_mem_cache` signature returns an owned
-        // `HashMap<…, …>` so we can't hand the Arc back directly
-        // without a wider refactor.
+        // and the per-file stat work.
+        //
+        // We still deep-clone the inner per-file `HashMap` here because
+        // `run_without_mem_cache` returns an owned `HashMap<…, …>`;
+        // `(**cas_paths).clone()` walks every entry and clones each
+        // `String`/`PathBuf`, not the `Arc`. The Arc wrapping in
+        // `PrefetchedCasPaths` is what saves the deep clone on the *new*
+        // warm-batch path in `create_virtual_store::run` (which uses
+        // `cas_paths.as_ref()` to borrow the inner map directly); this
+        // fallback path is the per-snapshot tokio-future flow which
+        // only fires for cache-miss snapshots, where the deep clone
+        // cost is dwarfed by the cold download that would otherwise
+        // run. Propagating the `Arc` through this signature would
+        // require a wider refactor of `DownloadTarballToStore`'s
+        // return type.
         if let Some(prefetched) = prefetched_cas_paths {
             if let Some(cas_paths) = prefetched.get(&cache_key) {
                 tracing::info!(
