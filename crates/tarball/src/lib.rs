@@ -379,7 +379,7 @@ pub async fn prefetch_cas_paths(
         // (see `StoreIndex::get_many`) collapses what used to be N
         // round-trips into one — see #294 for the cold-cache regression
         // the per-key loop introduced when every key missed.
-        let entries: Vec<(String, PackageFilesIndex)> = {
+        let entries: HashMap<String, PackageFilesIndex> = {
             let Ok(guard) = index.lock() else {
                 tracing::debug!(
                     target: "pacquet::download",
@@ -388,7 +388,7 @@ pub async fn prefetch_cas_paths(
                 return HashMap::new();
             };
             match guard.get_many(&cache_keys) {
-                Ok(map) => map.into_iter().collect(),
+                Ok(map) => map,
                 Err(error) => {
                     tracing::debug!(
                         target: "pacquet::download",

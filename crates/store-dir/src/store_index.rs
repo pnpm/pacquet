@@ -801,9 +801,10 @@ mod tests {
     }
 
     /// A row whose bytes don't decode (corruption, foreign writer) must
-    /// be silently skipped — `load_cached_cas_paths` already does
-    /// `.ok()?` on the per-key path, treating decode errors as cache
-    /// misses. The batched read keeps that semantic.
+    /// be skipped without failing the batch. `load_cached_cas_paths`
+    /// already does `.ok()?` on the per-key path, treating decode
+    /// errors as cache misses; the batched read keeps that semantic,
+    /// though `get_many` emits a `debug!` log for the dropped row.
     #[test]
     fn get_many_skips_undecodable_rows() {
         let dir = tempdir().unwrap();
