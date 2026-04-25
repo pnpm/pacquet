@@ -330,7 +330,11 @@ url
 
 ```rust
 // Good: pipe_as_ref calls .as_ref() then passes to the function
-path_buf.pipe_as_ref(Path::exists)
+"node_modules"
+    .pipe(Path::new)
+    .join(package_name)
+    .pipe_as_ref(is_within_store)
+    .then_some(package_name)
 ```
 
 #### When NOT to use pipe
