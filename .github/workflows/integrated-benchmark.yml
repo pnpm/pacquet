@@ -180,7 +180,7 @@ jobs:
             echo '<details><summary>BENCHMARK_REPORT.json</summary>'
             echo
             echo '```json'
-            cat bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.json
+            jq 'del(.results[].exit_codes)' bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.json
             echo '```'
             echo
             echo '</details>'
@@ -192,7 +192,7 @@ jobs:
             echo '<details><summary>BENCHMARK_REPORT.json</summary>'
             echo
             echo '```json'
-            cat bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE_HOT_CACHE.json
+            jq 'del(.results[].exit_codes)' bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE_HOT_CACHE.json
             echo '```'
             echo
             echo '</details>'
@@ -204,7 +204,7 @@ jobs:
             # echo '<details><summary>BENCHMARK_REPORT.json</summary>'
             # echo
             # echo '```json'
-            # cat bench-work-env/BENCHMARK_REPORT_CLEAN_INSTALL.json
+            # jq 'del(.results[].exit_codes)' bench-work-env/BENCHMARK_REPORT_CLEAN_INSTALL.json
             # echo '```'
             # echo
             # echo '</details>'
