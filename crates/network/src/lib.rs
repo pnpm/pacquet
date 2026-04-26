@@ -65,8 +65,13 @@ impl ThrottledClient {
     ///   window was slower than opening ~50 independent HTTP/1.1
     ///   connections that each get their own congestion window and
     ///   saturate bandwidth in parallel.
-    /// * **50 concurrent sockets**, matching pnpm's
-    ///   `DEFAULT_MAX_SOCKETS`.
+    /// * **`network_concurrency` concurrent in-flight requests**,
+    ///   matching pnpm's `networkConcurrency` default (see
+    ///   [`default_network_concurrency`]). Pnpm uses a 50-socket
+    ///   per-host pool ceiling (`DEFAULT_MAX_SOCKETS` in
+    ///   `network/fetch/src/dispatcher.ts`) *and* a smaller
+    ///   request-level cap that bounds how many fetches it actually
+    ///   runs at once; pacquet's semaphore plays the second role.
     /// * **`User-Agent: pnpm`** matching pnpm's
     ///   `fetchFromRegistry.ts`. A default `reqwest::Client` sends
     ///   no UA, which can trip CDN / WAF rules that reject or RST
@@ -144,15 +149,28 @@ impl ThrottledClient {
     /// timeouts so firewalled / unreachable URLs fail within the
     /// test-suite budget instead of waiting on TCP retry.
     pub fn from_client(client: Client) -> Self {
-        // Matches pnpm v11's `DEFAULT_MAX_SOCKETS`
-        // (`network/fetch/src/dispatcher.ts:12`). Pnpm has explicit
-        // benchmark evidence that 50 HTTP/1.1 connections saturate
-        // tarball-fetch bandwidth better than fewer-with-multiplexing
-        // or fewer-connections-period.
-        const MAX_CONCURRENT_REQUESTS: usize = 50;
-        let semaphore = Semaphore::new(MAX_CONCURRENT_REQUESTS);
+        let semaphore = Semaphore::new(default_network_concurrency());
         ThrottledClient { semaphore, client }
     }
+}
+
+/// Default number of concurrent in-flight network requests.
+///
+/// Mirrors pnpm's `networkConcurrency` formula in
+/// [`installing/package-requester/src/packageRequester.ts`](https://github.com/pnpm/pnpm/blob/1819226b51743f73c3b186df31c4439b02e9b307/installing/package-requester/src/packageRequester.ts#L97)
+/// and `calcMaxWorkers` in
+/// [`worker/src/index.ts`](https://github.com/pnpm/pnpm/blob/1819226b51743f73c3b186df31c4439b02e9b307/worker/src/index.ts#L63-L72):
+///
+/// ```ts
+/// networkConcurrency = Math.min(64, Math.max(calcMaxWorkers() * 3, 16))
+/// // calcMaxWorkers() = Math.max(1, availableParallelism() - 1)
+/// ```
+///
+/// Concretely: 16 on a 4-core machine, 21 on 8-core, 27 on 10-core,
+/// 45 on 16-core, capped at 64.
+pub fn default_network_concurrency() -> usize {
+    let max_workers = num_cpus::get().saturating_sub(1).max(1);
+    max_workers.saturating_mul(3).clamp(16, 64)
 }
 
 /// This is only necessary for tests.
