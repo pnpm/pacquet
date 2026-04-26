@@ -1,3 +1,4 @@
+use dashmap::DashSet;
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_npmrc::PackageImportMethod;
@@ -6,6 +7,23 @@ use std::{
     path::{Path, PathBuf},
     sync::atomic::{AtomicU8, Ordering},
 };
+
+/// Set of `node_modules`-side parent directories we've already
+/// observed (or made) exist via `fs::create_dir_all`. Threaded through
+/// each batch of [`link_file`] calls so the per-file
+/// "ensure-parent-dir" path doesn't redo the syscall on every entry
+/// in the same package — `create_dir_all` is idempotent but still
+/// stats every component on every invocation, which adds up to
+/// O(num_files) wasted stats per install.
+///
+/// Mirrors the per-snapshot dedup set pnpm v11 keeps inside its
+/// indexed-pkg-importer (see `fs/indexed-pkg-importer/src/index.ts`,
+/// `dirsCreated`). Concurrent because rayon's `par_iter` over
+/// `cas_paths` calls into `link_file` from multiple worker threads
+/// at once; a `DashSet` covers that without external locking, and
+/// the duplicate-mkdir race is benign — `create_dir_all` is
+/// idempotent.
+pub type EnsuredDirsCache = DashSet<PathBuf>;
 
 /// Error type for [`link_file`].
 #[derive(Debug, Display, Error, Diagnostic)]
@@ -91,10 +109,19 @@ fn log_method_once(flag: u8, method: &'static str) {
 ///
 /// * If `target_link` already exists, do nothing.
 /// * If parent dir of `target_link` doesn't exist, it will be created.
+///
+/// `ensured_dirs_cache` is the [`EnsuredDirsCache`] threaded through
+/// the batch of `link_file` calls that share one `node_modules` tree
+/// (typically one package's CAS-import phase). After a parent dir is
+/// successfully created the cache records its absolute path, so
+/// later files in the same package that share the parent skip the
+/// `create_dir_all` syscall entirely. Pass an empty cache when the
+/// caller doesn't care about the optimization (tests, one-off calls).
 pub fn link_file(
     method: PackageImportMethod,
     source_file: &Path,
     target_link: &Path,
+    ensured_dirs_cache: &EnsuredDirsCache,
 ) -> Result<(), LinkFileError> {
     // If the target resolves to a live file (directly or via a
     // symlink), a prior install placed it and there's nothing to do.
@@ -130,10 +157,20 @@ pub fn link_file(
     }
 
     if let Some(parent_dir) = target_link.parent() {
-        fs::create_dir_all(parent_dir).map_err(|error| LinkFileError::CreateDir {
-            dirname: parent_dir.to_path_buf(),
-            error,
-        })?;
+        // Skip the syscall when another file in the same batch has
+        // already ensured this exact parent. `create_dir_all` would
+        // otherwise stat every ancestor on every call. Race with
+        // concurrent rayon workers is benign: at worst two threads
+        // both call `create_dir_all` on a fresh dir before either
+        // inserts into the cache — which is exactly what `create_dir_all`
+        // already tolerates by being idempotent.
+        if !ensured_dirs_cache.contains(parent_dir) {
+            fs::create_dir_all(parent_dir).map_err(|error| LinkFileError::CreateDir {
+                dirname: parent_dir.to_path_buf(),
+                error,
+            })?;
+            ensured_dirs_cache.insert(parent_dir.to_path_buf());
+        }
     }
 
     // Hardlinking a file from the store into `node_modules` means any
@@ -335,7 +372,8 @@ mod tests {
         let src = write_source(tmp.path(), "src.txt", b"hello");
         let dst = tmp.path().join("nested/dst.txt");
 
-        link_file(PackageImportMethod::Copy, &src, &dst).expect("link_file should succeed");
+        link_file(PackageImportMethod::Copy, &src, &dst, &EnsuredDirsCache::new())
+            .expect("link_file should succeed");
 
         assert_eq!(fs::read(&dst).unwrap(), b"hello");
         // A plain copy leaves the two files as independent inodes.
@@ -359,7 +397,8 @@ mod tests {
         let src = write_source(tmp.path(), "src.txt", b"shared");
         let dst = tmp.path().join("nested/dst.txt");
 
-        link_file(PackageImportMethod::Hardlink, &src, &dst).expect("link_file should succeed");
+        link_file(PackageImportMethod::Hardlink, &src, &dst, &EnsuredDirsCache::new())
+            .expect("link_file should succeed");
 
         assert_eq!(fs::read(&dst).unwrap(), b"shared");
         #[cfg(unix)]
@@ -381,7 +420,8 @@ mod tests {
         let src = write_source(tmp.path(), "src.txt", b"auto");
         let dst = tmp.path().join("nested/dst.txt");
 
-        link_file(PackageImportMethod::Auto, &src, &dst).expect("Auto should always succeed");
+        link_file(PackageImportMethod::Auto, &src, &dst, &EnsuredDirsCache::new())
+            .expect("Auto should always succeed");
         assert_eq!(fs::read(&dst).unwrap(), b"auto");
     }
 
@@ -402,7 +442,8 @@ mod tests {
             PackageImportMethod::Clone,
             PackageImportMethod::CloneOrCopy,
         ] {
-            link_file(method, &src, &dst).expect("existing target should short-circuit");
+            link_file(method, &src, &dst, &EnsuredDirsCache::new())
+                .expect("existing target should short-circuit");
             assert_eq!(fs::read(&dst).unwrap(), b"old", "method {method:?} must not overwrite");
         }
     }
@@ -419,8 +460,8 @@ mod tests {
         let src = tmp.path().join("does-not-exist");
         let dst = tmp.path().join("dst.txt");
 
-        let err =
-            link_file(PackageImportMethod::Hardlink, &src, &dst).expect_err("no source → error");
+        let err = link_file(PackageImportMethod::Hardlink, &src, &dst, &EnsuredDirsCache::new())
+            .expect_err("no source → error");
         assert!(matches!(err, LinkFileError::Import { .. }), "got: {err:?}");
     }
 
@@ -436,7 +477,7 @@ mod tests {
         let src = write_source(tmp.path(), "src.txt", b"clone-or-copy");
         let dst = tmp.path().join("nested/dst.txt");
 
-        link_file(PackageImportMethod::CloneOrCopy, &src, &dst)
+        link_file(PackageImportMethod::CloneOrCopy, &src, &dst, &EnsuredDirsCache::new())
             .expect("CloneOrCopy should always succeed");
         assert_eq!(fs::read(&dst).unwrap(), b"clone-or-copy");
     }
@@ -451,7 +492,8 @@ mod tests {
         let src = tmp.path().join("does-not-exist");
         let dst = tmp.path().join("dst.txt");
 
-        let err = link_file(PackageImportMethod::Clone, &src, &dst).expect_err("no source → error");
+        let err = link_file(PackageImportMethod::Clone, &src, &dst, &EnsuredDirsCache::new())
+            .expect_err("no source → error");
         assert!(matches!(err, LinkFileError::Import { .. }), "got: {err:?}");
     }
 
@@ -469,7 +511,7 @@ mod tests {
         let dst = tmp.path().join("dst.txt");
         std::os::unix::fs::symlink(tmp.path().join("never-created"), &dst).unwrap();
 
-        link_file(PackageImportMethod::Hardlink, &src, &dst)
+        link_file(PackageImportMethod::Hardlink, &src, &dst, &EnsuredDirsCache::new())
             .expect("dangling symlink should be scrubbed, then hardlinked");
 
         let meta = fs::symlink_metadata(&dst).unwrap();
@@ -490,7 +532,7 @@ mod tests {
         let dst = tmp.path().join("dst.txt");
         std::os::unix::fs::symlink(&real_target, &dst).unwrap();
 
-        link_file(PackageImportMethod::Hardlink, &src, &dst)
+        link_file(PackageImportMethod::Hardlink, &src, &dst, &EnsuredDirsCache::new())
             .expect("live symlink should short-circuit");
 
         assert!(fs::symlink_metadata(&dst).unwrap().file_type().is_symlink());
@@ -711,5 +753,62 @@ mod tests {
             "state=COPY must not hardlink",
         );
         assert_eq!(state.load(Ordering::Relaxed), LINK_STATE_COPY, "state must not drift");
+    }
+
+    /// A successful `link_file` must record the `target_link.parent()`
+    /// it created in the cache. The next file in the same package
+    /// (same `cas_paths` batch) shares that parent, so a populated
+    /// cache lets the second call skip the redundant `create_dir_all`.
+    /// Without this assertion the cache would be allocated but never
+    /// populated, and the optimization would silently no-op.
+    #[test]
+    fn link_file_populates_ensured_dirs_cache_on_create() {
+        let tmp = tempdir().unwrap();
+        let src = write_source(tmp.path(), "src.txt", b"contents");
+        let dst = tmp.path().join("nested/sub/dst.txt");
+        let parent = dst.parent().unwrap().to_path_buf();
+        let cache = EnsuredDirsCache::new();
+
+        link_file(PackageImportMethod::Copy, &src, &dst, &cache).expect("link_file should succeed");
+
+        assert!(
+            cache.contains(&parent),
+            "successful create_dir_all must populate the cache for later siblings",
+        );
+    }
+
+    /// When the cache already records a parent, `link_file` must skip
+    /// the `create_dir_all` call. Prove it by populating the cache
+    /// with a path that *doesn't exist on disk* and asking `link_file`
+    /// to materialize a target under it. With the cache short-circuit
+    /// in place, the open in `ensure_file` (or the underlying
+    /// link/copy syscall) is the first thing that touches the
+    /// filesystem and surfaces `NotFound`. Without the short-circuit,
+    /// `create_dir_all` would lazily create the missing dir and the
+    /// call would succeed — that's the failure mode this guards.
+    ///
+    /// We pin to `Copy` so the syscall path is deterministic across
+    /// platforms (no reflink/hardlink tier-walking).
+    #[test]
+    fn link_file_skips_create_dir_all_on_cache_hit() {
+        let tmp = tempdir().unwrap();
+        let src = write_source(tmp.path(), "src.txt", b"contents");
+        let phantom_parent = tmp.path().join("does-not-exist-on-disk");
+        let dst = phantom_parent.join("dst.txt");
+        let cache = EnsuredDirsCache::new();
+        cache.insert(phantom_parent.clone());
+
+        let err = link_file(PackageImportMethod::Copy, &src, &dst, &cache)
+            .expect_err("cached parent must skip create_dir_all → copy must fail with NotFound");
+        match err {
+            LinkFileError::Import { error, .. } => {
+                assert_eq!(
+                    error.kind(),
+                    io::ErrorKind::NotFound,
+                    "the missing parent must surface from the copy itself, not from a recovered create_dir_all",
+                );
+            }
+            other => panic!("expected LinkFileError::Import(NotFound), got: {other:?}"),
+        }
     }
 }
