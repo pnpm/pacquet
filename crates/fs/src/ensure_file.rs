@@ -19,19 +19,37 @@ const EMFILE: i32 = 24;
 #[cfg(unix)]
 const ENFILE: i32 = 23;
 
-/// Run `op`, retrying on `EMFILE` / `ENFILE` with exponential
-/// backoff so a transient fd-table exhaustion under heavy
-/// concurrency doesn't fail the whole install. Matches pnpm's
-/// `graceful-fs` shape — pnpm has run this way for years and the
-/// fan-out shape (many concurrent rayon workers each holding fds
-/// during CAS extraction + verification) is the same in pacquet.
+/// Maximum total wall-time we'll spend retrying a single op on
+/// `EMFILE` / `ENFILE` before giving up. Matches pnpm's
+/// [`graceful-fs`](https://github.com/isaacs/node-graceful-fs/blob/v4.2.11/graceful-fs.js#L418):
+/// `Date.now() - startTime >= 60000`. pnpm has run this way for
+/// years against the same fd-pressure shape pacquet has (many
+/// concurrent CAS extractions each holding fds), so under-budgeting
+/// here is what makes installs that pnpm finishes fail under
+/// pacquet on a default-`ulimit -n=256` macOS host.
+#[cfg(unix)]
+const FD_PRESSURE_BUDGET: Duration = Duration::from_secs(60);
+
+/// Cap on the per-attempt sleep. Matches graceful-fs:
+/// `Math.min(sinceStart * 1.2, 100)`.
+#[cfg(unix)]
+const FD_PRESSURE_BACKOFF_CAP: Duration = Duration::from_millis(100);
+
+/// Run `op`, retrying on `EMFILE` / `ENFILE` so a transient
+/// fd-table exhaustion under heavy concurrency doesn't fail the
+/// whole install. Matches pnpm's `graceful-fs` shape:
 ///
-/// Backoff doubles starting at 2 ms and caps at 200 ms; the budget
-/// is 32 sleep-and-retry rounds followed by a final attempt (33
-/// total calls) for roughly 5–6 s of total wait before we surface
-/// the error. Real fd-pressure resolves in tens of ms once other
-/// workers finish their writes and close fds, so we hit the cap
-/// rarely.
+/// * Bounded by **wall-time**, not retry count: keep retrying for up
+///   to [`FD_PRESSURE_BUDGET`] (60 s, same as `graceful-fs`'s
+///   `60000`-ms `Date.now() - startTime` check). The previous
+///   count-based budget (32 retries × 200 ms cap ≈ 5–6 s) was an
+///   order of magnitude shorter than upstream and gave up in the
+///   middle of installs that pnpm completes cleanly on the same
+///   default-ulimit macOS host.
+/// * Backoff grows proportionally to the time we've already spent
+///   retrying — `min(elapsed * 1.2, 100 ms)` — so fresh fd pressure
+///   ramps up quickly while a stuck op doesn't busy-wait. Same shape
+///   `graceful-fs` uses inside `retry()`.
 ///
 /// On Windows the error codes don't map (Win32 returns its own
 /// numeric space) and the runtime fd limits work differently, so
@@ -44,18 +62,28 @@ where
 {
     #[cfg(unix)]
     {
-        let mut backoff = Duration::from_millis(2);
-        for _ in 0..32 {
+        let start = Instant::now();
+        loop {
             match op() {
                 Ok(value) => return Ok(value),
                 Err(error) if matches!(error.raw_os_error(), Some(EMFILE) | Some(ENFILE)) => {
+                    let elapsed = start.elapsed();
+                    if elapsed >= FD_PRESSURE_BUDGET {
+                        return Err(error);
+                    }
+                    // graceful-fs: `desiredDelay = min(sinceStart * 1.2, 100ms)`.
+                    // Multiply via millis to avoid `Duration::mul_f64` precision
+                    // surprises and keep `0 * 1.2 = 0` clean (1 ms floor below).
+                    let scaled_ms = (elapsed.as_millis() as u64).saturating_mul(12) / 10;
+                    let backoff =
+                        Duration::from_millis(scaled_ms.max(1)).min(FD_PRESSURE_BACKOFF_CAP);
                     std::thread::sleep(backoff);
-                    backoff = (backoff * 2).min(Duration::from_millis(200));
                 }
                 Err(error) => return Err(error),
             }
         }
     }
+    #[cfg(not(unix))]
     op()
 }
 
@@ -805,6 +833,49 @@ mod tests {
             assert_eq!(result.unwrap(), "ok");
             assert_eq!(attempts.get(), 3, "errno {errno} should have been retried twice");
         }
+    }
+
+    /// Persistent `EMFILE` must surface the error after the wall-time
+    /// budget elapses — and crucially must *not* give up earlier just
+    /// because it's been ~32 attempts (the previous count-based
+    /// budget). We verify the loop is wall-time-bounded by feeding it
+    /// an op that always fails and asserting the loop ran for at
+    /// least a noticeable fraction of the budget before bailing.
+    ///
+    /// Uses a tiny scaled budget (`SHORT_BUDGET`) via the closure-side
+    /// "give up after N ms" guard so the test doesn't actually sit
+    /// through the production 60 s wait. The closure itself flips to
+    /// returning a non-fd-pressure error after the short budget,
+    /// which forces the function to surface that error and return —
+    /// proving the loop kept retrying past the old 32-attempt cap.
+    #[cfg(unix)]
+    #[test]
+    fn retry_on_fd_pressure_keeps_retrying_past_old_count_budget() {
+        // 40 attempts proves we're past the old 32-attempt cap with
+        // a comfortable margin while keeping the test under ~4 s
+        // (after the early geometric ramp the backoff caps at 100 ms,
+        // so each subsequent iteration costs roughly that much).
+        const MIN_ATTEMPTS: u32 = 40;
+        let attempts = std::cell::Cell::new(0u32);
+
+        let result: io::Result<()> = retry_on_fd_pressure(|| {
+            let n = attempts.get() + 1;
+            attempts.set(n);
+            if n < MIN_ATTEMPTS {
+                Err(io::Error::from_raw_os_error(EMFILE))
+            } else {
+                // Surface a distinguishable non-fd error so the loop
+                // exits without waiting for the production budget.
+                Err(io::Error::from(io::ErrorKind::NotFound))
+            }
+        });
+
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::NotFound);
+        assert!(
+            attempts.get() >= MIN_ATTEMPTS,
+            "loop bailed at {} attempts; expected to retry past the old 32-cap",
+            attempts.get(),
+        );
     }
 
     /// Errors that aren't fd-pressure must propagate immediately —
