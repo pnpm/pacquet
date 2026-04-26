@@ -33,8 +33,9 @@ impl PackageVersion {
         let url = || format!("{registry}{name}/{tag}");
         let network_error = |error| NetworkError { error, url: url() };
 
-        let client = http_client.acquire().await;
-        let response = client
+        http_client
+            .acquire()
+            .await
             .get(url())
             .header(
                 "accept",
@@ -42,8 +43,11 @@ impl PackageVersion {
             )
             .send()
             .await
-            .map_err(network_error)?;
-        response.json::<PackageVersion>().await.map_err(network_error)?.pipe(Ok)
+            .map_err(network_error)?
+            .json::<PackageVersion>()
+            .await
+            .map_err(network_error)?
+            .pipe(Ok)
     }
 
     pub fn to_virtual_store_name(&self) -> String {

@@ -52,11 +52,9 @@ fn post_download_semaphore() -> &'static Semaphore {
 /// regardless of which intermediate `reqwest` / `hyper` / `io::Error`
 /// happens to elide it.
 fn walk_reqwest_chain(error: &reqwest::Error) -> String {
-    use std::error::Error as _;
     let mut out = error.to_string();
-    let mut cur: Option<&dyn std::error::Error> = error.source();
-    while let Some(src) = cur {
-        let next = src.source();
+    let mut error: &dyn std::error::Error = error;
+    while let Some(src) = error.source() {
         let s = src.to_string();
         // Skip empty or duplicate frames — hyper occasionally repeats
         // the same message across two layers, and reqwest sometimes
@@ -65,7 +63,7 @@ fn walk_reqwest_chain(error: &reqwest::Error) -> String {
             out.push_str(": ");
             out.push_str(&s);
         }
-        cur = next;
+        error = src;
     }
     out
 }
