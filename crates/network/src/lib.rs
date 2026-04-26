@@ -17,18 +17,11 @@ use tokio::sync::{Semaphore, SemaphorePermit};
 /// mid-handshake (surfacing as a generic "error sending request for
 /// url" with no body to look at).
 ///
-/// We deliberately send `pnpm` rather than `pacquet/<version>` for
-/// two reasons:
-///
-/// 1. **Pacquet is a port of pnpm** — its goal is byte-for-byte
-///    behavioural parity, including what the registry sees on the
-///    wire, so any UA-keyed allow / rate-limit rule that lets pnpm
-///    through also lets pacquet through.
-/// 2. The user reported a `pump-2.0.1.tgz` fetch that consistently
-///    failed under pacquet but succeeded under a parallel `pnpm` on
-///    the same network; reproducing pnpm's UA exactly is the most
-///    direct fix that doesn't require speculating about which CDN
-///    rule we're tripping.
+/// We deliberately send `pnpm` rather than `pacquet/<version>` so
+/// any UA-keyed allow / rate-limit rule that lets pnpm through also
+/// lets pacquet through. Pacquet is a port of pnpm; behavioural
+/// parity, including what the registry sees on the wire, is the
+/// goal.
 const DEFAULT_USER_AGENT: &str = "pnpm";
 
 /// Wrapper around [`Client`] with concurrent request limit enforced by the [`Semaphore`] mechanism.
@@ -101,10 +94,7 @@ impl ThrottledClient {
     /// * **`User-Agent: pnpm`** matching pnpm's
     ///   `fetchFromRegistry.ts`. A default `reqwest::Client` sends
     ///   no UA, which can trip CDN / WAF rules that reject or RST
-    ///   bot-shaped traffic before any HTTP response is produced —
-    ///   exactly the symptom reported when the headerless client
-    ///   failed to fetch `pump-2.0.1.tgz` while a parallel `pnpm`
-    ///   on the same network succeeded.
+    ///   bot-shaped traffic before any HTTP response is produced.
     ///
     ///   We deliberately do *not* set a default `Accept` header —
     ///   pnpm's `fetchFromRegistry` always attaches
@@ -120,13 +110,12 @@ impl ThrottledClient {
     /// default `freeSocketTimeout` (the agent pnpm builds its
     /// connection pool on top of). Most CDN / load-balancer edges in
     /// front of `registry.npmjs.org` close idle sockets after 5–15s
-    /// without sending FIN that hyper notices, so a longer pool TTL
-    /// (the previous 30s) lets pacquet reuse a half-dead socket and
-    /// surface the next request as a generic "error sending request
-    /// for url" — same symptom the user hit on `pump-2.0.1.tgz` while
-    /// pnpm on the same network succeeded. 4s keeps the pool useful
-    /// for back-to-back downloads (pacquet runs hundreds of fetches
-    /// in seconds) but well below the typical edge keepalive.
+    /// without sending FIN that hyper notices; a pool TTL above that
+    /// lets pacquet reuse a half-dead socket and surface the next
+    /// request as a generic "error sending request for url". 4s
+    /// keeps the pool useful for back-to-back downloads (pacquet
+    /// runs hundreds of fetches in seconds) but well below the
+    /// typical edge keepalive.
     ///
     /// `timeout(5min)` is the per-request deadline, not the socket
     /// inactivity timeout. A default `reqwest::Client` has no
