@@ -1,6 +1,45 @@
-use reqwest::Client;
+use reqwest::{
+    header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT},
+    Client,
+};
 use std::{future::IntoFuture, time::Duration};
 use tokio::sync::Semaphore;
+
+/// Default `User-Agent` pacquet sends on every registry request.
+///
+/// Identical to pnpm v11's
+/// [`network/fetch/src/fetchFromRegistry.ts`](https://github.com/pnpm/pnpm/blob/main/network/fetch/src/fetchFromRegistry.ts#L9):
+/// the literal string `pnpm`. A default `reqwest::Client` sends *no*
+/// User-Agent at all, which some registry CDNs and corporate WAFs
+/// treat as a bot signature and either block at the edge or terminate
+/// mid-handshake (surfacing as a generic "error sending request for
+/// url" with no body to look at).
+///
+/// We deliberately send `pnpm` rather than `pacquet/<version>` for
+/// two reasons:
+///
+/// 1. **Pacquet is a port of pnpm** — its goal is byte-for-byte
+///    behavioural parity, including what the registry sees on the
+///    wire, so any UA-keyed allow / rate-limit rule that lets pnpm
+///    through also lets pacquet through.
+/// 2. The user reported a `pump-2.0.1.tgz` fetch that consistently
+///    failed under pacquet but succeeded under a parallel `pnpm` on
+///    the same network; reproducing pnpm's UA exactly is the most
+///    direct fix that doesn't require speculating about which CDN
+///    rule we're tripping.
+const DEFAULT_USER_AGENT: &str = "pnpm";
+
+/// Default `Accept` header pacquet sends on every registry request.
+///
+/// Identical to pnpm's
+/// [`ACCEPT_ABBREVIATED_DOC`](https://github.com/pnpm/pnpm/blob/main/network/fetch/src/fetchFromRegistry.ts#L14-L15)
+/// (the abbreviated-metadata variant pnpm sends on every fetch,
+/// metadata or tarball). The npm registry serves tarballs regardless
+/// of `Accept` because of the `*/*` fallback, but a registered
+/// `Accept` is part of what some CDN edge rules look at to decide
+/// whether to serve the request.
+const DEFAULT_ACCEPT: &str =
+    "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
 
 /// Wrapper around [`Client`] with concurrent request limit enforced by the [`Semaphore`] mechanism.
 #[derive(Debug)]
@@ -37,25 +76,33 @@ impl ThrottledClient {
     ///   connections that each get their own congestion window and
     ///   saturate bandwidth in parallel.
     /// * **50 concurrent sockets**, matching pnpm's
-    ///   `DEFAULT_MAX_SOCKETS`. The old `num_cpus.max(16)` semaphore
-    ///   under-subscribed on every machine we benchmarked — on a
-    ///   4-core GHA runner pacquet had 1/3 of pnpm's concurrent-
-    ///   fetch budget.
+    ///   `DEFAULT_MAX_SOCKETS`.
+    /// * **`User-Agent` and `Accept` headers** matching pnpm's
+    ///   `fetchFromRegistry.ts`. A default `reqwest::Client` sends
+    ///   neither, which can trip CDN / WAF rules that reject or RST
+    ///   bot-shaped traffic before any HTTP response is produced —
+    ///   exactly the symptom reported when the headerless client
+    ///   failed to fetch `pump-2.0.1.tgz` while a parallel `pnpm`
+    ///   on the same network succeeded.
     ///
     /// Timeouts are unchanged: a default `reqwest::Client` has no
     /// deadlines at all, which is how `integrated-benchmark` used to
     /// hang at "Benchmark 1: pacquet@HEAD" until the GHA step budget
     /// (#263) when an upstream stalled. The 5-minute `timeout` is
     /// deliberately generous — npm tarballs are usually under 5 MB
-    /// but can reach hundreds of MB on slow connections, and there's
-    /// no retry on transient network errors yet (#259). 5 min keeps
-    /// slow-but-progressing downloads succeeding while still catching
-    /// truly stuck sockets. Making these values user-configurable
-    /// (npmrc / env / CLI) is follow-up once the fetch-retry story
-    /// lands.
+    /// but can reach hundreds of MB on slow connections. The retry
+    /// loop in `crates/tarball` (#301) handles short, transient
+    /// failures; the 5-minute cap catches truly stuck sockets.
+    /// Making these values user-configurable (npmrc / env / CLI)
+    /// is follow-up.
     pub fn new_for_installs() -> Self {
+        let mut default_headers = HeaderMap::with_capacity(2);
+        default_headers.insert(USER_AGENT, HeaderValue::from_static(DEFAULT_USER_AGENT));
+        default_headers.insert(ACCEPT, HeaderValue::from_static(DEFAULT_ACCEPT));
+
         let client = Client::builder()
             .http1_only()
+            .default_headers(default_headers)
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(300))
             .pool_idle_timeout(Duration::from_secs(30))
