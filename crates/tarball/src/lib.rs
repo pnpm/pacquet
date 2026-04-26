@@ -910,6 +910,61 @@ mod tests {
         ThrottledClient::from_client(client)
     }
 
+    /// Pin `walk_reqwest_chain`'s contract: a `NetworkError` formed
+    /// from a real reqwest connect failure must surface the leaf
+    /// reason (e.g. `Connection refused`) appended to the wrapper
+    /// message, not stop at reqwest's `error sending request for url
+    /// (URL)`. Without the helper, the user sees only the wrapper —
+    /// which is what triggered the original "what's actually failing?"
+    /// debugging round on this branch.
+    ///
+    /// Uses `127.0.0.1:1` (port 1 is reserved; connect always fails
+    /// with a deterministic ECONNREFUSED on every host I've tried)
+    /// and `fast_fail_client`'s 1 s bounds, so the test stays
+    /// hermetic and quick.
+    #[tokio::test]
+    async fn network_error_display_includes_reqwest_inner_chain() {
+        let url = "http://127.0.0.1:1/whatever";
+        let client = fast_fail_client();
+        let err = client
+            .run_with_permit(|c| c.get(url).send())
+            .await
+            .expect_err("connecting to port 1 must fail");
+        let net_err = NetworkError { url: url.to_string(), error: err };
+
+        let rendered = net_err.to_string();
+        assert!(
+            rendered.starts_with("Failed to fetch http://127.0.0.1:1/"),
+            "wrapper prefix missing, got: {rendered:?}",
+        );
+
+        // Reqwest's wrapper already includes the URL in `(...)`; the
+        // leaf reason appears after the wrapper, separated by `: `.
+        // Assert there *is* a non-empty frame after that — without
+        // `walk_reqwest_chain`, this is exactly what got dropped.
+        let leaf_section = rendered
+            .split_once("error sending request for url (")
+            .and_then(|(_, rest)| rest.split_once(")"))
+            .map(|(_, after_paren)| after_paren)
+            .expect("rendered output should include reqwest's wrapper");
+        assert!(
+            !leaf_section.trim().is_empty(),
+            "expected leaf cause appended after reqwest wrapper, got: {rendered:?}",
+        );
+        assert!(
+            leaf_section.starts_with(": "),
+            "leaf should be joined with `: ` per walk_reqwest_chain, got: {rendered:?}",
+        );
+
+        // Structural form for completeness — `#[error(source)]` should
+        // expose the reqwest::Error so miette / `Error::source` can
+        // walk into it independently of our flattened Display.
+        assert!(
+            std::error::Error::source(&net_err).is_some(),
+            "NetworkError should expose its reqwest::Error as source",
+        );
+    }
+
     /// **Problem:**
     /// The tested function requires `'static` paths, leaking would prevent
     /// temporary files from being cleaned up.
