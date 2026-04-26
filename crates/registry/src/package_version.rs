@@ -33,22 +33,17 @@ impl PackageVersion {
         let url = || format!("{registry}{name}/{tag}");
         let network_error = |error| NetworkError { error, url: url() };
 
-        http_client
-            .run_with_permit(|client| {
-                client
-                    .get(url())
-                    .header(
-                        "accept",
-                        "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-                    )
-                    .send()
-            })
+        let client = http_client.acquire().await;
+        let response = client
+            .get(url())
+            .header(
+                "accept",
+                "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+            )
+            .send()
             .await
-            .map_err(network_error)?
-            .json::<PackageVersion>()
-            .await
-            .map_err(network_error)?
-            .pipe(Ok)
+            .map_err(network_error)?;
+        response.json::<PackageVersion>().await.map_err(network_error)?.pipe(Ok)
     }
 
     pub fn to_virtual_store_name(&self) -> String {

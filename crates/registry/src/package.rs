@@ -34,22 +34,17 @@ impl Package {
     ) -> Result<Self, RegistryError> {
         let url = || format!("{registry}{name}"); // TODO: use reqwest URL directly
         let network_error = |error| NetworkError { error, url: url() };
-        http_client
-            .run_with_permit(|client| {
-                client
-                    .get(url())
-                    .header(
-                        "accept",
-                        "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-                    )
-                    .send()
-            })
+        let client = http_client.acquire().await;
+        let response = client
+            .get(url())
+            .header(
+                "accept",
+                "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+            )
+            .send()
             .await
-            .map_err(network_error)?
-            .json::<Package>()
-            .await
-            .map_err(network_error)?
-            .pipe(Ok)
+            .map_err(network_error)?;
+        response.json::<Package>().await.map_err(network_error)?.pipe(Ok)
     }
 
     pub fn pinned_version(&self, version_range: &str) -> Option<&PackageVersion> {

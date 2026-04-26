@@ -2,8 +2,8 @@ use reqwest::{
     header::{HeaderMap, HeaderValue, USER_AGENT},
     Client,
 };
-use std::{future::IntoFuture, time::Duration};
-use tokio::sync::Semaphore;
+use std::{ops::Deref, time::Duration};
+use tokio::sync::{Semaphore, SemaphorePermit};
 
 /// Default `User-Agent` pacquet sends on every request made by the
 /// install client — registry metadata fetches and tarball downloads
@@ -38,18 +38,44 @@ pub struct ThrottledClient {
     client: Client,
 }
 
+/// RAII guard returned from [`ThrottledClient::acquire`]. Holds a
+/// semaphore permit alongside a reference to the underlying
+/// [`Client`]; the permit is released when the guard is dropped.
+///
+/// The guard derefs to [`Client`] so callers can chain
+/// `guard.get(url).send().await?.json().await?` (or any other
+/// reqwest method) directly. **Holding the guard across the body
+/// await is the point of the API.** A request's socket FD lives
+/// from `connect` all the way through body streaming; dropping the
+/// permit when `.send()` returns (right after headers arrive, with
+/// the body still pending) means the semaphore stops bounding the
+/// real concurrent socket count. Under `try_join_all` fan-out the
+/// next batch of permits then `connect()` while previous bodies are
+/// still draining, and the per-process FD count overruns the
+/// platform limit — surfacing as `EMFILE` "too many open files".
+pub struct ThrottledClientGuard<'a> {
+    _permit: SemaphorePermit<'a>,
+    client: &'a Client,
+}
+
+impl<'a> Deref for ThrottledClientGuard<'a> {
+    type Target = Client;
+
+    fn deref(&self) -> &Client {
+        self.client
+    }
+}
+
 impl ThrottledClient {
-    /// Acquire a permit and run `proc` with the underlying [`Client`].
-    pub async fn run_with_permit<Proc, ProcFuture>(&self, proc: Proc) -> ProcFuture::Output
-    where
-        Proc: FnOnce(&Client) -> ProcFuture,
-        ProcFuture: IntoFuture,
-    {
+    /// Acquire a permit and return a guard granting access to the
+    /// underlying [`Client`]. The permit is released when the guard
+    /// is dropped, so callers control how long the request "counts"
+    /// against [`default_network_concurrency`] — typically the full
+    /// `send + body-consume` lifetime, not just `.send()`.
+    pub async fn acquire(&self) -> ThrottledClientGuard<'_> {
         let permit =
             self.semaphore.acquire().await.expect("semaphore shouldn't have been closed this soon");
-        let result = proc(&self.client).await;
-        drop(permit);
-        result
+        ThrottledClientGuard { _permit: permit, client: &self.client }
     }
 
     /// Construct the default throttled client used for real installs.

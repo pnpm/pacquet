@@ -696,10 +696,16 @@ impl<'a> DownloadTarballToStore<'a> {
         let network_error = |error| {
             TarballError::FetchTarball(NetworkError { url: package_url.to_string(), error })
         };
-        let response_head = http_client
-            .run_with_permit(|client| client.get(package_url).send())
-            .await
-            .map_err(network_error)?;
+
+        // Acquire the network permit *before* `connect + send` and
+        // hold it through body streaming. The permit must outlive the
+        // socket — releasing it after `.send()` (when only headers
+        // have arrived) lets the next batch of futures `connect()`
+        // while the previous bodies are still draining, breaking the
+        // semaphore's bound on concurrent open sockets and surfacing
+        // as `EMFILE` once the FD count overruns the per-process cap.
+        let client = http_client.acquire().await;
+        let response_head = client.get(package_url).send().await.map_err(network_error)?;
 
         // Read `Content-Length` *before* we start consuming the body
         // stream so we can pre-size the buffer. Ports pnpm v11's
@@ -757,6 +763,12 @@ impl<'a> DownloadTarballToStore<'a> {
             }
             buf
         };
+
+        // Body fully buffered into `response`; the socket can go
+        // back to the pool. Drop the network permit so spawn_blocking
+        // (CPU-bound, no socket needed) doesn't hold one of the
+        // limited fetch slots.
+        drop(client);
 
         tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
 
@@ -927,7 +939,10 @@ mod tests {
         let url = "http://127.0.0.1:1/whatever";
         let client = fast_fail_client();
         let err = client
-            .run_with_permit(|c| c.get(url).send())
+            .acquire()
+            .await
+            .get(url)
+            .send()
             .await
             .expect_err("connecting to port 1 must fail");
         let net_err = NetworkError { url: url.to_string(), error: err };
