@@ -1,73 +1,19 @@
 # pacquet
 
-Experimental package manager for node.js written in rust.
+The official pnpm rewrite in Rust.
 
-### TODO
+pacquet is a port of the [pnpm](https://github.com/pnpm/pnpm) CLI from TypeScript to Rust. It is not a new package manager and not a reimagining of pnpm. Its behavior, flags, defaults, error codes, file formats, and directory layout will match pnpm exactly.
 
-- [x] `.npmrc` support (for supported features [readme.md](./crates/npmrc/README.md))
-- [x] CLI commands (for supported features [readme.md](./crates/cli/README.md))
-- [x] Content addressable file store support
-- [ ] Shrink-file support in sync with `pnpm-lock.yml`
-  - [x] Frozen lockfile
-  - [ ] Update outdated lockfile
-  - [ ] Creating lockfile
-- [ ] Workspace support
-- [ ] Full sync with [pnpm error codes](https://pnpm.io/errors)
-- [ ] Generate a `node_modules/.bin` folder
-- [ ] Add CLI report
+## Roadmap
 
-## Debugging
+pacquet will become the installation engine of pnpm. The transition will happen in two phases.
 
-```shell
-TRACE=pacquet_tarball just cli add fastify
-```
+### Phase 1: fetching and linking
 
-## Testing
+pacquet replaces fetching and linking only. pnpm continues to create the lockfile, and pacquet does the rest. We expect this alone to make pnpm at least twice as fast in most scenarios. Shipping this phase is the current focus.
 
-```sh
-# Install necessary dependencies
-just install
+### Phase 2: resolution
 
-# Start a mocked registry server (optional)
-just registry-mock launch
+pacquet also takes over dependency resolution.
 
-# Run test
-just test
-```
-
-## Benchmarking
-
-### Install between multiple revisions
-
-First, you to start a local registry server, such as [verdaccio](https://verdaccio.org/):
-
-```sh
-verdaccio
-```
-
-Then, you can use the script named `integrated-benchmark` to run the various benchmark, For example:
-
-```sh
-# Comparing the branch you're working on against main
-just integrated-benchmark --scenario=frozen-lockfile my-branch main
-```
-
-```sh
-# Comparing current commit against the previous commit
-just integrated-benchmark --scenario=frozen-lockfile HEAD HEAD~
-```
-
-```sh
-# Comparing pacquet of current commit against pnpm
-just integrated-benchmark --scenario=frozen-lockfile --with-pnpm HEAD
-```
-
-```sh
-# Comparing pacquet of current commit, pacquet of main, and pnpm against each other
-just integrated-benchmark --scenario=frozen-lockfile --with-pnpm HEAD main
-```
-
-```sh
-# See more options
-just integrated-benchmark --help
-```
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for development setup, debugging, testing, and benchmarking.
