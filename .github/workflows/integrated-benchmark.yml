@@ -169,8 +169,6 @@ jobs:
 
       - name: Generate summary
         shell: bash
-        # `jq 'del(.results[].exit_codes)'` drops hyperfine's
-        # all-zero `exit_codes` array — noise in the PR comment.
         run: |
           (
             echo '## Integrated-Benchmark Report (${{ runner.os }})'
