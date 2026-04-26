@@ -105,6 +105,20 @@ impl ThrottledClient {
     /// `crates/tarball` (#301) handles short, transient failures;
     /// the 5-minute cap catches truly stuck sockets. Making these
     /// values user-configurable (npmrc / env / CLI) is follow-up.
+    ///
+    /// `hickory_dns(true)` swaps reqwest's default resolver
+    /// (tokio's `lookup_host`, which calls the platform's blocking
+    /// `getaddrinfo` from a `spawn_blocking` thread) for the
+    /// pure-Rust async resolver. The default resolver is correct
+    /// but on macOS it routes every lookup through `mDNSResponder`,
+    /// which spuriously returns `EAI_NONAME` ("nodename nor servname
+    /// provided") for valid hostnames when many concurrent lookups
+    /// pile up — e.g. the 50 simultaneous tarball connections this
+    /// client opens. pnpm doesn't hit it because Node's `dns.lookup`
+    /// runs on libuv's 4-thread pool, naturally throttling concurrent
+    /// `getaddrinfo` calls. `hickory-dns` queries DNS over UDP / TCP
+    /// directly, bypassing `mDNSResponder` and the EAI_NONAME flake
+    /// entirely.
     pub fn new_for_installs() -> Self {
         let mut default_headers = HeaderMap::with_capacity(1);
         default_headers.insert(USER_AGENT, HeaderValue::from_static(DEFAULT_USER_AGENT));
@@ -115,6 +129,7 @@ impl ThrottledClient {
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(300))
             .pool_idle_timeout(Duration::from_secs(4))
+            .hickory_dns(true)
             .build()
             .expect("build reqwest client with default timeouts");
         ThrottledClient::from_client(client)
