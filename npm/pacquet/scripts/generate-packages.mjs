@@ -36,7 +36,7 @@ function generateNativePackage(platform, arch) {
     cpu: [arch],
     repository: {
       type: "git",
-      url: "https://github.com/anonrig/pacquet",
+      url: "https://github.com/pnpm/pacquet",
     },
   }, null, 2);
 
