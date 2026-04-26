@@ -111,8 +111,8 @@ impl RetryOpts {
         // `Duration::from_millis` only takes `u64`. Saturate on the way
         // down so a pathological caller-supplied timeout produces the
         // largest expressible delay rather than a silently truncated one.
-        let min_ms = u64::try_from(self.min_timeout.as_millis()).unwrap_or(u64::MAX);
-        let max_ms = u64::try_from(self.max_timeout.as_millis()).unwrap_or(u64::MAX);
+        let min_ms = self.min_timeout.as_millis().pipe(u64::try_from).unwrap_or(u64::MAX);
+        let max_ms = self.max_timeout.as_millis().pipe(u64::try_from).unwrap_or(u64::MAX);
         let factor = u64::from(self.factor);
         let pow = factor.checked_pow(attempt).unwrap_or(u64::MAX);
         let ms = min_ms.saturating_mul(pow);
