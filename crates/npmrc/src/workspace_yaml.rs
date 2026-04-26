@@ -64,7 +64,7 @@ impl WorkspaceSettings {
     /// `Ok(None)` if none is found before reaching the filesystem root.
     ///
     /// Mirrors pnpm's behaviour in
-    /// [`loadNpmrcFiles.ts`](https://github.com/pnpm/pnpm/blob/main/config/reader/src/loadNpmrcFiles.ts)
+    /// [`loadNpmrcFiles.ts`](https://github.com/pnpm/pnpm/blob/1819226b51/config/reader/src/loadNpmrcFiles.ts)
     /// — the first ancestor containing a `pnpm-workspace.yaml` is the
     /// workspace root, and its config applies.
     pub fn find_and_load(

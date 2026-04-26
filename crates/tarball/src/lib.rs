@@ -355,7 +355,7 @@ fn extract_tarball_entries(
 /// [`checkPkgFilesIntegrity`][1] catches corruption via the content hash
 /// and doesn't gate on dirent type.
 ///
-/// [1]: https://github.com/pnpm/pnpm/blob/main/store/cafs/src/checkPkgFilesIntegrity.ts
+/// [1]: https://github.com/pnpm/pnpm/blob/1819226b51/store/cafs/src/checkPkgFilesIntegrity.ts
 ///
 /// Pre-fetched cas-paths map shared across all per-snapshot futures.
 /// Built once at install start by [`prefetch_cas_paths`]; downloads

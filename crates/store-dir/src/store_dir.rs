@@ -118,7 +118,7 @@ impl StoreDir {
     ///
     /// Gated by an `is_dir()` check on `files/` so we only run when the
     /// store is truly fresh — spiritually matches pnpm's
-    /// [`createPackageStore`](https://github.com/pnpm/pnpm/blob/main/store/package-store/src/storeController/index.ts)
+    /// [`createPackageStore`](https://github.com/pnpm/pnpm/blob/1819226b51/store/controller/src/storeController/index.ts)
     /// guard (`if !fs.existsSync(path.join(storeDir, 'files')) initStoreDir(...)`),
     /// but tightened from `exists()` to `is_dir()` so a non-directory
     /// entry at `files/` doesn't let `init` silently noop past store
