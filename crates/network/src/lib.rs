@@ -103,10 +103,11 @@ impl ThrottledClient {
     /// hang at "Benchmark 1: pacquet@HEAD" until the GHA step budget
     /// (#263) when an upstream stalled. 5 min is deliberately
     /// generous — npm tarballs are usually under 5 MB but can reach
-    /// hundreds of MB on slow connections. The retry loop in
-    /// `crates/tarball` (#301) handles short, transient failures;
-    /// the 5-minute cap catches truly stuck sockets. Making these
-    /// values user-configurable (npmrc / env / CLI) is follow-up.
+    /// hundreds of MB on slow connections. Pacquet does not yet
+    /// retry transient fetch errors (tracked in #301); the 5-minute
+    /// cap is here to catch truly stuck sockets, not to paper over
+    /// short-lived failures. Making these values user-configurable
+    /// (npmrc / env / CLI) is follow-up.
     ///
     /// `hickory_dns(true)` swaps reqwest's default resolver
     /// (tokio's `lookup_host`, which calls the platform's blocking

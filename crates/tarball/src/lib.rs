@@ -38,7 +38,7 @@ fn post_download_semaphore() -> &'static Semaphore {
     SEM.get_or_init(|| Semaphore::new(num_cpus::get().saturating_mul(2).max(4)))
 }
 
-/// Reqwest's own [`Display`] for a request-stage failure renders as
+/// Reqwest's own [`std::fmt::Display`] for a request-stage failure renders as
 /// `error sending request for url (URL): <inner>` only if it can find
 /// an inner source, and on some failure modes (e.g. the request was
 /// dropped before a connect was attempted) `inner` is `None` —
