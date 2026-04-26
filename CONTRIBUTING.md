@@ -61,3 +61,54 @@ This runs `typos`, `cargo fmt`, `just check` (which is `cargo check --locked`), 
 
 > [!NOTE]
 > Some integration tests require the local registry mock. Start it with `just registry-mock launch` before running `just test` if a test needs it.
+
+## Debugging
+
+Set the `TRACE` environment variable to enable trace-level logging for a given module:
+
+```sh
+TRACE=pacquet_tarball just cli add fastify
+```
+
+## Testing
+
+```sh
+just install              # install necessary dependencies
+just registry-mock launch # start a mocked registry server (optional)
+just test                 # run tests
+```
+
+## Benchmarking
+
+First, start a local registry server, such as [verdaccio](https://verdaccio.org/):
+
+```sh
+verdaccio
+```
+
+Then use the `integrated-benchmark` task to run benchmarks. For example:
+
+```sh
+# Compare the branch you are working on against main
+just integrated-benchmark --scenario=frozen-lockfile my-branch main
+```
+
+```sh
+# Compare the current commit against the previous commit
+just integrated-benchmark --scenario=frozen-lockfile HEAD HEAD~
+```
+
+```sh
+# Compare pacquet of the current commit against pnpm
+just integrated-benchmark --scenario=frozen-lockfile --with-pnpm HEAD
+```
+
+```sh
+# Compare pacquet of the current commit, pacquet of main, and pnpm against each other
+just integrated-benchmark --scenario=frozen-lockfile --with-pnpm HEAD main
+```
+
+```sh
+# See more options
+just integrated-benchmark --help
+```
