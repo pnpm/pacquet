@@ -96,15 +96,6 @@ impl ThrottledClient {
     ///   no UA, which can trip CDN / WAF rules that reject or RST
     ///   bot-shaped traffic before any HTTP response is produced.
     ///
-    ///   We deliberately do *not* set a default `Accept` header —
-    ///   pnpm's `fetchFromRegistry` always attaches
-    ///   `application/vnd.npm.install-v1+json; …` to every request,
-    ///   including tarball fetches where it makes no sense, but
-    ///   that's an upstream quirk we have no reason to copy.
-    ///   `crates/registry`'s metadata calls set the npm-specific
-    ///   `Accept` per-request; tarball fetches send no `Accept` and
-    ///   the registry serves them just fine.
-    ///
     /// `pool_idle_timeout(4s)` matches
     /// [`agentkeepalive`'s](https://github.com/node-modules/agentkeepalive/blob/1e5e312f36/lib/agent.js#L39-L41)
     /// default `freeSocketTimeout` (the agent pnpm builds its
