@@ -1,5 +1,5 @@
 use reqwest::{
-    header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT},
+    header::{HeaderMap, HeaderValue, USER_AGENT},
     Client,
 };
 use std::{future::IntoFuture, time::Duration};
@@ -28,18 +28,6 @@ use tokio::sync::Semaphore;
 ///    direct fix that doesn't require speculating about which CDN
 ///    rule we're tripping.
 const DEFAULT_USER_AGENT: &str = "pnpm";
-
-/// Default `Accept` header pacquet sends on every registry request.
-///
-/// Identical to pnpm's
-/// [`ACCEPT_ABBREVIATED_DOC`](https://github.com/pnpm/pnpm/blob/main/network/fetch/src/fetchFromRegistry.ts#L14-L15)
-/// (the abbreviated-metadata variant pnpm sends on every fetch,
-/// metadata or tarball). The npm registry serves tarballs regardless
-/// of `Accept` because of the `*/*` fallback, but a registered
-/// `Accept` is part of what some CDN edge rules look at to decide
-/// whether to serve the request.
-const DEFAULT_ACCEPT: &str =
-    "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
 
 /// Wrapper around [`Client`] with concurrent request limit enforced by the [`Semaphore`] mechanism.
 #[derive(Debug)]
@@ -77,13 +65,22 @@ impl ThrottledClient {
     ///   saturate bandwidth in parallel.
     /// * **50 concurrent sockets**, matching pnpm's
     ///   `DEFAULT_MAX_SOCKETS`.
-    /// * **`User-Agent` and `Accept` headers** matching pnpm's
+    /// * **`User-Agent: pnpm`** matching pnpm's
     ///   `fetchFromRegistry.ts`. A default `reqwest::Client` sends
-    ///   neither, which can trip CDN / WAF rules that reject or RST
+    ///   no UA, which can trip CDN / WAF rules that reject or RST
     ///   bot-shaped traffic before any HTTP response is produced —
     ///   exactly the symptom reported when the headerless client
     ///   failed to fetch `pump-2.0.1.tgz` while a parallel `pnpm`
     ///   on the same network succeeded.
+    ///
+    ///   We deliberately do *not* set a default `Accept` header —
+    ///   pnpm's `fetchFromRegistry` always attaches
+    ///   `application/vnd.npm.install-v1+json; …` to every request,
+    ///   including tarball fetches where it makes no sense, but
+    ///   that's an upstream quirk we have no reason to copy.
+    ///   `crates/registry`'s metadata calls set the npm-specific
+    ///   `Accept` per-request; tarball fetches send no `Accept` and
+    ///   the registry serves them just fine.
     ///
     /// Timeouts are unchanged: a default `reqwest::Client` has no
     /// deadlines at all, which is how `integrated-benchmark` used to
@@ -96,9 +93,8 @@ impl ThrottledClient {
     /// Making these values user-configurable (npmrc / env / CLI)
     /// is follow-up.
     pub fn new_for_installs() -> Self {
-        let mut default_headers = HeaderMap::with_capacity(2);
+        let mut default_headers = HeaderMap::with_capacity(1);
         default_headers.insert(USER_AGENT, HeaderValue::from_static(DEFAULT_USER_AGENT));
-        default_headers.insert(ACCEPT, HeaderValue::from_static(DEFAULT_ACCEPT));
 
         let client = Client::builder()
             .http1_only()
