@@ -897,7 +897,14 @@ impl<'a> DownloadTarballToStore<'a> {
         // QUESTION: I see no copying from existing store_dir, is there such mechanism?
         // TODO: If it's not implemented yet, implement it
 
-        if let Some(cache_lock) = mem_cache.get(package_url) {
+        // `DashMap::get` returns a `Ref` that holds a shard read guard for
+        // its entire lifetime. Holding it across `.await` deadlocks: while
+        // this task is parked, another task on the same worker can call
+        // `mem_cache.insert` for a key that hashes to the same shard,
+        // block on the write side, and starve every worker. Clone the
+        // inner `Arc` out and drop the `Ref` immediately.
+        let existing = mem_cache.get(package_url).map(|r| Arc::clone(r.value()));
+        if let Some(cache_lock) = existing {
             let notify = match &*cache_lock.write().await {
                 CacheValue::Available(cas_paths) => {
                     return Ok(Arc::clone(cas_paths));
