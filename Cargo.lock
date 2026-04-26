@@ -1794,7 +1794,6 @@ dependencies = [
 name = "pacquet-network"
 version = "0.0.1"
 dependencies = [
- "num_cpus",
  "pipe-trait",
  "reqwest",
  "tokio",

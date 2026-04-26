@@ -2,7 +2,7 @@ use reqwest::{
     header::{HeaderMap, HeaderValue, USER_AGENT},
     Client,
 };
-use std::{ops::Deref, time::Duration};
+use std::{num::NonZeroUsize, ops::Deref, time::Duration};
 use tokio::sync::{Semaphore, SemaphorePermit};
 
 /// Default `User-Agent` pacquet sends on every request made by the
@@ -195,8 +195,18 @@ impl ThrottledClient {
 ///
 /// Concretely: 16 on a 4-core machine, 21 on 8-core, 27 on 10-core,
 /// 45 on 16-core, capped at 64.
+///
+/// Uses [`std::thread::available_parallelism`] rather than
+/// `num_cpus::get()` so cgroup / CPU-quota limits in containers and
+/// CI runners are respected — `num_cpus` reports the host's logical
+/// CPU count, which on a quota-limited runner can over-report and
+/// push effective concurrency past what the kernel will actually
+/// schedule (matching the convention `crates/cli` already uses for
+/// rayon pool sizing, see `crates/cli/src/lib.rs`).
 pub fn default_network_concurrency() -> usize {
-    let max_workers = num_cpus::get().saturating_sub(1).max(1);
+    let available_parallelism =
+        std::thread::available_parallelism().map(NonZeroUsize::get).unwrap_or(1);
+    let max_workers = available_parallelism.saturating_sub(1).max(1);
     max_workers.saturating_mul(3).clamp(16, 64)
 }
 
