@@ -38,10 +38,45 @@ fn post_download_semaphore() -> &'static Semaphore {
     SEM.get_or_init(|| Semaphore::new(num_cpus::get().saturating_mul(2).max(4)))
 }
 
+/// Reqwest's own [`std::fmt::Display`] for a request-stage failure renders as
+/// `error sending request for url (URL): <inner>` only if it can find
+/// an inner source, and on some failure modes (e.g. the request was
+/// dropped before a connect was attempted) `inner` is `None` —
+/// leaving the user with the truly opaque `error sending request for
+/// url (URL)` and no clue about what actually failed.
+///
+/// `walk_reqwest_chain` walks `error.source()` itself and joins every
+/// stage's `Display` with `: ` so the rendered `NetworkError` always
+/// carries the leaf reason (e.g. `Connection refused (os error 61)`,
+/// `tls handshake eof`, `dns error: failed to lookup address`),
+/// regardless of which intermediate `reqwest` / `hyper` / `io::Error`
+/// happens to elide it.
+fn walk_reqwest_chain(error: &reqwest::Error) -> String {
+    let mut out = error.to_string();
+    let mut error: &dyn std::error::Error = error;
+    while let Some(src) = error.source() {
+        let s = src.to_string();
+        // Skip empty or duplicate frames — hyper occasionally repeats
+        // the same message across two layers, and reqwest sometimes
+        // already includes the inner string in its top-level Display.
+        if !s.is_empty() && !out.ends_with(&s) {
+            out.push_str(": ");
+            out.push_str(&s);
+        }
+        error = src;
+    }
+    out
+}
+
 #[derive(Debug, Display, Error, Diagnostic)]
-#[display("Failed to fetch {url}: {error}")]
+#[display("Failed to fetch {url}: {}", walk_reqwest_chain(error))]
 pub struct NetworkError {
     pub url: String,
+    /// Marked `#[error(source)]` so miette can also walk the chain on
+    /// its own (some renderers prefer the structured form). The
+    /// flattened string in `Display` is for the default miette report
+    /// where the user just sees one line per wrapper.
+    #[error(source)]
     pub error: reqwest::Error,
 }
 
@@ -659,10 +694,16 @@ impl<'a> DownloadTarballToStore<'a> {
         let network_error = |error| {
             TarballError::FetchTarball(NetworkError { url: package_url.to_string(), error })
         };
-        let response_head = http_client
-            .run_with_permit(|client| client.get(package_url).send())
-            .await
-            .map_err(network_error)?;
+
+        // Acquire the network permit *before* `connect + send` and
+        // hold it through body streaming. The permit must outlive the
+        // socket — releasing it after `.send()` (when only headers
+        // have arrived) lets the next batch of futures `connect()`
+        // while the previous bodies are still draining, breaking the
+        // semaphore's bound on concurrent open sockets and surfacing
+        // as `EMFILE` once the FD count overruns the per-process cap.
+        let client = http_client.acquire().await;
+        let response_head = client.get(package_url).send().await.map_err(network_error)?;
 
         // Read `Content-Length` *before* we start consuming the body
         // stream so we can pre-size the buffer. Ports pnpm v11's
@@ -672,36 +713,32 @@ impl<'a> DownloadTarballToStore<'a> {
         // lot of wasted alloc + copy work across the pipeline.
         let expected_size = response_head.content_length();
 
-        // Gate the memory-heavy + CPU-heavy part of the pipeline with
-        // `post_download_semaphore`:
-        //
-        // - The blocking pool is 512-wide by default, which is right
-        //   for I/O wait but disastrous for CPU work that can only
-        //   really run `num_cpus` at a time, so we cap concurrent
-        //   `spawn_blocking` bodies.
-        // - We also acquire the permit *before* we consume the body
-        //   rather than right before `spawn_blocking`. Buffering is
-        //   where the per-tarball memory spike lives (a full
-        //   decompressed package can be many MB), so holding the
-        //   permit across buffering bounds the number of fully-buffered
-        //   response bodies in RAM to the post-download cap. Without
-        //   this, a fast registry + `try_join_all` fan-out could pile
-        //   up hundreds of buffered tarballs waiting for a permit to
-        //   process (Copilot review on #269).
-        //
-        // The permit is held across both the body-stream drain and
-        // the `spawn_blocking.await` below, dropping at end of scope.
-        let _post_download_permit = post_download_semaphore()
-            .acquire()
-            .await
-            .expect("post-download semaphore shouldn't be closed this soon");
-
         // Stream the body into a single pre-sized `Vec<u8>` when
         // `Content-Length` is known. One allocation + one
         // `extend_from_slice` per chunk, no growth-by-doubling.
         // Falls back to empty capacity when CL is missing (chunked
         // transfer encoding), which still avoids reqwest/hyper's
         // intermediate-chunk-list + second-copy pass.
+        //
+        // The network permit is the only gate during fetch + body
+        // buffering. It bounds concurrent open sockets and
+        // concurrent in-progress fetches to
+        // `default_network_concurrency()`. Once a body has been
+        // buffered, the future drops the network permit and awaits
+        // `post_download_semaphore` for the spawn_blocking phase —
+        // the buffer keeps living in RAM across that wait, so a
+        // pathologically slow decompression stage could let buffered
+        // tarballs accumulate beyond the network bound. In practice
+        // Rust + flate2 decompresses faster than the network
+        // delivers, so buffered-but-not-yet-decompressing tarballs
+        // stay close to zero on real installs.
+        //
+        // Acquiring `post_download_semaphore` here too (so it gates
+        // body streaming) would let the smaller `num_cpus * 2` cap
+        // pin `network_concurrency` permits waiting for it,
+        // collapsing effective fetch concurrency to `post_download`
+        // and serializing the network pipeline behind decompression
+        // — that's the regression `perf(tarball)` (a43ca32) fixed.
         //
         // We don't re-verify the received byte count against
         // `Content-Length` — hyper enforces CL framing itself on the
@@ -720,6 +757,24 @@ impl<'a> DownloadTarballToStore<'a> {
             }
             buf
         };
+
+        // Body fully buffered into `response`; the socket can go
+        // back to the pool. Drop the network permit so spawn_blocking
+        // (CPU-bound, no socket needed) doesn't hold one of the
+        // limited fetch slots.
+        drop(client);
+
+        // Gate the CPU-heavy decompress + cafs-write pipeline.
+        //
+        // The blocking pool is 512-wide by default, which is right
+        // for I/O wait but disastrous for CPU work that can only
+        // really run `num_cpus` at a time, so we cap concurrent
+        // `spawn_blocking` bodies. The permit is held across the
+        // `spawn_blocking.await` below and dropped at end of scope.
+        let _post_download_permit = post_download_semaphore()
+            .acquire()
+            .await
+            .expect("post-download semaphore shouldn't be closed this soon");
 
         tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
 
@@ -871,6 +926,64 @@ mod tests {
             .build()
             .expect("build reqwest client");
         ThrottledClient::from_client(client)
+    }
+
+    /// Pin `walk_reqwest_chain`'s contract: a `NetworkError` formed
+    /// from a real reqwest connect failure must surface the leaf
+    /// reason (e.g. `Connection refused`) appended to the wrapper
+    /// message, not stop at reqwest's `error sending request for url
+    /// (URL)`. Without the helper, the user sees only the wrapper —
+    /// which is what triggered the original "what's actually failing?"
+    /// debugging round on this branch.
+    ///
+    /// Uses `127.0.0.1:1` (port 1 is reserved; connect always fails
+    /// with a deterministic ECONNREFUSED on every host I've tried)
+    /// and `fast_fail_client`'s 1 s bounds, so the test stays
+    /// hermetic and quick.
+    #[tokio::test]
+    async fn network_error_display_includes_reqwest_inner_chain() {
+        let url = "http://127.0.0.1:1/whatever";
+        let client = fast_fail_client();
+        let err = client
+            .acquire()
+            .await
+            .get(url)
+            .send()
+            .await
+            .expect_err("connecting to port 1 must fail");
+        let net_err = NetworkError { url: url.to_string(), error: err };
+
+        let rendered = net_err.to_string();
+        assert!(
+            rendered.starts_with("Failed to fetch http://127.0.0.1:1/"),
+            "wrapper prefix missing, got: {rendered:?}",
+        );
+
+        // Reqwest's wrapper already includes the URL in `(...)`; the
+        // leaf reason appears after the wrapper, separated by `: `.
+        // Assert there *is* a non-empty frame after that — without
+        // `walk_reqwest_chain`, this is exactly what got dropped.
+        let leaf_section = rendered
+            .split_once("error sending request for url (")
+            .and_then(|(_, rest)| rest.split_once(")"))
+            .map(|(_, after_paren)| after_paren)
+            .expect("rendered output should include reqwest's wrapper");
+        assert!(
+            !leaf_section.trim().is_empty(),
+            "expected leaf cause appended after reqwest wrapper, got: {rendered:?}",
+        );
+        assert!(
+            leaf_section.starts_with(": "),
+            "leaf should be joined with `: ` per walk_reqwest_chain, got: {rendered:?}",
+        );
+
+        // Structural form for completeness — `#[error(source)]` should
+        // expose the reqwest::Error so miette / `Error::source` can
+        // walk into it independently of our flattened Display.
+        assert!(
+            std::error::Error::source(&net_err).is_some(),
+            "NetworkError should expose its reqwest::Error as source",
+        );
     }
 
     /// **Problem:**
