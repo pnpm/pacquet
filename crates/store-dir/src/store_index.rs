@@ -362,6 +362,16 @@ impl StoreIndex {
             return Ok(out);
         }
         for chunk in keys.chunks(GET_MANY_CHUNK) {
+            // Build a `?,?,…?` list whose length matches `chunk`. The
+            // only thing interpolated into `sql` is this fixed-shape
+            // placeholder string — no caller-supplied bytes ever reach
+            // the SQL text. The keys themselves flow through
+            // `rusqlite::params_from_iter` below, which routes them via
+            // SQLite's prepared-statement parameter binding (the same
+            // path every other site in this file uses). Keep the two
+            // lines in lock-step: if the placeholder count or the params
+            // iterator ever stop matching `chunk.len()`, that's the bug
+            // to look at — not SQL injection.
             let placeholders = std::iter::repeat_n("?", chunk.len()).collect::<Vec<_>>().join(",");
             let sql = format!("SELECT key, data FROM package_index WHERE key IN ({placeholders})");
             let mut stmt =
