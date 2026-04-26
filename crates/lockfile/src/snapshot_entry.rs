@@ -8,7 +8,7 @@ use std::collections::HashMap;
 /// which versions its dependencies were resolved to, plus any optional /
 /// transitive-peer metadata needed to recreate the install.
 ///
-/// Specification: <https://github.com/pnpm/spec/blob/master/lockfile/9.0.md>
+/// Specification: <https://github.com/pnpm/spec/blob/834f2815cc/lockfile/9.0.md>
 #[derive(Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotEntry {

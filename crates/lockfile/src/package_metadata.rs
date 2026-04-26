@@ -7,7 +7,7 @@ use std::collections::HashMap;
 /// peer-dependency context — peer-specific information lives in
 /// [`SnapshotEntry`](crate::SnapshotEntry) instead.
 ///
-/// Specification: <https://github.com/pnpm/spec/blob/master/lockfile/9.0.md>
+/// Specification: <https://github.com/pnpm/spec/blob/834f2815cc/lockfile/9.0.md>
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageMetadata {

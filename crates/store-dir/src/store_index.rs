@@ -21,7 +21,7 @@ use std::{
 /// Each row keys a package by its tarball integrity plus a package identifier
 /// and stores a msgpack-encoded [`PackageFilesIndex`]. The schema and PRAGMAs
 /// below mirror pnpm's implementation in
-/// [`store/index/src/index.ts`](https://github.com/pnpm/pnpm/blob/main/store/index/src/index.ts)
+/// [`store/index/src/index.ts`](https://github.com/pnpm/pnpm/blob/1819226b51/store/index/src/index.ts)
 /// so that the two tools can read each other's entries.
 pub struct StoreIndex {
     conn: Connection,
@@ -557,7 +557,7 @@ pub struct PackageFilesIndex {
 }
 
 /// Value of [`PackageFilesIndex::files`]. Mirrors pnpm v11's
-/// [`PackageFileInfo`](https://github.com/pnpm/pnpm/blob/main/store/cafs-types/src/index.ts)
+/// [`PackageFileInfo`](https://github.com/pnpm/pnpm/blob/1819226b51/store/cafs-types/src/index.ts)
 /// field-for-field so that the msgpack payload interops.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

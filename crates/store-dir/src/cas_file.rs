@@ -19,7 +19,7 @@ impl StoreDir {
 
     /// Path to a content-addressed file given its pre-computed hex digest
     /// (from the SQLite store index) and its POSIX mode. Matches pnpm's
-    /// [`getFilePathByModeInCafs`](https://github.com/pnpm/pnpm/blob/main/store/cafs/src/getFilePathInCafs.ts)
+    /// [`getFilePathByModeInCafs`](https://github.com/pnpm/pnpm/blob/1819226b51/store/cafs/src/getFilePathInCafs.ts)
     /// so index entries written by either tool resolve to the same path.
     ///
     /// Returns `None` when `hex` is too short or not ASCII-hex.

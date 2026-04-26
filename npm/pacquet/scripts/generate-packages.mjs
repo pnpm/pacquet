@@ -1,4 +1,4 @@
-// Code copied from [Rome](https://github.com/rome/tools/blob/main/npm/rome/scripts/generate-packages.mjs)
+// Code copied from [Rome](https://github.com/rome/tools/blob/392d188a49/npm/rome/scripts/generate-packages.mjs)
 
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
