@@ -5,7 +5,9 @@ use reqwest::{
 use std::{future::IntoFuture, time::Duration};
 use tokio::sync::Semaphore;
 
-/// Default `User-Agent` pacquet sends on every registry request.
+/// Default `User-Agent` pacquet sends on every request made by the
+/// install client — registry metadata fetches and tarball downloads
+/// alike, including tarball URLs that point at non-registry hosts.
 ///
 /// Identical to pnpm v11's
 /// [`network/fetch/src/fetchFromRegistry.ts`](https://github.com/pnpm/pnpm/blob/main/network/fetch/src/fetchFromRegistry.ts#L9):
