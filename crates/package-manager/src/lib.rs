@@ -10,6 +10,7 @@ mod install_package_by_snapshot;
 mod install_package_from_registry;
 mod install_without_lockfile;
 mod link_file;
+mod retry_config;
 mod store_init;
 mod symlink_direct_dependencies;
 mod symlink_package;

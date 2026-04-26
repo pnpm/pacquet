@@ -10,10 +10,11 @@ use serde::Deserialize;
 use std::{fs, path::PathBuf};
 
 use crate::custom_deserializer::{
-    bool_true, default_hoist_pattern, default_modules_cache_max_age, default_modules_dir,
-    default_public_hoist_pattern, default_registry, default_store_dir, default_virtual_store_dir,
-    deserialize_bool, deserialize_pathbuf, deserialize_registry, deserialize_store_dir,
-    deserialize_u64,
+    bool_true, default_fetch_retries, default_fetch_retry_factor, default_fetch_retry_maxtimeout,
+    default_fetch_retry_mintimeout, default_hoist_pattern, default_modules_cache_max_age,
+    default_modules_dir, default_public_hoist_pattern, default_registry, default_store_dir,
+    default_virtual_store_dir, deserialize_bool, deserialize_pathbuf, deserialize_registry,
+    deserialize_store_dir, deserialize_u32, deserialize_u64,
 };
 pub use workspace_yaml::{
     workspace_root_or, LoadWorkspaceYamlError, WorkspaceSettings, WORKSPACE_MANIFEST_FILENAME,
@@ -176,6 +177,46 @@ pub struct Npmrc {
     /// silently ignored.
     #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
     pub verify_store_integrity: bool,
+
+    /// How many times pacquet retries a failed tarball fetch on transient
+    /// errors before giving up. Mirrors pnpm's `fetchRetries` (default
+    /// `2`, matching `config/config/src/index.ts`). The value is the count
+    /// of *retries*, so total attempts = `fetch_retries + 1`.
+    ///
+    /// Today this only gates the `pacquet-tarball` download path;
+    /// `crates/registry`'s metadata fetches still issue a single request.
+    /// Threading the same retry policy through the registry client is a
+    /// follow-up.
+    ///
+    /// Read from `pnpm-workspace.yaml` only — pnpm 11's
+    /// [`isIniConfigKey`](https://github.com/pnpm/pnpm/blob/1819226b51/config/reader/src/localConfig.ts#L160-L161)
+    /// excludes the `fetch-retry*` family from `NPM_AUTH_SETTINGS`, so a
+    /// `fetch-retries=…` line in `.npmrc` is ignored upstream and is
+    /// ignored here too. The kebab-case serde attribute exists only to
+    /// power [`Npmrc::new`]'s defaults; [`Npmrc::current`] applies the
+    /// auth subset from `.npmrc` and reads project-structural settings
+    /// from `pnpm-workspace.yaml`.
+    #[serde(default = "default_fetch_retries", deserialize_with = "deserialize_u32")]
+    pub fetch_retries: u32,
+
+    /// Exponential-backoff growth factor between retry attempts. Mirrors
+    /// pnpm's `fetchRetryFactor` (default `10`). Successive backoff is
+    /// `min(fetch_retry_mintimeout * factor^attempt, fetch_retry_maxtimeout)`.
+    /// Yaml-only — see [`Npmrc::fetch_retries`].
+    #[serde(default = "default_fetch_retry_factor", deserialize_with = "deserialize_u32")]
+    pub fetch_retry_factor: u32,
+
+    /// Floor in milliseconds for the wait between retries. Mirrors pnpm's
+    /// `fetchRetryMintimeout` (default `10000` — 10 s). Yaml-only — see
+    /// [`Npmrc::fetch_retries`].
+    #[serde(default = "default_fetch_retry_mintimeout", deserialize_with = "deserialize_u64")]
+    pub fetch_retry_mintimeout: u64,
+
+    /// Cap in milliseconds on the wait between retries. Mirrors pnpm's
+    /// `fetchRetryMaxtimeout` (default `60000` — 1 min). Yaml-only —
+    /// see [`Npmrc::fetch_retries`].
+    #[serde(default = "default_fetch_retry_maxtimeout", deserialize_with = "deserialize_u64")]
+    pub fetch_retry_maxtimeout: u64,
 }
 
 impl Npmrc {
@@ -303,6 +344,19 @@ mod tests {
         assert_eq!(value.modules_cache_max_age, 1000);
     }
 
+    /// `fetch-retries*` defaults must match pnpm's
+    /// `config/config/src/index.ts` (`2`, `10`, `10000`, `60000`) — these
+    /// are the values pnpm bakes into npm-style fetches and we want
+    /// pacquet to behave identically out of the box.
+    #[test]
+    pub fn fetch_retries_defaults_match_pnpm() {
+        let value = Npmrc::new();
+        assert_eq!(value.fetch_retries, 2);
+        assert_eq!(value.fetch_retry_factor, 10);
+        assert_eq!(value.fetch_retry_mintimeout, 10_000);
+        assert_eq!(value.fetch_retry_maxtimeout, 60_000);
+    }
+
     #[test]
     pub fn should_use_pnpm_home_env_var() {
         let _g = EnvGuard::snapshot(["PNPM_HOME"]);
@@ -380,6 +434,26 @@ mod tests {
         assert_eq!(config.lockfile, defaults.lockfile);
         assert_eq!(config.hoist, defaults.hoist);
         assert_eq!(config.node_linker, defaults.node_linker);
+    }
+
+    /// pnpm 11's `isIniConfigKey` (config/config/src/auth.ts) leaves the
+    /// `fetch-retries*` family out of `NPM_AUTH_SETTINGS`, so a value
+    /// like `fetch-retries=99` in `.npmrc` is silently ignored upstream.
+    /// pacquet must do the same — applying it would diverge from pnpm
+    /// and silently change install behaviour for projects that have a
+    /// stale `.npmrc` lying around.
+    #[test]
+    pub fn fetch_retry_keys_in_npmrc_are_ignored() {
+        let tmp = tempdir().unwrap();
+        let ini = "fetch-retries=99\nfetch-retry-factor=99\nfetch-retry-mintimeout=99\nfetch-retry-maxtimeout=99\n";
+        fs::write(tmp.path().join(".npmrc"), ini).expect("write to .npmrc");
+        let defaults = Npmrc::new();
+        let config =
+            Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new);
+        assert_eq!(config.fetch_retries, defaults.fetch_retries);
+        assert_eq!(config.fetch_retry_factor, defaults.fetch_retry_factor);
+        assert_eq!(config.fetch_retry_mintimeout, defaults.fetch_retry_mintimeout);
+        assert_eq!(config.fetch_retry_maxtimeout, defaults.fetch_retry_maxtimeout);
     }
 
     #[test]

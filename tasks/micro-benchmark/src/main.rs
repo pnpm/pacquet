@@ -5,7 +5,7 @@ use criterion::{Criterion, Throughput};
 use mockito::ServerGuard;
 use pacquet_network::ThrottledClient;
 use pacquet_store_dir::StoreDir;
-use pacquet_tarball::DownloadTarballToStore;
+use pacquet_tarball::{DownloadTarballToStore, RetryOpts};
 use pipe_trait::Pipe;
 use project_root::get_project_root;
 use ssri::Integrity;
@@ -47,6 +47,7 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
                 package_url: url,
                 package_id: "fast-querystring@1.0.0",
                 prefetched_cas_paths: None,
+                retry_opts: RetryOpts::default(),
             }
             .run_without_mem_cache()
             .await

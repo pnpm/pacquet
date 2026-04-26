@@ -1925,6 +1925,7 @@ dependencies = [
  "derive_more",
  "futures-util",
  "miette 7.6.0",
+ "mockito",
  "num_cpus",
  "pacquet-diagnostics",
  "pacquet-fs",
