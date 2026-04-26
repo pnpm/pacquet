@@ -722,15 +722,25 @@ impl<'a> DownloadTarballToStore<'a> {
         // transfer encoding), which still avoids reqwest/hyper's
         // intermediate-chunk-list + second-copy pass.
         //
-        // The network permit is the only gate here. It bounds both
-        // concurrent open sockets and concurrent buffered tarballs
-        // to `default_network_concurrency()` — matching pnpm's
-        // pQueue, which holds its slot from `fetch` through body
-        // arrival as one task. Acquiring `post_download_semaphore`
-        // here too would let the smaller `num_cpus * 2` cap pin
-        // `network_concurrency` permits waiting for it, collapsing
-        // effective fetch concurrency to `post_download` and
-        // serializing the network pipeline behind decompression.
+        // The network permit is the only gate during fetch + body
+        // buffering. It bounds concurrent open sockets and
+        // concurrent in-progress fetches to
+        // `default_network_concurrency()`. Once a body has been
+        // buffered, the future drops the network permit and awaits
+        // `post_download_semaphore` for the spawn_blocking phase —
+        // the buffer keeps living in RAM across that wait, so a
+        // pathologically slow decompression stage could let buffered
+        // tarballs accumulate beyond the network bound. In practice
+        // Rust + flate2 decompresses faster than the network
+        // delivers, so buffered-but-not-yet-decompressing tarballs
+        // stay close to zero on real installs.
+        //
+        // Acquiring `post_download_semaphore` here too (so it gates
+        // body streaming) would let the smaller `num_cpus * 2` cap
+        // pin `network_concurrency` permits waiting for it,
+        // collapsing effective fetch concurrency to `post_download`
+        // and serializing the network pipeline behind decompression
+        // — that's the regression `perf(tarball)` (a43ca32) fixed.
         //
         // We don't re-verify the received byte count against
         // `Content-Length` — hyper enforces CL framing itself on the

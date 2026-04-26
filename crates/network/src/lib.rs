@@ -147,8 +147,9 @@ impl ThrottledClient {
     /// but on macOS it routes every lookup through `mDNSResponder`,
     /// which spuriously returns `EAI_NONAME` ("nodename nor servname
     /// provided") for valid hostnames when many concurrent lookups
-    /// pile up — e.g. the 50 simultaneous tarball connections this
-    /// client opens. pnpm doesn't hit it because Node's `dns.lookup`
+    /// pile up — e.g. the [`default_network_concurrency`] simultaneous
+    /// tarball connections this client opens. pnpm doesn't hit it
+    /// because Node's `dns.lookup`
     /// runs on libuv's 4-thread pool, naturally throttling concurrent
     /// `getaddrinfo` calls. `hickory-dns` queries DNS over UDP / TCP
     /// directly, bypassing `mDNSResponder` and the EAI_NONAME flake
