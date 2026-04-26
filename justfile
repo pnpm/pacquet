@@ -56,6 +56,10 @@ check:
 test:
   cargo nextest run
 
+# List expected-failing test ports
+known-failures:
+  @cargo test --workspace known_failures -- --list 2>/dev/null | rg '^known_failures::'
+
 # Lint the whole project
 lint:
   cargo clippy --locked -- --deny warnings
