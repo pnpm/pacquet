@@ -1,4 +1,7 @@
-use crate::{create_cas_files, symlink_package, CreateCasFilesError, SymlinkPackageError};
+use crate::{
+    create_cas_files, retry_config::retry_opts_from_config, symlink_package, CreateCasFilesError,
+    SymlinkPackageError,
+};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_network::ThrottledClient;
@@ -99,6 +102,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
             package_url: package_version.as_tarball_url(),
             package_id: &package_id,
             prefetched_cas_paths: None,
+            retry_opts: retry_opts_from_config(config),
         }
         .run_with_mem_cache(tarball_mem_cache)
         .await
@@ -158,6 +162,10 @@ mod tests {
             strict_peer_dependencies: false,
             resolve_peers_from_workspace_root: false,
             verify_store_integrity: true,
+            fetch_retries: 2,
+            fetch_retry_factor: 10,
+            fetch_retry_mintimeout: 10_000,
+            fetch_retry_maxtimeout: 60_000,
         }
     }
 

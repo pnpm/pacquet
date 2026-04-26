@@ -28,7 +28,7 @@ ignore = []
 [licenses]
 allow = [
   "MIT",
-  "MPL-2.0", # required by mockito, which is used by tasks/micro-benchmark
+  "MPL-2.0", # required by mockito, used by crates/tarball tests and tasks/micro-benchmark
   "Apache-2.0",
   "Unicode-3.0", # newer ICU crates switched from Unicode-DFS-2016 to this
   "Unicode-DFS-2016",

@@ -1,4 +1,6 @@
-use crate::{CreateVirtualDirBySnapshot, CreateVirtualDirError};
+use crate::{
+    retry_config::retry_opts_from_config, CreateVirtualDirBySnapshot, CreateVirtualDirError,
+};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
@@ -108,6 +110,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             package_url: &tarball_url,
             package_id: &package_id,
             prefetched_cas_paths,
+            retry_opts: retry_opts_from_config(config),
         }
         .run_without_mem_cache()
         .await

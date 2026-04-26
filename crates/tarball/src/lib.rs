@@ -3,7 +3,7 @@ use std::{
     io::{Cursor, Read},
     path::{Component, PathBuf},
     sync::{Arc, OnceLock},
-    time::UNIX_EPOCH,
+    time::{Duration, UNIX_EPOCH},
 };
 
 use dashmap::DashMap;
@@ -68,6 +68,59 @@ fn walk_reqwest_chain(error: &reqwest::Error) -> String {
     out
 }
 
+/// Settings for the per-fetch retry loop. Mirrors pnpm's
+/// `fetch-retries` / `fetch-retry-factor` /
+/// `fetch-retry-mintimeout` / `fetch-retry-maxtimeout` and the
+/// `@zkochan/retry` algorithm pnpm uses in
+/// `network/fetch/src/fetch.ts`:
+///
+/// `delay = min(min_timeout * factor.pow(attempt), max_timeout)`
+///
+/// `attempt` is zero-indexed, so the first post-failure wait is
+/// `min_timeout`. `retries` is the number of *retries* — total
+/// attempts is `retries + 1`.
+#[derive(Debug, Clone, Copy)]
+pub struct RetryOpts {
+    pub retries: u32,
+    pub factor: u32,
+    pub min_timeout: Duration,
+    pub max_timeout: Duration,
+}
+
+impl Default for RetryOpts {
+    /// Defaults match pnpm's
+    /// [`config/reader/src/index.ts`](https://github.com/pnpm/pnpm/blob/1819226b51/config/reader/src/index.ts#L146-L149)
+    /// (2 retries, factor 10, 10 s floor, 60 s cap).
+    fn default() -> Self {
+        Self {
+            retries: 2,
+            factor: 10,
+            min_timeout: Duration::from_millis(10_000),
+            max_timeout: Duration::from_millis(60_000),
+        }
+    }
+}
+
+impl RetryOpts {
+    /// Backoff to wait before the `(attempt + 1)`-th attempt, where
+    /// `attempt` is the zero-indexed number of failures so far.
+    /// Matches `@zkochan/retry`'s formula with `randomize: false`.
+    fn delay_for(self, attempt: u32) -> Duration {
+        // `Duration::as_millis` returns `u128` because a `Duration` can
+        // hold values that overflow `u64` milliseconds, but
+        // `Duration::from_millis` only takes `u64`. Saturate on the way
+        // down so a pathological caller-supplied timeout produces the
+        // largest expressible delay rather than a silently truncated one.
+        let min_ms = u64::try_from(self.min_timeout.as_millis()).unwrap_or(u64::MAX);
+        let max_ms = u64::try_from(self.max_timeout.as_millis()).unwrap_or(u64::MAX);
+        let factor = u64::from(self.factor);
+        let pow = factor.checked_pow(attempt).unwrap_or(u64::MAX);
+        let ms = min_ms.saturating_mul(pow);
+        let capped = ms.min(max_ms);
+        Duration::from_millis(capped)
+    }
+}
+
 #[derive(Debug, Display, Error, Diagnostic)]
 #[display("Failed to fetch {url}: {}", walk_reqwest_chain(error))]
 pub struct NetworkError {
@@ -78,6 +131,13 @@ pub struct NetworkError {
     /// where the user just sees one line per wrapper.
     #[error(source)]
     pub error: reqwest::Error,
+}
+
+#[derive(Debug, Display, Error, Diagnostic)]
+#[display("Tarball server returned HTTP {status} for {url}")]
+pub struct HttpStatusError {
+    pub url: String,
+    pub status: u16,
 }
 
 #[derive(Debug, Display, Error, Diagnostic)]
@@ -93,6 +153,9 @@ pub struct VerifyChecksumError {
 pub enum TarballError {
     #[diagnostic(code(pacquet_tarball::fetch_tarball))]
     FetchTarball(NetworkError),
+
+    #[diagnostic(code(pacquet_tarball::http_status))]
+    HttpStatus(HttpStatusError),
 
     #[from(ignore)]
     #[diagnostic(code(pacquet_tarball::io_error))]
@@ -580,6 +643,209 @@ pub struct DownloadTarballToStore<'a> {
     /// the per-snapshot SQLite + integrity-check round-trip is skipped
     /// for every key already resolved by the prefetch.
     pub prefetched_cas_paths: Option<&'a PrefetchedCasPaths>,
+    /// Per-attempt retry budget for the tarball pipeline. Mirrors pnpm's
+    /// `fetch-retries*` knobs (`network/fetch/src/fetch.ts`,
+    /// `fetching/tarball-fetcher/src/remoteTarballFetcher.ts`): every
+    /// failure retries except HTTP 401, 403, 404 — including arbitrary
+    /// 4xx / 5xx, network resets, timeouts, mid-stream body errors,
+    /// integrity mismatches, and gzip / tar parse failures (#259).
+    pub retry_opts: RetryOpts,
+}
+
+/// Whether a [`TarballError`] from one tarball-fetch attempt should be
+/// retried. Matches pnpm's
+/// [`remoteTarballFetcher.ts`](https://github.com/pnpm/pnpm/blob/1819226b51/fetching/tarball-fetcher/src/remoteTarballFetcher.ts#L76-L84)
+/// policy *exactly*: only HTTP 401, 403, 404 (and the git-prepare
+/// failure code, which doesn't apply to registry tarballs) fail fast.
+/// Every other failure — arbitrary 4xx, 5xx, network reset, timeout,
+/// integrity mismatch, gzip / tar parse error, CAFS write hiccup —
+/// retries until the budget is exhausted.
+///
+/// In particular this means we retry integrity mismatches and decode
+/// errors. pnpm wraps the body fetch *and* the post-download
+/// `addFilesFromTarball` (integrity check + extraction) in one retried
+/// closure for the same reason: a corrupted byte on the wire that
+/// happens to escape TCP framing can break either the integrity check
+/// or the gzip decode, and a re-fetch is the cheapest way out.
+fn is_transient_error(err: &TarballError) -> bool {
+    match err {
+        TarballError::HttpStatus(http) => !matches!(http.status, 401 | 403 | 404),
+        _ => true,
+    }
+}
+
+/// Run one full tarball-fetch attempt: hit the network, drain the body
+/// into RAM, verify the integrity hash, then decompress and extract
+/// every entry into the CAFS. Returns the cas-paths map and the
+/// per-tarball [`PackageFilesIndex`] row that the caller queues into
+/// the shared store-index writer once the retry loop succeeds.
+///
+/// The whole pipeline lives in one attempt because pnpm's tarball
+/// fetcher does the same: any failure inside `addFilesFromTarball`
+/// (integrity mismatch, gzip decode, malformed tar) propagates back
+/// to the retry boundary so a re-fetch can recover from a flaky
+/// transfer that happens to checksum or decode wrong.
+///
+/// Permits are acquired *inside* this function so a backoff sleep
+/// between attempts doesn't keep one parked. The network permit is
+/// held from `connect + send` through body streaming (matching pnpm's
+/// pQueue and #281's EMFILE fix), then dropped before the
+/// `post_download_semaphore` permit gates the CPU-bound checksum +
+/// decode + extract step.
+async fn fetch_and_extract_once(
+    http_client: &ThrottledClient,
+    package_url: &str,
+    package_integrity: &Integrity,
+    package_unpacked_size: Option<usize>,
+    store_dir: &'static StoreDir,
+) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
+    let network_error =
+        |error| TarballError::FetchTarball(NetworkError { url: package_url.to_string(), error });
+
+    // Acquire the network permit *before* `connect + send` and hold it
+    // through body streaming. Releasing earlier would let the next
+    // batch of futures `connect()` while previous bodies are still
+    // draining, breaking the bound on concurrent open sockets.
+    let client = http_client.acquire().await;
+    let response_head = client.get(package_url).send().await.map_err(network_error)?;
+
+    let status = response_head.status();
+    if !status.is_success() {
+        // Drain small error bodies so reqwest/hyper can return the
+        // connection to the keep-alive pool — dropping an unconsumed
+        // `Response` closes the underlying connection, which we'd then
+        // pay to reopen on retry. Skip the drain when the body is
+        // unknown-length or larger than the cap, since hyper only
+        // returns the connection to the pool once the body is fully
+        // consumed; a partial drain wouldn't help and would just buffer
+        // a pathological response.
+        const DRAIN_CAP: u64 = 64 * 1024;
+        if response_head.content_length().is_some_and(|len| len <= DRAIN_CAP) {
+            let _ = response_head.bytes().await;
+        }
+        return Err(TarballError::HttpStatus(HttpStatusError {
+            url: package_url.to_string(),
+            status: status.as_u16(),
+        }));
+    }
+
+    let expected_size = response_head.content_length();
+
+    let buffer = {
+        use futures_util::StreamExt;
+        let mut buf = allocate_tarball_buffer(expected_size, package_url)?;
+        let mut stream = response_head.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(network_error)?;
+            buf.extend_from_slice(&chunk);
+        }
+        buf
+    };
+
+    // Body fully buffered; release the network permit before the
+    // CPU-bound work so spawn_blocking doesn't hold one of the
+    // limited fetch slots.
+    drop(client);
+
+    // Gate the CPU-heavy decompress + cafs-write pipeline.
+    let _post_download_permit = post_download_semaphore()
+        .acquire()
+        .await
+        .expect("post-download semaphore shouldn't be closed this soon");
+
+    tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
+
+    // Move the CPU-bound work (SHA-512, gzip inflate, per-file SHA-512,
+    // CAFS writes) onto the blocking pool. Same reasoning as before the
+    // retry refactor: a plain `tokio::spawn` pinned a reactor worker for
+    // each tarball — on a 2-core runner only two tarballs could make
+    // progress at a time. The post-download semaphore caps concurrency
+    // here.
+    let package_integrity = package_integrity.clone();
+    let package_url_owned = package_url.to_string();
+    let result = tokio::task::spawn_blocking(
+        move || -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
+            package_integrity.check(&buffer).map_err(|error| {
+                TarballError::Checksum(VerifyChecksumError { url: package_url_owned, error })
+            })?;
+
+            // Extract in a scope so the decompressed buffer + `tar::Archive`
+            // are released before we return — a large package's inflated
+            // bytes can be many MB.
+            let (cas_paths, pkg_files_idx) = {
+                let mut archive = decompress_gzip(&buffer, package_unpacked_size)?
+                    .pipe(Cursor::new)
+                    .pipe(Archive::new);
+                extract_tarball_entries(&mut archive, store_dir)?
+            };
+            Ok((cas_paths, pkg_files_idx))
+        },
+    )
+    .await
+    .map_err(TarballError::TaskJoin)??;
+
+    tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
+
+    Ok(result)
+}
+
+/// Run [`fetch_and_extract_once`] under pnpm's retry policy. Permanent
+/// errors (HTTP 401 / 403 / 404 — see [`is_transient_error`]) fail on
+/// the first attempt; everything else sleeps with exponential backoff
+/// and tries again until the budget is exhausted, surfacing the most
+/// recent error.
+///
+/// On retry, CAFS writes from a previous attempt that may have made it
+/// part-way through extraction stay on disk. That's safe: the CAFS is
+/// content-addressed, so re-extracting the same bytes produces
+/// identical paths and `write_cas_file` is idempotent.
+async fn fetch_and_extract_with_retry(
+    http_client: &ThrottledClient,
+    package_url: &str,
+    package_integrity: &Integrity,
+    package_unpacked_size: Option<usize>,
+    store_dir: &'static StoreDir,
+    retry_opts: RetryOpts,
+) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
+    let mut attempt: u32 = 0;
+    loop {
+        let result = fetch_and_extract_once(
+            http_client,
+            package_url,
+            package_integrity,
+            package_unpacked_size,
+            store_dir,
+        )
+        .await;
+        match result {
+            Ok(value) => return Ok(value),
+            Err(err) if !is_transient_error(&err) => return Err(err),
+            Err(err) if attempt >= retry_opts.retries => {
+                tracing::warn!(
+                    target: "pacquet::download",
+                    ?package_url,
+                    attempts = attempt + 1,
+                    ?err,
+                    "Tarball fetch retry budget exhausted",
+                );
+                return Err(err);
+            }
+            Err(err) => {
+                let delay = retry_opts.delay_for(attempt);
+                tracing::warn!(
+                    target: "pacquet::download",
+                    ?package_url,
+                    attempt = attempt + 1,
+                    max_attempts = retry_opts.retries + 1,
+                    ?delay,
+                    ?err,
+                    "Tarball fetch failed; retrying after backoff",
+                );
+                tokio::time::sleep(delay).await;
+                attempt += 1;
+            }
+        }
+    }
 }
 
 impl<'a> DownloadTarballToStore<'a> {
@@ -636,6 +902,7 @@ impl<'a> DownloadTarballToStore<'a> {
             package_id,
             verify_store_integrity,
             prefetched_cas_paths,
+            retry_opts,
             ..
         } = self;
         let store_index = self.store_index.clone();
@@ -691,170 +958,44 @@ impl<'a> DownloadTarballToStore<'a> {
 
         tracing::info!(target: "pacquet::download", ?package_url, "New cache");
 
-        let network_error = |error| {
-            TarballError::FetchTarball(NetworkError { url: package_url.to_string(), error })
-        };
+        // Run the full fetch + integrity + extract pipeline under
+        // pnpm's retry policy. Mirrors
+        // [`remoteTarballFetcher.ts`](https://github.com/pnpm/pnpm/blob/1819226b51/fetching/tarball-fetcher/src/remoteTarballFetcher.ts):
+        // a single retried closure wraps both the network side and the
+        // `addFilesFromTarball` side, so a flaky transfer that survives
+        // TCP framing but fails the SHA-512 hash or trips gzip / tar
+        // parsing recovers via re-fetch instead of aborting the install
+        // (#259). Only HTTP 401 / 403 / 404 fail fast — see
+        // [`is_transient_error`].
+        let (cas_paths, pkg_files_idx) = fetch_and_extract_with_retry(
+            http_client,
+            package_url,
+            package_integrity,
+            package_unpacked_size,
+            store_dir,
+            retry_opts,
+        )
+        .await?;
 
-        // Acquire the network permit *before* `connect + send` and
-        // hold it through body streaming. The permit must outlive the
-        // socket — releasing it after `.send()` (when only headers
-        // have arrived) lets the next batch of futures `connect()`
-        // while the previous bodies are still draining, breaking the
-        // semaphore's bound on concurrent open sockets and surfacing
-        // as `EMFILE` once the FD count overruns the per-process cap.
-        let client = http_client.acquire().await;
-        let response_head = client.get(package_url).send().await.map_err(network_error)?;
-
-        // Read `Content-Length` *before* we start consuming the body
-        // stream so we can pre-size the buffer. Ports pnpm v11's
-        // `fetching/tarball-fetcher/src/remoteTarballFetcher.ts:148-164`:
-        // reqwest/hyper internally grows its buffer by doubling when
-        // CL isn't used, so on a 1352-tarball cold install that's a
-        // lot of wasted alloc + copy work across the pipeline.
-        let expected_size = response_head.content_length();
-
-        // Stream the body into a single pre-sized `Vec<u8>` when
-        // `Content-Length` is known. One allocation + one
-        // `extend_from_slice` per chunk, no growth-by-doubling.
-        // Falls back to empty capacity when CL is missing (chunked
-        // transfer encoding), which still avoids reqwest/hyper's
-        // intermediate-chunk-list + second-copy pass.
-        //
-        // The network permit is the only gate during fetch + body
-        // buffering. It bounds concurrent open sockets and
-        // concurrent in-progress fetches to
-        // `default_network_concurrency()`. Once a body has been
-        // buffered, the future drops the network permit and awaits
-        // `post_download_semaphore` for the spawn_blocking phase —
-        // the buffer keeps living in RAM across that wait, so a
-        // pathologically slow decompression stage could let buffered
-        // tarballs accumulate beyond the network bound. In practice
-        // Rust + flate2 decompresses faster than the network
-        // delivers, so buffered-but-not-yet-decompressing tarballs
-        // stay close to zero on real installs.
-        //
-        // Acquiring `post_download_semaphore` here too (so it gates
-        // body streaming) would let the smaller `num_cpus * 2` cap
-        // pin `network_concurrency` permits waiting for it,
-        // collapsing effective fetch concurrency to `post_download`
-        // and serializing the network pipeline behind decompression
-        // — that's the regression `perf(tarball)` (a43ca32) fixed.
-        //
-        // We don't re-verify the received byte count against
-        // `Content-Length` — hyper enforces CL framing itself on the
-        // receive side (a body shorter than CL errors the stream, a
-        // body longer is truncated or queued as the next request),
-        // so the check would be dead code. Pnpm's equivalent
-        // `BadTarballError` path exists because undici in Node.js
-        // doesn't always enforce it.
-        let response = {
-            use futures_util::StreamExt;
-            let mut buf = allocate_tarball_buffer(expected_size, package_url)?;
-            let mut stream = response_head.bytes_stream();
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk.map_err(network_error)?;
-                buf.extend_from_slice(&chunk);
-            }
-            buf
-        };
-
-        // Body fully buffered into `response`; the socket can go
-        // back to the pool. Drop the network permit so spawn_blocking
-        // (CPU-bound, no socket needed) doesn't hold one of the
-        // limited fetch slots.
-        drop(client);
-
-        // Gate the CPU-heavy decompress + cafs-write pipeline.
-        //
-        // The blocking pool is 512-wide by default, which is right
-        // for I/O wait but disastrous for CPU work that can only
-        // really run `num_cpus` at a time, so we cap concurrent
-        // `spawn_blocking` bodies. The permit is held across the
-        // `spawn_blocking.await` below and dropped at end of scope.
-        let _post_download_permit = post_download_semaphore()
-            .acquire()
-            .await
-            .expect("post-download semaphore shouldn't be closed this soon");
-
-        tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
-
-        // TODO: Cloning here is less than desirable, there are 2 possible solutions for this problem:
-        // 1. Use an Arc and convert this line to Arc::clone.
-        // 2. Replace ssri with base64 and serde magic (which supports Copy).
-        let package_integrity = package_integrity.clone();
-        let package_id = package_id.to_string();
-
-        #[derive(Debug, From)]
-        enum TaskError {
-            Checksum(ssri::Error),
-            Other(TarballError),
+        // Hand the per-tarball files index off to the shared writer task
+        // from #265 *after* the retry loop returns, so transient failures
+        // don't queue a half-built row that a successful retry would
+        // duplicate. `queue` is a non-blocking `UnboundedSender::send`;
+        // the writer task owns one connection and batches whatever it
+        // drains in one `BEGIN IMMEDIATE; … ; COMMIT`. `None` means the
+        // writer failed to open or the caller handed us none — the row
+        // is dropped with a `warn!` and the next install misses on this
+        // cache key, matching the read path's stance.
+        let index_key = store_index_key(&package_integrity.to_string(), package_id);
+        if let Some(writer) = store_index_writer {
+            writer.queue(index_key, pkg_files_idx);
+        } else {
+            tracing::warn!(
+                target: "pacquet::download",
+                ?index_key,
+                "no shared store-index writer; skipping index row for this tarball",
+            );
         }
-        // Run the whole post-download pipeline on the blocking pool. The
-        // body is a dense mix of CPU-bound work (SHA-512 over the full
-        // tarball, gzip inflate, per-file SHA-512) and blocking I/O
-        // (`write_cas_file`). Running it as a plain `tokio::task::spawn`
-        // pinned a tokio reactor worker for the entirety of each tarball
-        // — on a 2-core runner that meant at most two tarballs could
-        // make progress at a time, and the tail of large packages
-        // missed the CI step budget even though the network side was
-        // long done. `spawn_blocking` uses tokio's dedicated
-        // blocking-thread pool instead, so the tail drains in parallel.
-        // The store-index row handoff at the end stays non-blocking
-        // (`StoreIndexWriter::queue`, #265), so the closure itself does
-        // no SQLite work. Concurrency is already capped by the
-        // `_post_download_permit` acquired above.
-        let cas_paths =
-            tokio::task::spawn_blocking(move || -> Result<HashMap<String, PathBuf>, TaskError> {
-                package_integrity.check(&response).map_err(TaskError::Checksum)?;
-
-                // TODO: test the duplication of entries
-
-                // Extract the tarball in a scope so the decompressed
-                // buffer + `tar::Archive` are released before the SQLite
-                // write — on large packages the inflated bytes can be
-                // multiple MB, and with hundreds of concurrent blocking
-                // tasks that memory adds up fast.
-                let (cas_paths, pkg_files_idx) = {
-                    let mut archive = decompress_gzip(&response, package_unpacked_size)
-                        .map_err(TaskError::Other)?
-                        .pipe(Cursor::new)
-                        .pipe(Archive::new);
-                    extract_tarball_entries(&mut archive, store_dir)?
-                };
-
-                // Hand the per-tarball files index off to the shared
-                // writer task from #265. `queue` is a non-blocking
-                // `UnboundedSender::send` — no SQLite work on this thread,
-                // just a channel push; the writer task owns one
-                // connection and batches whatever it drains in one
-                // `BEGIN IMMEDIATE; … ; COMMIT`. `None` means the writer
-                // failed to open or the caller handed us none — the row
-                // is dropped with a `warn!` and the next install misses
-                // on this cache key, matching the read path's stance.
-                let index_key = store_index_key(&package_integrity.to_string(), &package_id);
-                if let Some(writer) = store_index_writer {
-                    writer.queue(index_key, pkg_files_idx);
-                } else {
-                    tracing::warn!(
-                        target: "pacquet::download",
-                        ?index_key,
-                        "no shared store-index writer; skipping index row for this tarball",
-                    );
-                }
-
-                Ok(cas_paths)
-            })
-            .await
-            .map_err(TarballError::TaskJoin)?
-            .map_err(|error| match error {
-                TaskError::Checksum(error) => TarballError::Checksum(VerifyChecksumError {
-                    url: package_url.to_string(),
-                    error,
-                }),
-                TaskError::Other(error) => error,
-            })?;
-
-        tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
 
         Ok(cas_paths)
     }
@@ -986,6 +1127,18 @@ mod tests {
         );
     }
 
+    /// Default `RetryOpts` for unit tests. We don't want the suite to
+    /// sit through pnpm's 10 s + 60 s production backoff just to assert
+    /// that an unreachable URL eventually fails — every test that
+    /// exercises a network call here either short-circuits to a cache
+    /// hit or expects the failure path. `retries: 0` keeps the failure
+    /// path deterministic and bounded by `fast_fail_client`'s 1 s
+    /// timeouts; tests that specifically want to *prove* the retry
+    /// loop runs should construct their own [`RetryOpts`].
+    fn test_retry_opts() -> RetryOpts {
+        RetryOpts { retries: 0, ..RetryOpts::default() }
+    }
+
     /// **Problem:**
     /// The tested function requires `'static` paths, leaking would prevent
     /// temporary files from being cleaned up.
@@ -1018,6 +1171,7 @@ mod tests {
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
             package_id: "@fastify/error@3.3.0",
             prefetched_cas_paths: None,
+            retry_opts: test_retry_opts(),
         }
         .run_without_mem_cache()
         .await
@@ -1062,6 +1216,7 @@ mod tests {
             package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
             package_id: "@fastify/error@3.3.0",
             prefetched_cas_paths: None,
+            retry_opts: test_retry_opts(),
         }
         .run_without_mem_cache()
         .await
@@ -1137,6 +1292,7 @@ mod tests {
             package_url: "http://127.0.0.1:1/unreachable.tgz",
             package_id: pkg_id,
             prefetched_cas_paths: None,
+            retry_opts: test_retry_opts(),
         }
         .run_without_mem_cache()
         .await
@@ -1191,6 +1347,7 @@ mod tests {
             package_url: "http://127.0.0.1:1/unreachable.tgz",
             package_id: pkg_id,
             prefetched_cas_paths: Some(&prefetched),
+            retry_opts: test_retry_opts(),
         }
         .run_without_mem_cache()
         .await
@@ -1407,6 +1564,7 @@ mod tests {
             package_url: "http://127.0.0.1:1/unreachable.tgz",
             package_id: pkg_id,
             prefetched_cas_paths: None,
+            retry_opts: test_retry_opts(),
         }
         .run_without_mem_cache()
         .await
@@ -1461,6 +1619,7 @@ mod tests {
             package_url: "http://127.0.0.1:1/unreachable.tgz",
             package_id: pkg_id,
             prefetched_cas_paths: None,
+            retry_opts: test_retry_opts(),
         }
         .run_without_mem_cache()
         .await
@@ -1518,6 +1677,7 @@ mod tests {
             package_url: "http://127.0.0.1:1/unreachable.tgz",
             package_id: pkg_id,
             prefetched_cas_paths: None,
+            retry_opts: test_retry_opts(),
         }
         .run_without_mem_cache()
         .await
@@ -1585,6 +1745,7 @@ mod tests {
             package_url: "http://127.0.0.1:1/unreachable.tgz",
             package_id: pkg_id,
             prefetched_cas_paths: None,
+            retry_opts: test_retry_opts(),
         }
         .run_without_mem_cache()
         .await
@@ -1685,5 +1846,294 @@ mod tests {
         }
 
         drop(tempdir);
+    }
+
+    /// `RetryOpts::default()` reproduces pnpm's
+    /// `network/fetch/src/fetch.ts` defaults: 2 retries, factor 10,
+    /// minTimeout 10 s, maxTimeout 60 s. The first post-failure delay
+    /// is `minTimeout`; subsequent delays multiply by `factor` until
+    /// they hit `maxTimeout`.
+    #[test]
+    fn retry_opts_delay_matches_pnpm_formula() {
+        let opts = RetryOpts::default();
+        assert_eq!(opts.delay_for(0), Duration::from_millis(10_000));
+        // 10s * 10 = 100s, capped at 60s
+        assert_eq!(opts.delay_for(1), Duration::from_millis(60_000));
+        assert_eq!(opts.delay_for(5), Duration::from_millis(60_000));
+    }
+
+    /// Pathological `attempt` values must not panic / overflow. The
+    /// retry loop uses `attempt: u32`, so the worst case in production
+    /// is bounded by `retries`, but we want the math to stay sound
+    /// regardless.
+    #[test]
+    fn retry_opts_delay_does_not_overflow() {
+        let opts = RetryOpts::default();
+        assert_eq!(opts.delay_for(u32::MAX), Duration::from_millis(60_000));
+    }
+
+    /// pnpm's
+    /// [`remoteTarballFetcher.ts`](https://github.com/pnpm/pnpm/blob/1819226b51/fetching/tarball-fetcher/src/remoteTarballFetcher.ts#L76-L84)
+    /// rejects only HTTP 401, 403, 404 (and the git-prepare error code,
+    /// which doesn't apply to registry tarballs). Every other failure
+    /// — arbitrary 4xx, 5xx, network reset, integrity mismatch, gzip
+    /// or tar parse error — falls through to `op.retry(error)` and is
+    /// retried. Diverging here was the original bug behind #259.
+    #[test]
+    fn retry_classification_matches_pnpm_policy() {
+        let url = "https://example.test/pkg.tgz".to_string();
+        let mk_http =
+            |status: u16| TarballError::HttpStatus(HttpStatusError { url: url.clone(), status });
+
+        // Fail-fast set — exactly the three codes pnpm short-circuits on.
+        for code in [401u16, 403, 404] {
+            assert!(!is_transient_error(&mk_http(code)), "HTTP {code} should fail fast");
+        }
+        // Everything else, including arbitrary 4xx that pnpm does not
+        // single out, must retry.
+        for code in [400u16, 408, 409, 410, 418, 420, 422, 429, 500, 502, 503, 504] {
+            assert!(is_transient_error(&mk_http(code)), "HTTP {code} should retry");
+        }
+
+        // Non-HTTP failures: pnpm wraps body fetch + addFilesFromTarball
+        // (integrity + extraction) in one retried closure, so anything
+        // raised inside that closure retries. Cover a representative
+        // sample.
+        let bad_integrity: Integrity =
+            "sha512-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa==".parse().unwrap();
+        let ssri_err = bad_integrity.check(b"unrelated body").unwrap_err();
+        let checksum =
+            TarballError::Checksum(VerifyChecksumError { url: url.clone(), error: ssri_err });
+        assert!(is_transient_error(&checksum), "integrity mismatch should retry");
+
+        let too_large =
+            TarballError::TarballTooLarge { url: url.clone(), advertised_size: u64::MAX };
+        assert!(is_transient_error(&too_large), "TarballTooLarge should retry");
+    }
+
+    /// Real pnpm-published tarball (`@fastify/error@3.3.0`, 4.4 KiB).
+    /// Embedded so the retry-success test below has a body that
+    /// integrity-checks and extracts successfully on the retry attempt
+    /// — which is the only way to exercise the post-network steps of
+    /// the retry loop without going to the live registry.
+    const FASTIFY_ERROR_TARBALL: &[u8] =
+        include_bytes!("../../../tasks/micro-benchmark/fixtures/@fastify+error-3.3.0.tgz");
+    const FASTIFY_ERROR_INTEGRITY: &str =
+        "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==";
+
+    /// `RetryOpts` for the mockito tests below: keep the 2-retry budget
+    /// so we exercise the full attempt count, but collapse the backoff
+    /// to milliseconds so the test suite isn't sitting through pnpm's
+    /// production 10 s + 60 s waits.
+    fn fast_retry_opts() -> RetryOpts {
+        RetryOpts {
+            retries: 2,
+            factor: 1,
+            min_timeout: Duration::from_millis(1),
+            max_timeout: Duration::from_millis(1),
+        }
+    }
+
+    /// First request returns 503 (transient per pnpm's policy), the
+    /// retry returns 200 with the real fastify-error tarball. The
+    /// retry loop must drive the full pipeline — network → integrity
+    /// → extract — to completion on the second attempt, which is the
+    /// core fix for #259.
+    #[tokio::test]
+    async fn retries_then_succeeds_on_transient_5xx() {
+        let (store_dir_keep, store_path) = tempdir_with_leaked_path();
+        let mut server = mockito::Server::new_async().await;
+        let fail = server.mock("GET", "/pkg.tgz").with_status(503).expect(1).create_async().await;
+        let ok = server
+            .mock("GET", "/pkg.tgz")
+            .with_status(200)
+            .with_body(FASTIFY_ERROR_TARBALL)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let url = format!("{}/pkg.tgz", server.url());
+        let client = ThrottledClient::default();
+        let pkg_integrity = integrity(FASTIFY_ERROR_INTEGRITY);
+
+        let (cas_paths, _idx) = fetch_and_extract_with_retry(
+            &client,
+            &url,
+            &pkg_integrity,
+            None,
+            store_path,
+            fast_retry_opts(),
+        )
+        .await
+        .expect("transient 503 should be followed by a successful retry");
+
+        // Sanity-check: extraction actually populated the cas-paths map.
+        assert!(cas_paths.contains_key("package.json"));
+        fail.assert_async().await;
+        ok.assert_async().await;
+        drop(store_dir_keep);
+    }
+
+    /// pnpm's tarball fetcher retries integrity mismatches by re-running
+    /// the full `addFilesFromTarball` closure on the next attempt. With
+    /// a body that never matches the integrity hash, the loop must
+    /// retry until the budget is exhausted and then surface a
+    /// `Checksum` error — not fail fast on the first mismatch.
+    #[tokio::test]
+    async fn retries_integrity_mismatch_until_exhausted() {
+        let (store_dir_keep, store_path) = tempdir_with_leaked_path();
+        let mut server = mockito::Server::new_async().await;
+        // 2 retries + 1 initial = 3 attempts; every one returns the same
+        // body, which the wrong integrity hash will reject.
+        let mock = server
+            .mock("GET", "/pkg.tgz")
+            .with_status(200)
+            .with_body(b"definitely not a tarball matching the digest below")
+            .expect(3)
+            .create_async()
+            .await;
+
+        let url = format!("{}/pkg.tgz", server.url());
+        let client = ThrottledClient::default();
+        // Real-format integrity, deliberately not matching the body above.
+        let pkg_integrity = integrity(
+            "sha512-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa==",
+        );
+
+        let err = fetch_and_extract_with_retry(
+            &client,
+            &url,
+            &pkg_integrity,
+            None,
+            store_path,
+            fast_retry_opts(),
+        )
+        .await
+        .expect_err("integrity mismatch should exhaust the retry budget");
+        assert!(matches!(err, TarballError::Checksum(_)), "expected Checksum error, got {err:?}",);
+        mock.assert_async().await;
+        drop(store_dir_keep);
+    }
+
+    /// 404 is in pnpm's no-retry set. `expect(1)` makes the test fail if
+    /// the retry loop fires a second request — that would mean we're
+    /// spinning on a permanently-missing tarball.
+    #[tokio::test]
+    async fn fails_fast_on_404() {
+        let (store_dir_keep, store_path) = tempdir_with_leaked_path();
+        let mut server = mockito::Server::new_async().await;
+        let mock =
+            server.mock("GET", "/missing.tgz").with_status(404).expect(1).create_async().await;
+
+        let url = format!("{}/missing.tgz", server.url());
+        let client = ThrottledClient::default();
+        let pkg_integrity = integrity(FASTIFY_ERROR_INTEGRITY);
+
+        let err = fetch_and_extract_with_retry(
+            &client,
+            &url,
+            &pkg_integrity,
+            None,
+            store_path,
+            fast_retry_opts(),
+        )
+        .await
+        .expect_err("404 must fail-fast without retry");
+        match err {
+            TarballError::HttpStatus(http) => assert_eq!(http.status, 404),
+            other => panic!("expected HttpStatus(404), got: {other:?}"),
+        }
+        mock.assert_async().await;
+        drop(store_dir_keep);
+    }
+
+    /// pnpm retries arbitrary 4xx codes that aren't 401/403/404 (any
+    /// FetchError throws to the outer catch, which only short-circuits
+    /// on the explicit no-retry set). 410 Gone is the canonical example
+    /// — semantically permanent but pnpm still hits it `retries+1` times.
+    #[tokio::test]
+    async fn retries_other_4xx_codes() {
+        let (store_dir_keep, store_path) = tempdir_with_leaked_path();
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/pkg.tgz")
+            .with_status(410)
+            .expect(3) // retries: 2 + initial attempt = 3 total
+            .create_async()
+            .await;
+
+        let url = format!("{}/pkg.tgz", server.url());
+        let client = ThrottledClient::default();
+        let pkg_integrity = integrity(FASTIFY_ERROR_INTEGRITY);
+
+        let err = fetch_and_extract_with_retry(
+            &client,
+            &url,
+            &pkg_integrity,
+            None,
+            store_path,
+            fast_retry_opts(),
+        )
+        .await
+        .expect_err("non-401/403/404 4xx should exhaust the retry budget");
+        match err {
+            TarballError::HttpStatus(http) => assert_eq!(http.status, 410),
+            other => panic!("expected HttpStatus(410), got: {other:?}"),
+        }
+        mock.assert_async().await;
+        drop(store_dir_keep);
+    }
+
+    /// Persistent 5xx must stop after `retries + 1` total tries. Pairs
+    /// with `retries_then_succeeds_on_transient_5xx` to bracket both
+    /// success and exhaustion paths.
+    #[tokio::test]
+    async fn retry_exhaustion_returns_last_error() {
+        let (store_dir_keep, store_path) = tempdir_with_leaked_path();
+        let mut server = mockito::Server::new_async().await;
+        let mock = server.mock("GET", "/pkg.tgz").with_status(500).expect(3).create_async().await;
+
+        let url = format!("{}/pkg.tgz", server.url());
+        let client = ThrottledClient::default();
+        let pkg_integrity = integrity(FASTIFY_ERROR_INTEGRITY);
+
+        let err = fetch_and_extract_with_retry(
+            &client,
+            &url,
+            &pkg_integrity,
+            None,
+            store_path,
+            fast_retry_opts(),
+        )
+        .await
+        .expect_err("permanent 500s should exhaust the retry budget");
+        match err {
+            TarballError::HttpStatus(http) => assert_eq!(http.status, 500),
+            other => panic!("expected HttpStatus(500), got: {other:?}"),
+        }
+        mock.assert_async().await;
+        drop(store_dir_keep);
+    }
+
+    /// `retries: 0` (the value the existing fall-through tests use)
+    /// must produce exactly one network attempt — no extra request,
+    /// no backoff sleep. Guards against a future refactor that
+    /// off-by-ones the loop and turns `retries: 0` into "1 retry".
+    #[tokio::test]
+    async fn zero_retries_makes_a_single_attempt() {
+        let (store_dir_keep, store_path) = tempdir_with_leaked_path();
+        let mut server = mockito::Server::new_async().await;
+        let mock = server.mock("GET", "/pkg.tgz").with_status(500).expect(1).create_async().await;
+
+        let url = format!("{}/pkg.tgz", server.url());
+        let client = ThrottledClient::default();
+        let pkg_integrity = integrity(FASTIFY_ERROR_INTEGRITY);
+        let opts = RetryOpts { retries: 0, ..fast_retry_opts() };
+
+        fetch_and_extract_with_retry(&client, &url, &pkg_integrity, None, store_path, opts)
+            .await
+            .expect_err("retries=0 must surface the first failure");
+        mock.assert_async().await;
+        drop(store_dir_keep);
     }
 }

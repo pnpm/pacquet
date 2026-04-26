@@ -97,6 +97,30 @@ pub fn default_modules_cache_max_age() -> u64 {
     10080
 }
 
+pub fn default_fetch_retries() -> u32 {
+    2
+}
+
+pub fn default_fetch_retry_factor() -> u32 {
+    10
+}
+
+pub fn default_fetch_retry_mintimeout() -> u64 {
+    10_000
+}
+
+pub fn default_fetch_retry_maxtimeout() -> u64 {
+    60_000
+}
+
+pub fn deserialize_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    u32::from_str(&s).map_err(de::Error::custom)
+}
+
 pub fn deserialize_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
 where
     D: Deserializer<'de>,

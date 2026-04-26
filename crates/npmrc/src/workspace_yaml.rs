@@ -46,6 +46,10 @@ pub struct WorkspaceSettings {
     pub strict_peer_dependencies: Option<bool>,
     pub resolve_peers_from_workspace_root: Option<bool>,
     pub verify_store_integrity: Option<bool>,
+    pub fetch_retries: Option<u32>,
+    pub fetch_retry_factor: Option<u32>,
+    pub fetch_retry_mintimeout: Option<u64>,
+    pub fetch_retry_maxtimeout: Option<u64>,
 }
 
 /// Basename of the file pnpm reads; exported for test use.
@@ -145,6 +149,18 @@ impl WorkspaceSettings {
         }
         if let Some(v) = self.verify_store_integrity {
             npmrc.verify_store_integrity = v;
+        }
+        if let Some(v) = self.fetch_retries {
+            npmrc.fetch_retries = v;
+        }
+        if let Some(v) = self.fetch_retry_factor {
+            npmrc.fetch_retry_factor = v;
+        }
+        if let Some(v) = self.fetch_retry_mintimeout {
+            npmrc.fetch_retry_mintimeout = v;
+        }
+        if let Some(v) = self.fetch_retry_maxtimeout {
+            npmrc.fetch_retry_maxtimeout = v;
         }
     }
 }
@@ -255,6 +271,35 @@ registry: https://reg.example
         // under test uses so the component separator matches on every
         // platform (Windows uses `\` between joined components).
         assert_eq!(npmrc.store_dir, StoreDir::from(base.join("../shared-store")));
+    }
+
+    /// pnpm reads `fetchRetries` / `fetchRetryFactor` /
+    /// `fetchRetryMintimeout` / `fetchRetryMaxtimeout` from
+    /// `pnpm-workspace.yaml` as camelCase keys (mirrors of the kebab-case
+    /// `.npmrc` form). Confirm both deserialization and `apply_to` push
+    /// the overrides onto the `Npmrc`, since pacquet has to honour them
+    /// for parity with pnpm and for the install-time retry plumbing in
+    /// crates/tarball.
+    #[test]
+    fn parses_fetch_retry_settings_from_yaml_and_applies() {
+        let yaml = r#"
+fetchRetries: 5
+fetchRetryFactor: 3
+fetchRetryMintimeout: 1000
+fetchRetryMaxtimeout: 4000
+"#;
+        let settings: WorkspaceSettings = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(settings.fetch_retries, Some(5));
+        assert_eq!(settings.fetch_retry_factor, Some(3));
+        assert_eq!(settings.fetch_retry_mintimeout, Some(1000));
+        assert_eq!(settings.fetch_retry_maxtimeout, Some(4000));
+
+        let mut npmrc = Npmrc::new();
+        settings.apply_to(&mut npmrc, Path::new("/irrelevant"));
+        assert_eq!(npmrc.fetch_retries, 5);
+        assert_eq!(npmrc.fetch_retry_factor, 3);
+        assert_eq!(npmrc.fetch_retry_mintimeout, 1000);
+        assert_eq!(npmrc.fetch_retry_maxtimeout, 4000);
     }
 
     /// `verifyStoreIntegrity` is a camelCase key that serde's rename
