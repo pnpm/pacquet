@@ -79,6 +79,25 @@ fn walk_reqwest_chain(error: &reqwest::Error) -> String {
 /// `attempt` is zero-indexed, so the first post-failure wait is
 /// `min_timeout`. `retries` is the number of *retries* — total
 /// attempts is `retries + 1`.
+///
+/// # Pathological configurations
+///
+/// We don't sanitize these here because pnpm doesn't either —
+/// the config plumbing is meant to be byte-equivalent to upstream.
+/// The total number of attempts is always bounded by `retries`, so
+/// even a degenerate `delay_for` only removes the backoff:
+///
+/// * `factor == 0` keeps the first wait at `min_timeout` (`0u32.pow(0)
+///   == 1`), but every subsequent wait is `0` — i.e. no backoff
+///   between retries. Same as pnpm.
+/// * `factor == 1` waits `min_timeout` between every attempt. Same as
+///   pnpm.
+/// * `max_timeout < min_timeout` makes every wait `max_timeout`. Same
+///   as pnpm.
+///
+/// If a caller wants stricter validation (warn / reject these
+/// configs), it belongs above the `Npmrc` boundary, alongside any
+/// other npmrc sanity checks pnpm grows over time.
 #[derive(Debug, Clone, Copy)]
 pub struct RetryOpts {
     pub retries: u32,
