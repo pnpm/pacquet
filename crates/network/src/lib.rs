@@ -10,7 +10,7 @@ use tokio::sync::{Semaphore, SemaphorePermit};
 /// alike, including tarball URLs that point at non-registry hosts.
 ///
 /// Identical to pnpm v11's
-/// [`network/fetch/src/fetchFromRegistry.ts`](https://github.com/pnpm/pnpm/blob/main/network/fetch/src/fetchFromRegistry.ts#L9):
+/// [`network/fetch/src/fetchFromRegistry.ts`](https://github.com/pnpm/pnpm/blob/1819226b51/network/fetch/src/fetchFromRegistry.ts#L9):
 /// the literal string `pnpm`. A default `reqwest::Client` sends *no*
 /// User-Agent at all, which some registry CDNs and corporate WAFs
 /// treat as a bot signature and either block at the edge or terminate
@@ -116,7 +116,7 @@ impl ThrottledClient {
     ///   the registry serves them just fine.
     ///
     /// `pool_idle_timeout(4s)` matches
-    /// [`agentkeepalive`'s](https://github.com/node-modules/agentkeepalive/blob/master/lib/agent.js#L39-L41)
+    /// [`agentkeepalive`'s](https://github.com/node-modules/agentkeepalive/blob/1e5e312f36/lib/agent.js#L39-L41)
     /// default `freeSocketTimeout` (the agent pnpm builds its
     /// connection pool on top of). Most CDN / load-balancer edges in
     /// front of `registry.npmjs.org` close idle sockets after 5–15s
@@ -184,9 +184,9 @@ impl ThrottledClient {
 /// Default number of concurrent in-flight network requests.
 ///
 /// Mirrors pnpm's `networkConcurrency` formula in
-/// [`installing/package-requester/src/packageRequester.ts`](https://github.com/pnpm/pnpm/blob/1819226b51743f73c3b186df31c4439b02e9b307/installing/package-requester/src/packageRequester.ts#L97)
+/// [`installing/package-requester/src/packageRequester.ts`](https://github.com/pnpm/pnpm/blob/1819226b51/installing/package-requester/src/packageRequester.ts#L97)
 /// and `calcMaxWorkers` in
-/// [`worker/src/index.ts`](https://github.com/pnpm/pnpm/blob/1819226b51743f73c3b186df31c4439b02e9b307/worker/src/index.ts#L63-L72):
+/// [`worker/src/index.ts`](https://github.com/pnpm/pnpm/blob/1819226b51/worker/src/index.ts#L63-L72):
 ///
 /// ```ts
 /// networkConcurrency = Math.min(64, Math.max(calcMaxWorkers() * 3, 16))
