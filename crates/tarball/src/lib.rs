@@ -745,9 +745,28 @@ async fn fetch_and_extract_once(
     // Body fully buffered; release the network permit before the
     // CPU-bound work so spawn_blocking doesn't hold one of the
     // limited fetch slots.
+    //
+    // The network permit was the only gate during fetch + body
+    // buffering — `default_network_concurrency()` bounds concurrent
+    // open sockets and concurrent in-progress fetches. The buffer
+    // lives in RAM across this drop and the next acquire, so a
+    // pathologically slow decompression stage could let buffered
+    // tarballs accumulate beyond the network bound. In practice
+    // flate2 decompresses faster than the network delivers, so
+    // buffered-but-not-yet-decompressing tarballs stay close to zero.
+    // Gating body buffering with `post_download_semaphore` (the
+    // smaller `num_cpus * 2` cap) instead would pin `network_concurrency`
+    // permits waiting for it and collapse fetch concurrency down to
+    // `post_download` — that's the regression `perf(tarball)` (a43ca32)
+    // fixed; don't reintroduce it.
     drop(client);
 
-    // Gate the CPU-heavy decompress + cafs-write pipeline.
+    // Gate the CPU-heavy decompress + cafs-write pipeline. The blocking
+    // pool is 512-wide by default, which is right for I/O wait but
+    // disastrous for CPU work that can only really run `num_cpus` at a
+    // time, so we cap concurrent `spawn_blocking` bodies. The permit is
+    // held across the `spawn_blocking.await` below and dropped at end
+    // of scope.
     let _post_download_permit = post_download_semaphore()
         .acquire()
         .await
