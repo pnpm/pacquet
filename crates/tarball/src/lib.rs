@@ -38,10 +38,47 @@ fn post_download_semaphore() -> &'static Semaphore {
     SEM.get_or_init(|| Semaphore::new(num_cpus::get().saturating_mul(2).max(4)))
 }
 
+/// Reqwest's own [`Display`] for a request-stage failure renders as
+/// `error sending request for url (URL): <inner>` only if it can find
+/// an inner source, and on some failure modes (e.g. the request was
+/// dropped before a connect was attempted) `inner` is `None` —
+/// leaving the user with the truly opaque `error sending request for
+/// url (URL)` and no clue about what actually failed.
+///
+/// `walk_reqwest_chain` walks `error.source()` itself and joins every
+/// stage's `Display` with `: ` so the rendered `NetworkError` always
+/// carries the leaf reason (e.g. `Connection refused (os error 61)`,
+/// `tls handshake eof`, `dns error: failed to lookup address`),
+/// regardless of which intermediate `reqwest` / `hyper` / `io::Error`
+/// happens to elide it.
+fn walk_reqwest_chain(error: &reqwest::Error) -> String {
+    use std::error::Error as _;
+    let mut out = error.to_string();
+    let mut cur: Option<&dyn std::error::Error> = error.source();
+    while let Some(src) = cur {
+        let next = src.source();
+        let s = src.to_string();
+        // Skip empty or duplicate frames — hyper occasionally repeats
+        // the same message across two layers, and reqwest sometimes
+        // already includes the inner string in its top-level Display.
+        if !s.is_empty() && !out.ends_with(&s) {
+            out.push_str(": ");
+            out.push_str(&s);
+        }
+        cur = next;
+    }
+    out
+}
+
 #[derive(Debug, Display, Error, Diagnostic)]
-#[display("Failed to fetch {url}: {error}")]
+#[display("Failed to fetch {url}: {}", walk_reqwest_chain(error))]
 pub struct NetworkError {
     pub url: String,
+    /// Marked `#[error(source)]` so miette can also walk the chain on
+    /// its own (some renderers prefer the structured form). The
+    /// flattened string in `Display` is for the default miette report
+    /// where the user just sees one line per wrapper.
+    #[error(source)]
     pub error: reqwest::Error,
 }
 
