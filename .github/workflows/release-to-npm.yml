@@ -120,19 +120,27 @@ jobs:
     name: Publish
     runs-on: ubuntu-latest
     permissions:
+      # Required for npm provenance attestations via OIDC.
       id-token: write
+      # Required for softprops/action-gh-release to create the release below.
       contents: write
-      discussions: write
     needs:
       - build
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Node.js
-        uses: actions/setup-node@v3
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
         with:
-          node-version: 18
-          registry-url: 'https://registry.npmjs.org'
+          # Match the version pinned in CI; bump together. Pacquet needs a
+          # pnpm that writes lockfile v9, so pin the latest 11.x RC until
+          # stable ships.
+          version: 11.0.0-rc.5
+          standalone: true
+
+      - name: Setup Node
+        run: pnpm runtime -g set node 22
+        timeout-minutes: 2
 
       - name: Download Artifacts
         uses: actions/download-artifact@v4
@@ -154,10 +162,15 @@ jobs:
           for package in npm/pacquet*; do cat $package/package.json ; echo ; done
 
       - name: Publish npm packages as latest
-        # NOTE: The trailing slash on $package/ changes it to publishing the directory
-        run: for package in npm/pacquet*; do npm publish $package/ --tag latest --access public --provenance; done
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # Auth is via npm's trusted publishing: `id-token: write` above grants
+        # this job an OIDC token that pnpm/npm exchange with the registry,
+        # so no NPM_TOKEN is needed. `--provenance` attaches the same OIDC
+        # token to a provenance attestation on each tarball.
+        # The trailing slash on $package/ changes it to publishing the directory.
+        run: |
+          for package in npm/pacquet*; do
+            pnpm publish "$package/" --tag latest --access public --provenance --no-git-checks
+          done
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
