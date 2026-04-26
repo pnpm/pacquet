@@ -715,36 +715,22 @@ impl<'a> DownloadTarballToStore<'a> {
         // lot of wasted alloc + copy work across the pipeline.
         let expected_size = response_head.content_length();
 
-        // Gate the memory-heavy + CPU-heavy part of the pipeline with
-        // `post_download_semaphore`:
-        //
-        // - The blocking pool is 512-wide by default, which is right
-        //   for I/O wait but disastrous for CPU work that can only
-        //   really run `num_cpus` at a time, so we cap concurrent
-        //   `spawn_blocking` bodies.
-        // - We also acquire the permit *before* we consume the body
-        //   rather than right before `spawn_blocking`. Buffering is
-        //   where the per-tarball memory spike lives (a full
-        //   decompressed package can be many MB), so holding the
-        //   permit across buffering bounds the number of fully-buffered
-        //   response bodies in RAM to the post-download cap. Without
-        //   this, a fast registry + `try_join_all` fan-out could pile
-        //   up hundreds of buffered tarballs waiting for a permit to
-        //   process (Copilot review on #269).
-        //
-        // The permit is held across both the body-stream drain and
-        // the `spawn_blocking.await` below, dropping at end of scope.
-        let _post_download_permit = post_download_semaphore()
-            .acquire()
-            .await
-            .expect("post-download semaphore shouldn't be closed this soon");
-
         // Stream the body into a single pre-sized `Vec<u8>` when
         // `Content-Length` is known. One allocation + one
         // `extend_from_slice` per chunk, no growth-by-doubling.
         // Falls back to empty capacity when CL is missing (chunked
         // transfer encoding), which still avoids reqwest/hyper's
         // intermediate-chunk-list + second-copy pass.
+        //
+        // The network permit is the only gate here. It bounds both
+        // concurrent open sockets and concurrent buffered tarballs
+        // to `default_network_concurrency()` — matching pnpm's
+        // pQueue, which holds its slot from `fetch` through body
+        // arrival as one task. Acquiring `post_download_semaphore`
+        // here too would let the smaller `num_cpus * 2` cap pin
+        // `network_concurrency` permits waiting for it, collapsing
+        // effective fetch concurrency to `post_download` and
+        // serializing the network pipeline behind decompression.
         //
         // We don't re-verify the received byte count against
         // `Content-Length` — hyper enforces CL framing itself on the
@@ -769,6 +755,18 @@ impl<'a> DownloadTarballToStore<'a> {
         // (CPU-bound, no socket needed) doesn't hold one of the
         // limited fetch slots.
         drop(client);
+
+        // Gate the CPU-heavy decompress + cafs-write pipeline.
+        //
+        // The blocking pool is 512-wide by default, which is right
+        // for I/O wait but disastrous for CPU work that can only
+        // really run `num_cpus` at a time, so we cap concurrent
+        // `spawn_blocking` bodies. The permit is held across the
+        // `spawn_blocking.await` below and dropped at end of scope.
+        let _post_download_permit = post_download_semaphore()
+            .acquire()
+            .await
+            .expect("post-download semaphore shouldn't be closed this soon");
 
         tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
 
