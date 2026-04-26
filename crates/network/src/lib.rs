@@ -82,16 +82,29 @@ impl ThrottledClient {
     ///   `Accept` per-request; tarball fetches send no `Accept` and
     ///   the registry serves them just fine.
     ///
-    /// Timeouts are unchanged: a default `reqwest::Client` has no
+    /// `pool_idle_timeout(4s)` matches
+    /// [`agentkeepalive`'s](https://github.com/node-modules/agentkeepalive/blob/master/lib/agent.js#L39-L41)
+    /// default `freeSocketTimeout` (the agent pnpm builds its
+    /// connection pool on top of). Most CDN / load-balancer edges in
+    /// front of `registry.npmjs.org` close idle sockets after 5–15s
+    /// without sending FIN that hyper notices, so a longer pool TTL
+    /// (the previous 30s) lets pacquet reuse a half-dead socket and
+    /// surface the next request as a generic "error sending request
+    /// for url" — same symptom the user hit on `pump-2.0.1.tgz` while
+    /// pnpm on the same network succeeded. 4s keeps the pool useful
+    /// for back-to-back downloads (pacquet runs hundreds of fetches
+    /// in seconds) but well below the typical edge keepalive.
+    ///
+    /// `timeout(5min)` is the per-request deadline, not the socket
+    /// inactivity timeout. A default `reqwest::Client` has no
     /// deadlines at all, which is how `integrated-benchmark` used to
     /// hang at "Benchmark 1: pacquet@HEAD" until the GHA step budget
-    /// (#263) when an upstream stalled. The 5-minute `timeout` is
-    /// deliberately generous — npm tarballs are usually under 5 MB
-    /// but can reach hundreds of MB on slow connections. The retry
-    /// loop in `crates/tarball` (#301) handles short, transient
-    /// failures; the 5-minute cap catches truly stuck sockets.
-    /// Making these values user-configurable (npmrc / env / CLI)
-    /// is follow-up.
+    /// (#263) when an upstream stalled. 5 min is deliberately
+    /// generous — npm tarballs are usually under 5 MB but can reach
+    /// hundreds of MB on slow connections. The retry loop in
+    /// `crates/tarball` (#301) handles short, transient failures;
+    /// the 5-minute cap catches truly stuck sockets. Making these
+    /// values user-configurable (npmrc / env / CLI) is follow-up.
     pub fn new_for_installs() -> Self {
         let mut default_headers = HeaderMap::with_capacity(1);
         default_headers.insert(USER_AGENT, HeaderValue::from_static(DEFAULT_USER_AGENT));
@@ -101,7 +114,7 @@ impl ThrottledClient {
             .default_headers(default_headers)
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(300))
-            .pool_idle_timeout(Duration::from_secs(30))
+            .pool_idle_timeout(Duration::from_secs(4))
             .build()
             .expect("build reqwest client with default timeouts");
         ThrottledClient::from_client(client)
