@@ -16,8 +16,8 @@ pacquet-store-dir = { workspace = true }
 home          = { workspace = true }
 pipe-trait    = { workspace = true }
 serde         = { workspace = true }
+serde-saphyr  = { workspace = true }
 serde_ini     = { workspace = true }
-serde_yaml    = { workspace = true }
 smart-default = { workspace = true }
 
 [dev-dependencies]

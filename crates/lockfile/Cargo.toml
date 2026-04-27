@@ -18,7 +18,8 @@ derive_more      = { workspace = true }
 node-semver      = { workspace = true }
 pipe-trait       = { workspace = true }
 serde            = { workspace = true }
-serde_yaml       = { workspace = true }
+serde-saphyr     = { workspace = true }
+serde_json       = { workspace = true }
 ssri             = { workspace = true }
 split-first-char = { workspace = true }
 
