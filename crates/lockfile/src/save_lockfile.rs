@@ -1,4 +1,4 @@
-use crate::Lockfile;
+use crate::{serialize_yaml, Lockfile};
 use derive_more::{Display, Error};
 use pacquet_diagnostics::miette::{self, Diagnostic};
 use std::{env, fs, io, path::Path};
@@ -13,7 +13,7 @@ pub enum SaveLockfileError {
 
     #[display("Failed to serialize lockfile to YAML: {_0}")]
     #[diagnostic(code(pacquet_lockfile::serialize_yaml))]
-    SerializeYaml(serde_yaml::Error),
+    SerializeYaml(serde_saphyr::ser::Error),
 
     #[display("Failed to write lockfile content: {_0}")]
     #[diagnostic(code(pacquet_lockfile::write_file))]
@@ -23,7 +23,7 @@ pub enum SaveLockfileError {
 impl Lockfile {
     /// Save lockfile to a specific path.
     pub fn save_to_path(&self, path: &Path) -> Result<(), SaveLockfileError> {
-        let content = serde_yaml::to_string(self).map_err(SaveLockfileError::SerializeYaml)?;
+        let content = serialize_yaml::to_string(self).map_err(SaveLockfileError::SerializeYaml)?;
         fs::write(path, content).map_err(SaveLockfileError::WriteFile)
     }
 
@@ -98,14 +98,14 @@ mod tests {
     #[test]
     fn round_trip_parse_save_parse_preserves_lockfile() {
         let original: Lockfile =
-            serde_yaml::from_str(LOCKFILE_YAML).expect("parse fixture lockfile");
+            serde_saphyr::from_str(LOCKFILE_YAML).expect("parse fixture lockfile");
 
         let tmp = tempdir().expect("create tempdir");
         let path = tmp.path().join("pnpm-lock.yaml");
         original.save_to_path(&path).expect("save lockfile");
 
         let saved_bytes = std::fs::read_to_string(&path).expect("read saved lockfile");
-        let reparsed: Lockfile = serde_yaml::from_str(&saved_bytes).expect("reparse lockfile");
+        let reparsed: Lockfile = serde_saphyr::from_str(&saved_bytes).expect("reparse lockfile");
 
         assert_eq!(original, reparsed);
     }
@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn save_fails_with_wrapped_io_error_when_path_is_invalid() {
         let empty_lockfile: Lockfile =
-            serde_yaml::from_str("lockfileVersion: '9.0'\n").expect("parse minimal lockfile");
+            serde_saphyr::from_str("lockfileVersion: '9.0'\n").expect("parse minimal lockfile");
 
         // Attempt to write under a non-existent directory; fs::write returns NotFound.
         let bad_path = std::path::Path::new("/nonexistent-pacquet-dir/pnpm-lock.yaml");
