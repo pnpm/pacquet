@@ -6,6 +6,7 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
+use pacquet_package_manifest::PackageManifest;
 use pacquet_registry::{Package, PackageTag, PackageVersion, RegistryError};
 use pacquet_store_dir::{SharedReadonlyStoreIndex, StoreIndexWriter};
 use pacquet_tarball::{DownloadTarballToStore, MemCache, TarballError};
@@ -16,8 +17,14 @@ use std::{path::Path, str::FromStr, sync::Arc};
 /// * Extracts the tarball to global store directory (~/Library/../pacquet)
 /// * Links global store directory to virtual dir (node_modules/.pacquet/..)
 ///
-/// `symlink_path` will be appended by the name of the package. Therefore,
-/// it should be resolved into the node_modules folder of a subdependency such as
+/// `name` is the manifest dependency key — the directory name the
+/// package will be exposed as inside `node_modules`. For an npm-alias
+/// entry (`"foo": "npm:bar@^1.0.0"`), `name` is the local alias (`foo`)
+/// and the actual registry package name (`bar`) is parsed out of
+/// `version_range` before the registry lookup.
+///
+/// `symlink_path` will be appended by `name`. Therefore, it should be
+/// resolved into the node_modules folder of a subdependency such as
 /// `node_modules/.pacquet/fastify@1.0.0/node_modules`.
 #[must_use]
 pub struct InstallPackageFromRegistry<'a> {
@@ -48,9 +55,15 @@ impl<'a> InstallPackageFromRegistry<'a> {
     {
         let &InstallPackageFromRegistry { http_client, config, name, version_range, .. } = &self;
 
+        // Strip any `npm:<name>@<range>` alias prefix before talking to
+        // the registry. `name` (the manifest key) stays as the directory
+        // name inside `node_modules`.
+        let (registry_name, version_range) =
+            PackageManifest::resolve_registry_dependency(name, version_range);
+
         Ok(if let Ok(tag) = version_range.parse::<Tag>() {
             let package_version = PackageVersion::fetch_from_registry(
-                name,
+                registry_name,
                 tag.into(),
                 http_client,
                 &config.registry,
@@ -60,9 +73,10 @@ impl<'a> InstallPackageFromRegistry<'a> {
             self.install_package_version(&package_version).await?;
             package_version
         } else {
-            let package = Package::fetch_from_registry(name, http_client, &config.registry)
-                .await
-                .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
+            let package =
+                Package::fetch_from_registry(registry_name, http_client, &config.registry)
+                    .await
+                    .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
             let package_version = package.pinned_version(version_range).unwrap(); // TODO: propagate error for when no version satisfies range
             self.install_package_version(package_version).await?;
             package_version.clone()
@@ -80,6 +94,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
             store_index,
             store_index_writer,
             node_modules_dir,
+            name,
             ..
         } = self;
 
@@ -108,13 +123,18 @@ impl<'a> InstallPackageFromRegistry<'a> {
         .await
         .map_err(InstallPackageFromRegistryError::DownloadTarballToStore)?;
 
+        // The virtual store always uses the registry-returned name
+        // (`package_version.name`), so npm-alias entries share a single
+        // virtual store directory with their non-aliased counterparts.
+        // The exposed symlink under `node_modules/` uses the manifest
+        // key (`name`) so both forms can coexist in the same parent.
         let save_path = config
             .virtual_store_dir
             .join(store_folder_name)
             .join("node_modules")
             .join(&package_version.name);
 
-        let symlink_path = node_modules_dir.join(&package_version.name);
+        let symlink_path = node_modules_dir.join(name);
 
         tracing::info!(target: "pacquet::import", ?save_path, ?symlink_path, "Import package");
 
