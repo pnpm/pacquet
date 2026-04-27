@@ -62,7 +62,7 @@ jobs:
           git branch
 
       - name: Cache verdaccio
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           key: integrated-benchmark-verdaccio
           path: |
@@ -71,7 +71,7 @@ jobs:
         continue-on-error: true
 
       - name: Cache Rust builds
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           key: integrated-benchmark-builds-${{ matrix.os }}
           path: |
@@ -99,7 +99,7 @@ jobs:
           standalone: true
 
       - name: Cache pnpm
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           key: integrated-benchmark-pnpm-v11
           path: |
@@ -213,7 +213,7 @@ jobs:
       - name: Find Comment
         # Check if the event is not triggered by a fork
         if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: peter-evans/find-comment@v2
+        uses: peter-evans/find-comment@v4
         id: fc
         with:
           issue-number: ${{ github.event.pull_request.number }}

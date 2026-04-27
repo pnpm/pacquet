@@ -143,7 +143,7 @@ jobs:
         timeout-minutes: 2
 
       - name: Download Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: binaries-*
           merge-multiple: true
@@ -174,7 +174,7 @@ jobs:
           done
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           name: pacquet v${{ needs.build.outputs.version }}
           draft: true

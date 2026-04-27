@@ -166,8 +166,8 @@ impl WorkspaceSettings {
 }
 
 fn resolve(base: &Path, value: &str) -> PathBuf {
-    let candidate = PathBuf::from(value);
-    if candidate.is_absolute() { candidate } else { base.join(candidate) }
+    let candidate = Path::new(value);
+    if candidate.is_absolute() { candidate.to_path_buf() } else { base.join(candidate) }
 }
 
 fn find_workspace_manifest(start: &Path) -> Option<PathBuf> {
