@@ -1848,6 +1848,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pacquet-modules-yaml"
+version = "0.0.1"
+dependencies = [
+ "pacquet-testing-utils",
+ "pretty_assertions",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+]
+
+[[package]]
 name = "pacquet-network"
 version = "0.0.1"
 dependencies = [
