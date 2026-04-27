@@ -24,7 +24,7 @@ pub fn workspace_root() -> &'static Path {
             .pipe(String::from_utf8)
             .expect("convert stdout to UTF-8")
             .trim_end()
-            .pipe(PathBuf::from)
+            .pipe(Path::new)
             .parent()
             .expect("parent of root manifest")
             .to_path_buf()
