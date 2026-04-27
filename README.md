@@ -20,3 +20,7 @@ pacquet replaces fetching and linking only. pnpm continues to create the lockfil
 pacquet also takes over dependency resolution.
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for development setup, debugging, testing, and benchmarking.
+
+## Benchmark
+
+![](https://pnpm.io/img/benchmarks/alotta-files-pnpm.svg)
