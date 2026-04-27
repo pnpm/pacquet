@@ -2,9 +2,8 @@ use crate::{FileHash, StoreDir};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_fs::{
-    ensure_file, ensure_parent_dir,
-    file_mode::{is_executable, EXEC_MODE},
-    EnsureFileError,
+    EnsureFileError, ensure_file, ensure_parent_dir,
+    file_mode::{EXEC_MODE, is_executable},
 };
 use sha2::{Digest, Sha512};
 use std::path::PathBuf;
@@ -19,7 +18,7 @@ impl StoreDir {
 
     /// Path to a content-addressed file given its pre-computed hex digest
     /// (from the SQLite store index) and its POSIX mode. Matches pnpm's
-    /// [`getFilePathByModeInCafs`](https://github.com/pnpm/pnpm/blob/main/store/cafs/src/getFilePathInCafs.ts)
+    /// [`getFilePathByModeInCafs`](https://github.com/pnpm/pnpm/blob/1819226b51/store/cafs/src/getFilePathInCafs.ts)
     /// so index entries written by either tool resolve to the same path.
     ///
     /// Returns `None` when `hex` is too short or not ASCII-hex.

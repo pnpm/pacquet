@@ -1,6 +1,6 @@
 use dashmap::DashSet;
 use serde::{Deserialize, Serialize};
-use sha2::{digest, Sha512};
+use sha2::{Sha512, digest};
 use std::path::{self, PathBuf};
 
 /// Content hash of a file.
@@ -118,7 +118,7 @@ impl StoreDir {
     ///
     /// Gated by an `is_dir()` check on `files/` so we only run when the
     /// store is truly fresh — spiritually matches pnpm's
-    /// [`createPackageStore`](https://github.com/pnpm/pnpm/blob/main/store/package-store/src/storeController/index.ts)
+    /// [`createPackageStore`](https://github.com/pnpm/pnpm/blob/1819226b51/store/controller/src/storeController/index.ts)
     /// guard (`if !fs.existsSync(path.join(storeDir, 'files')) initStoreDir(...)`),
     /// but tightened from `exists()` to `is_dir()` so a non-directory
     /// entry at `files/` doesn't let `init` silently noop past store
@@ -201,23 +201,23 @@ mod tests {
     use super::*;
     use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
+    use std::path::Path;
 
     #[test]
     fn file_path_by_head_tail() {
         let received = "/home/user/.local/share/pnpm/store"
             .pipe(StoreDir::new)
             .file_path_by_head_tail("3e", "f722d37b016c63ac0126cfdcec");
-        let expected = PathBuf::from(
-            "/home/user/.local/share/pnpm/store/v11/files/3e/f722d37b016c63ac0126cfdcec",
-        );
-        assert_eq!(&received, &expected);
+        let expected =
+            Path::new("/home/user/.local/share/pnpm/store/v11/files/3e/f722d37b016c63ac0126cfdcec");
+        assert_eq!(received, expected);
     }
 
     #[test]
     fn tmp() {
         let received = StoreDir::new("/home/user/.local/share/pnpm/store").tmp();
-        let expected = PathBuf::from("/home/user/.local/share/pnpm/store/v11/tmp");
-        assert_eq!(&received, &expected);
+        let expected = Path::new("/home/user/.local/share/pnpm/store/v11/tmp");
+        assert_eq!(received, expected);
     }
 
     /// `init` on a fresh store should materialize `v11/files/00..ff`

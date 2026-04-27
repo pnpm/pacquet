@@ -1,5 +1,5 @@
 //! Port of pnpm v11's
-//! [`store/cafs/src/checkPkgFilesIntegrity.ts`](https://github.com/pnpm/pnpm/blob/main/store/cafs/src/checkPkgFilesIntegrity.ts).
+//! [`store/cafs/src/checkPkgFilesIntegrity.ts`](https://github.com/pnpm/pnpm/blob/1819226b51/store/cafs/src/checkPkgFilesIntegrity.ts).
 //!
 //! The store index's `package_index` row lists the CAFS paths a package
 //! expanded into. Before reusing the row the caller checks those files
@@ -44,7 +44,7 @@ pub struct VerifyResult {
 /// Fast path used when `verify-store-integrity` is `false`.
 ///
 /// Port of pnpm's
-/// [`buildFileMapsFromIndex`](https://github.com/pnpm/pnpm/blob/main/store/cafs/src/checkPkgFilesIntegrity.ts).
+/// [`buildFileMapsFromIndex`](https://github.com/pnpm/pnpm/blob/1819226b51/store/cafs/src/checkPkgFilesIntegrity.ts).
 /// No stat syscalls — the caller trusts the index, and any missing /
 /// corrupt CAFS file surfaces lazily at import time (pnpm's `linkOrCopy`
 /// equivalent).

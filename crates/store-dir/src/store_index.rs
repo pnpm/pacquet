@@ -7,8 +7,8 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
@@ -21,7 +21,7 @@ use std::{
 /// Each row keys a package by its tarball integrity plus a package identifier
 /// and stores a msgpack-encoded [`PackageFilesIndex`]. The schema and PRAGMAs
 /// below mirror pnpm's implementation in
-/// [`store/index/src/index.ts`](https://github.com/pnpm/pnpm/blob/main/store/index/src/index.ts)
+/// [`store/index/src/index.ts`](https://github.com/pnpm/pnpm/blob/1819226b51/store/index/src/index.ts)
 /// so that the two tools can read each other's entries.
 pub struct StoreIndex {
     conn: Connection,
@@ -66,6 +66,16 @@ pub struct StoreIndexWriter {
 /// `setRawMany` has no explicit cap (it drains whatever `nextTick`
 /// scheduled) but in practice its batches stay in the low hundreds.
 const MAX_BATCH_SIZE: usize = 256;
+
+/// Per-query placeholder cap for [`StoreIndex::get_many`]. SQLite's
+/// `SQLITE_MAX_VARIABLE_NUMBER` defaulted to 999 before 3.32.0 and is
+/// 32766 in newer builds (rusqlite ships a recent SQLite, so the
+/// effective cap is well above any realistic lockfile size). Capping
+/// at 999 here keeps us safe against hand-rolled custom builds with
+/// the legacy default — no realistic install hits this boundary, but
+/// the chunking adds maybe a microsecond of overhead and removes the
+/// need to think about the cap on the read path.
+const GET_MANY_CHUNK: usize = 999;
 
 impl StoreIndexWriter {
     /// Spawn the batched writer task. Returns the handle producers push
@@ -133,14 +143,14 @@ impl StoreIndexWriter {
     /// snapshot install that's a thousand identical warnings drowning
     /// out real diagnostics.
     pub fn queue(&self, key: String, value: PackageFilesIndex) {
-        if let Err(error) = self.tx.send((key, value)) {
-            if self.warn_on_send_failure.swap(false, Ordering::Relaxed) {
-                tracing::warn!(
-                    target: "pacquet::store_index",
-                    ?error,
-                    "store-index writer channel closed; dropping queued row (further failures silenced)",
-                );
-            }
+        if let Err(error) = self.tx.send((key, value))
+            && self.warn_on_send_failure.swap(false, Ordering::Relaxed)
+        {
+            tracing::warn!(
+                target: "pacquet::store_index",
+                ?error,
+                "store-index writer channel closed; dropping queued row (further failures silenced)",
+            );
         }
     }
 }
@@ -329,6 +339,65 @@ impl StoreIndex {
         decode_index_value(&bytes).map(Some)
     }
 
+    /// Look up many keys in one trip across the SQLite mutex.
+    ///
+    /// Returns a `key → PackageFilesIndex` map for every row that exists
+    /// and decodes cleanly. Missing keys are simply absent from the map;
+    /// rows whose msgpack payload fails to decode are logged at `debug!`
+    /// and dropped, matching `load_cached_cas_paths`'s `.ok()?` stance on
+    /// the per-key path — a malformed row is treated as a cache miss so
+    /// the install falls through to a fresh download.
+    ///
+    /// SQLite walks the `package_index` PK B-tree once per chunk, so the
+    /// per-key query overhead (≈40 µs even for misses) collapses into
+    /// one round-trip. With 1352 cache keys against an empty store this
+    /// drops the prefetch cost from ~50 ms of N selects to a single
+    /// query — see #294 for the cold-cache regression this fixes.
+    pub fn get_many(
+        &self,
+        keys: &[String],
+    ) -> Result<HashMap<String, PackageFilesIndex>, StoreIndexError> {
+        let mut out = HashMap::with_capacity(keys.len());
+        if keys.is_empty() {
+            return Ok(out);
+        }
+        for chunk in keys.chunks(GET_MANY_CHUNK) {
+            // Build a `?,?,…?` list whose length matches `chunk`. The
+            // only thing interpolated into `sql` is this fixed-shape
+            // placeholder string — no caller-supplied bytes ever reach
+            // the SQL text. The keys themselves flow through
+            // `rusqlite::params_from_iter` below, which routes them via
+            // SQLite's prepared-statement parameter binding (the same
+            // path every other site in this file uses). Keep the two
+            // lines in lock-step: if the placeholder count or the params
+            // iterator ever stop matching `chunk.len()`, that's the bug
+            // to look at — not SQL injection.
+            let placeholders = std::iter::repeat_n("?", chunk.len()).collect::<Vec<_>>().join(",");
+            let sql = format!("SELECT key, data FROM package_index WHERE key IN ({placeholders})");
+            let mut stmt =
+                self.conn.prepare(&sql).map_err(|source| StoreIndexError::Read { source })?;
+            let params = rusqlite::params_from_iter(chunk.iter().map(String::as_str));
+            let rows = stmt
+                .query_map(params, |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)))
+                .map_err(|source| StoreIndexError::Read { source })?;
+            for row in rows {
+                let (key, bytes) = row.map_err(|source| StoreIndexError::Read { source })?;
+                match decode_index_value(&bytes) {
+                    Ok(entry) => {
+                        out.insert(key, entry);
+                    }
+                    Err(error) => tracing::debug!(
+                        target: "pacquet::store_index",
+                        ?key,
+                        ?error,
+                        "skipping undecodable package_index row in get_many",
+                    ),
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Insert or replace a package-files index.
     ///
     /// Uses the [`encode_package_files_index`][crate::msgpackr_records::encode_package_files_index]
@@ -488,7 +557,7 @@ pub struct PackageFilesIndex {
 }
 
 /// Value of [`PackageFilesIndex::files`]. Mirrors pnpm v11's
-/// [`PackageFileInfo`](https://github.com/pnpm/pnpm/blob/main/store/cafs-types/src/index.ts)
+/// [`PackageFileInfo`](https://github.com/pnpm/pnpm/blob/1819226b51/store/cafs-types/src/index.ts)
 /// field-for-field so that the msgpack payload interops.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -671,5 +740,125 @@ mod tests {
         assert_eq!(info.mode, 0o644);
         assert_eq!(info.size, 17);
         assert_eq!(info.checked_at, Some(1_700_000_000_000));
+    }
+
+    #[test]
+    fn get_many_returns_empty_for_empty_input() {
+        let dir = tempdir().unwrap();
+        let idx = StoreIndex::open(dir.path()).unwrap();
+        idx.set(&store_index_key("sha512-a", "x@1.0.0"), &sample_index()).unwrap();
+
+        let out = idx.get_many(&[]).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn get_many_all_miss_returns_empty_map() {
+        let dir = tempdir().unwrap();
+        let idx = StoreIndex::open(dir.path()).unwrap();
+        let keys = vec![
+            store_index_key("sha512-a", "missing-a@1.0.0"),
+            store_index_key("sha512-b", "missing-b@1.0.0"),
+            store_index_key("sha512-c", "missing-c@1.0.0"),
+        ];
+
+        let out = idx.get_many(&keys).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn get_many_all_hit_returns_every_row() {
+        let dir = tempdir().unwrap();
+        let idx = StoreIndex::open(dir.path()).unwrap();
+        let payload = sample_index();
+        let keys: Vec<String> =
+            (0..5).map(|i| store_index_key("sha512-x", &format!("pkg{i}@1.0.0"))).collect();
+        for key in &keys {
+            idx.set(key, &payload).unwrap();
+        }
+
+        let out = idx.get_many(&keys).unwrap();
+        assert_eq!(out.len(), keys.len());
+        for key in &keys {
+            assert_eq!(out.get(key), Some(&payload));
+        }
+    }
+
+    #[test]
+    fn get_many_mixed_hit_and_miss_returns_only_hits() {
+        let dir = tempdir().unwrap();
+        let idx = StoreIndex::open(dir.path()).unwrap();
+        let payload = sample_index();
+        let hit_keys: Vec<String> =
+            (0..3).map(|i| store_index_key("sha512-h", &format!("hit{i}@1.0.0"))).collect();
+        let miss_keys: Vec<String> =
+            (0..3).map(|i| store_index_key("sha512-m", &format!("miss{i}@1.0.0"))).collect();
+        for key in &hit_keys {
+            idx.set(key, &payload).unwrap();
+        }
+
+        let mut all_keys = hit_keys.clone();
+        all_keys.extend(miss_keys.clone());
+        let out = idx.get_many(&all_keys).unwrap();
+
+        assert_eq!(out.len(), hit_keys.len());
+        for key in &hit_keys {
+            assert!(out.contains_key(key), "hit key missing from result: {key}");
+        }
+        for key in &miss_keys {
+            assert!(!out.contains_key(key), "miss key present in result: {key}");
+        }
+    }
+
+    /// A row whose bytes don't decode (corruption, foreign writer) must
+    /// be skipped without failing the batch. `load_cached_cas_paths`
+    /// already does `.ok()?` on the per-key path, treating decode
+    /// errors as cache misses; the batched read keeps that semantic,
+    /// though `get_many` emits a `debug!` log for the dropped row.
+    #[test]
+    fn get_many_skips_undecodable_rows() {
+        let dir = tempdir().unwrap();
+        let idx = StoreIndex::open(dir.path()).unwrap();
+        let payload = sample_index();
+        let good_key = store_index_key("sha512-good", "good@1.0.0");
+        let bad_key = store_index_key("sha512-bad", "bad@1.0.0");
+        idx.set(&good_key, &payload).unwrap();
+        idx.conn
+            .execute(
+                "INSERT INTO package_index (key, data) VALUES (?1, ?2)",
+                // Bytes that aren't valid msgpack — the decoder will reject
+                // these and `get_many` should drop them rather than fail
+                // the whole batch.
+                rusqlite::params![&bad_key, &b"not msgpack"[..]],
+            )
+            .unwrap();
+
+        let out = idx.get_many(&[good_key.clone(), bad_key.clone()]).unwrap();
+
+        assert_eq!(out.len(), 1);
+        assert!(out.contains_key(&good_key));
+        assert!(!out.contains_key(&bad_key));
+    }
+
+    /// Exercise the chunking path with more keys than `GET_MANY_CHUNK`.
+    /// SQLite's `INSERT OR REPLACE` is fast enough that seeding a few
+    /// thousand rows in-process stays cheap.
+    #[test]
+    fn get_many_handles_more_keys_than_chunk_size() {
+        let dir = tempdir().unwrap();
+        let mut idx = StoreIndex::open(dir.path()).unwrap();
+        let payload = sample_index();
+        let total = GET_MANY_CHUNK + 100;
+        let keys: Vec<String> =
+            (0..total).map(|i| store_index_key("sha512-c", &format!("chunked{i}@1.0.0"))).collect();
+        let entries = keys.iter().map(|k| (k.clone(), sample_index()));
+        idx.set_many(entries).unwrap();
+
+        let out = idx.get_many(&keys).unwrap();
+
+        assert_eq!(out.len(), total);
+        for key in &keys {
+            assert_eq!(out.get(key), Some(&payload));
+        }
     }
 }

@@ -1,5 +1,6 @@
 use pacquet_store_dir::StoreDir;
-use serde::{de, Deserialize, Deserializer};
+use pipe_trait::Pipe;
+use serde::{Deserialize, Deserializer, de};
 use std::{env, path::PathBuf, str::FromStr};
 
 #[cfg(windows)]
@@ -22,12 +23,11 @@ pub fn default_public_hoist_pattern() -> Vec<String> {
 // Get the drive letter from a path on Windows. If it's not a Windows path, return None.
 #[cfg(windows)]
 fn get_drive_letter(current_dir: &Path) -> Option<char> {
-    if let Some(Component::Prefix(prefix_component)) = current_dir.components().next() {
-        if let std::path::Prefix::Disk(disk_byte) | std::path::Prefix::VerbatimDisk(disk_byte) =
+    if let Some(Component::Prefix(prefix_component)) = current_dir.components().next()
+        && let std::path::Prefix::Disk(disk_byte) | std::path::Prefix::VerbatimDisk(disk_byte) =
             prefix_component.kind()
-        {
-            return Some(disk_byte as char);
-        }
+    {
+        return Some(disk_byte as char);
     }
     None
 }
@@ -97,6 +97,30 @@ pub fn default_modules_cache_max_age() -> u64 {
     10080
 }
 
+pub fn default_fetch_retries() -> u32 {
+    2
+}
+
+pub fn default_fetch_retry_factor() -> u32 {
+    10
+}
+
+pub fn default_fetch_retry_mintimeout() -> u64 {
+    10_000
+}
+
+pub fn default_fetch_retry_maxtimeout() -> u64 {
+    60_000
+}
+
+pub fn deserialize_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    u32::from_str(&s).map_err(de::Error::custom)
+}
+
 pub fn deserialize_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
 where
     D: Deserializer<'de>,
@@ -117,8 +141,7 @@ pub fn deserialize_pathbuf<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let s = String::deserialize(deserializer)?;
-    let path = PathBuf::from_str(&s).map_err(de::Error::custom)?;
+    let path = deserializer.pipe(String::deserialize)?.pipe(PathBuf::from);
 
     if path.is_absolute() {
         return Ok(path);
@@ -162,7 +185,11 @@ mod tests {
     #[test]
     fn test_default_store_dir_with_pnpm_home_env() {
         let _g = EnvGuard::snapshot(["PNPM_HOME"]);
-        env::set_var("PNPM_HOME", "/tmp/pnpm-home"); // TODO: change this to dependency injection
+        // SAFETY: EnvGuard above serializes the test against other env-mutating
+        // tests in this process; no other thread reads these vars concurrently.
+        unsafe {
+            env::set_var("PNPM_HOME", "/tmp/pnpm-home"); // TODO: change this to dependency injection
+        }
         let store_dir = default_store_dir();
         assert_eq!(display_store_dir(&store_dir), "/tmp/pnpm-home/store");
     }
@@ -178,8 +205,12 @@ mod tests {
         // see the TODO — but this is enough for the failure mode this
         // PR is fixing.
         let _g = EnvGuard::snapshot(["PNPM_HOME", "XDG_DATA_HOME"]);
-        env::remove_var("PNPM_HOME");
-        env::set_var("XDG_DATA_HOME", "/tmp/xdg_data_home");
+        // SAFETY: EnvGuard above serializes the test against other env-mutating
+        // tests in this process; no other thread reads these vars concurrently.
+        unsafe {
+            env::remove_var("PNPM_HOME");
+            env::set_var("XDG_DATA_HOME", "/tmp/xdg_data_home");
+        }
         let store_dir = default_store_dir();
         assert_eq!(display_store_dir(&store_dir), "/tmp/xdg_data_home/pnpm/store");
     }

@@ -31,7 +31,7 @@ use std::str::FromStr;
 /// package name appears before the version separator (either the first `@`
 /// occurs before any `(` and `:`, or the reference begins with `@`).
 ///
-/// Reference: <https://github.com/pnpm/pnpm/blob/main/deps/path/src/index.ts>
+/// Reference: <https://github.com/pnpm/pnpm/blob/1819226b51/deps/path/src/index.ts>
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "&'de str", into = "String")]
 pub enum SnapshotDepRef {
@@ -210,7 +210,7 @@ mod tests {
             ("string-width@4.2.3", "string-width@4.2.3"),
             ("\"17.0.2(react@17.0.2)\"", "17.0.2(react@17.0.2)"),
         ] {
-            let dep: SnapshotDepRef = serde_yaml::from_str(yaml).unwrap();
+            let dep: SnapshotDepRef = serde_saphyr::from_str(yaml).unwrap();
             assert_eq!(dep.to_string(), expected);
         }
     }

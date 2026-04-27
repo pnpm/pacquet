@@ -32,8 +32,25 @@ Before writing code for a feature, bug fix, or behavior change:
 If the upstream behavior is unclear or looks wrong, stop and ask the user
 rather than guessing.
 
-When citing upstream code in a PR description or commit message, link to a
-specific commit on `main` (not a branch tip) so the reference stays stable.
+When citing upstream code anywhere — code comments, doc comments, Markdown
+docs, PR descriptions, or commit messages — link to a specific commit SHA, not
+a branch name. Branch links such as `github.com/<owner>/<repo>/blob/main/...`
+or `.../tree/master/...` are *impermanent*: their target drifts as the branch
+moves and may eventually 404 if the file is renamed or deleted. Permanent
+links pin the commit (`github.com/<owner>/<repo>/blob/<sha>/...`) so the
+reference stays meaningful long after upstream changes. Use the **first 10
+hex characters** of the SHA — full 40-character SHAs make URLs unwieldy on
+narrow displays and in commit logs, and 10 characters is more than enough to
+disambiguate a commit in any real-world repository. Resolve the SHA with
+`git ls-remote https://github.com/<owner>/<repo>.git refs/heads/<branch>`
+(then take the first 10 characters) or by clicking "Copy permalink" (`y`) on
+GitHub and trimming the SHA segment. This rule applies to every GitHub
+repository, not only `pnpm/pnpm`.
+
+## Follow the project guides
+
+1. Follow the contributing guide in [`CONTRIBUTING.md`](./CONTRIBUTING.md). It covers commit message format, writing style, setup, and the automated checks to run before committing.
+2. Follow the code style guide in [`CODE_STYLE_GUIDE.md`](./CODE_STYLE_GUIDE.md). It covers code-level conventions not enforced by tooling: imports, modules, naming, ownership and borrowing, parameter type selection, trait bounds, pattern matching, `pipe-trait`, error handling, test layout, logging during tests, and cloning of `Arc` and `Rc`.
 
 ## Repo layout
 
@@ -43,8 +60,13 @@ specific commit on `main` (not a branch tip) so the reference stays stable.
     `diagnostics`, `testing-utils`.
 - `tasks/` — developer tooling: `integrated-benchmark`, `micro-benchmark`,
   `registry-mock`.
-- `CODE_STYLE_GUIDE.md` — Rust style conventions beyond what clippy enforces.
-  Read it before submitting code.
+- `CONTRIBUTING.md` — commit-message format, writing style, setup, and the
+  automated checks to run before submitting. Read it before submitting code.
+- `CODE_STYLE_GUIDE.md` — manual code-style conventions beyond what `cargo
+  fmt`, `taplo`, and clippy enforce: imports, modules, naming, ownership
+  and borrowing, trait bounds, pattern matching, `pipe-trait`, error
+  handling, test layout, and `Arc`/`Rc` cloning. Read it before submitting
+  code.
 - `justfile` — canonical commands (see below).
 
 ## Commands
@@ -62,7 +84,7 @@ by crate or name — see below).
 - `just cli -- <args>` — run the pacquet binary.
 - `just registry-mock <args>` — manage the mock registry used by tests.
 - `just integrated-benchmark <args>` — compare revisions or compare against
-  pnpm itself (see `README.md`).
+  pnpm itself (see `CONTRIBUTING.md`).
 
 Warnings are errors (`--deny warnings` in lint). Do not silence them with
 `#[allow(...)]` unless there is a specific, justified reason.

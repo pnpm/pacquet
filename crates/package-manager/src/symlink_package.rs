@@ -51,7 +51,7 @@ pub fn symlink_package(
                     symlink_target: symlink_target.to_path_buf(),
                     symlink_path: symlink_path.to_path_buf(),
                     error,
-                })
+                });
             }
         }
     }

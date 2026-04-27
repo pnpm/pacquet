@@ -7,7 +7,7 @@
 //!
 //! pnpm packs every `PackageFilesIndex` with `new Packr({ useRecords: true,
 //! moreTypes: true })` (see
-//! [`store/index/src/index.ts`](https://github.com/pnpm/pnpm/blob/main/store/index/src/index.ts)
+//! [`store/index/src/index.ts`](https://github.com/pnpm/pnpm/blob/1819226b51/store/index/src/index.ts)
 //! line 12). `useRecords` replaces repeated string keys in same-shape
 //! structs with a compact slot reference — roughly, Protobuf field numbers
 //! inline. Plain `rmp_serde` output round-trips through msgpackr badly
@@ -77,6 +77,7 @@
 use crate::{CafsFileInfo, PackageFilesIndex, SideEffectsDiff};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
+use smart_default::SmartDefault;
 use std::{collections::HashMap, rc::Rc};
 
 /// Extension type code msgpackr assigns to record-definition markers.
@@ -632,7 +633,7 @@ fn write_str(w: &mut Vec<u8>, s: &str) {
 /// { added: Some, deleted: None }` decodes to `{ added: Map }`, not
 /// `{ added: Map, deleted: null }`.
 pub fn encode_package_files_index(index: &PackageFilesIndex) -> Result<Vec<u8>, EncodeError> {
-    let mut state = EncodeState::new();
+    let mut state = EncodeState::default();
     let mut out = Vec::with_capacity(256);
     encode_pkg_files_index_value(&mut out, &mut state, index)?;
     Ok(out)
@@ -687,6 +688,7 @@ const FIRST_INNER_SLOT: u8 = SLOT_LO + 1; // 0x41
 /// at most a handful of possible shapes (2 for `CafsFileInfo`, 4 for
 /// `SideEffectsDiff`), so the 0x40..=0x7f slot range is vastly
 /// over-provisioned for realistic workloads.
+#[derive(SmartDefault)]
 struct EncodeState {
     /// Shape → slot for every `CafsFileInfo` shape seen so far. The
     /// index is the shape bitmask produced by [`cafs_shape`] (2
@@ -699,18 +701,11 @@ struct EncodeState {
     /// Next unused slot in the 0x41..=0x7f range. Starts above
     /// `PKG_FILES_INDEX_SLOT` because the top-level record always
     /// takes slot 0x40.
+    #[default(FIRST_INNER_SLOT)]
     next_slot: u8,
 }
 
 impl EncodeState {
-    fn new() -> Self {
-        EncodeState {
-            cafs_slots: [None; 2],
-            side_effects_slots: [None; 4],
-            next_slot: FIRST_INNER_SLOT,
-        }
-    }
-
     fn allocate_slot(&mut self) -> Result<u8, EncodeError> {
         if self.next_slot > SLOT_HI {
             return Err(EncodeError::OutOfRecordSlots {
@@ -1529,7 +1524,7 @@ mod tests {
         // `SideEffectsDiff` has 4 — but the error path must exist in
         // case a future record type is added without bumping the
         // shape accounting.
-        let mut state = EncodeState::new();
+        let mut state = EncodeState::default();
         for _ in FIRST_INNER_SLOT..=SLOT_HI {
             state.allocate_slot().expect("should succeed within the slot range");
         }

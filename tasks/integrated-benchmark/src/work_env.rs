@@ -121,6 +121,19 @@ impl WorkEnv {
 
             let repository = self.repository();
             let revision_repo = self.revision_repo(revision);
+
+            // Resolve the revision against the source repository *before*
+            // fetching, so the fetch can request the exact commit. A bare
+            // `git fetch <repo>` only writes the source's `HEAD` to
+            // `FETCH_HEAD`, which means a SHA that isn't reachable from
+            // the source's HEAD (e.g. tip of `main` when the runner is on
+            // a PR branch that's behind `main`) won't end up in the
+            // bench-repo and the subsequent `git checkout <sha>` panics
+            // with `unable to read tree`. See PR #321 comment
+            // <https://github.com/pnpm/pacquet/pull/321#issuecomment-4326141435>.
+            let commit = self.resolve_revision(revision);
+            eprintln!("Resolved {revision:?} to {commit}");
+
             if revision_repo.exists() {
                 if !revision_repo.join(".git").exists() {
                     eprintln!("Initializing a git repository at {revision_repo:?}...");
@@ -132,11 +145,12 @@ impl WorkEnv {
                         .pipe(executor("git init"));
                 }
 
-                eprintln!("Fetching from {repository:?}...");
+                eprintln!("Fetching {commit} from {repository:?}...");
                 Command::new("git")
                     .current_dir(&revision_repo)
                     .arg("fetch")
                     .arg(repository)
+                    .arg(&commit)
                     .pipe(executor("git fetch"));
             } else {
                 eprintln!("Cloning {repository:?} to {revision_repo:?}...");
@@ -148,12 +162,11 @@ impl WorkEnv {
                     .pipe(executor("git clone"));
             }
 
-            let commit = self.resolve_revision(revision);
             eprintln!("Checking out {commit:?}...");
             Command::new("git")
                 .current_dir(&revision_repo)
                 .arg("checkout")
-                .arg(commit)
+                .arg(&commit)
                 .pipe(executor("git checkout"));
 
             eprintln!("List of branches:");
@@ -173,17 +186,47 @@ impl WorkEnv {
     }
 
     fn benchmark(&self) {
+        // Pre-benchmark wipe of `node_modules` *and* `store-dir` for
+        // every benchmark target, regardless of scenario. The
+        // hot-cache scenario's per-iteration `--prepare` intentionally
+        // preserves `store-dir` so subsequent iterations can reuse
+        // it, which means whatever a previous run / scenario / partial
+        // invocation left in `store-dir` would otherwise carry into
+        // the warmup — and the warmup wouldn't actually be what
+        // primes the store. Wiping once upfront makes the warmup the
+        // priming run no matter what state the work-env was in. For
+        // cold-cache scenarios this is redundant with the per-iteration
+        // wipe but harmless (Copilot review on #296).
+        for dir in self
+            .revision_ids()
+            .chain(self.with_pnpm.then_some(WorkEnv::PNPM))
+            .map(|id| self.bench_dir(id))
+        {
+            for name in ["node_modules", "store-dir"] {
+                let path = dir.join(name);
+                if path.exists() {
+                    fs::remove_dir_all(&path).expect("pre-benchmark wipe");
+                }
+            }
+        }
+
         // hyperfine runs `--prepare` before *each* timed invocation, so
         // cleanup must cover every bench dir we're about to measure.
         // Previously this only wiped the pacquet revisions — if
         // `--with-pnpm` was set, pnpm's `node_modules` survived between
         // iterations, and after the warmup pnpm just hit a no-op
         // "already installed" code path instead of doing real work.
+        //
+        // Per-iteration cleanup paths come from the scenario: cold-cache
+        // scenarios wipe `node_modules` and `store-dir`, hot-cache wipes
+        // only `node_modules` so the warmup-populated store survives
+        // into the timed runs.
+        let cleanup_paths = self.scenario.cleanup_paths();
         let cleanup_targets = self
             .revision_ids()
             .chain(self.with_pnpm.then_some(WorkEnv::PNPM))
             .map(|id| self.bench_dir(id))
-            .flat_map(|dir| [dir.join("node_modules"), dir.join("store-dir")])
+            .flat_map(|dir| cleanup_paths.iter().map(move |name| dir.join(name)))
             .map(|path| path.maybe_quote().to_string())
             .join(" ");
         let cleanup_command = format!("rm -rf {cleanup_targets}");
@@ -231,30 +274,82 @@ fn create_package_json(dst_dir: &Path, src_dir: Option<&Path>) {
 /// would have fired — the workspace file's `allowBuilds: {core-js: false,
 /// es5-ext: false}` silences those specific warnings and keeps pnpm's
 /// output clean so hyperfine doesn't see stderr noise.
+///
+/// Always guarantees `storeDir: ./store-dir` ends up in the destination.
+/// Both pnpm and pacquet read the store path from this file (pacquet
+/// since the `.npmrc` parser explicitly ignores `store-dir`); without
+/// that key, both fall through to the global default store and the
+/// benchmark's per-iteration / pre-benchmark cleanup wipes a directory
+/// the install never wrote to. That silently invalidates cold/hot-cache
+/// semantics and lets state from previous runs leak in (Copilot review
+/// on #296).
+///
+/// If a custom fixture's workspace file already declares `storeDir`,
+/// trust it — that's the user opting into a different store layout
+/// (e.g. shared store across revisions to test a specific scenario).
+/// Only inject our default when the key is absent.
 fn create_pnpm_workspace(dst_dir: &Path, src_dir: Option<&Path>) {
     let dst = dst_dir.join("pnpm-workspace.yaml");
-    if let Some(src_dir) = src_dir {
+    let base = if let Some(src_dir) = src_dir {
         let src = src_dir.join("pnpm-workspace.yaml");
-        // The workspace file is optional when a custom fixture directory
-        // is provided — only copy if present, so existing fixture dirs
-        // that predate this helper don't start erroring out.
         if src.is_file() {
             assert_ne!(src, dst);
-            fs::copy(src, dst).expect("copy pnpm-workspace.yaml for the revision");
+            fs::read_to_string(src).expect("read fixture pnpm-workspace.yaml")
+        } else {
+            String::new()
         }
     } else {
-        fs::write(dst, PNPM_WORKSPACE).expect("write pnpm-workspace.yaml for the revision");
-    }
+        PNPM_WORKSPACE.to_string()
+    };
+    let content = if has_top_level_store_dir(&base) {
+        base
+    } else {
+        if !base.is_empty() {
+            eprintln!(
+                "warn: fixture's pnpm-workspace.yaml has no top-level `storeDir:` — \
+                 prepending `storeDir: ./store-dir` so per-revision store isolation works"
+            );
+        }
+        if base.is_empty() {
+            "storeDir: ./store-dir\n".to_string()
+        } else {
+            format!("storeDir: ./store-dir\n{base}")
+        }
+    };
+    fs::write(dst, content).expect("write pnpm-workspace.yaml for the revision");
+}
+
+/// Detect a top-level `storeDir:` key in a YAML document. We only look
+/// at lines whose first byte is a non-whitespace, non-`#` character so
+/// nested keys (`foo:\n  storeDir: …`) and comments don't count. This
+/// is a deliberately tiny scan, not a real YAML parse — the workspace
+/// files we ship and accept are flat enough that line-level matching
+/// covers the practical cases.
+fn has_top_level_store_dir(yaml: &str) -> bool {
+    yaml.lines().any(|line| {
+        let first = match line.as_bytes().first() {
+            Some(&b) => b,
+            None => return false,
+        };
+        if first.is_ascii_whitespace() || first == b'#' {
+            return false;
+        }
+        line.starts_with("storeDir:")
+    })
 }
 
 fn create_npmrc(dir: &Path, registry: &str, scenario: BenchmarkScenario) {
     let path = dir.join(".npmrc");
-    let store_dir = dir.join("store-dir");
-    let store_dir = store_dir.to_str().expect("path to store-dir is valid UTF-8");
     eprintln!("Creating config file {path:?}...");
     let mut file = File::create(path).expect("create .npmrc");
     writeln!(file, "registry={registry}").unwrap();
-    writeln!(file, "store-dir={store_dir}").unwrap();
+    // `store-dir` is read from `pnpm-workspace.yaml` (`storeDir`) by both
+    // pnpm and pacquet, not from `.npmrc`. Pacquet's `.npmrc` parser
+    // (`crates/npmrc/src/npmrc_auth.rs`) explicitly ignores `store-dir`
+    // and a test there pins that behaviour. The static fixture's
+    // `storeDir: ./store-dir` already resolves to `{bench_dir}/store-dir`
+    // under each per-revision CWD, which gives the same per-revision
+    // isolation the redundant `.npmrc` line was supposedly providing.
     writeln!(file, "auto-install-peers=false").unwrap();
     writeln!(file, "ignore-scripts=true").unwrap();
     writeln!(file, "{}", scenario.npmrc_lockfile_setting()).unwrap();

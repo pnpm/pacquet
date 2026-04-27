@@ -4,6 +4,18 @@ on:
   workflow_dispatch:
   pull_request:
     types: [opened, synchronize]
+    paths:
+      - '**/*.rs'
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'justfile'
+      - 'tasks/registry-mock/package.json'
+      - 'tasks/registry-mock/pnpm-lock.yaml'
+      - 'tasks/registry-mock/pnpm-workspace.yaml'
+      - 'tasks/integrated-benchmark/src/fixtures/**'
+      - '.github/actions/**'
+      - '.github/workflows/integrated-benchmark.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
@@ -50,7 +62,7 @@ jobs:
           git branch
 
       - name: Cache verdaccio
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           key: integrated-benchmark-verdaccio
           path: |
@@ -59,7 +71,7 @@ jobs:
         continue-on-error: true
 
       - name: Cache Rust builds
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           key: integrated-benchmark-builds-${{ matrix.os }}
           path: |
@@ -87,7 +99,7 @@ jobs:
           standalone: true
 
       - name: Cache pnpm
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           key: integrated-benchmark-pnpm-v11
           path: |
@@ -116,21 +128,24 @@ jobs:
         # timeout (6 h). A normal run is ~2 min — 10 min is generous
         # headroom, and a failure surfaces fast enough to iterate on.
         timeout-minutes: 10
-        # Enable pacquet's tracing at `info` so the next hang shows
-        # which phase the stalled install was in (download,
-        # extraction, import, index write …) before it went silent.
-        # Without this, `--show-output` only captures pacquet's
-        # empty stream since the default filter is off.
-        env:
-          TRACE: pacquet=info
-        # `--show-output` pipes each binary's stderr through hyperfine
-        # so the step log captures traces / profile output / panics
-        # inline with each run. Essential for diagnosing a hang on CI
-        # where we can't attach a debugger.
         run: |
-          just integrated-benchmark --show-output --scenario=frozen-lockfile --verdaccio --with-pnpm HEAD main
+          just integrated-benchmark --scenario=frozen-lockfile --verdaccio --with-pnpm HEAD main
           cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.md
           cp bench-work-env/BENCHMARK_REPORT.json bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.json
+
+      - name: 'Benchmark: Frozen Lockfile (Hot Cache)'
+        shell: bash
+        # Same timeout rationale as the cold-cache step above.
+        # Mirrors pnpm's "Headless install (frozen lockfile, warm
+        # store+cache)" benchmark: each timed run wipes only
+        # `node_modules`, the per-revision store survives, and
+        # hyperfine's warmup run is what populates it on the first
+        # iteration so timed runs all see a hot store.
+        timeout-minutes: 10
+        run: |
+          just integrated-benchmark --scenario=frozen-lockfile-hot-cache --verdaccio --with-pnpm HEAD main
+          cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE_HOT_CACHE.md
+          cp bench-work-env/BENCHMARK_REPORT.json bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE_HOT_CACHE.json
 
       # - name: 'Benchmark: Clean Install'
       #   shell: bash
@@ -152,7 +167,19 @@ jobs:
             echo '<details><summary>BENCHMARK_REPORT.json</summary>'
             echo
             echo '```json'
-            cat bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.json
+            jq 'del(.results[].exit_codes)' bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.json
+            echo '```'
+            echo
+            echo '</details>'
+            echo
+            echo '### Scenario: Frozen Lockfile (Hot Cache)'
+            echo
+            cat bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE_HOT_CACHE.md
+            echo
+            echo '<details><summary>BENCHMARK_REPORT.json</summary>'
+            echo
+            echo '```json'
+            jq 'del(.results[].exit_codes)' bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE_HOT_CACHE.json
             echo '```'
             echo
             echo '</details>'
@@ -164,7 +191,7 @@ jobs:
             # echo '<details><summary>BENCHMARK_REPORT.json</summary>'
             # echo
             # echo '```json'
-            # cat bench-work-env/BENCHMARK_REPORT_CLEAN_INSTALL.json
+            # jq 'del(.results[].exit_codes)' bench-work-env/BENCHMARK_REPORT_CLEAN_INSTALL.json
             # echo '```'
             # echo
             # echo '</details>'
@@ -173,7 +200,7 @@ jobs:
       - name: Find Comment
         # Check if the event is not triggered by a fork
         if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: peter-evans/find-comment@v2
+        uses: peter-evans/find-comment@v4
         id: fc
         with:
           issue-number: ${{ github.event.pull_request.number }}

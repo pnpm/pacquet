@@ -13,17 +13,18 @@ repository.workspace = true
 [dependencies]
 pacquet-fs = { workspace = true }
 
-dashmap     = { workspace = true }
-derive_more = { workspace = true }
-miette      = { workspace = true }
-rmp-serde   = { workspace = true }
-rusqlite    = { workspace = true }
-serde       = { workspace = true }
-serde_json  = { workspace = true }
-sha2        = { workspace = true }
-ssri        = { workspace = true }
-tokio       = { workspace = true, features = ["sync"] }
-tracing     = { workspace = true }
+dashmap       = { workspace = true }
+derive_more   = { workspace = true }
+miette        = { workspace = true }
+rmp-serde     = { workspace = true }
+rusqlite      = { workspace = true }
+serde         = { workspace = true }
+serde_json    = { workspace = true }
+sha2          = { workspace = true }
+smart-default = { workspace = true }
+ssri          = { workspace = true }
+tokio         = { workspace = true, features = ["sync"] }
+tracing       = { workspace = true }
 
 # Enable `sha2`'s `asm` feature on non-MSVC targets only. The feature
 # activates the `sha2-asm` crate (hand-written `.S` assembly files for

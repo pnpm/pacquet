@@ -108,7 +108,7 @@ mod tests {
     fn deserialize_ok() {
         fn case(input: &'static str, output: PkgName) {
             eprintln!("CASE: {input:?}");
-            let actual: PkgName = serde_yaml::from_str(input).unwrap();
+            let actual: PkgName = serde_saphyr::from_str(input).unwrap();
             assert_eq!(&actual, &output);
         }
 
@@ -148,12 +148,11 @@ mod tests {
     fn serialize() {
         fn case(input: PkgName, output: &'static str) {
             eprintln!("CASE: {input:?}");
-            let received = serde_yaml::to_value(&input).unwrap();
-            let expected = output.to_string().pipe(serde_yaml::Value::String);
-            assert_eq!(&received, &expected);
+            let received = input.pipe_ref(serde_saphyr::to_string).unwrap();
+            assert_eq!(received, output);
         }
 
-        case(PkgName { scope: Some("foo".to_string()), bare: "bar".to_string() }, "@foo/bar");
-        case(PkgName { scope: None, bare: "foo-bar".to_string() }, "foo-bar");
+        case(PkgName { scope: Some("foo".to_string()), bare: "bar".to_string() }, "\"@foo/bar\"\n");
+        case(PkgName { scope: None, bare: "foo-bar".to_string() }, "foo-bar\n");
     }
 }

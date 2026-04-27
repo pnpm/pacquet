@@ -7,7 +7,7 @@ use pacquet_network::ThrottledClient;
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 
-use crate::{package_version::PackageVersion, NetworkError, RegistryError};
+use crate::{NetworkError, RegistryError, package_version::PackageVersion};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Package {
@@ -35,15 +35,14 @@ impl Package {
         let url = || format!("{registry}{name}"); // TODO: use reqwest URL directly
         let network_error = |error| NetworkError { error, url: url() };
         http_client
-            .run_with_permit(|client| {
-                client
-                    .get(url())
-                    .header(
-                        "accept",
-                        "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-                    )
-                    .send()
-            })
+            .acquire()
+            .await
+            .get(url())
+            .header(
+                "accept",
+                "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+            )
+            .send()
             .await
             .map_err(network_error)?
             .json::<Package>()

@@ -11,6 +11,7 @@ mod project_snapshot;
 mod resolution;
 mod resolved_dependency;
 mod save_lockfile;
+mod serialize_yaml;
 mod snapshot_dep_ref;
 mod snapshot_entry;
 
@@ -47,8 +48,8 @@ pub struct LockfileSettings {
 
 /// A pnpm v9 lockfile.
 ///
-/// Specification: <https://github.com/pnpm/spec/blob/master/lockfile/9.0.md>
-/// Reference: <https://github.com/pnpm/pnpm/blob/main/lockfile/lockfile-types/src/index.ts>
+/// Specification: <https://github.com/pnpm/spec/blob/834f2815cc/lockfile/9.0.md>
+/// Reference: <https://github.com/pnpm/pnpm/blob/1819226b51/lockfile/types/src/index.ts>
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Lockfile {

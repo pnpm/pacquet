@@ -1,4 +1,4 @@
-use crate::{link_file, LinkFileError};
+use crate::{LinkFileError, link_file};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_npmrc::PackageImportMethod;
