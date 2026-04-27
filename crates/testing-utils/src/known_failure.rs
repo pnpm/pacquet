@@ -15,10 +15,11 @@ pub type KnownResult<T> = Result<T, KnownFailure>;
 /// Continue a ported test only after the stubbed subject under test is implemented.
 #[macro_export]
 macro_rules! allow_known_failure {
-    ($expr:expr) => {
-        match $expr {
+    ($expr:expr) => {{
+        let known_result: $crate::known_failure::KnownResult<_> = $expr;
+        match known_result {
             Ok(value) => value,
             Err(_known_failure) => return,
         }
-    };
+    }};
 }
