@@ -2161,13 +2161,12 @@ mod tests {
     }
 
     /// Regression test for the `run_with_mem_cache` deadlock that hung
-    /// `pacquet install` on real-network workloads such as the alot7
-    /// benchmark (~1300 packages). The if-let branch used to hold a
-    /// `DashMap::Ref` (a synchronous shard read guard) across two
-    /// `.await` points; under enough concurrency another task on the
-    /// same worker would call `mem_cache.insert` for a key hashing to
-    /// the same shard, block on the parking_lot write, and starve every
-    /// worker.
+    /// `pacquet install` on real-network workloads at high concurrency.
+    /// The if-let branch used to hold a `DashMap::Ref` (a synchronous
+    /// shard read guard) across two `.await` points; under enough
+    /// concurrency another task on the same worker would call
+    /// `mem_cache.insert` for a key hashing to the same shard, block
+    /// on the parking_lot write, and starve every worker.
     ///
     /// To reproduce end-to-end:
     /// * Mockito serves the real fastify-error tarball with a
