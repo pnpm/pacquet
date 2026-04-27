@@ -148,14 +148,11 @@ mod tests {
     fn serialize() {
         fn case(input: PkgName, output: &'static str) {
             eprintln!("CASE: {input:?}");
-            let received = serde_saphyr::to_string(&input).unwrap();
-            let received = received.trim();
-            let reparsed: PkgName = serde_saphyr::from_str(received).expect("reparse");
-            assert_eq!(&reparsed, &input);
-            assert_eq!(reparsed.to_string(), output);
+            let received = input.pipe_ref(serde_saphyr::to_string).unwrap();
+            assert_eq!(received, output);
         }
 
-        case(PkgName { scope: Some("foo".to_string()), bare: "bar".to_string() }, "@foo/bar");
-        case(PkgName { scope: None, bare: "foo-bar".to_string() }, "foo-bar");
+        case(PkgName { scope: Some("foo".to_string()), bare: "bar".to_string() }, "\"@foo/bar\"\n");
+        case(PkgName { scope: None, bare: "foo-bar".to_string() }, "foo-bar\n");
     }
 }

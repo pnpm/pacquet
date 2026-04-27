@@ -99,6 +99,7 @@ impl From<LockfileResolution> for ResolutionSerde {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::serialize_yaml;
     use pretty_assertions::assert_eq;
     use text_block_macros::text_block;
 
@@ -141,7 +142,7 @@ mod tests {
             tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
             integrity: None,
         });
-        let received = crate::serialize_yaml::to_string(&resolution).unwrap();
+        let received = serialize_yaml::to_string(&resolution).unwrap();
         let received = received.trim();
         eprintln!("RECEIVED:\n{received}");
         let expected = text_block! {
@@ -154,7 +155,7 @@ mod tests {
             tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
             integrity: integrity("sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==").into()
         });
-        let received = crate::serialize_yaml::to_string(&resolution).unwrap();
+        let received = serialize_yaml::to_string(&resolution).unwrap();
         let received = received.trim();
         eprintln!("RECEIVED:\n{received}");
         let expected = text_block! {
@@ -182,7 +183,7 @@ mod tests {
         let resolution = LockfileResolution::Registry(RegistryResolution {
             integrity: integrity("sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==")
         });
-        let received = crate::serialize_yaml::to_string(&resolution).unwrap();
+        let received = serialize_yaml::to_string(&resolution).unwrap();
         let received = received.trim();
         eprintln!("RECEIVED:\n{received}");
         let expected = text_block! {
@@ -210,7 +211,7 @@ mod tests {
         let resolution = LockfileResolution::Directory(DirectoryResolution {
             directory: "ts-pipe-compose-0.2.1/package".to_string(),
         });
-        let received = crate::serialize_yaml::to_string(&resolution).unwrap();
+        let received = serialize_yaml::to_string(&resolution).unwrap();
         let received = received.trim();
         eprintln!("RECEIVED:\n{received}");
         let expected = text_block! {
@@ -242,7 +243,7 @@ mod tests {
             repo: "https://github.com/ksxnodemodules/ts-pipe-compose.git".to_string(),
             commit: "e63c09e460269b0c535e4c34debf69bb91d57b22".to_string(),
         });
-        let received = crate::serialize_yaml::to_string(&resolution).unwrap();
+        let received = serialize_yaml::to_string(&resolution).unwrap();
         let received = received.trim();
         eprintln!("RECEIVED:\n{received}");
         let expected = text_block! {

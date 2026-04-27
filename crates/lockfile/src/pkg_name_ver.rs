@@ -12,6 +12,7 @@ pub type ParsePkgNameVerError = ParsePkgNameSuffixError<SemverError>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
 
     fn name_ver(name: &str, ver: impl Into<Version>) -> PkgNameVer {
@@ -80,11 +81,8 @@ mod tests {
 
     #[test]
     fn serialize() {
-        let input = name_ver("ts-node", (10, 9, 1));
-        let received = serde_saphyr::to_string(&input).unwrap();
-        let received = received.trim();
-        let reparsed: PkgNameVer = serde_saphyr::from_str(received).expect("reparse");
-        assert_eq!(reparsed, input);
-        assert_eq!(reparsed.to_string(), "ts-node@10.9.1");
+        let received = name_ver("ts-node", (10, 9, 1)).pipe_ref(serde_saphyr::to_string).unwrap();
+        let expected = "ts-node@10.9.1\n";
+        assert_eq!(received, expected);
     }
 }
