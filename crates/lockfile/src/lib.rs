@@ -11,6 +11,7 @@ mod project_snapshot;
 mod resolution;
 mod resolved_dependency;
 mod save_lockfile;
+mod serialize_yaml;
 mod snapshot_dep_ref;
 mod snapshot_entry;
 

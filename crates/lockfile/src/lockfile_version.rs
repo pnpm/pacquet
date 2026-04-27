@@ -45,7 +45,7 @@ mod tests {
                 const MAJOR: u16 = $major;
                 let input = $input;
                 eprintln!("CASE: LockfileVersion::<{MAJOR}>::try_from({input:?})");
-                let received: LockfileVersion<MAJOR> = serde_yaml::from_str(input).unwrap();
+                let received: LockfileVersion<MAJOR> = serde_saphyr::from_str(input).unwrap();
                 let expected = LockfileVersion::<MAJOR>($output);
                 assert_eq!(&received, &expected);
             }};

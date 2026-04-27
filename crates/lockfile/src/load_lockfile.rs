@@ -21,7 +21,7 @@ pub enum LoadLockfileError {
 
     #[display("Failed to parse lockfile content as YAML: {_0}")]
     #[diagnostic(code(pacquet_lockfile::parse_yaml))]
-    ParseYaml(serde_yaml::Error),
+    ParseYaml(serde_saphyr::Error),
 }
 
 impl Lockfile {
@@ -34,6 +34,6 @@ impl Lockfile {
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
             Err(error) => return error.pipe(LoadLockfileError::ReadFile).pipe(Err),
         };
-        content.pipe_as_ref(serde_yaml::from_str).map_err(LoadLockfileError::ParseYaml)
+        content.pipe_as_ref(serde_saphyr::from_str).map_err(LoadLockfileError::ParseYaml)
     }
 }

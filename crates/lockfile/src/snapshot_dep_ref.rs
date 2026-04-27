@@ -210,7 +210,7 @@ mod tests {
             ("string-width@4.2.3", "string-width@4.2.3"),
             ("\"17.0.2(react@17.0.2)\"", "17.0.2(react@17.0.2)"),
         ] {
-            let dep: SnapshotDepRef = serde_yaml::from_str(yaml).unwrap();
+            let dep: SnapshotDepRef = serde_saphyr::from_str(yaml).unwrap();
             assert_eq!(dep.to_string(), expected);
         }
     }
