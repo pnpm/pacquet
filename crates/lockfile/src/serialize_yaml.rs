@@ -7,7 +7,7 @@
 //! level parity with what pnpm produces.
 
 use serde::Serialize;
-use serde_saphyr::{ser, ser_options, to_string_with_options, SerializerOptions};
+use serde_saphyr::{SerializerOptions, ser, ser_options, to_string_with_options};
 
 /// Serializer options matching pnpm's lockfile output.
 fn options() -> SerializerOptions {

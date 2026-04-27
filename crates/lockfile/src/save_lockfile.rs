@@ -1,4 +1,4 @@
-use crate::{serialize_yaml, Lockfile};
+use crate::{Lockfile, serialize_yaml};
 use derive_more::{Display, Error};
 use pacquet_diagnostics::miette::{self, Diagnostic};
 use std::{env, fs, io, path::Path};
