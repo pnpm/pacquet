@@ -1,6 +1,6 @@
 use reqwest::{
-    header::{HeaderMap, HeaderValue, USER_AGENT},
     Client,
+    header::{HeaderMap, HeaderValue, USER_AGENT},
 };
 use std::{num::NonZeroUsize, ops::Deref, time::Duration};
 use tokio::sync::{Semaphore, SemaphorePermit};

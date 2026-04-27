@@ -101,9 +101,10 @@ fn should_add_to_package_json() {
     let (root, dir, anchor) = exec_pacquet_in_temp_cwd(["add", "@pnpm.e2e/hello-world-js-bin"]);
     let file = PackageManifest::from_path(dir.join("package.json")).unwrap();
     eprintln!("Ensure @pnpm.e2e/hello-world-js-bin is added to package.json#dependencies");
-    assert!(file
-        .dependencies([DependencyGroup::Prod])
-        .any(|(k, _)| k == "@pnpm.e2e/hello-world-js-bin"));
+    assert!(
+        file.dependencies([DependencyGroup::Prod])
+            .any(|(k, _)| k == "@pnpm.e2e/hello-world-js-bin")
+    );
     drop((root, anchor)); // cleanup
 }
 
@@ -113,9 +114,9 @@ fn should_add_dev_dependency() {
         exec_pacquet_in_temp_cwd(["add", "@pnpm.e2e/hello-world-js-bin", "--save-dev"]);
     let file = PackageManifest::from_path(dir.join("package.json")).unwrap();
     eprintln!("Ensure @pnpm.e2e/hello-world-js-bin is added to package.json#devDependencies");
-    assert!(file
-        .dependencies([DependencyGroup::Dev])
-        .any(|(k, _)| k == "@pnpm.e2e/hello-world-js-bin"));
+    assert!(
+        file.dependencies([DependencyGroup::Dev]).any(|(k, _)| k == "@pnpm.e2e/hello-world-js-bin")
+    );
     drop((root, anchor)); // cleanup
 }
 
@@ -125,12 +126,13 @@ fn should_add_peer_dependency() {
         exec_pacquet_in_temp_cwd(["add", "@pnpm.e2e/hello-world-js-bin", "--save-peer"]);
     let file = PackageManifest::from_path(dir.join("package.json")).unwrap();
     eprintln!("Ensure @pnpm.e2e/hello-world-js-bin is added to package.json#devDependencies");
-    assert!(file
-        .dependencies([DependencyGroup::Dev])
-        .any(|(k, _)| k == "@pnpm.e2e/hello-world-js-bin"));
+    assert!(
+        file.dependencies([DependencyGroup::Dev]).any(|(k, _)| k == "@pnpm.e2e/hello-world-js-bin")
+    );
     eprintln!("Ensure @pnpm.e2e/hello-world-js-bin is added to package.json#peerDependencies");
-    assert!(file
-        .dependencies([DependencyGroup::Peer])
-        .any(|(k, _)| k == "@pnpm.e2e/hello-world-js-bin"));
+    assert!(
+        file.dependencies([DependencyGroup::Peer])
+            .any(|(k, _)| k == "@pnpm.e2e/hello-world-js-bin")
+    );
     drop((root, anchor)); // cleanup
 }

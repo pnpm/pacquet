@@ -1,6 +1,6 @@
 use dashmap::DashSet;
 use serde::{Deserialize, Serialize};
-use sha2::{digest, Sha512};
+use sha2::{Sha512, digest};
 use std::path::{self, PathBuf};
 
 /// Content hash of a file.

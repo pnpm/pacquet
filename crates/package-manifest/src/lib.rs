@@ -7,7 +7,7 @@ use std::{
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use strum::IntoStaticStr;
 
 #[derive(Debug, Display, Error, From, Diagnostic)]
@@ -203,11 +203,7 @@ impl PackageManifest {
             return Ok(Some(script_str));
         }
 
-        if if_present {
-            Ok(None)
-        } else {
-            Err(PackageManifestError::NoScript(command.to_string()))
-        }
+        if if_present { Ok(None) } else { Err(PackageManifestError::NoScript(command.to_string())) }
     }
 }
 
@@ -218,7 +214,7 @@ mod tests {
     use insta::assert_snapshot;
     use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
-    use tempfile::{tempdir, NamedTempFile};
+    use tempfile::{NamedTempFile, tempdir};
 
     use super::*;
     use crate::DependencyGroup;

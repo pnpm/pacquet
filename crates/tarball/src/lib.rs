@@ -12,8 +12,8 @@ use miette::Diagnostic;
 use pacquet_fs::file_mode;
 use pacquet_network::ThrottledClient;
 use pacquet_store_dir::{
-    store_index_key, CafsFileInfo, PackageFilesIndex, SharedReadonlyStoreIndex, StoreDir,
-    StoreIndexError, StoreIndexWriter, WriteCasFileError,
+    CafsFileInfo, PackageFilesIndex, SharedReadonlyStoreIndex, StoreDir, StoreIndexError,
+    StoreIndexWriter, WriteCasFileError, store_index_key,
 };
 use pipe_trait::Pipe;
 use smart_default::SmartDefault;
@@ -21,7 +21,7 @@ use ssri::Integrity;
 use tar::Archive;
 use tokio::sync::{Notify, RwLock, Semaphore};
 use tracing::instrument;
-use zune_inflate::{errors::InflateDecodeErrors, DeflateDecoder, DeflateOptions};
+use zune_inflate::{DeflateDecoder, DeflateOptions, errors::InflateDecodeErrors};
 
 /// Cap on concurrent post-download tarball work (SHA-512 of the whole
 /// tarball + gzip inflate + per-file SHA-512 + CAFS writes). The body is
@@ -978,16 +978,16 @@ impl<'a> DownloadTarballToStore<'a> {
         // run. Propagating the `Arc` through this signature would
         // require a wider refactor of `DownloadTarballToStore`'s
         // return type.
-        if let Some(prefetched) = prefetched_cas_paths {
-            if let Some(cas_paths) = prefetched.get(&cache_key) {
-                tracing::info!(
-                    target: "pacquet::download",
-                    ?package_url,
-                    ?package_id,
-                    "Reusing prefetched CAFS entry — skipping download",
-                );
-                return Ok((**cas_paths).clone());
-            }
+        if let Some(prefetched) = prefetched_cas_paths
+            && let Some(cas_paths) = prefetched.get(&cache_key)
+        {
+            tracing::info!(
+                target: "pacquet::download",
+                ?package_url,
+                ?package_id,
+                "Reusing prefetched CAFS entry — skipping download",
+            );
+            return Ok((**cas_paths).clone());
         }
         if let Some(cas_paths) =
             load_cached_cas_paths(store_index, store_dir, cache_key, verify_store_integrity).await
@@ -1046,7 +1046,7 @@ mod tests {
     use pacquet_store_dir::StoreIndex;
     use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
-    use tempfile::{tempdir, TempDir};
+    use tempfile::{TempDir, tempdir};
 
     use super::*;
 
@@ -1280,8 +1280,9 @@ mod tests {
         let (bin_path, bin_hash) =
             store_path.write_cas_file(b"#!/usr/bin/env node\nconsole.log('hi');\n", true).unwrap();
 
-        let pkg_integrity =
-            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_integrity = integrity(
+            "sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==",
+        );
         let pkg_id = "fake@1.0.0";
         let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
 
@@ -1353,8 +1354,9 @@ mod tests {
     /// `package_url` proves the network path is also bypassed.
     #[tokio::test]
     async fn reuses_prefetched_cas_paths_when_provided() {
-        let pkg_integrity =
-            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_integrity = integrity(
+            "sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==",
+        );
         let pkg_id = "fake@1.0.0";
         let cache_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
 
@@ -1409,8 +1411,9 @@ mod tests {
         let (pkg_json_path, pkg_json_hash) =
             store_path.write_cas_file(b"{\"name\":\"fake\"}", false).unwrap();
 
-        let pkg_integrity =
-            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_integrity = integrity(
+            "sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==",
+        );
         let pkg_id = "fake@1.0.0";
         let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
 
@@ -1458,8 +1461,9 @@ mod tests {
     async fn prefetch_cas_paths_omits_failed_integrity_entries() {
         let (store_dir, store_path) = tempdir_with_leaked_path();
 
-        let pkg_integrity =
-            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_integrity = integrity(
+            "sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==",
+        );
         let pkg_id = "fake@1.0.0";
         let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
 
@@ -1497,7 +1501,7 @@ mod tests {
         .await;
 
         assert!(
-            prefetched.get(&index_key).is_none(),
+            !prefetched.contains_key(&index_key),
             "row that fails integrity must not appear in prefetch result",
         );
         drop(store_dir);
@@ -1515,8 +1519,9 @@ mod tests {
     async fn prefetch_cas_paths_skips_filesystem_checks_when_verify_disabled() {
         let (store_dir, store_path) = tempdir_with_leaked_path();
 
-        let pkg_integrity =
-            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_integrity = integrity(
+            "sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==",
+        );
         let pkg_id = "fake@1.0.0";
         let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
 
@@ -1568,8 +1573,9 @@ mod tests {
     async fn falls_through_when_cafs_file_missing() {
         let (store_dir, store_path) = tempdir_with_leaked_path();
 
-        let pkg_integrity =
-            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_integrity = integrity(
+            "sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==",
+        );
         let pkg_id = "fake@1.0.0";
         let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
 
@@ -1625,8 +1631,9 @@ mod tests {
     async fn falls_through_when_digest_is_malformed() {
         let (store_dir, store_path) = tempdir_with_leaked_path();
 
-        let pkg_integrity =
-            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_integrity = integrity(
+            "sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==",
+        );
         let pkg_id = "fake@1.0.0";
         let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
 
@@ -1679,8 +1686,9 @@ mod tests {
     async fn falls_through_when_cafs_path_is_a_directory() {
         let (store_dir, store_path) = tempdir_with_leaked_path();
 
-        let pkg_integrity =
-            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_integrity = integrity(
+            "sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==",
+        );
         let pkg_id = "fake@1.0.0";
         let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
 
@@ -1739,8 +1747,9 @@ mod tests {
     async fn falls_through_when_cafs_path_is_a_symlink() {
         let (store_dir, store_path) = tempdir_with_leaked_path();
 
-        let pkg_integrity =
-            integrity("sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==");
+        let pkg_integrity = integrity(
+            "sha512-q/IXcMGuF8v7ZLf/JeYfE/pB4Wg1yxT6jXJz8JxRK7a4mJSXV1QKMXDPfZkvMHTZpYxWBDoJiXtptDWFnoCA2w==",
+        );
         let pkg_id = "fake@1.0.0";
         let index_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
 
@@ -1958,8 +1967,7 @@ mod tests {
     /// the retry loop without going to the live registry.
     const FASTIFY_ERROR_TARBALL: &[u8] =
         include_bytes!("../../../tasks/micro-benchmark/fixtures/@fastify+error-3.3.0.tgz");
-    const FASTIFY_ERROR_INTEGRITY: &str =
-        "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==";
+    const FASTIFY_ERROR_INTEGRITY: &str = "sha512-dj7vjIn1Ar8sVXj2yAXiMNCJDmS9MQ9XMlIecX2dIzzhjSHCyKo4DdXjXMs7wKW2kj6yvVRSpuQjOZ3YLrh56w==";
 
     /// `RetryOpts` for the mockito tests below: keep the 2-retry budget
     /// so we exercise the full attempt count, but collapse the backoff

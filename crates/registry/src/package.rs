@@ -7,7 +7,7 @@ use pacquet_network::ThrottledClient;
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 
-use crate::{package_version::PackageVersion, NetworkError, RegistryError};
+use crate::{NetworkError, RegistryError, package_version::PackageVersion};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Package {
