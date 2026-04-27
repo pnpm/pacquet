@@ -301,7 +301,7 @@ mod tests {
         // run through `CreateVirtualStore` with an empty snapshot set,
         // which is a successful no-op. That's enough to prove we took
         // the frozen branch.
-        let lockfile: Lockfile = serde_yaml::from_str(concat!(
+        let lockfile: Lockfile = serde_saphyr::from_str(concat!(
             "lockfileVersion: '9.0'\n",
             "importers:\n",
             "  .:\n",

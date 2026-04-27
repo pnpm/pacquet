@@ -14,7 +14,6 @@ mod tests {
     use super::*;
     use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
-    use serde_yaml::Value as YamlValue;
 
     fn name_ver(name: &str, ver: impl Into<Version>) -> PkgNameVer {
         PkgNameVer::new(name.parse().unwrap(), ver.into())
@@ -39,7 +38,7 @@ mod tests {
     fn deserialize_ok() {
         fn case(input: &'static str, expected: PkgNameVer) {
             eprintln!("CASE: {input:?}");
-            let received: PkgNameVer = serde_yaml::from_str(input).unwrap();
+            let received: PkgNameVer = serde_saphyr::from_str(input).unwrap();
             assert_eq!(&received, &expected);
         }
 
@@ -82,8 +81,8 @@ mod tests {
 
     #[test]
     fn serialize() {
-        let received = name_ver("ts-node", (10, 9, 1)).pipe_ref(serde_yaml::to_value).unwrap();
-        let expected = "ts-node@10.9.1".to_string().pipe(YamlValue::String);
+        let received = name_ver("ts-node", (10, 9, 1)).pipe_ref(serde_saphyr::to_string).unwrap();
+        let expected = "ts-node@10.9.1\n";
         assert_eq!(received, expected);
     }
 }

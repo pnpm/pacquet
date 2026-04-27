@@ -60,7 +60,7 @@ pub const WORKSPACE_MANIFEST_FILENAME: &str = "pnpm-workspace.yaml";
 #[non_exhaustive]
 pub enum LoadWorkspaceYamlError {
     ReadFile(io::Error),
-    ParseYaml(serde_yaml::Error),
+    ParseYaml(serde_saphyr::Error),
 }
 
 impl WorkspaceSettings {
@@ -79,7 +79,7 @@ impl WorkspaceSettings {
         };
         let text = fs::read_to_string(&path).map_err(LoadWorkspaceYamlError::ReadFile)?;
         let settings: WorkspaceSettings =
-            serde_yaml::from_str(&text).map_err(LoadWorkspaceYamlError::ParseYaml)?;
+            serde_saphyr::from_str(&text).map_err(LoadWorkspaceYamlError::ParseYaml)?;
         Ok(Some((path, settings)))
     }
 
@@ -208,7 +208,7 @@ nodeLinker: hoisted
 packages:
   - packages/*
 "#;
-        let settings: WorkspaceSettings = serde_yaml::from_str(yaml).unwrap();
+        let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
         assert_eq!(settings.store_dir.as_deref(), Some("../my-store"));
         assert_eq!(settings.registry.as_deref(), Some("https://reg.example"));
         assert_eq!(settings.lockfile, Some(false));
@@ -231,7 +231,7 @@ packages:
         // allow-lists, …). This guards against regressions that would make
         // serde reject those unknown keys during deserialization — i.e.
         // someone adding `deny_unknown_fields` to the struct.
-        let _settings: WorkspaceSettings = serde_yaml::from_str(yaml).unwrap();
+        let _settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
     }
 
     #[test]
@@ -241,7 +241,7 @@ storeDir: /absolute/store
 lockfile: false
 registry: https://reg.example
 "#;
-        let settings: WorkspaceSettings = serde_yaml::from_str(yaml).unwrap();
+        let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
         let mut npmrc = Npmrc::new();
         npmrc.lockfile = true;
         let before_registry = npmrc.registry.clone();
@@ -257,7 +257,7 @@ registry: https://reg.example
     #[test]
     fn apply_resolves_relative_paths_against_base_dir() {
         let yaml = "storeDir: ../shared-store\n";
-        let settings: WorkspaceSettings = serde_yaml::from_str(yaml).unwrap();
+        let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
         let mut npmrc = Npmrc::new();
         let base = Path::new("/workspace/root");
 
@@ -284,7 +284,7 @@ fetchRetryFactor: 3
 fetchRetryMintimeout: 1000
 fetchRetryMaxtimeout: 4000
 "#;
-        let settings: WorkspaceSettings = serde_yaml::from_str(yaml).unwrap();
+        let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
         assert_eq!(settings.fetch_retries, Some(5));
         assert_eq!(settings.fetch_retry_factor, Some(3));
         assert_eq!(settings.fetch_retry_mintimeout, Some(1000));
@@ -308,7 +308,7 @@ fetchRetryMaxtimeout: 4000
     #[test]
     fn parses_verify_store_integrity_from_yaml_and_applies() {
         let yaml = "verifyStoreIntegrity: false\n";
-        let settings: WorkspaceSettings = serde_yaml::from_str(yaml).unwrap();
+        let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
         assert_eq!(settings.verify_store_integrity, Some(false));
 
         let mut npmrc = Npmrc::new();
@@ -320,7 +320,7 @@ fetchRetryMaxtimeout: 4000
     #[test]
     fn apply_leaves_unset_fields_alone() {
         let yaml = "storeDir: /s\n";
-        let settings: WorkspaceSettings = serde_yaml::from_str(yaml).unwrap();
+        let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
         let mut npmrc = Npmrc::new();
         let before =
             (npmrc.hoist, npmrc.lockfile, npmrc.registry.clone(), npmrc.auto_install_peers);

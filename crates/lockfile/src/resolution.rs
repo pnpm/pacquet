@@ -99,6 +99,7 @@ impl From<LockfileResolution> for ResolutionSerde {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::serialize_yaml;
     use pretty_assertions::assert_eq;
     use text_block_macros::text_block;
 
@@ -112,7 +113,7 @@ mod tests {
         let yaml = text_block! {
             "tarball: file:ts-pipe-compose-0.2.1.tgz"
         };
-        let received: LockfileResolution = serde_yaml::from_str(yaml).unwrap();
+        let received: LockfileResolution = serde_saphyr::from_str(yaml).unwrap();
         dbg!(&received);
         let expected = LockfileResolution::Tarball(TarballResolution {
             tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
@@ -125,7 +126,7 @@ mod tests {
             "tarball: file:ts-pipe-compose-0.2.1.tgz"
             "integrity: sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg=="
         };
-        let received: LockfileResolution = serde_yaml::from_str(yaml).unwrap();
+        let received: LockfileResolution = serde_saphyr::from_str(yaml).unwrap();
         dbg!(&received);
         let expected = LockfileResolution::Tarball(TarballResolution {
             tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
@@ -141,7 +142,7 @@ mod tests {
             tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
             integrity: None,
         });
-        let received = serde_yaml::to_string(&resolution).unwrap();
+        let received = serialize_yaml::to_string(&resolution).unwrap();
         let received = received.trim();
         eprintln!("RECEIVED:\n{received}");
         let expected = text_block! {
@@ -154,7 +155,7 @@ mod tests {
             tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
             integrity: integrity("sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==").into()
         });
-        let received = serde_yaml::to_string(&resolution).unwrap();
+        let received = serialize_yaml::to_string(&resolution).unwrap();
         let received = received.trim();
         eprintln!("RECEIVED:\n{received}");
         let expected = text_block! {
@@ -169,7 +170,7 @@ mod tests {
         let yaml = text_block! {
             "integrity: sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg=="
         };
-        let received: LockfileResolution = serde_yaml::from_str(yaml).unwrap();
+        let received: LockfileResolution = serde_saphyr::from_str(yaml).unwrap();
         dbg!(&received);
         let expected = LockfileResolution::Registry(RegistryResolution {
             integrity: integrity(
@@ -186,7 +187,7 @@ mod tests {
                 "sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==",
             ),
         });
-        let received = serde_yaml::to_string(&resolution).unwrap();
+        let received = serialize_yaml::to_string(&resolution).unwrap();
         let received = received.trim();
         eprintln!("RECEIVED:\n{received}");
         let expected = text_block! {
@@ -201,7 +202,7 @@ mod tests {
             "type: directory"
             "directory: ts-pipe-compose-0.2.1/package"
         };
-        let received: LockfileResolution = serde_yaml::from_str(yaml).unwrap();
+        let received: LockfileResolution = serde_saphyr::from_str(yaml).unwrap();
         dbg!(&received);
         let expected = LockfileResolution::Directory(DirectoryResolution {
             directory: "ts-pipe-compose-0.2.1/package".to_string(),
@@ -214,7 +215,7 @@ mod tests {
         let resolution = LockfileResolution::Directory(DirectoryResolution {
             directory: "ts-pipe-compose-0.2.1/package".to_string(),
         });
-        let received = serde_yaml::to_string(&resolution).unwrap();
+        let received = serialize_yaml::to_string(&resolution).unwrap();
         let received = received.trim();
         eprintln!("RECEIVED:\n{received}");
         let expected = text_block! {
@@ -231,7 +232,7 @@ mod tests {
             "repo: https://github.com/ksxnodemodules/ts-pipe-compose.git"
             "commit: e63c09e460269b0c535e4c34debf69bb91d57b22"
         };
-        let received: LockfileResolution = serde_yaml::from_str(yaml).unwrap();
+        let received: LockfileResolution = serde_saphyr::from_str(yaml).unwrap();
         dbg!(&received);
         let expected = LockfileResolution::Git(GitResolution {
             repo: "https://github.com/ksxnodemodules/ts-pipe-compose.git".to_string(),
@@ -246,7 +247,7 @@ mod tests {
             repo: "https://github.com/ksxnodemodules/ts-pipe-compose.git".to_string(),
             commit: "e63c09e460269b0c535e4c34debf69bb91d57b22".to_string(),
         });
-        let received = serde_yaml::to_string(&resolution).unwrap();
+        let received = serialize_yaml::to_string(&resolution).unwrap();
         let received = received.trim();
         eprintln!("RECEIVED:\n{received}");
         let expected = text_block! {
