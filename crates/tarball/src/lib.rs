@@ -16,6 +16,7 @@ use pacquet_store_dir::{
     StoreIndexWriter, WriteCasFileError, store_index_key,
 };
 use pipe_trait::Pipe;
+use smart_default::SmartDefault;
 use ssri::Integrity;
 use tar::Archive;
 use tokio::sync::{Notify, RwLock, Semaphore};
@@ -98,26 +99,20 @@ fn walk_reqwest_chain(error: &reqwest::Error) -> String {
 /// If a caller wants stricter validation (warn / reject these
 /// configs), it belongs above the `Npmrc` boundary, alongside any
 /// other npmrc sanity checks pnpm grows over time.
-#[derive(Debug, Clone, Copy)]
+///
+/// Defaults (via [`SmartDefault`]) match pnpm's
+/// [`config/reader/src/index.ts`](https://github.com/pnpm/pnpm/blob/1819226b51/config/reader/src/index.ts#L146-L149)
+/// (2 retries, factor 10, 10 s floor, 60 s cap).
+#[derive(Debug, Clone, Copy, SmartDefault)]
 pub struct RetryOpts {
+    #[default = 2]
     pub retries: u32,
+    #[default = 10]
     pub factor: u32,
+    #[default(Duration::from_millis(10_000))]
     pub min_timeout: Duration,
+    #[default(Duration::from_millis(60_000))]
     pub max_timeout: Duration,
-}
-
-impl Default for RetryOpts {
-    /// Defaults match pnpm's
-    /// [`config/reader/src/index.ts`](https://github.com/pnpm/pnpm/blob/1819226b51/config/reader/src/index.ts#L146-L149)
-    /// (2 retries, factor 10, 10 s floor, 60 s cap).
-    fn default() -> Self {
-        Self {
-            retries: 2,
-            factor: 10,
-            min_timeout: Duration::from_millis(10_000),
-            max_timeout: Duration::from_millis(60_000),
-        }
-    }
 }
 
 impl RetryOpts {
