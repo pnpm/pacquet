@@ -1,4 +1,5 @@
 use pacquet_store_dir::StoreDir;
+use pipe_trait::Pipe;
 use serde::{de, Deserialize, Deserializer};
 use std::{env, path::PathBuf, str::FromStr};
 
@@ -141,7 +142,7 @@ pub fn deserialize_pathbuf<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let path = PathBuf::from(String::deserialize(deserializer)?);
+    let path = deserializer.pipe(String::deserialize)?.pipe(PathBuf::from);
 
     if path.is_absolute() {
         return Ok(path);

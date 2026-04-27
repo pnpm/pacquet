@@ -19,8 +19,15 @@ pub fn workspace_root() -> &'static Path {
             output.status.success(),
             "Command `cargo locate-project` exits with non-zero status code"
         );
-        let stdout = String::from_utf8(output.stdout).expect("convert stdout to UTF-8");
-        Path::new(stdout.trim_end()).parent().expect("parent of root manifest").to_path_buf()
+        output
+            .stdout
+            .pipe(String::from_utf8)
+            .expect("convert stdout to UTF-8")
+            .trim_end()
+            .pipe(Path::new)
+            .parent()
+            .expect("parent of root manifest")
+            .to_path_buf()
     })
 }
 
