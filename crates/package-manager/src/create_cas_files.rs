@@ -51,7 +51,7 @@ pub fn create_cas_files(
         link_file(import_method, store_path, &dir_path.join(cleaned_entry))
     };
 
-    if cas_paths.len() < SEQUENTIAL_FAN_OUT_THRESHOLD {
+    if cas_paths.len() <= SEQUENTIAL_FAN_OUT_THRESHOLD {
         cas_paths.iter().try_for_each(link_one).map_err(CreateCasFilesError::LinkFile)
     } else {
         cas_paths.par_iter().try_for_each(link_one).map_err(CreateCasFilesError::LinkFile)
