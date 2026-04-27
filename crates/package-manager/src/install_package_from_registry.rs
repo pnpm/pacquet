@@ -118,11 +118,24 @@ impl<'a> InstallPackageFromRegistry<'a> {
 
         tracing::info!(target: "pacquet::import", ?save_path, ?symlink_path, "Import package");
 
-        create_cas_files(config.package_import_method, &save_path, &cas_paths)
-            .map_err(InstallPackageFromRegistryError::CreateCasFiles)?;
-
-        symlink_package(&save_path, &symlink_path)
-            .map_err(InstallPackageFromRegistryError::SymlinkPackage)?;
+        // Both `create_cas_files` and `symlink_package` perform blocking
+        // `std::fs` I/O. Use `block_in_place` so Tokio can migrate other
+        // futures off this worker thread before we block it. On
+        // `current_thread` runtimes (e.g. `#[tokio::test]`) `block_in_place`
+        // panics, so detect the flavor and fall back to a plain inline call.
+        let do_import = || -> Result<(), InstallPackageFromRegistryError> {
+            create_cas_files(config.package_import_method, &save_path, &cas_paths)
+                .map_err(InstallPackageFromRegistryError::CreateCasFiles)?;
+            symlink_package(&save_path, &symlink_path)
+                .map_err(InstallPackageFromRegistryError::SymlinkPackage)
+        };
+        let on_multi_thread = tokio::runtime::Handle::try_current()
+            .is_ok_and(|h| h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread);
+        if on_multi_thread {
+            tokio::task::block_in_place(do_import)?;
+        } else {
+            do_import()?;
+        }
 
         Ok(())
     }
