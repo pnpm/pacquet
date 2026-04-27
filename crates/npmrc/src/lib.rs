@@ -309,7 +309,9 @@ fn read_npmrc(dir: &std::path::Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::{env, str::FromStr};
+    use std::env;
+    #[cfg(not(target_os = "windows"))]
+    use std::path::Path;
 
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
@@ -407,7 +409,7 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     pub fn should_use_absolute_virtual_store_dir() {
         let value: Npmrc = serde_ini::from_str("virtual-store-dir=/node_modules/.pacquet").unwrap();
-        assert_eq!(value.virtual_store_dir, PathBuf::from_str("/node_modules/.pacquet").unwrap());
+        assert_eq!(value.virtual_store_dir, Path::new("/node_modules/.pacquet"));
     }
 
     #[test]

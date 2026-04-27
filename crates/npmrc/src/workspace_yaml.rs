@@ -166,9 +166,9 @@ impl WorkspaceSettings {
 }
 
 fn resolve(base: &Path, value: &str) -> PathBuf {
-    let candidate = PathBuf::from(value);
+    let candidate = Path::new(value);
     if candidate.is_absolute() {
-        candidate
+        candidate.to_path_buf()
     } else {
         base.join(candidate)
     }

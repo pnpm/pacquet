@@ -892,7 +892,14 @@ impl<'a> DownloadTarballToStore<'a> {
         // QUESTION: I see no copying from existing store_dir, is there such mechanism?
         // TODO: If it's not implemented yet, implement it
 
-        if let Some(cache_lock) = mem_cache.get(package_url) {
+        // `DashMap::get` returns a `Ref` that holds a shard read guard for
+        // its entire lifetime. Holding it across `.await` deadlocks: while
+        // this task is parked, another task on the same worker can call
+        // `mem_cache.insert` for a key that hashes to the same shard,
+        // block on the write side, and starve every worker. Clone the
+        // inner `Arc` out and drop the `Ref` immediately.
+        let existing = mem_cache.get(package_url).map(|r| Arc::clone(r.value()));
+        if let Some(cache_lock) = existing {
             let notify = match &*cache_lock.write().await {
                 CacheValue::Available(cas_paths) => {
                     return Ok(Arc::clone(cas_paths));
@@ -2146,6 +2153,153 @@ mod tests {
         }
         mock.assert_async().await;
         drop(store_dir_keep);
+    }
+
+    /// Regression test for the `run_with_mem_cache` deadlock that hung
+    /// `pacquet install` on real-network workloads at high concurrency.
+    /// The if-let branch used to hold a `DashMap::Ref` (a synchronous
+    /// shard read guard) across two `.await` points; under enough
+    /// concurrency another task on the same worker would call
+    /// `mem_cache.insert` for a key hashing to the same shard, block
+    /// on the parking_lot write, and starve every worker.
+    ///
+    /// To reproduce end-to-end:
+    /// * Mockito serves the real fastify-error tarball with a
+    ///   per-request sleep so the InProgress window is wide enough to
+    ///   schedule the contending task.
+    /// * Two concurrent calls for the same URL: one wins the else
+    ///   branch, the other parks in the if-let branch.
+    /// * A third call for a different URL whose key hashes to the same
+    ///   DashMap shard. Its else branch calls `mem_cache.insert`, which
+    ///   needs a write guard on the same shard.
+    /// * Single-worker tokio runtime: with the bug, the only worker
+    ///   blocks on parking_lot's exclusive wait and nothing else can be
+    ///   polled. The runtime is parked in a side OS thread so the test
+    ///   asserts the deadlock as a wall-clock timeout instead of
+    ///   hanging the test process forever.
+    #[test]
+    fn run_with_mem_cache_does_not_deadlock_on_dashmap_shard_contention() {
+        use std::sync::mpsc;
+        use std::thread;
+
+        const RESPONSE_LATENCY: Duration = Duration::from_millis(300);
+        const TEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+        let (tx, rx) = mpsc::channel();
+        thread::Builder::new()
+            .name("tarball-deadlock-regression".into())
+            .spawn(move || {
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(1)
+                    .enable_all()
+                    .build()
+                    .expect("build single-worker runtime");
+
+                rt.block_on(async {
+                    let mut server = mockito::Server::new_async().await;
+                    let url1 = format!("{}/pkg.tgz", server.url());
+
+                    // `DashMap::default()` uses `RandomState`, whose seed is
+                    // per-instance — so we MUST probe the very cache the
+                    // runtime tasks will use. A separate "probe" map would
+                    // hash to different shards and silently defeat the
+                    // collision setup, hiding the regression.
+                    let mem_cache: &'static MemCache = Box::leak(Box::new(MemCache::default()));
+                    let target_shard = mem_cache.determine_map(&url1);
+                    let url2 = (0u32..10_000)
+                        .map(|i| format!("{}/pkg-{i}.tgz", server.url()))
+                        .find(|u| u != &url1 && mem_cache.determine_map(u) == target_shard)
+                        .expect("no colliding URL within 10000 candidates");
+
+                    let path1 = url1.trim_start_matches(server.url().as_str()).to_string();
+                    let path2 = url2.trim_start_matches(server.url().as_str()).to_string();
+                    // Both endpoints are expected to be hit exactly once: A
+                    // for url1, C for url2. B uses the in-memory cache and
+                    // never reaches the network. Asserting hit counts guards
+                    // against a future short-circuit (e.g. a store-index
+                    // cache hit) that would let `run_with_mem_cache` return
+                    // before the contention window we want to exercise.
+                    let slow1 = server
+                        .mock("GET", path1.as_str())
+                        .with_status(200)
+                        .expect(1)
+                        .with_chunked_body(|w| {
+                            std::thread::sleep(RESPONSE_LATENCY);
+                            w.write_all(FASTIFY_ERROR_TARBALL)
+                        })
+                        .create_async()
+                        .await;
+                    let slow2 = server
+                        .mock("GET", path2.as_str())
+                        .with_status(200)
+                        .expect(1)
+                        .with_chunked_body(|w| {
+                            std::thread::sleep(RESPONSE_LATENCY);
+                            w.write_all(FASTIFY_ERROR_TARBALL)
+                        })
+                        .create_async()
+                        .await;
+
+                    // Leak everything spawned tasks need to borrow. The test
+                    // is single-shot so we don't bother reclaiming.
+                    let (_store_keep, store_path) = tempdir_with_leaked_path();
+                    let client: &'static ThrottledClient =
+                        Box::leak(Box::new(ThrottledClient::default()));
+                    let pkg_integrity: &'static Integrity =
+                        Box::leak(Box::new(integrity(FASTIFY_ERROR_INTEGRITY)));
+                    let url1: &'static str = Box::leak(url1.into_boxed_str());
+                    let url2: &'static str = Box::leak(url2.into_boxed_str());
+
+                    let make_dts = |url: &'static str| DownloadTarballToStore {
+                        http_client: client,
+                        store_dir: store_path,
+                        store_index: None,
+                        store_index_writer: None,
+                        verify_store_integrity: true,
+                        package_integrity: pkg_integrity,
+                        package_unpacked_size: None,
+                        package_url: url,
+                        package_id: "fastify-error@3.3.0",
+                        prefetched_cas_paths: None,
+                        retry_opts: RetryOpts { retries: 0, ..RetryOpts::default() },
+                    };
+
+                    // Spawn each task and yield once before the next so the
+                    // single worker drains the just-spawned task to its first
+                    // suspension point. With one worker, `yield_now` is a
+                    // deterministic ordering primitive (FIFO local queue):
+                    // A reaches `run_without_mem_cache`'s HTTP await, B
+                    // reaches the if-let branch's `notified().await` (with
+                    // the bug, holding the DashMap shard guard), and only
+                    // then is C polled — its else branch's
+                    // `mem_cache.insert` is what blocks the worker pre-fix.
+                    let task_a = tokio::spawn(make_dts(url1).run_with_mem_cache(mem_cache));
+                    tokio::task::yield_now().await;
+                    let task_b = tokio::spawn(make_dts(url1).run_with_mem_cache(mem_cache));
+                    tokio::task::yield_now().await;
+                    let task_c = tokio::spawn(make_dts(url2).run_with_mem_cache(mem_cache));
+
+                    task_a.await.expect("task A panicked").expect("task A failed");
+                    task_b.await.expect("task B panicked").expect("task B failed");
+                    task_c.await.expect("task C panicked").expect("task C failed");
+
+                    // Confirm each tarball endpoint was actually hit; without
+                    // these the test would pass vacuously if `run_with_mem_cache`
+                    // ever short-circuits before the network call.
+                    slow1.assert_async().await;
+                    slow2.assert_async().await;
+                });
+
+                // Reaching here means the runtime drained all three tasks —
+                // i.e. no deadlock.
+                let _ = tx.send(());
+            })
+            .expect("spawn regression-test thread");
+
+        rx.recv_timeout(TEST_TIMEOUT).expect(
+            "run_with_mem_cache deadlocked on DashMap shard contention; \
+             single-worker runtime did not finish within the timeout",
+        );
     }
 
     /// `retries: 0` (the value the existing fall-through tests use)

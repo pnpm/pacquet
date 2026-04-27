@@ -33,6 +33,7 @@ tracing       = { workspace = true }
 zune-inflate  = { workspace = true }
 
 [dev-dependencies]
+dashmap           = { workspace = true, features = ["raw-api"] }
 mockito           = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile          = { workspace = true }
