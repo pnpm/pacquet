@@ -141,8 +141,7 @@ pub fn deserialize_pathbuf<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let s = String::deserialize(deserializer)?;
-    let path = PathBuf::from_str(&s).map_err(de::Error::custom)?;
+    let path = PathBuf::from(String::deserialize(deserializer)?);
 
     if path.is_absolute() {
         return Ok(path);
