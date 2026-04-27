@@ -172,7 +172,9 @@ mod tests {
         let received: LockfileResolution = serde_yaml::from_str(yaml).unwrap();
         dbg!(&received);
         let expected = LockfileResolution::Registry(RegistryResolution {
-            integrity: integrity("sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==")
+            integrity: integrity(
+                "sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==",
+            ),
         });
         assert_eq!(received, expected);
     }
@@ -180,7 +182,9 @@ mod tests {
     #[test]
     fn serialize_registry_resolution() {
         let resolution = LockfileResolution::Registry(RegistryResolution {
-            integrity: integrity("sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==")
+            integrity: integrity(
+                "sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==",
+            ),
         });
         let received = serde_yaml::to_string(&resolution).unwrap();
         let received = received.trim();

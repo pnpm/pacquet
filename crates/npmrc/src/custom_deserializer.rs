@@ -1,5 +1,5 @@
 use pacquet_store_dir::StoreDir;
-use serde::{de, Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, de};
 use std::{env, path::PathBuf, str::FromStr};
 
 #[cfg(windows)]
@@ -186,7 +186,11 @@ mod tests {
     #[test]
     fn test_default_store_dir_with_pnpm_home_env() {
         let _g = EnvGuard::snapshot(["PNPM_HOME"]);
-        env::set_var("PNPM_HOME", "/tmp/pnpm-home"); // TODO: change this to dependency injection
+        // SAFETY: EnvGuard above serializes the test against other env-mutating
+        // tests in this process; no other thread reads these vars concurrently.
+        unsafe {
+            env::set_var("PNPM_HOME", "/tmp/pnpm-home"); // TODO: change this to dependency injection
+        }
         let store_dir = default_store_dir();
         assert_eq!(display_store_dir(&store_dir), "/tmp/pnpm-home/store");
     }
@@ -202,8 +206,12 @@ mod tests {
         // see the TODO — but this is enough for the failure mode this
         // PR is fixing.
         let _g = EnvGuard::snapshot(["PNPM_HOME", "XDG_DATA_HOME"]);
-        env::remove_var("PNPM_HOME");
-        env::set_var("XDG_DATA_HOME", "/tmp/xdg_data_home");
+        // SAFETY: EnvGuard above serializes the test against other env-mutating
+        // tests in this process; no other thread reads these vars concurrently.
+        unsafe {
+            env::remove_var("PNPM_HOME");
+            env::set_var("XDG_DATA_HOME", "/tmp/xdg_data_home");
+        }
         let store_dir = default_store_dir();
         assert_eq!(display_store_dir(&store_dir), "/tmp/xdg_data_home/pnpm/store");
     }

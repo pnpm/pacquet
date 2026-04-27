@@ -1,6 +1,6 @@
 use crate::{
-    store_init::init_store_dir_best_effort, InstallPackageFromRegistry,
-    InstallPackageFromRegistryError,
+    InstallPackageFromRegistry, InstallPackageFromRegistryError,
+    store_init::init_store_dir_best_effort,
 };
 use async_recursion::async_recursion;
 use dashmap::DashSet;

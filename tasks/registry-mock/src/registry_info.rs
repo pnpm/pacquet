@@ -1,5 +1,5 @@
 use crate::{
-    kill_verdaccio::kill_all_verdaccio_children, port_to_url::port_to_url, MockInstanceOptions,
+    MockInstanceOptions, kill_verdaccio::kill_all_verdaccio_children, port_to_url::port_to_url,
 };
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};

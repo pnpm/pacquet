@@ -17,7 +17,7 @@ use crate::custom_deserializer::{
     deserialize_store_dir, deserialize_u32, deserialize_u64,
 };
 pub use workspace_yaml::{
-    workspace_root_or, LoadWorkspaceYamlError, WorkspaceSettings, WORKSPACE_MANIFEST_FILENAME,
+    LoadWorkspaceYamlError, WORKSPACE_MANIFEST_FILENAME, WorkspaceSettings, workspace_root_or,
 };
 
 #[derive(Debug, Deserialize, Default, PartialEq)]
@@ -265,11 +265,11 @@ impl Npmrc {
         // Layer pnpm-workspace.yaml overrides on top. Missing file or
         // unreadable yaml is silently ignored, matching .npmrc's
         // best-effort behaviour above.
-        if let Some(start) = cwd {
-            if let Ok(Some((path, settings))) = WorkspaceSettings::find_and_load(&start) {
-                let base_dir = path.parent().unwrap_or(&start).to_path_buf();
-                settings.apply_to(&mut npmrc, &base_dir);
-            }
+        if let Some(start) = cwd
+            && let Ok(Some((path, settings))) = WorkspaceSettings::find_and_load(&start)
+        {
+            let base_dir = path.parent().unwrap_or(&start).to_path_buf();
+            settings.apply_to(&mut npmrc, &base_dir);
         }
 
         npmrc
@@ -360,7 +360,11 @@ mod tests {
     #[test]
     pub fn should_use_pnpm_home_env_var() {
         let _g = EnvGuard::snapshot(["PNPM_HOME"]);
-        env::set_var("PNPM_HOME", "/hello"); // TODO: change this to dependency injection
+        // SAFETY: EnvGuard above serializes the test against other env-mutating
+        // tests in this process; no other thread reads these vars concurrently.
+        unsafe {
+            env::set_var("PNPM_HOME", "/hello"); // TODO: change this to dependency injection
+        }
         let value: Npmrc = serde_ini::from_str("").unwrap();
         assert_eq!(display_store_dir(&value.store_dir), "/hello/store");
     }
@@ -375,8 +379,12 @@ mod tests {
         // temporarily-unset state. See the companion fix in
         // `custom_deserializer::tests::test_default_store_dir_with_xdg_env`.
         let _g = EnvGuard::snapshot(["PNPM_HOME", "XDG_DATA_HOME"]);
-        env::remove_var("PNPM_HOME"); // TODO: change this to dependency injection
-        env::set_var("XDG_DATA_HOME", "/hello");
+        // SAFETY: EnvGuard above serializes the test against other env-mutating
+        // tests in this process; no other thread reads these vars concurrently.
+        unsafe {
+            env::remove_var("PNPM_HOME"); // TODO: change this to dependency injection
+            env::set_var("XDG_DATA_HOME", "/hello");
+        }
         let value: Npmrc = serde_ini::from_str("").unwrap();
         assert_eq!(display_store_dir(&value.store_dir), "/hello/pnpm/store");
     }

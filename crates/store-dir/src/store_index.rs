@@ -7,8 +7,8 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
@@ -143,14 +143,14 @@ impl StoreIndexWriter {
     /// snapshot install that's a thousand identical warnings drowning
     /// out real diagnostics.
     pub fn queue(&self, key: String, value: PackageFilesIndex) {
-        if let Err(error) = self.tx.send((key, value)) {
-            if self.warn_on_send_failure.swap(false, Ordering::Relaxed) {
-                tracing::warn!(
-                    target: "pacquet::store_index",
-                    ?error,
-                    "store-index writer channel closed; dropping queued row (further failures silenced)",
-                );
-            }
+        if let Err(error) = self.tx.send((key, value))
+            && self.warn_on_send_failure.swap(false, Ordering::Relaxed)
+        {
+            tracing::warn!(
+                target: "pacquet::store_index",
+                ?error,
+                "store-index writer channel closed; dropping queued row (further failures silenced)",
+            );
         }
     }
 }

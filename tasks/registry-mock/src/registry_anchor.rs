@@ -1,4 +1,4 @@
-use crate::{kill_verdaccio::kill_all_verdaccio_children, MockInstanceOptions, RegistryInfo};
+use crate::{MockInstanceOptions, RegistryInfo, kill_verdaccio::kill_all_verdaccio_children};
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 use std::{

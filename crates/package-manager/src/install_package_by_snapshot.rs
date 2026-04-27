@@ -1,5 +1,5 @@
 use crate::{
-    retry_config::retry_opts_from_config, CreateVirtualDirBySnapshot, CreateVirtualDirError,
+    CreateVirtualDirBySnapshot, CreateVirtualDirError, retry_config::retry_opts_from_config,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
