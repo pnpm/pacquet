@@ -296,7 +296,9 @@ impl Default for Npmrc {
 
 #[cfg(test)]
 mod tests {
-    use std::{env, path::Path};
+    use std::env;
+    #[cfg(not(target_os = "windows"))]
+    use std::path::Path;
 
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
