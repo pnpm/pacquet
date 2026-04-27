@@ -2218,18 +2218,26 @@ mod tests {
 
                     let path1 = url1.trim_start_matches(server.url().as_str()).to_string();
                     let path2 = url2.trim_start_matches(server.url().as_str()).to_string();
-                    let _slow1 = server
+                    // Both endpoints are expected to be hit exactly once: A
+                    // for url1, C for url2. B uses the in-memory cache and
+                    // never reaches the network. Asserting hit counts guards
+                    // against a future short-circuit (e.g. a store-index
+                    // cache hit) that would let `run_with_mem_cache` return
+                    // before the contention window we want to exercise.
+                    let slow1 = server
                         .mock("GET", path1.as_str())
                         .with_status(200)
+                        .expect(1)
                         .with_chunked_body(|w| {
                             std::thread::sleep(RESPONSE_LATENCY);
                             w.write_all(FASTIFY_ERROR_TARBALL)
                         })
                         .create_async()
                         .await;
-                    let _slow2 = server
+                    let slow2 = server
                         .mock("GET", path2.as_str())
                         .with_status(200)
+                        .expect(1)
                         .with_chunked_body(|w| {
                             std::thread::sleep(RESPONSE_LATENCY);
                             w.write_all(FASTIFY_ERROR_TARBALL)
@@ -2261,17 +2269,30 @@ mod tests {
                         retry_opts: RetryOpts { retries: 0, ..RetryOpts::default() },
                     };
 
-                    // Sequential spawn so A is reliably the cache writer and
-                    // B reliably enters the if-let branch with InProgress.
+                    // Spawn each task and yield once before the next so the
+                    // single worker drains the just-spawned task to its first
+                    // suspension point. With one worker, `yield_now` is a
+                    // deterministic ordering primitive (FIFO local queue):
+                    // A reaches `run_without_mem_cache`'s HTTP await, B
+                    // reaches the if-let branch's `notified().await` (with
+                    // the bug, holding the DashMap shard guard), and only
+                    // then is C polled — its else branch's
+                    // `mem_cache.insert` is what blocks the worker pre-fix.
                     let task_a = tokio::spawn(make_dts(url1).run_with_mem_cache(mem_cache));
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    tokio::task::yield_now().await;
                     let task_b = tokio::spawn(make_dts(url1).run_with_mem_cache(mem_cache));
-                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    tokio::task::yield_now().await;
                     let task_c = tokio::spawn(make_dts(url2).run_with_mem_cache(mem_cache));
 
                     task_a.await.expect("task A panicked").expect("task A failed");
                     task_b.await.expect("task B panicked").expect("task B failed");
                     task_c.await.expect("task C panicked").expect("task C failed");
+
+                    // Confirm each tarball endpoint was actually hit; without
+                    // these the test would pass vacuously if `run_with_mem_cache`
+                    // ever short-circuits before the network call.
+                    slow1.assert_async().await;
+                    slow2.assert_async().await;
                 });
 
                 // Reaching here means the runtime drained all three tasks —
