@@ -328,6 +328,80 @@ mod tests {
         drop(dir);
     }
 
+    /// Issue #312: an npm-alias dependency
+    /// (`"<key>": "npm:<real>@<range>"`) used to panic during install
+    /// because the whole `npm:...` spec was fed to
+    /// `node_semver::Range::parse`. Assert that:
+    ///
+    /// * the install completes,
+    /// * the virtual-store directory uses the *real* package name, and
+    /// * the symlink under `node_modules/` uses the alias key.
+    ///
+    /// Mirrors pnpm's `parseBareSpecifier`. Reference:
+    /// <https://github.com/pnpm/pnpm/blob/1819226b51/resolving/npm-resolver/src/parseBareSpecifier.ts>
+    #[tokio::test]
+    async fn npm_alias_dependency_installs_under_alias_key() {
+        let mock_instance = AutoMockInstance::load_or_init();
+
+        let dir = tempdir().unwrap();
+        let store_dir = dir.path().join("pacquet-store");
+        let project_root = dir.path().join("project");
+        let modules_dir = project_root.join("node_modules");
+        let virtual_store_dir = modules_dir.join(".pacquet");
+
+        let manifest_path = dir.path().join("package.json");
+        let mut manifest = PackageManifest::create_if_needed(manifest_path.clone()).unwrap();
+
+        manifest
+            .add_dependency(
+                "hello-world-alias",
+                "npm:@pnpm.e2e/hello-world-js-bin@1.0.0",
+                DependencyGroup::Prod,
+            )
+            .unwrap();
+        manifest.save().unwrap();
+
+        let mut config = Npmrc::new();
+        config.store_dir = store_dir.into();
+        config.modules_dir = modules_dir.to_path_buf();
+        config.virtual_store_dir = virtual_store_dir.to_path_buf();
+        config.registry = mock_instance.url();
+        let config = config.leak();
+
+        Install {
+            tarball_mem_cache: &Default::default(),
+            http_client: &Default::default(),
+            config,
+            manifest: &manifest,
+            lockfile: None,
+            dependency_groups: [DependencyGroup::Prod],
+            frozen_lockfile: false,
+            resolved_packages: &Default::default(),
+        }
+        .run()
+        .await
+        .expect("npm-alias install should succeed");
+
+        // Symlink lives under the alias key, *not* the real package name.
+        let alias_link = project_root.join("node_modules/hello-world-alias");
+        assert!(
+            is_symlink_or_junction(&alias_link).unwrap(),
+            "expected alias symlink at {alias_link:?}",
+        );
+        assert!(
+            !project_root.join("node_modules/@pnpm.e2e/hello-world-js-bin").exists(),
+            "the real package name must not be exposed alongside an unrelated alias",
+        );
+
+        // Virtual-store directory uses the real package name.
+        let virtual_store_path =
+            project_root.join("node_modules/.pacquet/@pnpm.e2e+hello-world-js-bin@1.0.0");
+        assert!(virtual_store_path.is_dir(), "expected real-name virtual store dir");
+        assert!(virtual_store_path.join("node_modules/@pnpm.e2e/hello-world-js-bin").is_dir());
+
+        drop((dir, mock_instance));
+    }
+
     /// Symmetric negative: `--frozen-lockfile` with no lockfile
     /// loadable must surface `NoLockfile`, even when `config.lockfile`
     /// is `false` (which used to fall through to the no-lockfile path
