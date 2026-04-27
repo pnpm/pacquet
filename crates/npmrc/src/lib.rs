@@ -128,7 +128,7 @@ pub struct Npmrc {
     /// speed when switching branches or downgrading dependencies.
     ///
     /// Default value is 10080 (7 days in minutes)
-    #[default = 10080]
+    #[default(_code = "default_modules_cache_max_age()")]
     #[serde(default = "default_modules_cache_max_age", deserialize_with = "deserialize_u64")]
     pub modules_cache_max_age: u64,
 
@@ -212,7 +212,7 @@ pub struct Npmrc {
     /// `serde_ini::from_str` still parse; [`Npmrc::current`] applies the
     /// auth subset from `.npmrc` and reads project-structural settings
     /// from `pnpm-workspace.yaml`.
-    #[default = 2]
+    #[default(_code = "default_fetch_retries()")]
     #[serde(default = "default_fetch_retries", deserialize_with = "deserialize_u32")]
     pub fetch_retries: u32,
 
@@ -220,21 +220,21 @@ pub struct Npmrc {
     /// pnpm's `fetchRetryFactor` (default `10`). Successive backoff is
     /// `min(fetch_retry_mintimeout * factor^attempt, fetch_retry_maxtimeout)`.
     /// Yaml-only — see [`Npmrc::fetch_retries`].
-    #[default = 10]
+    #[default(_code = "default_fetch_retry_factor()")]
     #[serde(default = "default_fetch_retry_factor", deserialize_with = "deserialize_u32")]
     pub fetch_retry_factor: u32,
 
     /// Floor in milliseconds for the wait between retries. Mirrors pnpm's
     /// `fetchRetryMintimeout` (default `10000` — 10 s). Yaml-only — see
     /// [`Npmrc::fetch_retries`].
-    #[default = 10_000]
+    #[default(_code = "default_fetch_retry_mintimeout()")]
     #[serde(default = "default_fetch_retry_mintimeout", deserialize_with = "deserialize_u64")]
     pub fetch_retry_mintimeout: u64,
 
     /// Cap in milliseconds on the wait between retries. Mirrors pnpm's
     /// `fetchRetryMaxtimeout` (default `60000` — 1 min). Yaml-only —
     /// see [`Npmrc::fetch_retries`].
-    #[default = 60_000]
+    #[default(_code = "default_fetch_retry_maxtimeout()")]
     #[serde(default = "default_fetch_retry_maxtimeout", deserialize_with = "deserialize_u64")]
     pub fetch_retry_maxtimeout: u64,
 }
