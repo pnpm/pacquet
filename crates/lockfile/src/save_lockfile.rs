@@ -105,6 +105,19 @@ mod tests {
         original.save_to_path(&path).expect("save lockfile");
 
         let saved_bytes = std::fs::read_to_string(&path).expect("read saved lockfile");
+
+        // Long single-line scalars (notably `integrity: sha512-…`) must stay plain;
+        // pnpm-lock.yaml never uses folded block scalars (`>-`) for them. Guard the
+        // formatting invariant that `serialize_yaml` exists to enforce.
+        assert!(
+            !saved_bytes.contains(">-"),
+            "saved lockfile must not contain folded block scalars (`>-`):\n{saved_bytes}",
+        );
+        assert!(
+            saved_bytes.contains("integrity: sha512-"),
+            "saved lockfile must keep `integrity: sha512-` as a plain scalar:\n{saved_bytes}",
+        );
+
         let reparsed: Lockfile = serde_saphyr::from_str(&saved_bytes).expect("reparse lockfile");
 
         assert_eq!(original, reparsed);
