@@ -23,12 +23,11 @@ pub fn default_public_hoist_pattern() -> Vec<String> {
 // Get the drive letter from a path on Windows. If it's not a Windows path, return None.
 #[cfg(windows)]
 fn get_drive_letter(current_dir: &Path) -> Option<char> {
-    if let Some(Component::Prefix(prefix_component)) = current_dir.components().next() {
-        if let std::path::Prefix::Disk(disk_byte) | std::path::Prefix::VerbatimDisk(disk_byte) =
+    if let Some(Component::Prefix(prefix_component)) = current_dir.components().next()
+        && let std::path::Prefix::Disk(disk_byte) | std::path::Prefix::VerbatimDisk(disk_byte) =
             prefix_component.kind()
-        {
-            return Some(disk_byte as char);
-        }
+    {
+        return Some(disk_byte as char);
     }
     None
 }
