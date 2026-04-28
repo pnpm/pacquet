@@ -378,7 +378,7 @@ Primary tests:
 - [ ] `TypeScript repo: installing/deps-installer/test/lockfile.ts:547` `repeat install with no inner lockfile should not rewrite packages in node_modules` covers missing current lockfile on repeat install.
 - [ ] `TypeScript repo: installing/deps-installer/test/lockfile.ts:1007` `use current pnpm-lock.yaml as initial wanted one, when wanted was removed` covers recovering from current lockfile when wanted lockfile is gone.
 - [ ] `TypeScript repo: installing/deps-installer/test/lockfile.ts:1351` `a broken private lockfile is ignored` covers malformed `node_modules/.pnpm/lock.yaml`.
-- [ ] `TypeScript repo: installing/deps-installer/test/lockfile.ts:1324` `a lockfile with duplicate keys is causes an exception, when frozenLockfile is true` covers frozen lockfile parse/validation failure.
+- [ ] `TypeScript repo: installing/deps-installer/test/lockfile.ts:1324` `a lockfile with duplicate keys causes an exception, when frozenLockfile is true` covers frozen lockfile parse/validation failure.
 
 Supporting tests:
 
@@ -557,7 +557,7 @@ Install tests:
 - [ ] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:105` `from a github repo with different name`
 - [ ] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:150` `a subdependency is from a github repo with different name`
 - [ ] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:174` `from a git repo`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:206` `from a github repo the has no package.json file`
+- [ ] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:206` `from a github repo that has no package.json file`
 - [ ] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:276` `re-adding a git repo with a different tag`
 - [ ] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:323` `should not update when adding unrelated dependency`
 - [ ] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:354` `git-hosted repository is not added to the store if it fails to be built`
