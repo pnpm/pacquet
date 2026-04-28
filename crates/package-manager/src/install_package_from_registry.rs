@@ -10,7 +10,7 @@ use pacquet_package_manifest::PackageManifest;
 use pacquet_registry::{Package, PackageTag, PackageVersion, RegistryError};
 use pacquet_store_dir::{SharedReadonlyStoreIndex, StoreIndexWriter};
 use pacquet_tarball::{DownloadTarballToStore, MemCache, TarballError};
-use std::{path::Path, str::FromStr, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 /// This subroutine executes the following and returns the package
 /// * Retrieves the package from the registry
@@ -49,22 +49,25 @@ pub enum InstallPackageFromRegistryError {
 
 impl<'a> InstallPackageFromRegistry<'a> {
     /// Execute the subroutine.
-    pub async fn run<Tag>(self) -> Result<PackageVersion, InstallPackageFromRegistryError>
-    where
-        Tag: FromStr + Into<PackageTag>,
-    {
+    pub async fn run(self) -> Result<PackageVersion, InstallPackageFromRegistryError> {
         let &InstallPackageFromRegistry { http_client, config, name, version_range, .. } = &self;
 
         // Strip any `npm:<name>@<range>` alias prefix before talking to
         // the registry. `name` (the manifest key) stays as the directory
-        // name inside `node_modules`.
+        // name inside `node_modules`. Unversioned aliases (`npm:foo`) are
+        // resolved to `"latest"` by `resolve_registry_dependency`.
         let (registry_name, version_range) =
             PackageManifest::resolve_registry_dependency(name, version_range);
 
-        Ok(if let Ok(tag) = version_range.parse::<Tag>() {
+        // Try parsing as a `PackageTag` first: this covers both the
+        // `"latest"` tag (including unversioned `npm:` aliases) and
+        // pinned versions like `"1.0.0"`. Semver ranges like `"^1.0.0"`
+        // fail `PackageTag::from_str` and fall through to the range
+        // resolution branch below.
+        Ok(if let Ok(tag) = version_range.parse::<PackageTag>() {
             let package_version = PackageVersion::fetch_from_registry(
                 registry_name,
-                tag.into(),
+                tag,
                 http_client,
                 &config.registry,
             )
@@ -209,7 +212,7 @@ mod tests {
             version_range: "1.0.0",
             node_modules_dir: modules_dir.path(),
         }
-        .run::<Version>()
+        .run()
         .await
         .unwrap();
 

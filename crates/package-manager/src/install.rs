@@ -402,6 +402,87 @@ mod tests {
         drop((dir, mock_instance));
     }
 
+    /// Issue #312, unversioned variant: `"foo": "npm:bar"` (no `@<range>`)
+    /// must default to `latest` without panicking. `resolve_registry_dependency`
+    /// turns `"npm:bar"` into `("bar", "latest")`; the previous code then
+    /// fed `"latest"` to `package.pinned_version()` which panics because
+    /// `node_semver::Range` cannot parse the string. The fix is to route
+    /// `"latest"` (and any `PackageTag`-parseable value) through
+    /// `PackageVersion::fetch_from_registry` directly.
+    ///
+    /// We use the same scoped test package as the pinned-version test above
+    /// but omit the `@1.0.0` suffix to trigger the default-to-`latest` path.
+    #[tokio::test]
+    async fn unversioned_npm_alias_defaults_to_latest() {
+        let mock_instance = AutoMockInstance::load_or_init();
+
+        let dir = tempdir().unwrap();
+        let store_dir = dir.path().join("pacquet-store");
+        let project_root = dir.path().join("project");
+        let modules_dir = project_root.join("node_modules");
+        let virtual_store_dir = modules_dir.join(".pacquet");
+
+        let manifest_path = dir.path().join("package.json");
+        let mut manifest = PackageManifest::create_if_needed(manifest_path.clone()).unwrap();
+
+        // No `@<version>` — should resolve to the `latest` tag.
+        manifest
+            .add_dependency(
+                "hello-world-alias",
+                "npm:@pnpm.e2e/hello-world-js-bin",
+                DependencyGroup::Prod,
+            )
+            .unwrap();
+        manifest.save().unwrap();
+
+        let mut config = Npmrc::new();
+        config.store_dir = store_dir.into();
+        config.modules_dir = modules_dir.to_path_buf();
+        config.virtual_store_dir = virtual_store_dir.to_path_buf();
+        config.registry = mock_instance.url();
+        let config = config.leak();
+
+        Install {
+            tarball_mem_cache: &Default::default(),
+            http_client: &Default::default(),
+            config,
+            manifest: &manifest,
+            lockfile: None,
+            dependency_groups: [DependencyGroup::Prod],
+            frozen_lockfile: false,
+            resolved_packages: &Default::default(),
+        }
+        .run()
+        .await
+        .expect("unversioned npm-alias install should succeed (defaults to latest)");
+
+        // Symlink lives under the alias key, not the real package name.
+        let alias_link = project_root.join("node_modules/hello-world-alias");
+        assert!(
+            is_symlink_or_junction(&alias_link).unwrap(),
+            "expected alias symlink at {alias_link:?}",
+        );
+        assert!(
+            !project_root.join("node_modules/@pnpm.e2e/hello-world-js-bin").exists(),
+            "the real package name must not be exposed alongside the alias",
+        );
+
+        // Virtual-store directory uses the real package name (version resolved
+        // at runtime from `latest` — just assert the real name prefix exists).
+        let virtual_store_dir_path = project_root.join("node_modules/.pacquet");
+        let has_real_name_dir = std::fs::read_dir(&virtual_store_dir_path)
+            .unwrap()
+            .flatten()
+            .any(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("@pnpm.e2e+hello-world-js-bin@")
+            });
+        assert!(has_real_name_dir, "expected real-name virtual store directory");
+
+        drop((dir, mock_instance));
+    }
+
     /// Symmetric negative: `--frozen-lockfile` with no lockfile
     /// loadable must surface `NoLockfile`, even when `config.lockfile`
     /// is `false` (which used to fall through to the no-lockfile path

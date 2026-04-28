@@ -7,7 +7,6 @@ use dashmap::DashSet;
 use derive_more::{Display, Error};
 use futures_util::future;
 use miette::Diagnostic;
-use node_semver::Version;
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
@@ -112,7 +111,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                     name,
                     version_range,
                 }
-                .run::<Version>()
+                .run()
                 .await
                 .map_err(InstallWithoutLockfileError::InstallPackageFromRegistry)?;
 
@@ -205,7 +204,7 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
                     name,
                     version_range,
                 }
-                .run::<Version>()
+                .run()
                 .await
                 .map_err(InstallWithoutLockfileError::InstallPackageFromRegistry)?;
                 self.install_dependencies_from_registry(
