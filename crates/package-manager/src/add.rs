@@ -24,8 +24,8 @@ where
     pub manifest: &'a mut PackageManifest,
     pub lockfile: Option<&'a Lockfile>,
     pub list_dependency_groups: ListDependencyGroups, // must be a function because it is called multiple times
-    pub package_name: &'a str, // TODO: 1. multiple arguments, 2. name this `packages`
-    pub save_exact: bool,      // TODO: add `save-exact` to `.npmrc`, merge configs, and remove this
+    pub packages: &'a [&'a str],
+    pub save_exact: bool, // TODO: add `save-exact` to `.npmrc`, merge configs, and remove this
 }
 
 /// Error type of [`Add`].
@@ -69,58 +69,60 @@ where
             manifest,
             lockfile,
             list_dependency_groups,
-            package_name,
+            packages,
             save_exact,
             resolved_packages,
         } = self;
 
-        let (name, specifier) = parse_pkg_arg(package_name);
+        for &pkg in packages {
+            let (name, specifier) = parse_pkg_arg(pkg);
 
-        // Resolve the version specifier to a range string to save in package.json.
-        // For tags (no specifier or dist-tag), we fetch the resolved version first so
-        // we can save a pinned semver range rather than a mutable tag name.
-        let version_to_save = if specifier.is_empty() || specifier == "latest" {
-            let version = PackageVersion::fetch_from_registry(
-                name,
-                PackageTag::Latest,
-                http_client,
-                &config.registry,
-            )
-            .await
-            .map_err(AddError::FetchVersion)?;
-            version.serialize(save_exact)
-        } else if let Ok(v) = specifier.parse::<Version>() {
-            // Exact semver version: fetch to validate, then save with ^ unless --save-exact.
-            PackageVersion::fetch_from_registry(
-                name,
-                PackageTag::Version(v),
-                http_client,
-                &config.registry,
-            )
-            .await
-            .map_err(AddError::FetchVersion)?;
-            if save_exact { specifier.to_owned() } else { format!("^{specifier}") }
-        } else if specifier.parse::<Range>().is_ok() {
-            // Semver range (e.g. `^18`, `~1.0.0`, `>=1 <2`): save as-is and let
-            // the install step resolve the best matching version.
-            specifier.to_owned()
-        } else {
-            // Named dist-tag (e.g. `next`, `beta`): resolve to a concrete version.
-            let version = PackageVersion::fetch_from_registry(
-                name,
-                PackageTag::Tag(specifier.to_owned()),
-                http_client,
-                &config.registry,
-            )
-            .await
-            .map_err(AddError::FetchVersion)?;
-            version.serialize(save_exact)
-        };
+            // Resolve the version specifier to a range string to save in package.json.
+            // For tags (no specifier or dist-tag), we fetch the resolved version first so
+            // we can save a pinned semver range rather than a mutable tag name.
+            let version_to_save = if specifier.is_empty() || specifier == "latest" {
+                let version = PackageVersion::fetch_from_registry(
+                    name,
+                    PackageTag::Latest,
+                    http_client,
+                    &config.registry,
+                )
+                .await
+                .map_err(AddError::FetchVersion)?;
+                version.serialize(save_exact)
+            } else if let Ok(v) = specifier.parse::<Version>() {
+                // Exact semver version: fetch to validate, then save with ^ unless --save-exact.
+                PackageVersion::fetch_from_registry(
+                    name,
+                    PackageTag::Version(v),
+                    http_client,
+                    &config.registry,
+                )
+                .await
+                .map_err(AddError::FetchVersion)?;
+                if save_exact { specifier.to_owned() } else { format!("^{specifier}") }
+            } else if specifier.parse::<Range>().is_ok() {
+                // Semver range (e.g. `^18`, `~1.0.0`, `>=1 <2`): save as-is and let
+                // the install step resolve the best matching version.
+                specifier.to_owned()
+            } else {
+                // Named dist-tag (e.g. `next`, `beta`): resolve to a concrete version.
+                let version = PackageVersion::fetch_from_registry(
+                    name,
+                    PackageTag::Tag(specifier.to_owned()),
+                    http_client,
+                    &config.registry,
+                )
+                .await
+                .map_err(AddError::FetchVersion)?;
+                version.serialize(save_exact)
+            };
 
-        for dependency_group in list_dependency_groups() {
-            manifest
-                .add_dependency(name, &version_to_save, dependency_group)
-                .map_err(AddError::AddDependencyToManifest)?;
+            for dependency_group in list_dependency_groups() {
+                manifest
+                    .add_dependency(name, &version_to_save, dependency_group)
+                    .map_err(AddError::AddDependencyToManifest)?;
+            }
         }
 
         Install {

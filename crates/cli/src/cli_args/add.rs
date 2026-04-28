@@ -65,8 +65,9 @@ impl AddDependencyOptions {
 
 #[derive(Debug, Args)]
 pub struct AddArgs {
-    /// Name of the package
-    pub package_name: String, // TODO: 1. multiple arguments, 2. name this `packages`
+    /// Names of the packages to add.
+    #[clap(required = true)]
+    pub packages: Vec<String>,
     /// --save-prod, --save-dev, --save-optional, --save-peer
     #[clap(flatten)]
     pub dependency_options: AddDependencyOptions,
@@ -88,6 +89,7 @@ impl AddArgs {
         let State { tarball_mem_cache, http_client, config, manifest, lockfile, resolved_packages } =
             &mut state;
 
+        let packages: Vec<&str> = self.packages.iter().map(String::as_str).collect();
         Add {
             tarball_mem_cache,
             http_client,
@@ -95,13 +97,13 @@ impl AddArgs {
             manifest,
             lockfile: lockfile.as_ref(),
             list_dependency_groups: || self.dependency_options.dependency_groups(),
-            package_name: &self.package_name,
+            packages: &packages,
             save_exact: self.save_exact,
             resolved_packages,
         }
         .run()
         .await
-        .wrap_err("adding a new package")
+        .wrap_err("adding packages")
     }
 }
 
