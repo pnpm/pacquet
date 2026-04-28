@@ -108,9 +108,10 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
         manifest
             .dependencies(dependency_groups)
             .map(|(name, version_range)| {
-                // Same pattern as `create_virtual_store.rs`: an
-                // `async move` can't borrow into the surrounding
-                // scope, so bind a same-Arc copy outside the future.
+                // Same pattern as `create_virtual_store.rs`: clone the
+                // shared cache handle so each per-dependency future owns
+                // a handle it can move into the `async move` block and
+                // then reference from within the future.
                 let verified_files_cache = SharedVerifiedFilesCache::clone(&verified_files_cache);
                 async move {
                     let dependency = InstallPackageFromRegistry {
