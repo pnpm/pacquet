@@ -1,3 +1,5 @@
+mod cafs_write;
+
 use std::{fs, path::Path};
 
 use clap::Parser;
@@ -71,6 +73,7 @@ pub fn main() -> Result<(), String> {
     }
 
     bench_tarball(&mut criterion, &mut server, &fixtures_folder);
+    cafs_write::bench_cafs_write(&mut criterion, &fixtures_folder);
 
     Ok(())
 }
