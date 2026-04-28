@@ -473,11 +473,7 @@ mod tests {
         let has_real_name_dir = std::fs::read_dir(&virtual_store_dir_path)
             .unwrap()
             .flatten()
-            .any(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with("@pnpm.e2e+hello-world-js-bin@")
-            });
+            .any(|e| e.file_name().to_string_lossy().starts_with("@pnpm.e2e+hello-world-js-bin@"));
         assert!(has_real_name_dir, "expected real-name virtual store directory");
 
         drop((dir, mock_instance));
