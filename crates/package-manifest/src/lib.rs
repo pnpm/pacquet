@@ -157,6 +157,35 @@ impl PackageManifest {
             .flat_map(|(name, version)| version.as_str().map(|value| (name.as_str(), value)))
     }
 
+    /// Resolve a `(key, bare_specifier)` pair from a `package.json`
+    /// dependency entry into the `(registry_name, version_range)` to send
+    /// to the registry.
+    ///
+    /// For an ordinary entry (`"foo": "^1.2.3"`) the registry name equals
+    /// the entry key. For an npm-alias entry (`"foo": "npm:bar@^1.2.3"`)
+    /// the registry name is parsed from the spec and the entry key is
+    /// only used as the directory name under `node_modules`. An
+    /// unversioned `npm:bar` (or `npm:@scope/bar`) defaults to the
+    /// `latest` tag.
+    ///
+    /// Mirrors pnpm's `parseBareSpecifier`. Reference:
+    /// <https://github.com/pnpm/pnpm/blob/1819226b51/resolving/npm-resolver/src/parseBareSpecifier.ts>
+    pub fn resolve_registry_dependency<'a>(
+        key: &'a str,
+        bare_specifier: &'a str,
+    ) -> (&'a str, &'a str) {
+        let Some(rest) = bare_specifier.strip_prefix("npm:") else {
+            return (key, bare_specifier);
+        };
+        // pnpm's parseBareSpecifier uses `lastIndexOf('@')` and treats
+        // `index < 1` (no `@`, or `@` at position 0 of a scoped name)
+        // as "no version" — the spec is just a package name.
+        match rest.rfind('@') {
+            Some(idx) if idx >= 1 => (&rest[..idx], &rest[idx + 1..]),
+            _ => (rest, "latest"),
+        }
+    }
+
     pub fn bundle_dependencies(&self) -> Result<Option<BundleDependencies>, serde_json::Error> {
         self.value
             .get("bundleDependencies")
@@ -330,5 +359,70 @@ mod tests {
         case!(r#"{ "bundleDependencies": true }"# => true.pipe(BundleDependencies::Boolean).pipe(Some));
         case!(r#"{ "bundledDependencies": true }"# => true.pipe(BundleDependencies::Boolean).pipe(Some));
         case!(r#"{}"# => None);
+    }
+
+    #[test]
+    fn resolve_registry_dependency_passes_through_plain_specs() {
+        for (key, spec) in [
+            ("foo", "^1.0.0"),
+            ("foo", "1.2.3"),
+            ("foo", "latest"),
+            ("@scope/foo", "^1.0.0"),
+            ("foo", "*"),
+            ("foo", ">=1 <2"),
+        ] {
+            assert_eq!(
+                PackageManifest::resolve_registry_dependency(key, spec),
+                (key, spec),
+                "plain spec ({key:?}, {spec:?}) should pass through unchanged",
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_registry_dependency_strips_npm_alias_prefix() {
+        assert_eq!(
+            PackageManifest::resolve_registry_dependency("ansi-strip", "npm:strip-ansi@^6.0.1"),
+            ("strip-ansi", "^6.0.1"),
+        );
+    }
+
+    #[test]
+    fn resolve_registry_dependency_handles_scoped_target() {
+        assert_eq!(
+            PackageManifest::resolve_registry_dependency("react17", "npm:@types/react@^17.0.49"),
+            ("@types/react", "^17.0.49"),
+        );
+    }
+
+    #[test]
+    fn resolve_registry_dependency_handles_pinned_version() {
+        assert_eq!(
+            PackageManifest::resolve_registry_dependency("foo-cjs", "npm:foo@1.2.3"),
+            ("foo", "1.2.3"),
+        );
+    }
+
+    #[test]
+    fn resolve_registry_dependency_unversioned_npm_alias_defaults_to_latest() {
+        // `npm:foo` and `npm:@scope/foo` mean "latest" in pnpm.
+        assert_eq!(
+            PackageManifest::resolve_registry_dependency("foo-cjs", "npm:foo"),
+            ("foo", "latest"),
+        );
+        assert_eq!(
+            PackageManifest::resolve_registry_dependency("react17", "npm:@types/react"),
+            ("@types/react", "latest"),
+        );
+    }
+
+    #[test]
+    fn resolve_registry_dependency_picks_last_at_for_alias() {
+        // Mirrors pnpm's `lastIndexOf('@')` so prerelease/build metadata
+        // containing `@` would still be split at the *final* `@`.
+        assert_eq!(
+            PackageManifest::resolve_registry_dependency("foo-rc", "npm:@scope/foo@1.0.0-rc.1",),
+            ("@scope/foo", "1.0.0-rc.1"),
+        );
     }
 }
