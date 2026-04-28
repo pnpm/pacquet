@@ -10,12 +10,6 @@ use std::{
 /// Error type for [`link_file`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum LinkFileError {
-    #[display("cannot create directory at {dirname:?}: {error}")]
-    CreateDir {
-        dirname: PathBuf,
-        #[error(source)]
-        error: io::Error,
-    },
     // `link_file` now dispatches to copy / reflink / hardlink depending
     // on `PackageImportMethod`, so a "fail to create a link" message
     // would be misleading when the configured method is `Copy`. Using
@@ -90,7 +84,13 @@ fn log_method_once(flag: u8, method: &'static str) {
 /// Materialize a CAFS file into `target_link` using `method`.
 ///
 /// * If `target_link` already exists, do nothing.
-/// * If parent dir of `target_link` doesn't exist, it will be created.
+/// * `target_link.parent()` must already exist; this is a leaf
+///   operation that does not create directories. Mirrors pnpm v11's
+///   `importFile` (see `fs/indexed-pkg-importer/src/importIndexedDir.ts`,
+///   `tryImportIndexedDir`), which mkdirs the unique parent set
+///   sequentially up-front and then calls into the import primitive
+///   per file. [`create_cas_files`](crate::create_cas_files) is the
+///   production caller and handles that pre-pass.
 pub fn link_file(
     method: PackageImportMethod,
     source_file: &Path,
@@ -127,13 +127,6 @@ pub fn link_file(
             // Non-`NotFound` stat error. Leave the dirent alone; the
             // import call below will surface the real problem.
         }
-    }
-
-    if let Some(parent_dir) = target_link.parent() {
-        fs::create_dir_all(parent_dir).map_err(|error| LinkFileError::CreateDir {
-            dirname: parent_dir.to_path_buf(),
-            error,
-        })?;
     }
 
     // Hardlinking a file from the store into `node_modules` means any
@@ -334,6 +327,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let src = write_source(tmp.path(), "src.txt", b"hello");
         let dst = tmp.path().join("nested/dst.txt");
+        fs::create_dir_all(dst.parent().unwrap()).unwrap();
 
         link_file(PackageImportMethod::Copy, &src, &dst).expect("link_file should succeed");
 
@@ -358,6 +352,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let src = write_source(tmp.path(), "src.txt", b"shared");
         let dst = tmp.path().join("nested/dst.txt");
+        fs::create_dir_all(dst.parent().unwrap()).unwrap();
 
         link_file(PackageImportMethod::Hardlink, &src, &dst).expect("link_file should succeed");
 
@@ -380,6 +375,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let src = write_source(tmp.path(), "src.txt", b"auto");
         let dst = tmp.path().join("nested/dst.txt");
+        fs::create_dir_all(dst.parent().unwrap()).unwrap();
 
         link_file(PackageImportMethod::Auto, &src, &dst).expect("Auto should always succeed");
         assert_eq!(fs::read(&dst).unwrap(), b"auto");
@@ -435,6 +431,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let src = write_source(tmp.path(), "src.txt", b"clone-or-copy");
         let dst = tmp.path().join("nested/dst.txt");
+        fs::create_dir_all(dst.parent().unwrap()).unwrap();
 
         link_file(PackageImportMethod::CloneOrCopy, &src, &dst)
             .expect("CloneOrCopy should always succeed");
