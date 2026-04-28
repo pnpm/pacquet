@@ -29,6 +29,11 @@ function generateNativePackage(platform, arch) {
   // Generate the package.json manifest
   const { version } = rootManifest;
 
+  // publishConfig.executableFiles tells pnpm pack to keep mode 0755
+  // on the binary in the published tarball. Without it, pack normalizes
+  // every non-bin file to 0644 and the JS shim's spawnSync fails with
+  // EACCES on install.
+  const ext = platform === "win32" ? ".exe" : "";
   const manifest = JSON.stringify({
     name: packageName,
     version,
@@ -36,7 +41,10 @@ function generateNativePackage(platform, arch) {
     cpu: [arch],
     repository: {
       type: "git",
-      url: "https://github.com/anonrig/pacquet",
+      url: "https://github.com/pnpm/pacquet",
+    },
+    publishConfig: {
+      executableFiles: [`./${BIN_NAME}${ext}`],
     },
   }, null, 2);
 
@@ -45,7 +53,6 @@ function generateNativePackage(platform, arch) {
   fs.writeFileSync(manifestPath, manifest);
 
   // Copy the binary
-  const ext = platform === "win32" ? ".exe" : "";
   const binarySource = resolve(REPO_ROOT, `${BIN_NAME}-${platform}-${arch}${ext}`);
   const binaryTarget = resolve(packageRoot, `${BIN_NAME}${ext}`);
 

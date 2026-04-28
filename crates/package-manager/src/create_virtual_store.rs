@@ -1,5 +1,5 @@
 use crate::{
-    store_init::init_store_dir_best_effort, InstallPackageBySnapshot, InstallPackageBySnapshotError,
+    InstallPackageBySnapshot, InstallPackageBySnapshotError, store_init::init_store_dir_best_effort,
 };
 use derive_more::{Display, Error};
 use futures_util::future;
@@ -7,7 +7,7 @@ use miette::Diagnostic;
 use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
-use pacquet_store_dir::{store_index_key, StoreIndex, StoreIndexWriter};
+use pacquet_store_dir::{StoreIndex, StoreIndexWriter, store_index_key};
 use pacquet_tarball::prefetch_cas_paths;
 use pipe_trait::Pipe;
 use std::collections::HashMap;
@@ -27,7 +27,9 @@ pub enum CreateVirtualStoreError {
     #[diagnostic(transparent)]
     InstallPackageBySnapshot(#[error(source)] InstallPackageBySnapshotError),
 
-    #[display("Lockfile has a snapshot entry `{snapshot_key}` with no matching metadata entry (`{metadata_key}`) in `packages:`.")]
+    #[display(
+        "Lockfile has a snapshot entry `{snapshot_key}` with no matching metadata entry (`{metadata_key}`) in `packages:`."
+    )]
     #[diagnostic(code(pacquet_package_manager::missing_package_metadata))]
     MissingPackageMetadata { snapshot_key: String, metadata_key: String },
 

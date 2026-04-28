@@ -84,7 +84,7 @@ by crate or name — see below).
 - `just cli -- <args>` — run the pacquet binary.
 - `just registry-mock <args>` — manage the mock registry used by tests.
 - `just integrated-benchmark <args>` — compare revisions or compare against
-  pnpm itself (see `README.md`).
+  pnpm itself (see `CONTRIBUTING.md`).
 
 Warnings are errors (`--deny warnings` in lint). Do not silence them with
 `#[allow(...)]` unless there is a specific, justified reason.

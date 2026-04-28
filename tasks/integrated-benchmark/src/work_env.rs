@@ -121,6 +121,19 @@ impl WorkEnv {
 
             let repository = self.repository();
             let revision_repo = self.revision_repo(revision);
+
+            // Resolve the revision against the source repository *before*
+            // fetching, so the fetch can request the exact commit. A bare
+            // `git fetch <repo>` only writes the source's `HEAD` to
+            // `FETCH_HEAD`, which means a SHA that isn't reachable from
+            // the source's HEAD (e.g. tip of `main` when the runner is on
+            // a PR branch that's behind `main`) won't end up in the
+            // bench-repo and the subsequent `git checkout <sha>` panics
+            // with `unable to read tree`. See PR #321 comment
+            // <https://github.com/pnpm/pacquet/pull/321#issuecomment-4326141435>.
+            let commit = self.resolve_revision(revision);
+            eprintln!("Resolved {revision:?} to {commit}");
+
             if revision_repo.exists() {
                 if !revision_repo.join(".git").exists() {
                     eprintln!("Initializing a git repository at {revision_repo:?}...");
@@ -132,11 +145,12 @@ impl WorkEnv {
                         .pipe(executor("git init"));
                 }
 
-                eprintln!("Fetching from {repository:?}...");
+                eprintln!("Fetching {commit} from {repository:?}...");
                 Command::new("git")
                     .current_dir(&revision_repo)
                     .arg("fetch")
                     .arg(repository)
+                    .arg(&commit)
                     .pipe(executor("git fetch"));
             } else {
                 eprintln!("Cloning {repository:?} to {revision_repo:?}...");
@@ -148,12 +162,11 @@ impl WorkEnv {
                     .pipe(executor("git clone"));
             }
 
-            let commit = self.resolve_revision(revision);
             eprintln!("Checking out {commit:?}...");
             Command::new("git")
                 .current_dir(&revision_repo)
                 .arg("checkout")
-                .arg(commit)
+                .arg(&commit)
                 .pipe(executor("git checkout"));
 
             eprintln!("List of branches:");

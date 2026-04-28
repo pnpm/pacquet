@@ -16,7 +16,7 @@ pub struct ProjectSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dev_dependencies: Option<ResolvedDependencyMap>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub dependencies_meta: Option<serde_yaml::Value>, // TODO: DependenciesMeta
+    pub dependencies_meta: Option<serde_json::Value>, // TODO: DependenciesMeta
     #[serde(skip_serializing_if = "Option::is_none")]
     pub publish_directory: Option<String>,
 }
@@ -69,7 +69,7 @@ mod tests {
     };
 
     fn fixture_project_snapshot() -> ProjectSnapshot {
-        serde_yaml::from_str(YAML).unwrap()
+        serde_saphyr::from_str(YAML).unwrap()
     }
 
     #[test]

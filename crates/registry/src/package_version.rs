@@ -4,7 +4,7 @@ use pacquet_network::ThrottledClient;
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 
-use crate::{package_distribution::PackageDistribution, NetworkError, PackageTag, RegistryError};
+use crate::{NetworkError, PackageTag, RegistryError, package_distribution::PackageDistribution};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq)]
 #[serde(rename_all = "camelCase")]

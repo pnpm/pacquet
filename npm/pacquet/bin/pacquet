@@ -41,7 +41,7 @@ if (binPath) {
 } else {
   console.error(
     "The pacquet CLI package doesn't ship with prebuilt binaries for your platform yet. " +
-    "You can create an issue at https://github.com/anonrig/pacquet/issues for support."
+    "You can create an issue at https://github.com/pnpm/pacquet/issues for support."
   );
   process.exitCode = 1;
 }

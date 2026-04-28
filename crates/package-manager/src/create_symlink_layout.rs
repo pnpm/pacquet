@@ -1,4 +1,4 @@
-use crate::{symlink_package, SymlinkPackageError};
+use crate::{SymlinkPackageError, symlink_package};
 use pacquet_lockfile::{PkgName, SnapshotDepRef};
 use std::{collections::HashMap, path::Path};
 

@@ -114,13 +114,13 @@ pub fn link_file(
             // / copy doesn't collide with `AlreadyExists` and so the
             // installed package isn't left with a silently-missing
             // file.
-            if let Ok(meta) = fs::symlink_metadata(target_link) {
-                if meta.file_type().is_symlink() {
-                    fs::remove_file(target_link).map_err(|error| LinkFileError::RemoveStale {
-                        path: target_link.to_path_buf(),
-                        error,
-                    })?;
-                }
+            if let Ok(meta) = fs::symlink_metadata(target_link)
+                && meta.file_type().is_symlink()
+            {
+                fs::remove_file(target_link).map_err(|error| LinkFileError::RemoveStale {
+                    path: target_link.to_path_buf(),
+                    error,
+                })?;
             }
         }
         Err(_) => {

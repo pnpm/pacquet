@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use tracing::Level;
-use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter, Layer};
+use tracing_subscriber::{EnvFilter, Layer, fmt::format::FmtSpan};
 
 pub fn enable_tracing_by_env() {
     let Ok(trace_var) = std::env::var("TRACE") else { return };

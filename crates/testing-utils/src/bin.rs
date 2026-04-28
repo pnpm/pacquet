@@ -2,7 +2,7 @@ use assert_cmd::prelude::*;
 use command_extra::CommandExtra;
 use pacquet_registry_mock::AutoMockInstance;
 use std::{fs, path::PathBuf, process::Command};
-use tempfile::{tempdir, TempDir};
+use tempfile::{TempDir, tempdir};
 use text_block_macros::text_block_fnl;
 
 /// Assets for an integration test involving spawning `pacquet` and/or `pnpm` as

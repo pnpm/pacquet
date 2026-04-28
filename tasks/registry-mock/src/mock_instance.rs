@@ -1,6 +1,6 @@
 use crate::{
-    kill_verdaccio::kill_all_verdaccio_children, node_registry_mock, port_to_url::port_to_url,
     PreparedRegistryInfo, RegistryAnchor, RegistryInfo,
+    kill_verdaccio::kill_all_verdaccio_children, node_registry_mock, port_to_url::port_to_url,
 };
 use assert_cmd::prelude::*;
 use pipe_trait::Pipe;
@@ -12,7 +12,7 @@ use std::{
     process::{Child, Command, Stdio},
 };
 use sysinfo::{Pid, Signal};
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 /// Handler of a mocked registry server instance.
 ///
@@ -139,15 +139,14 @@ impl AutoMockInstance {
             return AutoMockInstance::Prepared(prepared);
         }
 
-        let anchor = RegistryAnchor::load_or_init({
-            MockInstanceOptions {
-                client: &Client::new(),
-                port: pick_unused_port().expect("pick an unused port"),
-                stdout: None,
-                stderr: None,
-                max_retries: 20,
-                retry_delay: Duration::from_millis(500),
-            }
+        let client = Client::new();
+        let anchor = RegistryAnchor::load_or_init(MockInstanceOptions {
+            client: &client,
+            port: pick_unused_port().expect("pick an unused port"),
+            stdout: None,
+            stderr: None,
+            max_retries: 20,
+            retry_delay: Duration::from_millis(500),
         });
 
         AutoMockInstance::RefCount(anchor)

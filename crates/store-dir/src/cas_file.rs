@@ -2,9 +2,8 @@ use crate::{FileHash, StoreDir};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_fs::{
-    ensure_file, ensure_parent_dir,
-    file_mode::{is_executable, EXEC_MODE},
-    EnsureFileError,
+    EnsureFileError, ensure_file, ensure_parent_dir,
+    file_mode::{EXEC_MODE, is_executable},
 };
 use sha2::{Digest, Sha512};
 use std::path::PathBuf;

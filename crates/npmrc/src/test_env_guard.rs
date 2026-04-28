@@ -69,9 +69,15 @@ impl EnvGuard {
 impl Drop for EnvGuard {
     fn drop(&mut self) {
         for (name, prior) in &self.saved {
-            match prior {
-                Some(value) => env::set_var(name, value),
-                None => env::remove_var(name),
+            // SAFETY: the `_lock` field is still held for the duration of this
+            // `Drop`, so no other env-mutating test in this process is running
+            // concurrently. The variables themselves are only read by tests
+            // that take the same lock.
+            unsafe {
+                match prior {
+                    Some(value) => env::set_var(name, value),
+                    None => env::remove_var(name),
+                }
             }
         }
     }
