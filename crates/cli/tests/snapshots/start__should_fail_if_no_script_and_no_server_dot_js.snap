@@ -1,0 +1,7 @@
+---
+source: crates/cli/tests/start.rs
+expression: "String::from_utf8_lossy(&output.stderr).trim_end()"
+---
+Error: pacquet_package_manifest::no_script_or_server
+
+  × Missing script start or file server.js
