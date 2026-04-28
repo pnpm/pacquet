@@ -100,10 +100,10 @@ fn pre_create_dirs(root: &Path, workload: &[Entry]) {
     use std::collections::HashSet;
     let mut seen = HashSet::new();
     for entry in workload {
-        if let Some(parent) = entry.relative_path.parent() {
-            if seen.insert(parent.to_path_buf()) {
-                fs::create_dir_all(root.join(parent)).expect("pre-create dir");
-            }
+        if let Some(parent) = entry.relative_path.parent()
+            && seen.insert(parent.to_path_buf())
+        {
+            fs::create_dir_all(root.join(parent)).expect("pre-create dir");
         }
     }
 }
@@ -176,14 +176,13 @@ mod uring {
         let root = root.to_path_buf();
 
         tokio_uring::builder().entries(1024).start(async move {
-            stream::iter(workload.into_iter())
+            stream::iter(workload)
                 .map(|entry| {
                     let path = root.join(&entry.relative_path);
                     async move {
                         let _ = Sha512::digest(entry.content.as_slice());
-                        let file = tokio_uring::fs::File::create(&path)
-                            .await
-                            .expect("uring create");
+                        let file =
+                            tokio_uring::fs::File::create(&path).await.expect("uring create");
                         let buf: Vec<u8> = (*entry.content).clone();
                         let (res, _) = file.write_at(buf, 0).submit().await;
                         res.expect("uring write_at");
@@ -209,9 +208,7 @@ mod uring {
                 let path = root.join(&entry.relative_path);
                 tasks.push(async move {
                     let _ = Sha512::digest(entry.content.as_slice());
-                    let file = tokio_uring::fs::File::create(&path)
-                        .await
-                        .expect("uring create");
+                    let file = tokio_uring::fs::File::create(&path).await.expect("uring create");
                     let buf: Vec<u8> = (*entry.content).clone();
                     let (res, _) = file.write_at(buf, 0).submit().await;
                     res.expect("uring write_at");

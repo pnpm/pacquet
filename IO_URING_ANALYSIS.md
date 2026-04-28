@@ -210,24 +210,93 @@ just integrated-benchmark   # for cross-revision integration tests
 cargo run --release -p pacquet-micro-benchmark
 ```
 
-## 5. Recommendation
+## 5. Measured numbers (pacquet micro-benchmark)
+
+Same host (Linux 6.18.5, x86_64). `cargo run --release -p
+pacquet-micro-benchmark`, criterion default settings (3 s warmup, 100
+samples per group). The two workloads replicate the
+`@fastify+error-3.3.0.tgz` fixture's 14 files until the row count is
+hit, with parent dirs pre-created so the measurement is
+open + write + close + SHA-512 per file.
+
+### `cafs_write_128` (128 files, ~144 KiB total)
+
+| Strategy                  | Mean       | Throughput       | vs. winner  |
+| ------------------------- | ---------- | ---------------- | ----------- |
+| **`rayon`**               | **5.03 ms**| **28.69 MiB/s**  | 1.00×       |
+| `sequential`              | 5.86 ms    | 24.62 MiB/s      | 1.16× slower|
+| `tokio_blocking_per_file` | 10.06 ms   | 14.35 MiB/s      | 2.00× slower|
+| `tokio_uring_correct`     | 15.02 ms   | 9.61 MiB/s       | 2.99× slower|
+| `tokio_uring_stupid`      | 24.30 ms   | 5.94 MiB/s       | 4.83× slower|
+
+### `cafs_write_1024` (1024 files, ~1.13 MiB total)
+
+| Strategy                  | Mean        | Throughput       | vs. winner  |
+| ------------------------- | ----------- | ---------------- | ----------- |
+| **`rayon`**               | **120.03 ms**| **9.69 MiB/s**  | 1.00×       |
+| `tokio_blocking_per_file` | 193.07 ms   | 6.03 MiB/s       | 1.61× slower|
+| `tokio_uring_correct`     | 198.14 ms   | 5.87 MiB/s       | 1.65× slower|
+| `tokio_uring_stupid`      | 218.01 ms   | 5.34 MiB/s       | 1.82× slower|
+| `sequential`              | 341.00 ms   | 3.41 MiB/s       | 2.84× slower|
+
+The pacquet micro-bench numbers tell the same story as the gist
+hyperfine numbers, with one extra interesting datum:
+
+* **Rayon wins at every workload size.** The lead grows with workload:
+  1.16× over sequential at 128 files becomes 2.84× at 1024 files,
+  because rayon's work-stealing pool turns every additional file
+  into another opportunity to amortize scheduling cost across cores.
+* **`sequential` is *not* always the worst.** At 128 files it beats
+  every async / uring variant — the per-call overhead of crossing
+  into the tokio runtime, the blocking pool, or the io_uring driver
+  swamps the actual write cost when there are too few writes to
+  amortize the setup. Only at 1024 files does sequential drop to the
+  bottom because the missing parallelism finally costs more than the
+  syscall-batching overhead of the alternatives.
+* **The "correct" vs. "stupid" tokio-uring gap shrinks with workload
+  size**, from 1.62× at 128 files to 1.10× at 1024 files. The
+  unbounded `join_all` shape pays a fixed-cost per task to spin up;
+  spread that across 1024 ops and the per-op cost dominates again.
+  But "correct" still wins, just by less, and **both still lose to
+  rayon by a meaningful margin** at every size.
+
+### Confirming the gist's diagnoses
+
+The pacquet bench reproduces both of the gist's findings, in pacquet's
+own code:
+
+* **Ring depth + concurrency cap matter**: `tokio_uring_correct` is
+  faster than `tokio_uring_stupid` at both 128 and 1024 files.
+* **Per-file `sync_all` is expensive**: the "stupid" variant carries
+  it; the "correct" one doesn't. At 128 files the cost is dominant
+  (1.62× gap); at 1024 it's still measurable (1.10×).
+
+But the bigger result is that **the right comparison for pacquet's
+hot path is not "stupid uring vs. correct uring"** — both are bad
+relative to the rayon baseline pacquet's existing shape already
+matches.
+
+## 6. Recommendation
 
 **Do not adopt tokio-uring in pacquet.** The current shape — sequential
 per-tarball writes, `num_cpus * 2` tarballs in parallel via
 `spawn_blocking` — is structurally equivalent to the rayon+std::fs
-strategy that won the gist comparison by 5.5×. Any io_uring layer on
-top of `spawn_blocking` would add complexity (Linux-only;
-single-threaded ring driver per task; lifetime / `'static` buffer
-constraints; harder error mapping) for negative or zero throughput
-benefit on this workload.
+strategy that won at every workload size measured. Any io_uring layer
+on top would add complexity (Linux-only; single-threaded ring driver
+per task; lifetime / `'static` buffer constraints; harder error
+mapping) for **a measured 1.65×–4.83× regression** on the workload
+the change would target.
 
-**Within-tarball parallelism (rayon)** is a marginal candidate worth
-a follow-up: tarballs with 100+ files might benefit from running CAS
-writes on rayon while one blocking thread runs the tar parser + SHA.
-The overlap is small because the tar walker is serial by construction
-(it streams a single decompressed buffer); shifting writes off the
-parser's thread is the only available parallelism. The micro-benchmark
-results below quantify this — see *Results*.
+**Within-tarball rayon parallelism is a credible follow-up.** The 1024
+data point shows rayon at **2.84×** sequential. Pacquet today writes
+each tarball's CAS files sequentially within one `spawn_blocking`
+body; switching that loop to `par_iter` while keeping the
+`num_cpus * 2` outer cap could shave a meaningful chunk off install
+time on packages with many small files (e.g. babel/eslint plugin
+forests). It would *not* change pacquet's overall threading model
+— just take more advantage of the threads already available. This
+is left as a follow-up; it isn't an io_uring change and isn't
+strictly the question this report set out to answer.
 
 **The gist's "stupid" pattern is a useful negative example to keep
 in code review.** Two anti-patterns to flag:
@@ -239,14 +308,14 @@ in code review.** Two anti-patterns to flag:
 
 Both already appear in pacquet's review checklists implicitly via the
 `post_download_semaphore()` cap and the `ensure_file` design — this
-report just makes the rationale explicit.
+report just makes the rationale explicit and gives them
+quantitative weight.
 
-## 6. Results
+### Best implementation, in one sentence
 
-(*The micro-benchmark numbers below were collected by running
-`cargo run --release -p pacquet-micro-benchmark` on the same host as
-the gist comparison above. They are reproduced here so the report
-stays self-contained when posted to a PR.*)
-
-> **TODO**: paste the criterion summary table for `cafs_write_128`
-> and `cafs_write_1024` after running.
+For pacquet's CAS-write hot path, **rayon `par_iter` over
+`std::fs::write` (the gist's "rayon and standard API" baseline) is
+the best implementation**, and pacquet's current
+`spawn_blocking`-per-tarball shape is the multi-tarball generalization
+of it. Neither tokio-uring variant from the gist beats it on this
+workload at any size we measured.
