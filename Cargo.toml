@@ -21,6 +21,7 @@ pacquet-testing-utils    = { path = "crates/testing-utils" }
 pacquet-package-manifest = { path = "crates/package-manifest" }
 pacquet-package-manager  = { path = "crates/package-manager" }
 pacquet-lockfile         = { path = "crates/lockfile" }
+pacquet-modules-yaml     = { path = "crates/modules-yaml" }
 pacquet-network          = { path = "crates/network" }
 pacquet-npmrc            = { path = "crates/npmrc" }
 pacquet-executor         = { path = "crates/executor" }
