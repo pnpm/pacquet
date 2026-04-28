@@ -39,3 +39,4 @@ zune-inflate = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio-uring = "0.5"
+monoio      = "0.2"

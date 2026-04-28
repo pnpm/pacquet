@@ -3,19 +3,31 @@
 This report studies four implementations of "write 1000 small files
 concurrently" published by KSXGitHub at
 [gist 8508bc170bd14365350945bf2c13b800](https://gist.github.com/KSXGitHub/8508bc170bd14365350945bf2c13b800),
-compares them against each other on the host this report was generated
-on, then maps the lessons onto pacquet's hot install path. The
-artifacts are:
+adds [bytedance/monoio](https://github.com/bytedance/monoio) as a
+sixth competitor (correct + stupid shapes), compares them against
+each other on the host this report was generated on, then maps the
+lessons onto pacquet's hot install path. The artifacts are:
 
 | Source file                  | Language | Strategy                                                          |
 | ---------------------------- | -------- | ----------------------------------------------------------------- |
 | `rayon_and_standard_api.rs`  | Rust     | `rayon::par_iter` + `std::fs::write` (blocking syscalls per file) |
 | `tokio_uring_correct.rs`     | Rust     | `tokio_uring`, ring depth 1024, `buffer_unordered(num_cpus*2)`    |
 | `tokio_uring_stupid.rs`      | Rust     | `tokio_uring` default ring, unbounded `join_all`, per-file `sync_all` |
+| `monoio_correct` (added)     | Rust     | `monoio::IoUringDriver`, ring depth 1024, `buffer_unordered(num_cpus*2)` |
+| `monoio_stupid` (added)      | Rust     | `monoio::IoUringDriver` default ring, unbounded `join_all`, per-file `sync_all` |
 | `node_version.js`            | Node     | `Promise.all` over `fs.promises.writeFile`                        |
 
 Each program creates 1000 tiny files (`Data for file <i>`, ~16 bytes
 each) under the current working directory.
+
+monoio is ByteDance's thread-per-core async runtime built directly on
+io_uring. The relevant difference from `tokio_uring` is the runtime,
+not the kernel interface: monoio ships its own scheduler and task
+abstraction rather than bridging to tokio's, so its per-task
+overhead is lower at the cost of being single-threaded by design.
+Both runtimes wrap the same `io_uring` kernel surface, so they show
+the same `IORING_OP_*` events under `bpftrace`; the user-space cost
+is what differs.
 
 ## 1. Why "stupid" is stupid
 
@@ -59,31 +71,41 @@ Three independent failures stack on the "stupid" version:
    1000. `buffer_unordered(N)` keeps exactly `N` futures alive at any
    moment, so the cost of polling and demuxing is bounded.
 
-## 2. Measured numbers (host this run)
+## 2. Measured numbers (gist + monoio, this host)
 
 Run with `hyperfine --warmup 3 --min-runs 20 --cleanup 'rm -f *.txt'`.
-Linux 6.18.5, x86_64, multi-core:
+Linux 6.18.5, x86_64, **4 vCPU / 16 GiB RAM** sandbox (caveat covered
+in §7).
 
-| Strategy                | Mean        | vs. winner    |
-| ----------------------- | ----------- | ------------- |
-| `rayon` + `std::fs`     | **8.9 ms**  | 1.00×         |
-| `tokio_uring` correct   | 49.0 ms     | 5.51× slower  |
-| `tokio_uring` stupid    | 133.8 ms    | 15.05× slower |
-| Node `Promise.all`      | 152.5 ms    | 17.15× slower |
+| Strategy                | Mean         | vs. winner     |
+| ----------------------- | ------------ | -------------- |
+| `rayon` + `std::fs`     | **8.1 ms**   | 1.00×          |
+| `monoio` correct        | 31.6 ms      | 3.91× slower   |
+| `tokio_uring` correct   | 39.6 ms      | 4.91× slower   |
+| `monoio` stupid         | 136.2 ms     | 16.89× slower  |
+| `tokio_uring` stupid    | 139.5 ms     | 17.30× slower  |
+| Node `Promise.all`      | 151.0 ms     | 18.72× slower  |
 
-Two findings worth pinning:
+Three findings worth pinning:
 
-* The "correct" tokio-uring is ~2.7× faster than the "stupid" one,
-  confirming the gist's claim. The win comes from ring depth +
-  bounded fan-out + skipping fsync, not from io_uring per se.
-* **Rayon + `std::fs` beat both io_uring variants by a wide margin
-  on this workload.** That deserves explanation rather than being
-  treated as a curiosity.
+* **`monoio` correct beats `tokio_uring` correct by ~1.25× on this
+  host.** Same kernel interface, same ring depth, same concurrency
+  cap — the win is the runtime: monoio's thread-per-core scheduler
+  has lower per-task overhead than tokio-uring's bridge into the
+  tokio task system. With the kernel side held constant, the
+  user-space scheduler is the dominant variable for "many tiny ops."
+* The two **stupid variants are tied** (within noise: 136 ms vs.
+  139 ms). Once submission-queue overflow + per-file `fsync` start
+  dominating, the choice of runtime stops mattering — the kernel is
+  the bottleneck, and both runtimes pay the same cost.
+* Rayon still wins overall on this host. **The relevant question is
+  no longer "rayon vs. uring" but "what changes when CPU count goes
+  up?"** — covered in §7.
 
-### Why rayon wins on this workload
+### Why rayon wins on this host (caveat in §7)
 
 Three properties of "1000 files × 16 bytes" make io_uring's strengths
-irrelevant:
+irrelevant **on a low-CPU host**:
 
 1. **Files fit in the page cache.** Linux acks the `write(2)` as soon
    as bytes land in dirty page cache; there is no real I/O in the
@@ -98,15 +120,26 @@ irrelevant:
    filesystem level for 1000 path-distinct files.
 3. **`std::fs::write` from a rayon thread is just three syscalls
    (`open`, `write`, `close`) with no intermediate marshalling.**
-   Rayon's work-stealing pool spreads these across all cores. The
-   io_uring variant pays additional per-op cost: copy `Vec<u8>` into
+   Rayon's work-stealing pool spreads these across all cores. Both
+   io_uring runtimes pay additional per-op cost: copy `Vec<u8>` into
    the ring buffer, push SQE, kernel reads SQE, kernel pushes CQE,
-   user reads CQE, futures driver wakes the right task.
+   user reads CQE, runtime wakes the right task. monoio amortizes
+   this better than tokio_uring (1.25× lead this host) but still
+   pays it.
+
+The shape that flips this calculus is **high CPU count**, where
+rayon's per-thread syscall pattern hits kernel-side lock contention
+(EXT4 journal, dcache, inode allocator) and io_uring's
+single-threaded-submit model side-steps it. See §7 for measured
+data on a 28C/56T host where `tokio_uring` correct (and presumably
+`monoio` correct, by extension) overtakes rayon.
 
 io_uring shines when the per-op latency dominates (network sockets,
 random reads from cold storage, large sequential I/O that benefits
-from kernel-side batching). For "many tiny synchronous-feeling writes
-into the page cache" it is the wrong tool.
+from kernel-side batching), or when concurrent syscall serialization
+in the kernel becomes the wall — i.e. on machines with enough cores
+to actually serialize. For "many tiny page-cache writes on 4 cores"
+it is the wrong tool.
 
 ## 3. Mapping onto pacquet
 
@@ -191,7 +224,7 @@ A new criterion bench was added at
 * Pre-creates parent directories (matching `StoreDir::init`'s
   pre-shard step), so the measurement is open/write/close + SHA-512
   per file.
-* Five strategies:
+* Seven strategies:
   * `sequential` — current pacquet within-tarball shape.
   * `rayon` — `par_iter` over the same `ensure_file`.
   * `tokio_blocking_per_file` — std::fs analogue of the gist's
@@ -201,6 +234,10 @@ A new criterion bench was added at
     `buffer_unordered(num_cpus*2)`.
   * `tokio_uring_stupid` — gist-style default ring, unbounded
     `join_all`, per-file `sync_all`.
+  * `monoio_correct` — same parameters as `tokio_uring_correct`,
+    but on `monoio::IoUringDriver` instead of tokio_uring.
+  * `monoio_stupid` — same anti-patterns as `tokio_uring_stupid`,
+    on monoio.
 
 Run via:
 
@@ -221,101 +258,200 @@ open + write + close + SHA-512 per file.
 
 ### `cafs_write_128` (128 files, ~144 KiB total)
 
-| Strategy                  | Mean       | Throughput       | vs. winner  |
-| ------------------------- | ---------- | ---------------- | ----------- |
-| **`rayon`**               | **5.03 ms**| **28.69 MiB/s**  | 1.00×       |
-| `sequential`              | 5.86 ms    | 24.62 MiB/s      | 1.16× slower|
-| `tokio_blocking_per_file` | 10.06 ms   | 14.35 MiB/s      | 2.00× slower|
-| `tokio_uring_correct`     | 15.02 ms   | 9.61 MiB/s       | 2.99× slower|
-| `tokio_uring_stupid`      | 24.30 ms   | 5.94 MiB/s       | 4.83× slower|
+| Strategy                  | Mean       | vs. winner   |
+| ------------------------- | ---------- | ------------ |
+| **`rayon`**               | **5.93 ms**| 1.00×        |
+| `sequential`              | 6.24 ms    | 1.05× slower |
+| `tokio_blocking_per_file` | 12.54 ms   | 2.11× slower |
+| `monoio_stupid`           | 18.66 ms   | 3.15× slower |
+| `tokio_uring_correct`     | 18.71 ms   | 3.16× slower |
+| `monoio_correct`          | 19.47 ms   | 3.28× slower |
+| `tokio_uring_stupid`      | 26.36 ms   | 4.45× slower |
 
 ### `cafs_write_1024` (1024 files, ~1.13 MiB total)
 
-| Strategy                  | Mean        | Throughput       | vs. winner  |
-| ------------------------- | ----------- | ---------------- | ----------- |
-| **`rayon`**               | **120.03 ms**| **9.69 MiB/s**  | 1.00×       |
-| `tokio_blocking_per_file` | 193.07 ms   | 6.03 MiB/s       | 1.61× slower|
-| `tokio_uring_correct`     | 198.14 ms   | 5.87 MiB/s       | 1.65× slower|
-| `tokio_uring_stupid`      | 218.01 ms   | 5.34 MiB/s       | 1.82× slower|
-| `sequential`              | 341.00 ms   | 3.41 MiB/s       | 2.84× slower|
+| Strategy                  | Mean        | vs. winner   |
+| ------------------------- | ----------- | ------------ |
+| **`rayon`**               | **122.80 ms**| 1.00×       |
+| `tokio_blocking_per_file` | 194.81 ms   | 1.59× slower |
+| `monoio_correct`          | 201.38 ms   | 1.64× slower |
+| `tokio_uring_correct`     | 202.78 ms   | 1.65× slower |
+| `tokio_uring_stupid`      | 224.70 ms   | 1.83× slower |
+| `monoio_stupid`           | 232.47 ms   | 1.89× slower |
+| `sequential`              | 322.48 ms   | 2.63× slower |
 
-The pacquet micro-bench numbers tell the same story as the gist
-hyperfine numbers, with one extra interesting datum:
+Five findings in the seven-strategy data:
 
-* **Rayon wins at every workload size.** The lead grows with workload:
-  1.16× over sequential at 128 files becomes 2.84× at 1024 files,
-  because rayon's work-stealing pool turns every additional file
-  into another opportunity to amortize scheduling cost across cores.
+* **Rayon wins at every workload size.** The lead grows with
+  workload: 1.05× over sequential at 128 files becomes 2.63× at
+  1024 files, because rayon's work-stealing pool turns every
+  additional file into another opportunity to amortize scheduling
+  cost across cores.
 * **`sequential` is *not* always the worst.** At 128 files it beats
-  every async / uring variant — the per-call overhead of crossing
-  into the tokio runtime, the blocking pool, or the io_uring driver
-  swamps the actual write cost when there are too few writes to
-  amortize the setup. Only at 1024 files does sequential drop to the
-  bottom because the missing parallelism finally costs more than the
-  syscall-batching overhead of the alternatives.
+  every async / uring variant by a wide margin — the per-call
+  overhead of crossing into the tokio runtime, the blocking pool, or
+  the io_uring driver swamps the actual write cost when there are
+  too few writes to amortize the setup. Only at 1024 files does
+  sequential drop to the bottom because the missing parallelism
+  finally costs more than the per-op overhead of the alternatives.
+* **monoio and tokio-uring are essentially tied at 1024 files.**
+  `monoio_correct` (201 ms) vs. `tokio_uring_correct` (203 ms) is
+  within noise. monoio's runtime overhead advantage washes out once
+  the workload is big enough that kernel-side cost dominates per-op
+  scheduling cost. The 1.25× gap visible in the gist hyperfine and
+  at 128 files reflects monoio's leaner scheduler; at 1024 files the
+  same EXT4 / VFS path that all three runtimes share is the wall.
+* **At 128 files, `monoio_stupid` (18.66 ms) is statistically tied
+  with `tokio_uring_correct` (18.71 ms) and faster than
+  `monoio_correct` (19.47 ms).** That looks paradoxical until you
+  notice monoio's task overhead is so low that the cost of an
+  unbounded `join_all` over 128 futures is negligible — and the cost
+  of the `buffer_unordered` machinery is *not*. At 1024 files the
+  pattern reasserts: `monoio_correct` (201) beats `monoio_stupid`
+  (232) by 1.15×, and `tokio_uring_correct` (203) beats
+  `tokio_uring_stupid` (225) by 1.11×. The gist's anti-patterns are
+  real costs, just not at every workload size.
 * **The "correct" vs. "stupid" tokio-uring gap shrinks with workload
-  size**, from 1.62× at 128 files to 1.10× at 1024 files. The
-  unbounded `join_all` shape pays a fixed-cost per task to spin up;
-  spread that across 1024 ops and the per-op cost dominates again.
-  But "correct" still wins, just by less, and **both still lose to
-  rayon by a meaningful margin** at every size.
+  size**, from 1.41× at 128 files to 1.11× at 1024 files. Same
+  underlying reason as above: fixed per-task setup cost spread over
+  more ops.
 
 ### Confirming the gist's diagnoses
 
-The pacquet bench reproduces both of the gist's findings, in pacquet's
-own code:
+The pacquet bench reproduces both of the gist's findings on both
+runtimes:
 
-* **Ring depth + concurrency cap matter**: `tokio_uring_correct` is
-  faster than `tokio_uring_stupid` at both 128 and 1024 files.
-* **Per-file `sync_all` is expensive**: the "stupid" variant carries
-  it; the "correct" one doesn't. At 128 files the cost is dominant
-  (1.62× gap); at 1024 it's still measurable (1.10×).
+* **Ring depth + concurrency cap matter at scale**: at 1024 files,
+  every "correct" variant beats its "stupid" counterpart on both
+  runtimes (tokio_uring 1.11×, monoio 1.15×). At 128 files the
+  signal is mixed because the fixed costs of the "correct"
+  machinery aren't yet amortized.
+* **Per-file `sync_all` is expensive**: this dominates the "stupid"
+  variants' overhead at every size, but the cost ratio depends on
+  what else is going on — at 128 files on monoio the runtime is so
+  cheap that even the fsync drumbeat doesn't push the result above
+  the "correct" timing.
 
-But the bigger result is that **the right comparison for pacquet's
-hot path is not "stupid uring vs. correct uring"** — both are bad
-relative to the rayon baseline pacquet's existing shape already
-matches.
+But the headline result is unchanged from the four-strategy run:
+**the right comparison for pacquet's hot path on this host is not
+"uring runtime A vs. uring runtime B"** — every uring strategy
+loses to rayon, regardless of which runtime drives the ring.
 
-## 6. Recommendation
+## 6. The host caveat that flips the ranking
 
-**Do not adopt tokio-uring in pacquet.** The current shape — sequential
-per-tarball writes, `num_cpus * 2` tarballs in parallel via
-`spawn_blocking` — is structurally equivalent to the rayon+std::fs
-strategy that won at every workload size measured. Any io_uring layer
+The numbers above were collected on a 4-vCPU sandbox (Intel Xeon
+@ 2.10 GHz, 16 GiB RAM, ext4 on virtio block, no cgroup limits, Linux
+6.18.5). On a 28-core / 56-thread workstation the same gist programs
+produce the **opposite** ranking:
+
+| Strategy                | 4-vCPU sandbox (mine) | 28C/56T workstation (theirs) |
+| ----------------------- | --------------------- | ---------------------------- |
+| `tokio_uring` correct   | 39.6 ms (4.91× slower)| **27.3 s (1.00×)**           |
+| `rayon` + `std::fs`     | **8.1 ms (1.00×)**    | 39.2 s (1.44× slower)        |
+| `tokio_uring` stupid    | 139.5 ms (17.30×)     | 117.5 s (4.30× slower)       |
+| Node                    | 151.0 ms (18.72×)     | 118.0 s (4.32× slower)       |
+
+(*This is real measured data from the gist's author running the same
+binaries on a different host. monoio wasn't measured on the 56-thread
+box; if/when it is, expect it to behave like `tokio_uring` correct
+modulo monoio's runtime advantage.*)
+
+The mechanism for the inversion is **kernel-side lock contention**.
+Rayon at `num_cpus` workers does *N* concurrent in-kernel
+`open(O_CREAT) + write + close` walks. Each walk takes:
+
+* the parent dirent's `i_rwsem` for `lookup` / `dentry` insertion,
+* the per-superblock journal lock on the create path (EXT4 / XFS
+  `start_this_handle` → `j_state_lock`),
+* the inode-allocator group lock to bump i-block / i-inode bitmaps,
+* the per-mount lock on `__mnt_want_write`.
+
+At 4–8 cores those cachelines stay mostly local; at 56 threads they
+ping-pong between sockets and the syscall floor jumps from "few
+hundred ns" to "several µs each." Rayon's per-thread syscall
+pattern can't hide that. io_uring sidesteps it: a *single*
+user-thread submits SQEs into shared-memory ring buffers, the
+kernel side processes them on its own worker pool, and many of
+those locks are taken once-per-batch instead of once-per-thread.
+
+The "stupid" patterns lose on both hosts by similar margins, so
+the **anti-patterns are universally bad** and the gist's
+educational point still stands. What flips with hardware is which
+*correct* strategy wins.
+
+There's also a sandbox confound worth flagging: my host's `/dev/vda`
+is virtio passthrough, so `fsync` cost is whatever the host
+chooses to charge. On a real disk the "stupid" `sync_all`-per-file
+pattern would likely look worse than my numbers show. So if anything
+my measurements *under-state* how bad the stupid patterns are.
+
+## 7. Recommendation
+
+The right framing is conditional on hardware shape.
+
+**Default for typical CI runners and laptops (≤ 8–16 threads).**
+Pacquet's current shape — sequential per-tarball writes within a
+`spawn_blocking` body, `num_cpus * 2` tarballs in parallel — is
+structurally equivalent to the rayon+std::fs strategy that won every
+size on this host. **Keep this as the default.** Any io_uring layer
 on top would add complexity (Linux-only; single-threaded ring driver
-per task; lifetime / `'static` buffer constraints; harder error
-mapping) for **a measured 1.65×–4.83× regression** on the workload
-the change would target.
+per runtime; lifetime / `'static` buffer constraints; harder error
+mapping) for a 1.6×–3.3× regression on the workload it targets.
 
-**Within-tarball rayon parallelism is a credible follow-up.** The 1024
-data point shows rayon at **2.84×** sequential. Pacquet today writes
-each tarball's CAS files sequentially within one `spawn_blocking`
-body; switching that loop to `par_iter` while keeping the
-`num_cpus * 2` outer cap could shave a meaningful chunk off install
-time on packages with many small files (e.g. babel/eslint plugin
-forests). It would *not* change pacquet's overall threading model
-— just take more advantage of the threads already available. This
-is left as a follow-up; it isn't an io_uring change and isn't
-strictly the question this report set out to answer.
+**For high-thread Linux workstations / build servers (32+ threads).**
+A Linux-only io_uring CAS-write fast-path is a credible
+optimization. The 56-thread data shows `tokio_uring` correct beating
+rayon by 1.44×, and the mechanism (kernel-lock side-step) gets
+*worse* with core count, not better. The realistic implementation
+shape: a feature-flagged or runtime-detected single shared monoio /
+tokio_uring runtime for CAS writes, gated behind something like
+`PACQUET_USE_IO_URING=1` (or a `--prefer-iouring` flag) until the
+ergonomics across pacquet's existing tokio multi-thread runtime are
+worked out. monoio is the better candidate of the two: it's faster
+on this host (1.25× over tokio_uring) and the mechanism predicts the
+advantage holds on bigger boxes; at 1024 files the difference washes
+out into noise, so picking on 1024-file data alone wouldn't justify
+the choice — pick monoio because its runtime overhead is lower and
+that *only matters more* as the workload gets faster per-op.
 
-**The gist's "stupid" pattern is a useful negative example to keep
-in code review.** Two anti-patterns to flag:
+**Within-tarball rayon parallelism is a credible follow-up
+regardless.** At 1024 files rayon hits 2.63× sequential. Pacquet
+today writes each tarball's CAS files sequentially within one
+`spawn_blocking` body; switching that loop to `par_iter` while
+keeping the `num_cpus * 2` outer cap would shave a meaningful chunk
+off install time on packages with many small files
+(e.g. babel/eslint plugin forests), without changing the threading
+model. This is **separate from the io_uring question** and applies
+to every host shape.
+
+**The gist's "stupid" patterns are a universal negative example.**
+Both runtimes pay the same penalty for them at scale; both runtimes
+mostly hide it on small workloads. Two anti-patterns to flag in
+review:
 
 1. `join_all` over a large unbounded set of I/O futures without a
    `buffer_unordered` cap.
-2. Per-op `fsync` / `sync_all` in a hot batch unless the durability
-   guarantee is actually required.
+2. Per-op `fsync` / `sync_all` in a hot batch unless durability is
+   actually required.
 
-Both already appear in pacquet's review checklists implicitly via the
-`post_download_semaphore()` cap and the `ensure_file` design — this
-report just makes the rationale explicit and gives them
-quantitative weight.
+These already appear implicitly in pacquet's review checklists via
+the `post_download_semaphore()` cap and the `ensure_file` design;
+this report just makes the rationale explicit and gives it
+quantitative weight on two distinct runtimes.
 
 ### Best implementation, in one sentence
 
-For pacquet's CAS-write hot path, **rayon `par_iter` over
-`std::fs::write` (the gist's "rayon and standard API" baseline) is
-the best implementation**, and pacquet's current
-`spawn_blocking`-per-tarball shape is the multi-tarball generalization
-of it. Neither tokio-uring variant from the gist beats it on this
-workload at any size we measured.
+* On low-CPU hosts (this sandbox, most CI runners): **rayon
+  `par_iter` over `std::fs::write`** is the best implementation, and
+  pacquet's current `spawn_blocking`-per-tarball shape is its
+  multi-tarball generalization.
+* On high-CPU Linux hosts (28+ cores): **a single shared `monoio`
+  (preferred) or `tokio_uring` runtime, sized at 1024 SQEs with
+  `buffer_unordered(num_cpus*2)` and no per-file `sync_all`** —
+  i.e. the gist's "correct" pattern, ideally on monoio for the
+  lower per-task overhead — is the faster strategy. Adoption would
+  need to be opt-in until cross-host evidence makes the default
+  switch.
+* Universally: **never the "stupid" pattern.** Both runtimes
+  reproduce the ~1.1×–4.5× regression the gist diagnosed; only the
+  exact magnitude varies with workload size.

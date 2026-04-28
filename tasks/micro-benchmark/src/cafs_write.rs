@@ -220,6 +220,70 @@ mod uring {
     }
 }
 
+#[cfg(target_os = "linux")]
+mod monoio_strat {
+    use super::*;
+    use futures_util::stream::{self, StreamExt};
+
+    /// "Correct" monoio shape: thread-per-core runtime with `with_entries(1024)`,
+    /// `buffer_unordered(num_cpus * 2)` cap, no per-file fsync. monoio's
+    /// `write_at` returns the result directly (no `.submit()` like
+    /// tokio-uring), but the user-visible shape is the same.
+    pub(super) fn run_correct(root: &Path, workload: &[Entry]) {
+        let concurrency = num_cpus::get().saturating_mul(2).max(4);
+        let workload = workload.to_vec();
+        let root = root.to_path_buf();
+
+        let mut rt = monoio::RuntimeBuilder::<monoio::IoUringDriver>::new()
+            .with_entries(1024)
+            .build()
+            .expect("monoio runtime");
+        rt.block_on(async move {
+            stream::iter(workload)
+                .map(|entry| {
+                    let path = root.join(&entry.relative_path);
+                    async move {
+                        let _ = Sha512::digest(entry.content.as_slice());
+                        let file = monoio::fs::File::create(&path).await.expect("monoio create");
+                        let buf: Vec<u8> = (*entry.content).clone();
+                        let (res, _) = file.write_at(buf, 0).await;
+                        res.expect("monoio write_at");
+                    }
+                })
+                .buffer_unordered(concurrency)
+                .for_each(|_| async {})
+                .await;
+        });
+    }
+
+    /// "Stupid" monoio shape: default ring, unbounded `join_all`,
+    /// per-file `sync_all`. Same anti-patterns as `tokio_uring_stupid`,
+    /// reproduced on monoio so the runtime overheads can be compared
+    /// head to head.
+    pub(super) fn run_stupid(root: &Path, workload: &[Entry]) {
+        let workload = workload.to_vec();
+        let root = root.to_path_buf();
+
+        let mut rt =
+            monoio::RuntimeBuilder::<monoio::IoUringDriver>::new().build().expect("monoio runtime");
+        rt.block_on(async move {
+            let mut tasks = Vec::with_capacity(workload.len());
+            for entry in workload {
+                let path = root.join(&entry.relative_path);
+                tasks.push(async move {
+                    let _ = Sha512::digest(entry.content.as_slice());
+                    let file = monoio::fs::File::create(&path).await.expect("monoio create");
+                    let buf: Vec<u8> = (*entry.content).clone();
+                    let (res, _) = file.write_at(buf, 0).await;
+                    res.expect("monoio write_at");
+                    file.sync_all().await.expect("monoio sync_all");
+                });
+            }
+            futures_util::future::join_all(tasks).await;
+        });
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Bench wiring
 // ---------------------------------------------------------------------------
@@ -302,6 +366,30 @@ pub fn bench_cafs_write(c: &mut Criterion, fixtures_folder: &Path) {
                         dir
                     },
                     |dir| uring::run_stupid(dir.path(), &workload),
+                    criterion::BatchSize::PerIteration,
+                );
+            });
+
+            group.bench_function(BenchmarkId::new("strategy", "monoio_correct"), |b| {
+                b.iter_batched_ref(
+                    || {
+                        let dir = tempdir().expect("tempdir");
+                        pre_create_dirs(dir.path(), &workload);
+                        dir
+                    },
+                    |dir| monoio_strat::run_correct(dir.path(), &workload),
+                    criterion::BatchSize::PerIteration,
+                );
+            });
+
+            group.bench_function(BenchmarkId::new("strategy", "monoio_stupid"), |b| {
+                b.iter_batched_ref(
+                    || {
+                        let dir = tempdir().expect("tempdir");
+                        pre_create_dirs(dir.path(), &workload);
+                        dir
+                    },
+                    |dir| monoio_strat::run_stupid(dir.path(), &workload),
                     criterion::BatchSize::PerIteration,
                 );
             });
