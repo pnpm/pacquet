@@ -1,4 +1,4 @@
-use pacquet_store_dir::StoreIndex;
+use pacquet_store_dir::{SharedVerifiedFilesCache, StoreIndex};
 use pipe_trait::Pipe;
 use pretty_assertions::assert_eq;
 use tempfile::{TempDir, tempdir};
@@ -161,6 +161,7 @@ async fn packages_under_orgs_should_work() {
         package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
         package_id: "@fastify/error@3.3.0",
         prefetched_cas_paths: None,
+        verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
     }
     .run_without_mem_cache()
@@ -206,6 +207,7 @@ async fn should_throw_error_on_checksum_mismatch() {
         package_url: "https://registry.npmjs.org/@fastify/error/-/error-3.3.0.tgz",
         package_id: "@fastify/error@3.3.0",
         prefetched_cas_paths: None,
+        verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
     }
     .run_without_mem_cache()
@@ -278,6 +280,7 @@ async fn reuses_cached_cas_paths_when_index_entry_is_live() {
         package_url: "http://127.0.0.1:1/unreachable.tgz",
         package_id: pkg_id,
         prefetched_cas_paths: None,
+        verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
     }
     .run_without_mem_cache()
@@ -334,6 +337,7 @@ async fn reuses_prefetched_cas_paths_when_provided() {
         package_url: "http://127.0.0.1:1/unreachable.tgz",
         package_id: pkg_id,
         prefetched_cas_paths: Some(&prefetched),
+        verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
     }
     .run_without_mem_cache()
@@ -388,6 +392,7 @@ async fn prefetch_cas_paths_returns_hits_for_live_index_rows() {
         store_path,
         vec![index_key.clone()],
         true,
+        SharedVerifiedFilesCache::default(),
     )
     .await;
 
@@ -442,6 +447,7 @@ async fn prefetch_cas_paths_omits_failed_integrity_entries() {
         // `check_pkg_files_integrity`'s "scrub & re-fetch" path,
         // which turns the row into a miss.
         true,
+        SharedVerifiedFilesCache::default(),
     )
     .await;
 
@@ -498,6 +504,7 @@ async fn prefetch_cas_paths_skips_filesystem_checks_when_verify_disabled() {
         store_path,
         vec![index_key.clone()],
         false,
+        SharedVerifiedFilesCache::default(),
     )
     .await;
 
@@ -555,6 +562,7 @@ async fn falls_through_when_cafs_file_missing() {
         package_url: "http://127.0.0.1:1/unreachable.tgz",
         package_id: pkg_id,
         prefetched_cas_paths: None,
+        verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
     }
     .run_without_mem_cache()
@@ -611,6 +619,7 @@ async fn falls_through_when_digest_is_malformed() {
         package_url: "http://127.0.0.1:1/unreachable.tgz",
         package_id: pkg_id,
         prefetched_cas_paths: None,
+        verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
     }
     .run_without_mem_cache()
@@ -670,6 +679,7 @@ async fn falls_through_when_cafs_path_is_a_directory() {
         package_url: "http://127.0.0.1:1/unreachable.tgz",
         package_id: pkg_id,
         prefetched_cas_paths: None,
+        verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
     }
     .run_without_mem_cache()
@@ -739,6 +749,7 @@ async fn falls_through_when_cafs_path_is_a_symlink() {
         package_url: "http://127.0.0.1:1/unreachable.tgz",
         package_id: pkg_id,
         prefetched_cas_paths: None,
+        verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
     }
     .run_without_mem_cache()
@@ -1212,6 +1223,7 @@ fn run_with_mem_cache_does_not_deadlock_on_dashmap_shard_contention() {
                     package_url: url,
                     package_id: "fastify-error@3.3.0",
                     prefetched_cas_paths: None,
+                    verified_files_cache: SharedVerifiedFilesCache::default(),
                     retry_opts: RetryOpts { retries: 0, ..RetryOpts::default() },
                 };
 

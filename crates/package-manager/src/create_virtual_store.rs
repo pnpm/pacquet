@@ -7,7 +7,7 @@ use miette::Diagnostic;
 use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
-use pacquet_store_dir::{StoreIndex, StoreIndexWriter, store_index_key};
+use pacquet_store_dir::{SharedVerifiedFilesCache, StoreIndex, StoreIndexWriter, store_index_key};
 use pacquet_tarball::prefetch_cas_paths;
 use pipe_trait::Pipe;
 use std::collections::HashMap;
@@ -118,6 +118,14 @@ impl<'a> CreateVirtualStore<'a> {
         let (store_index_writer, writer_task) = StoreIndexWriter::spawn(store_dir);
         let store_index_writer_ref = Some(&store_index_writer);
 
+        // Install-scoped `verifiedFilesCache`. One `Arc<DashSet>` lives
+        // for the duration of the install; every per-snapshot fetch
+        // gets the same handle. A CAFS path verified on snapshot A
+        // populates the set so snapshot B's verify pass skips the stat
+        // / re-hash cost. Ports pnpm's `verifiedFilesCache: Set<string>`
+        // threading in `store/cafs/src/checkPkgFilesIntegrity.ts`.
+        let verified_files_cache = SharedVerifiedFilesCache::default();
+
         // Batch every cache lookup the per-snapshot futures would otherwise
         // each fan into `tokio::task::spawn_blocking`. With 1352 snapshots
         // hitting the default 512-thread blocking pool, each task's actual
@@ -176,6 +184,7 @@ impl<'a> CreateVirtualStore<'a> {
             store_dir,
             cache_keys,
             config.verify_store_integrity,
+            SharedVerifiedFilesCache::clone(&verified_files_cache),
         )
         .await;
 
@@ -266,6 +275,7 @@ impl<'a> CreateVirtualStore<'a> {
         // existing tokio + download path.
         if !cold.is_empty() {
             let prefetched_ref = Some(&prefetched);
+            let verified_files_cache_ref = &verified_files_cache;
             cold.iter()
                 .map(|(snapshot_key, snapshot)| async move {
                     let metadata_key = snapshot_key.without_peer();
@@ -281,6 +291,7 @@ impl<'a> CreateVirtualStore<'a> {
                         store_index: store_index_ref,
                         store_index_writer: store_index_writer_ref,
                         prefetched_cas_paths: prefetched_ref,
+                        verified_files_cache: verified_files_cache_ref,
                         package_key: snapshot_key,
                         metadata,
                         snapshot,

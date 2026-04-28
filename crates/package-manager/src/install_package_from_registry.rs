@@ -8,7 +8,7 @@ use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::PackageManifest;
 use pacquet_registry::{Package, PackageTag, PackageVersion, RegistryError};
-use pacquet_store_dir::{SharedReadonlyStoreIndex, StoreIndexWriter};
+use pacquet_store_dir::{SharedReadonlyStoreIndex, SharedVerifiedFilesCache, StoreIndexWriter};
 use pacquet_tarball::{DownloadTarballToStore, MemCache, TarballError};
 use std::{path::Path, sync::Arc};
 
@@ -33,6 +33,10 @@ pub struct InstallPackageFromRegistry<'a> {
     pub config: &'static Npmrc,
     pub store_index: Option<&'a SharedReadonlyStoreIndex>,
     pub store_index_writer: Option<&'a Arc<StoreIndexWriter>>,
+    /// Install-scoped `verifiedFilesCache` shared across every
+    /// per-package fetch. See `DownloadTarballToStore::verified_files_cache`
+    /// for the rationale.
+    pub verified_files_cache: &'a SharedVerifiedFilesCache,
     pub node_modules_dir: &'a Path,
     pub name: &'a str,
     pub version_range: &'a str,
@@ -96,6 +100,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
             config,
             store_index,
             store_index_writer,
+            verified_files_cache,
             node_modules_dir,
             name,
             ..
@@ -111,6 +116,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
             store_index: store_index.cloned(),
             store_index_writer: store_index_writer.cloned(),
             verify_store_integrity: config.verify_store_integrity,
+            verified_files_cache: SharedVerifiedFilesCache::clone(verified_files_cache),
             package_integrity: package_version
                 .dist
                 .integrity
@@ -202,12 +208,14 @@ mod tests {
                 .pipe(Box::new)
                 .pipe(Box::leak);
         let http_client = ThrottledClient::new_for_installs();
+        let verified_files_cache = SharedVerifiedFilesCache::default();
         let package = InstallPackageFromRegistry {
             tarball_mem_cache: &Default::default(),
             config,
             http_client: &http_client,
             store_index: None,
             store_index_writer: None,
+            verified_files_cache: &verified_files_cache,
             name: "fast-querystring",
             version_range: "1.0.0",
             node_modules_dir: modules_dir.path(),
