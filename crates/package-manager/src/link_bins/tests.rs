@@ -184,11 +184,13 @@ fn link_direct_dep_bins_follows_symlink_to_real_package() {
         .unwrap();
     fs::write(real_pkg.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
 
+    // Use the same approach pacquet uses in production: symlink on
+    // Unix, junction on Windows. Plain `std::os::windows::fs::symlink_dir`
+    // requires the `SeCreateSymbolicLinkPrivilege` (off by default on
+    // CI runners), so the test would fail there even though production
+    // never hits that code path.
     let symlink = modules.join("foo");
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(&real_pkg, &symlink).unwrap();
-    #[cfg(windows)]
-    std::os::windows::fs::symlink_dir(&real_pkg, &symlink).unwrap();
+    pacquet_fs::symlink_dir(&real_pkg, &symlink).unwrap();
 
     link_direct_dep_bins(&modules, &["foo".to_string()]).unwrap();
 
