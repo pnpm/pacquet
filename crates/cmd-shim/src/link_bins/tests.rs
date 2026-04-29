@@ -78,6 +78,123 @@ fn link_bins_walks_modules_and_scopes() {
     assert!(bins.join("bar").exists(), "scoped @s/bar shim must use bare name `bar`");
 }
 
+/// `link_bins` on a missing `node_modules` directory must be a no-op
+/// (Ok with empty result), not an error. Real fs returns `NotFound`
+/// which the implementation already degrades.
+#[test]
+fn link_bins_handles_missing_modules_dir() {
+    let tmp = tempdir().unwrap();
+    let bins_dir = tmp.path().join(".bin");
+    link_bins(&tmp.path().join("missing"), &bins_dir).expect("missing modules dir is Ok");
+    assert!(!bins_dir.exists(), "no shims means no bin dir created");
+}
+
+/// `link_bins_of_packages` with no bins to link is a complete no-op —
+/// it must not even create the bins directory. The empty-`chosen`
+/// short-circuit guards a slot whose children have no bin field.
+#[test]
+fn link_bins_of_packages_no_op_when_no_bins() {
+    let tmp = tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    fs::create_dir_all(&pkg).unwrap();
+    fs::write(pkg.join("package.json"), json!({"name": "pkg"}).to_string()).unwrap();
+    let bins = tmp.path().join(".bin");
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(pkg.join("package.json")).unwrap()).unwrap();
+    link_bins_of_packages(&[PackageBinSource { location: pkg, manifest }], &bins).unwrap();
+    assert!(!bins.exists(), "bins dir must not be created when nothing to link");
+}
+
+/// Same-name bin from two non-owner packages: lexical-compare picks the
+/// alphabetically smaller package name. Pins the
+/// `resolveCommandConflicts` fallback shape.
+#[test]
+fn lexical_compare_breaks_tie_when_neither_owns() {
+    let tmp = tempdir().unwrap();
+    let alpha = tmp.path().join("alpha");
+    let beta = tmp.path().join("beta");
+    for d in [&alpha, &beta] {
+        fs::create_dir_all(d).unwrap();
+        fs::write(d.join("cmd.js"), "#!/usr/bin/env node\n").unwrap();
+    }
+    fs::write(
+        alpha.join("package.json"),
+        json!({"name": "alpha", "bin": {"shared": "cmd.js"}}).to_string(),
+    )
+    .unwrap();
+    fs::write(
+        beta.join("package.json"),
+        json!({"name": "beta", "bin": {"shared": "cmd.js"}}).to_string(),
+    )
+    .unwrap();
+
+    let manifest_alpha: Value =
+        serde_json::from_slice(&fs::read(alpha.join("package.json")).unwrap()).unwrap();
+    let manifest_beta: Value =
+        serde_json::from_slice(&fs::read(beta.join("package.json")).unwrap()).unwrap();
+
+    let bins = tmp.path().join(".bin");
+    // Order beta-then-alpha to verify the choice doesn't depend on
+    // discovery order.
+    link_bins_of_packages(
+        &[
+            PackageBinSource { location: beta.clone(), manifest: manifest_beta },
+            PackageBinSource { location: alpha.clone(), manifest: manifest_alpha },
+        ],
+        &bins,
+    )
+    .unwrap();
+
+    let body = fs::read_to_string(bins.join("shared")).unwrap();
+    assert!(
+        body.contains("/alpha/cmd.js"),
+        "lexically smaller package name `alpha` must win, got body:\n{body}",
+    );
+}
+
+/// A malformed `package.json` (invalid JSON) under `<modules_dir>` must
+/// surface as a `ParseManifest` error, not silently skip.
+#[test]
+fn link_bins_propagates_parse_manifest_error() {
+    let tmp = tempdir().unwrap();
+    let modules = tmp.path().join("node_modules");
+    fs::create_dir_all(modules.join("broken")).unwrap();
+    fs::write(modules.join("broken/package.json"), "{ this is not json").unwrap();
+
+    let bins = modules.join(".bin");
+    let err = link_bins(&modules, &bins).expect_err("invalid manifest must surface");
+    assert!(
+        matches!(err, LinkBinsError::ParseManifest { .. }),
+        "expected ParseManifest, got {err:?}",
+    );
+}
+
+/// `link_bins` must idempotently short-circuit when an existing shim
+/// already targets the same bin file. Pins `is_shim_pointing_at`'s
+/// integration with the writer. Mirrors pnpm's
+/// "linkBins() skips bins that already reference the correct target":
+/// <https://github.com/pnpm/pnpm/blob/4750fd370c/bins/linker/test/index.ts#L79-L99>.
+#[test]
+fn link_bins_skips_existing_shim_with_matching_marker() {
+    let tmp = tempdir().unwrap();
+    let modules = tmp.path().join("node_modules");
+    fs::create_dir_all(modules.join("foo")).unwrap();
+    fs::write(modules.join("foo/package.json"), json!({"name": "foo", "bin": "f.js"}).to_string())
+        .unwrap();
+    fs::write(modules.join("foo/f.js"), "#!/usr/bin/env node\n").unwrap();
+
+    let bins = modules.join(".bin");
+    link_bins(&modules, &bins).unwrap();
+    let original = fs::read_to_string(bins.join("foo")).unwrap();
+    // Append a sentinel — if the second pass rewrites the shim, the
+    // sentinel disappears.
+    let sentinel = format!("{original}\n# SENTINEL");
+    fs::write(bins.join("foo"), &sentinel).unwrap();
+
+    link_bins(&modules, &bins).unwrap();
+    assert_eq!(fs::read_to_string(bins.join("foo")).unwrap(), sentinel);
+}
+
 /// Conflict resolution: when two packages declare the same bin name, the
 /// owning package wins.
 #[test]

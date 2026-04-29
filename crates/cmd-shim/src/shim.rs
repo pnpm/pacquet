@@ -29,6 +29,24 @@ fn extension_program(extension: &str) -> Option<&'static str> {
     }
 }
 
+/// Filesystem capability: read up to a buffer of bytes from a file path.
+/// Mirrors the per-capability DI pattern in `pacquet-modules-yaml`. See
+/// the principles documented at
+/// <https://github.com/pnpm/pacquet/pull/332#issuecomment-4345054524>.
+pub trait FsReadHead {
+    fn read_head(path: &Path, buf: &mut [u8]) -> io::Result<usize>;
+}
+
+/// Production filesystem provider.
+pub struct RealFs;
+
+impl FsReadHead for RealFs {
+    fn read_head(path: &Path, buf: &mut [u8]) -> io::Result<usize> {
+        let mut file = File::open(path)?;
+        file.read(buf)
+    }
+}
+
 /// Read up to 512 bytes of `path` and infer the runtime.
 ///
 /// Order, mirroring `searchScriptRuntime`:
@@ -39,13 +57,14 @@ fn extension_program(extension: &str) -> Option<&'static str> {
 /// 3. If neither yields a runtime, return `None` — `generate_sh_shim` handles
 ///    that by exec'ing the target directly.
 ///
-/// Errors reading the file degrade to `Ok(None)`. cmd-shim's TS code throws
-/// here but pacquet's call sites already verified the bin path resolves under
-/// the package root; a transient read error shouldn't fail the whole install.
-pub fn search_script_runtime(path: &Path) -> io::Result<Option<ScriptRuntime>> {
+/// `NotFound` reading the file degrades to `Ok(None)` so a missing-bin race
+/// doesn't fail the whole install. Other IO errors propagate, since pacquet
+/// has already verified the bin path resolves under the package root by
+/// this point and a real failure deserves to surface.
+pub fn search_script_runtime<Fs: FsReadHead>(path: &Path) -> io::Result<Option<ScriptRuntime>> {
     let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("");
 
-    let runtime_from_shebang = read_shebang(path)?;
+    let runtime_from_shebang = read_shebang::<Fs>(path)?;
     if let Some(rt) = runtime_from_shebang {
         return Ok(Some(rt));
     }
@@ -57,18 +76,22 @@ pub fn search_script_runtime(path: &Path) -> io::Result<Option<ScriptRuntime>> {
     Ok(None)
 }
 
-fn read_shebang(path: &Path) -> io::Result<Option<ScriptRuntime>> {
-    let mut file = match File::open(path) {
-        Ok(file) => file,
+fn read_shebang<Fs: FsReadHead>(path: &Path) -> io::Result<Option<ScriptRuntime>> {
+    let mut buffer = [0u8; 512];
+    let read = match Fs::read_head(path, &mut buffer) {
+        Ok(read) => read,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    let mut buffer = [0u8; 512];
-    let read = file.read(&mut buffer)?;
-    let head = String::from_utf8_lossy(&buffer[..read]);
+    Ok(parse_shebang_from_bytes(&buffer[..read]))
+}
 
+/// Parse the runtime out of the first line of a script's content. Pure
+/// function over bytes so the caller can plug in any I/O strategy.
+pub fn parse_shebang_from_bytes(bytes: &[u8]) -> Option<ScriptRuntime> {
+    let head = String::from_utf8_lossy(bytes);
     let first_line = head.trim_start().split('\n').next().unwrap_or("").trim_end_matches('\r');
-    Ok(parse_shebang(first_line))
+    parse_shebang(first_line)
 }
 
 /// Mirrors the shebang regex in upstream cmd-shim:

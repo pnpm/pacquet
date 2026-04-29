@@ -82,3 +82,137 @@ fn pkg_owns_bin_overrides() {
     assert!(pkg_owns_bin("pnpx", "@pnpm/exe"));
     assert!(!pkg_owns_bin("npx", "anything-else"));
 }
+
+/// Mirrors pnpm's "should allow $ as command name" test
+/// (<https://github.com/pnpm/pnpm/blob/4750fd370c/bins/resolver/test/index.ts#L21-L36>).
+/// `$` is the documented escape hatch for awkward bin names; it must
+/// survive the URL-safe-name guard.
+#[test]
+fn dollar_is_allowed_as_command_name() {
+    let manifest = json!({
+        "name": "undollar",
+        "version": "1.0.0",
+        "bin": {"$": "./undollar.js"},
+    });
+    let commands = get_bins_from_package_manifest(&manifest, Path::new("/p"));
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].name, "$");
+}
+
+/// Mirrors pnpm's "skip dangerous bin names" test
+/// (<https://github.com/pnpm/pnpm/blob/4750fd370c/bins/resolver/test/index.ts#L74-L94>).
+/// Path-traversal characters in the *key* must be filtered, not just the
+/// value.
+#[test]
+fn skip_dangerous_bin_names() {
+    let manifest = json!({
+        "name": "foo",
+        "version": "1.0.0",
+        "bin": {
+            "../bad": "./bad",
+            "..\\bad": "./bad",
+            "good": "./good",
+            "~/bad": "./bad",
+        },
+    });
+    let commands = get_bins_from_package_manifest(&manifest, Path::new("/p"));
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].name, "good");
+}
+
+/// Mirrors pnpm's "skip dangerous bin locations" test
+/// (<https://github.com/pnpm/pnpm/blob/4750fd370c/bins/resolver/test/index.ts#L96-L112>).
+/// `../bad` in the *value* must be filtered by the `is_subdir` check.
+#[test]
+fn skip_dangerous_bin_locations() {
+    let manifest = json!({
+        "name": "foo",
+        "version": "1.0.0",
+        "bin": {
+            "bad": "../bad",
+            "good": "./good",
+        },
+    });
+    let commands = get_bins_from_package_manifest(&manifest, Path::new("/pkg/foo"));
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].name, "good");
+}
+
+/// Mirrors pnpm's "get bin from scoped bin name" test
+/// (<https://github.com/pnpm/pnpm/blob/4750fd370c/bins/resolver/test/index.ts#L114-L130>).
+/// A scoped key like `@foo/a` collapses to `a` before validation.
+#[test]
+fn scoped_bin_name_strips_scope_prefix() {
+    let manifest = json!({
+        "name": "@foo/a",
+        "version": "1.0.0",
+        "bin": {"@foo/a": "./a"},
+    });
+    let commands = get_bins_from_package_manifest(&manifest, Path::new("/p"));
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].name, "a");
+}
+
+/// Mirrors pnpm's "skip scoped bin names with path traversal" test
+/// (<https://github.com/pnpm/pnpm/blob/4750fd370c/bins/resolver/test/index.ts#L132-L148>).
+/// After the scope strip, the resulting bare name still has to pass the
+/// URL-safe guard — a `@scope/../etc/passwd` collapses to `../etc/passwd`
+/// which must be rejected.
+#[test]
+fn skip_scoped_bin_names_with_path_traversal() {
+    let manifest = json!({
+        "name": "malicious",
+        "version": "1.0.0",
+        "bin": {
+            "@scope/../../.npmrc": "./malicious.js",
+            "@scope/../etc/passwd": "./evil.js",
+            "@scope/legit": "./good.js",
+        },
+    });
+    let commands = get_bins_from_package_manifest(&manifest, Path::new("/p"));
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].name, "legit");
+}
+
+/// `bin` as a non-string non-object (number, array, null) is malformed.
+/// Pacquet's port must return an empty list rather than panic, mirroring
+/// pnpm's silent fall-through to the empty default.
+#[test]
+fn malformed_bin_type_returns_empty() {
+    for shape in [json!(42), json!(["a", "b"]), json!(null), json!(true)] {
+        let manifest = json!({"name": "x", "version": "1.0.0", "bin": shape});
+        assert!(
+            get_bins_from_package_manifest(&manifest, Path::new("/p")).is_empty(),
+            "malformed bin shape must be tolerated",
+        );
+    }
+}
+
+/// `bin` as a string requires the manifest to declare `name` (mirrors
+/// pnpm's `INVALID_PACKAGE_NAME` guard). Pacquet returns an empty list
+/// rather than throwing because the install pipeline would have already
+/// surfaced a missing-name failure upstream.
+#[test]
+fn bin_string_with_missing_package_name_returns_empty() {
+    let manifest = json!({"bin": "cli.js"});
+    assert!(get_bins_from_package_manifest(&manifest, Path::new("/p")).is_empty());
+}
+
+/// Object-form bin entries whose values aren't strings (number, null, etc.)
+/// are silently skipped. Same defensive shape pnpm has for malformed
+/// manifests.
+#[test]
+fn bin_object_with_non_string_value_is_skipped() {
+    let manifest = json!({
+        "name": "tool",
+        "version": "1.0.0",
+        "bin": {
+            "good": "ok.js",
+            "bad-num": 42,
+            "bad-null": null,
+        },
+    });
+    let commands = get_bins_from_package_manifest(&manifest, Path::new("/p"));
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].name, "good");
+}

@@ -7,6 +7,36 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Read the `package.json` of every direct dependency under `modules_dir`
+/// and link its bins into `<modules_dir>/.bin`.
+///
+/// `dep_names` is the list of direct-dependency keys as they appear in
+/// `package.json` — the same names already symlinked under `<modules_dir>/`
+/// by [`crate::SymlinkDirectDependencies`]. We resolve `package.json` via
+/// the symlink (`fs::read` follows it transparently) so the read targets
+/// the real package contents in the virtual store.
+///
+/// Driven on rayon because each location's read+parse is independent.
+/// Mirrors pnpm v11's `linkBinsOfPackages` call site for direct deps:
+/// <https://github.com/pnpm/pnpm/blob/4750fd370c/installing/deps-installer/src/install/index.ts#L1539>.
+pub fn link_direct_dep_bins(modules_dir: &Path, dep_names: &[String]) -> Result<(), LinkBinsError> {
+    let direct_dep_locations: Vec<PathBuf> =
+        dep_names.iter().map(|name| modules_dir.join(name)).collect();
+    let bin_sources: Vec<PackageBinSource> = direct_dep_locations
+        .par_iter()
+        .filter_map(|location| {
+            let manifest_path = location.join("package.json");
+            let bytes = fs::read(&manifest_path).ok()?;
+            let manifest = serde_json::from_slice(&bytes).ok()?;
+            Some(PackageBinSource { location: location.clone(), manifest })
+        })
+        .collect();
+    if bin_sources.is_empty() {
+        return Ok(());
+    }
+    link_bins_of_packages(&bin_sources, &modules_dir.join(".bin"))
+}
+
 /// Error type of [`LinkVirtualStoreBins`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum LinkVirtualStoreBinsError {

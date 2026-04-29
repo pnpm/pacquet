@@ -1,12 +1,12 @@
-use crate::symlink_package;
+use crate::{link_direct_dep_bins, symlink_package};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_cmd_shim::{LinkBinsError, PackageBinSource, link_bins_of_packages};
+use pacquet_cmd_shim::LinkBinsError;
 use pacquet_lockfile::{Lockfile, PkgName, PkgNameVerPeer, PkgVerPeer, ProjectSnapshot};
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::DependencyGroup;
 use rayon::prelude::*;
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::collections::HashMap;
 
 /// This subroutine creates symbolic links in the `node_modules` directory for
 /// the direct dependencies. The targets of the link are the virtual directories.
@@ -73,39 +73,10 @@ where
             .expect("symlink pkg"); // TODO: properly propagate this error
         });
 
-        // After the symlink layout is in place, link each direct
-        // dependency's bins into `<modules_dir>/.bin`. Mirrors pnpm v11's
-        // `linkBinsOfPackages` call site at
-        // <https://github.com/pnpm/pnpm/blob/4750fd370c/installing/deps-installer/src/install/index.ts#L1539>.
-        let direct_dep_locations: Vec<PathBuf> =
-            direct_deps.iter().map(|(name, _)| config.modules_dir.join(name.to_string())).collect();
-        let bin_sources = collect_bin_sources(&direct_dep_locations);
-        if !bin_sources.is_empty() {
-            link_bins_of_packages(&bin_sources, &config.modules_dir.join(".bin"))
-                .map_err(SymlinkDirectDependenciesError::LinkBins)?;
-        }
+        let dep_names: Vec<String> = direct_deps.iter().map(|(name, _)| name.to_string()).collect();
+        link_direct_dep_bins(&config.modules_dir, &dep_names)
+            .map_err(SymlinkDirectDependenciesError::LinkBins)?;
 
         Ok(())
     }
-}
-
-/// Read the `package.json` for each location in `locations` and return the
-/// ones that parse. Locations are direct-dependency symlinks under
-/// `<modules_dir>/<name>` — pacquet has already created them by this point,
-/// and `fs::read` follows the symlink to the real file in the virtual store.
-///
-/// Driven on rayon because each location's read+parse is independent and the
-/// caller is not in an async context. With many direct deps the serial
-/// version added measurable wall time; rayon brings that down to roughly
-/// `N / num_cpus` per-call latency.
-fn collect_bin_sources(locations: &[PathBuf]) -> Vec<PackageBinSource> {
-    locations
-        .par_iter()
-        .filter_map(|location| {
-            let manifest_path = location.join("package.json");
-            let bytes = fs::read(&manifest_path).ok()?;
-            let manifest = serde_json::from_slice(&bytes).ok()?;
-            Some(PackageBinSource { location: location.clone(), manifest })
-        })
-        .collect()
 }

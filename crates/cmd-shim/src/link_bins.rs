@@ -1,6 +1,6 @@
 use crate::{
     bin_resolver::{Command, get_bins_from_package_manifest, pkg_owns_bin},
-    shim::{generate_sh_shim, is_shim_pointing_at, search_script_runtime},
+    shim::{RealFs, generate_sh_shim, is_shim_pointing_at, search_script_runtime},
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
@@ -227,7 +227,7 @@ fn pick_winner(bin_name: &str, existing: &str, candidate: &str) -> bool {
 /// The platform-specific behavior is gated behind `#[cfg(unix)]` so the
 /// build still compiles on Windows.
 fn write_shim(target_path: &Path, shim_path: &Path) -> Result<(), LinkBinsError> {
-    let runtime = search_script_runtime(target_path).map_err(|error| {
+    let runtime = search_script_runtime::<RealFs>(target_path).map_err(|error| {
         LinkBinsError::ProbeShimSource { path: target_path.to_path_buf(), error }
     })?;
 

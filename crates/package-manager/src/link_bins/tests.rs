@@ -1,4 +1,5 @@
 use super::*;
+use pacquet_cmd_shim::is_shim_pointing_at;
 use serde_json::json;
 use tempfile::tempdir;
 
@@ -78,4 +79,131 @@ fn skips_slot_own_package_when_walking_children() {
     // No children → bin dir should not exist at all (`link_bins_of_packages`
     // is a no-op when the package set is empty).
     assert!(!bin_dir.exists(), "self-bin must not be linked into own slot");
+}
+
+/// `LinkVirtualStoreBins` with a non-existent virtual-store directory
+/// must be a no-op (`Ok`) — a fresh install where the dir doesn't exist
+/// yet must not error out.
+#[test]
+fn link_virtual_store_bins_no_op_when_dir_missing() {
+    let tmp = tempdir().unwrap();
+    let nonexistent = tmp.path().join("does-not-exist");
+    LinkVirtualStoreBins { virtual_store_dir: &nonexistent }.run().expect("missing dir is Ok");
+}
+
+/// Slot whose name has a `+` (scope separator) resolves to
+/// `node_modules/<scope>/<name>`. Pins `find_slot_own_package_dir`'s
+/// scoped branch — the un-scoped branch is exercised by the existing
+/// `writes_child_bins_into_slot_own_package_node_modules` test.
+#[test]
+fn link_virtual_store_bins_handles_scoped_slot_name() {
+    let tmp = tempdir().unwrap();
+    let virtual_dir = tmp.path().join(".pacquet");
+    let slot = virtual_dir.join("@scope+parent@1.0.0");
+    let modules = slot.join("node_modules");
+    let parent_dir = modules.join("@scope/parent");
+    let child_dir = modules.join("child");
+    fs::create_dir_all(&parent_dir).unwrap();
+    fs::create_dir_all(&child_dir).unwrap();
+
+    fs::write(
+        parent_dir.join("package.json"),
+        json!({"name": "@scope/parent", "version": "1.0.0"}).to_string(),
+    )
+    .unwrap();
+    fs::write(
+        child_dir.join("package.json"),
+        json!({"name": "child", "version": "1.0.0", "bin": "cli.js"}).to_string(),
+    )
+    .unwrap();
+    fs::write(child_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+
+    LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }.run().unwrap();
+
+    let shim = parent_dir.join("node_modules/.bin/child");
+    assert!(shim.exists(), "scoped-slot bin linking must produce a shim at {shim:?}");
+}
+
+/// A virtual-store slot whose `node_modules/` is missing must be skipped
+/// without error.
+#[test]
+fn link_virtual_store_bins_skips_slot_without_node_modules() {
+    let tmp = tempdir().unwrap();
+    let virtual_dir = tmp.path().join(".pacquet");
+    fs::create_dir_all(virtual_dir.join("incomplete@1.0.0")).unwrap();
+    LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }.run().unwrap();
+}
+
+/// `link_direct_dep_bins` walks the project's `node_modules/<dep>`
+/// symlinks and writes a shim per declared bin. End-to-end exercise of
+/// the path that runs after `SymlinkDirectDependencies`.
+#[test]
+fn link_direct_dep_bins_writes_shims_for_each_dep() {
+    let tmp = tempdir().unwrap();
+    let modules = tmp.path().join("node_modules");
+    let foo_dir = modules.join("foo");
+    fs::create_dir_all(&foo_dir).unwrap();
+    fs::write(foo_dir.join("package.json"), json!({"name": "foo", "bin": "cli.js"}).to_string())
+        .unwrap();
+    fs::write(foo_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+
+    link_direct_dep_bins(&modules, &["foo".to_string()]).unwrap();
+
+    let shim = modules.join(".bin/foo");
+    assert!(shim.exists(), "shim should be created at {shim:?}");
+    let body = fs::read_to_string(&shim).unwrap();
+    assert!(is_shim_pointing_at(&body, &foo_dir.join("cli.js")));
+}
+
+/// `link_direct_dep_bins` with no deps is a no-op — must not even
+/// create the `.bin` directory. Mirrors the early-return of
+/// `link_bins_of_packages`.
+#[test]
+fn link_direct_dep_bins_no_op_for_empty_dep_list() {
+    let tmp = tempdir().unwrap();
+    let modules = tmp.path().join("node_modules");
+    fs::create_dir_all(&modules).unwrap();
+    link_direct_dep_bins(&modules, &[]).unwrap();
+    assert!(!modules.join(".bin").exists());
+}
+
+/// `link_direct_dep_bins` resolves the dep name through the symlink
+/// pacquet creates under `<modules_dir>/<name>`. Pin that the manifest
+/// is read from the symlink's *target*, not the symlink path itself.
+#[test]
+fn link_direct_dep_bins_follows_symlink_to_real_package() {
+    let tmp = tempdir().unwrap();
+    let modules = tmp.path().join("node_modules");
+    fs::create_dir_all(&modules).unwrap();
+
+    // The "real" package contents live elsewhere (mimics pacquet's
+    // virtual-store layout).
+    let real_pkg = tmp.path().join("virtual/foo@1.0.0/node_modules/foo");
+    fs::create_dir_all(&real_pkg).unwrap();
+    fs::write(real_pkg.join("package.json"), json!({"name": "foo", "bin": "cli.js"}).to_string())
+        .unwrap();
+    fs::write(real_pkg.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+
+    let symlink = modules.join("foo");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&real_pkg, &symlink).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&real_pkg, &symlink).unwrap();
+
+    link_direct_dep_bins(&modules, &["foo".to_string()]).unwrap();
+
+    assert!(modules.join(".bin/foo").exists(), "symlinked dep must produce a shim");
+}
+
+/// Skip dep names whose symlink points at a non-existent target.
+/// `link_direct_dep_bins` filters those silently because the
+/// surrounding install pipeline has already populated whatever it could.
+#[test]
+fn link_direct_dep_bins_skips_dep_with_missing_manifest() {
+    let tmp = tempdir().unwrap();
+    let modules = tmp.path().join("node_modules");
+    fs::create_dir_all(&modules).unwrap();
+    // No `<modules>/foo` directory at all.
+    link_direct_dep_bins(&modules, &["foo".to_string()]).unwrap();
+    assert!(!modules.join(".bin").exists());
 }
