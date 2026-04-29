@@ -203,29 +203,32 @@ mod tests {
         assert_eq!(env_replace::<NoEnv>("$ price").unwrap(), "$ price");
     }
 
+    /// Hits the early-`None` branch of `bytes.get(start + 1)?` inside
+    /// `find_placeholder_end`: the input ends on a `$` with no byte
+    /// to peek at.
     #[test]
-    fn malformed_placeholder_is_left_alone() {
-        // No closing brace, nested `$`, etc.
-        assert_eq!(env_replace::<NoEnv>("${OPEN").unwrap(), "${OPEN");
-        struct EnvWithDollarKey;
-        impl EnvVar for EnvWithDollarKey {
-            fn var(_: &str) -> Option<String> {
-                unreachable!("malformed placeholder must short-circuit before any var lookup")
-            }
-        }
-        assert_eq!(env_replace::<EnvWithDollarKey>("${A$B}").unwrap(), "${A$B}");
+    fn trailing_dollar_with_no_byte_after_is_passthrough() {
+        assert_eq!(env_replace::<NoEnv>("$").unwrap(), "$");
+        assert_eq!(env_replace::<NoEnv>("foo$").unwrap(), "foo$");
     }
 
+    /// A nested `$` or `{` inside a placeholder body, or an unclosed
+    /// `${...`, leaves the input verbatim. `NoEnv` would also return
+    /// `None` for any lookup — but the parser must short-circuit
+    /// *before* the lookup, so swapping in a richer fake would still
+    /// be a no-op.
+    #[test]
+    fn malformed_placeholder_is_left_alone() {
+        assert_eq!(env_replace::<NoEnv>("${OPEN").unwrap(), "${OPEN");
+        assert_eq!(env_replace::<NoEnv>("${A$B}").unwrap(), "${A$B}");
+    }
+
+    /// One literal backslash escapes the placeholder; the parser
+    /// must skip the var lookup entirely. `NoEnv` is sufficient
+    /// because the lookup never runs in this branch.
     #[test]
     fn odd_backslash_count_escapes_placeholder() {
-        // One literal backslash => placeholder treated as literal text.
-        struct EnvWithX;
-        impl EnvVar for EnvWithX {
-            fn var(_: &str) -> Option<String> {
-                unreachable!("escaped placeholder must short-circuit before any var lookup")
-            }
-        }
-        assert_eq!(env_replace::<EnvWithX>(r"\${X}").unwrap(), "${X}");
+        assert_eq!(env_replace::<NoEnv>(r"\${X}").unwrap(), "${X}");
     }
 
     #[test]

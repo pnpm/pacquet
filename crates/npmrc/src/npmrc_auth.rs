@@ -118,7 +118,7 @@ impl NpmrcAuth {
                 continue;
             }
 
-            apply_default_creds_field(&mut auth.default_creds, key.as_str(), value);
+            apply_creds_field(&mut auth.default_creds, key.as_str(), value);
         }
         auth
     }
@@ -241,17 +241,13 @@ fn split_creds_key(key: &str) -> Option<(&str, &str)> {
 }
 
 fn apply_creds_field(creds: &mut RawCreds, field: &str, value: String) {
+    // The catch-all swallows arbitrary `.npmrc` keys that don't map to
+    // a credential field — e.g. a top-level `store-dir=` line, or a
+    // `//host/:registry=` per-registry override that we don't honour
+    // yet. Matches pnpm's `getNetworkConfigs` shape: only the four
+    // recognised fields contribute to `RawCreds`; everything else is
+    // silently dropped.
     match field {
-        "_authToken" => creds.auth_token = Some(value),
-        "_auth" => creds.auth_pair_base64 = Some(value),
-        "username" => creds.username = Some(value),
-        "_password" => creds.password = Some(value),
-        _ => {}
-    }
-}
-
-fn apply_default_creds_field(creds: &mut RawCreds, key: &str, value: String) {
-    match key {
         "_authToken" => creds.auth_token = Some(value),
         "_auth" => creds.auth_pair_base64 = Some(value),
         "username" => creds.username = Some(value),
@@ -410,5 +406,154 @@ registry=https://r.example
             npmrc.auth_headers.for_url("https://reg.com/").as_deref(),
             Some(format!("Basic {pair}").as_str()),
         );
+    }
+
+    /// `[section]` headers are not meaningful in `.npmrc`; the parser
+    /// should skip them silently.
+    #[test]
+    fn ini_section_headers_are_skipped() {
+        let ini = "[default]\nregistry=https://r.example\n[other]\n";
+        let auth = NpmrcAuth::from_ini::<NoEnv>(ini);
+        assert_eq!(auth.registry.as_deref(), Some("https://r.example"));
+    }
+
+    /// When a `${VAR}` placeholder appears in the *key* and cannot be
+    /// resolved, the parser keeps the raw key verbatim and pushes a
+    /// warning. Mirrors `substituteEnv` in pnpm's `loadNpmrcFiles.ts`.
+    #[test]
+    fn env_replace_failure_on_key_warns_and_keeps_raw_key() {
+        // `${MISSING}_authToken` resolves to a literal key, so it lands
+        // in `default_creds` rather than being recognised as the typed
+        // `_authToken` field. The point of this test is to exercise the
+        // warning + raw-key branch at the top of `from_ini`.
+        let ini = "${MISSING}_authToken=abc\n";
+        let auth = NpmrcAuth::from_ini::<NoEnv>(ini);
+        assert!(auth.warnings.iter().any(|warning| warning.contains("${MISSING}")));
+    }
+
+    /// Top-level `_auth=`, `username=`, and `_password=` lines should
+    /// land on `default_creds` so the resolved registry's nerf-darted
+    /// URI gets a `Basic` header.
+    #[test]
+    fn top_level_auth_pair_keys_to_default_registry_basic_header() {
+        let pair = base64_encode("bob:hunter2");
+        let ini = format!("_auth={pair}\n");
+        let mut npmrc = Npmrc::new();
+        NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to(&mut npmrc);
+        assert_eq!(
+            npmrc.auth_headers.for_url("https://registry.npmjs.org/").as_deref(),
+            Some(format!("Basic {pair}").as_str()),
+        );
+    }
+
+    #[test]
+    fn top_level_username_password_keys_to_default_registry_basic_header() {
+        let raw_password = "hunter2";
+        let password_b64 = base64_encode(raw_password);
+        let ini = format!("username=bob\n_password={password_b64}\n");
+        let mut npmrc = Npmrc::new();
+        NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to(&mut npmrc);
+        assert_eq!(
+            npmrc.auth_headers.for_url("https://registry.npmjs.org/").as_deref(),
+            Some(format!("Basic {}", base64_encode("bob:hunter2")).as_str()),
+        );
+    }
+
+    /// A `//host/:_password=…` line on its own (no matching `username`)
+    /// produces no `Basic` header — the credential shape needs both
+    /// halves. Hits the `None` fallthrough in `creds_to_header`.
+    #[test]
+    fn lone_per_registry_password_produces_no_header() {
+        let ini = format!("//reg.com/:_password={}\n", base64_encode("solo"));
+        let mut npmrc = Npmrc::new();
+        NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to(&mut npmrc);
+        assert_eq!(npmrc.auth_headers.for_url("https://reg.com/"), None);
+    }
+
+    /// Per-registry creds with a recognisable suffix should be carried
+    /// through `build_auth_headers` and surface as a `Basic` header for
+    /// matching URLs. Exercises the `auth_header_by_uri.insert(...)`
+    /// branch in [`NpmrcAuth::build_auth_headers`].
+    #[test]
+    fn per_registry_username_password_apply_through_build_auth_headers() {
+        let raw_password = "hunter2";
+        let password_b64 = base64_encode(raw_password);
+        let ini =
+            format!("//reg.example/:username=alice\n//reg.example/:_password={password_b64}\n",);
+        let mut npmrc = Npmrc::new();
+        NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to(&mut npmrc);
+        assert_eq!(
+            npmrc.auth_headers.for_url("https://reg.example/foo").as_deref(),
+            Some(format!("Basic {}", base64_encode("alice:hunter2")).as_str()),
+        );
+    }
+
+    /// `//host/:somethingUnknown=value` lines are dropped silently:
+    /// `split_creds_key` returns `None` for anything outside
+    /// [`CREDS_SUFFIXES`], and the line then falls through to
+    /// `apply_creds_field` on `default_creds` with a non-matching
+    /// field. Exercises both no-match arms.
+    #[test]
+    fn unknown_per_registry_suffix_is_silently_dropped() {
+        let ini = "//reg.example/:registry=https://other.example/\n";
+        let auth = NpmrcAuth::from_ini::<NoEnv>(ini);
+        assert!(auth.creds_by_uri.is_empty());
+        assert_eq!(auth.default_creds, RawCreds::default());
+        assert_eq!(auth.warnings, Vec::<String>::new());
+    }
+
+    /// `apply_registry_and_warn` should drain the warning queue —
+    /// pnpm's `substituteEnv` writes the same string to stderr via
+    /// `globalWarn` once per resolution failure.
+    #[test]
+    fn apply_registry_and_warn_drains_warnings() {
+        let ini = "//reg.com/:_authToken=${MISSING}\n";
+        let mut auth = NpmrcAuth::from_ini::<NoEnv>(ini);
+        assert_eq!(auth.warnings.len(), 1);
+        let mut npmrc = Npmrc::new();
+        auth.apply_registry_and_warn(&mut npmrc);
+        assert!(auth.warnings.is_empty(), "warnings should be drained after flush");
+    }
+
+    /// When `_password` is *not* valid base64, `creds_to_header`
+    /// falls back to using the raw string verbatim. Mirrors the
+    /// `unwrap_or_else` branch in `creds_to_header`. Pnpm's
+    /// `parseBasicAuth` doesn't have this exact fallback (it always
+    /// `atob`s), but pacquet's tolerance avoids losing the credential
+    /// for `.npmrc` files where `_password` was already a raw value.
+    #[test]
+    fn invalid_base64_password_falls_back_to_raw_value() {
+        // `*` is outside the base64 alphabet, so `base64_decode`
+        // returns `None` and the raw string is used as the password.
+        let ini = "//reg.com/:username=alice\n//reg.com/:_password=raw*pw\n";
+        let mut npmrc = Npmrc::new();
+        NpmrcAuth::from_ini::<NoEnv>(ini).apply_to(&mut npmrc);
+        assert_eq!(
+            npmrc.auth_headers.for_url("https://reg.com/").as_deref(),
+            Some(format!("Basic {}", base64_encode("alice:raw*pw")).as_str()),
+        );
+    }
+
+    /// Exercises every branch of [`base64_decode`]: the alphanumeric
+    /// arms, the `+` arm, the `/` arm, the `=` padding break, and the
+    /// "invalid character" return. Without these the password-decode
+    /// fallback (`unwrap_or_else(... pass_b64.clone())`) path stays
+    /// unreachable from the parser tests.
+    #[test]
+    fn base64_decode_covers_every_alphabet_branch() {
+        // Standard alphanumeric round-trip.
+        assert_eq!(
+            base64_decode(&base64_encode("alice:hunter2")).as_deref(),
+            Some("alice:hunter2")
+        );
+        // `/` arm: `"???"` (three 0x3f bytes) encodes to `"Pz8/"`.
+        assert_eq!(base64_decode("Pz8/").as_deref(), Some("???"));
+        // `+` arm: `"~~~"` (three 0x7e bytes) encodes to `"fn5+"`.
+        assert_eq!(base64_decode("fn5+").as_deref(), Some("~~~"));
+        // `=` padding short-circuits the loop on a 2-byte input.
+        assert_eq!(base64_decode("aGk=").as_deref(), Some("hi"));
+        // Invalid byte returns None so the parser keeps the raw
+        // value verbatim. `*` is not in the alphabet.
+        assert_eq!(base64_decode("not*base64"), None);
     }
 }

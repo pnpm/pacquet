@@ -152,6 +152,7 @@ pub fn nerf_dart(url: &str) -> String {
 /// optional `:port`, optional path. Standard library has no URL type
 /// and pulling in the full `url` crate just for this is heavier than
 /// needed.
+#[derive(Clone, Copy)]
 struct ParsedUrl<'a> {
     scheme: &'a str,
     user_info: Option<&'a str>,
@@ -225,13 +226,6 @@ impl<'a> ParsedUrl<'a> {
 
     fn with_default_port_stripped(&self) -> ParsedUrl<'a> {
         ParsedUrl { port: None, ..*self }
-    }
-}
-
-impl<'a> Copy for ParsedUrl<'a> {}
-impl<'a> Clone for ParsedUrl<'a> {
-    fn clone(&self) -> Self {
-        *self
     }
 }
 
@@ -425,5 +419,47 @@ mod tests {
     #[test]
     fn returns_none_for_unmatched_url_in_empty_map() {
         assert_eq!(AuthHeaders::default().for_url("http://reg.com"), None);
+    }
+
+    /// Hits the trailing-slash-append branch in `for_url` (line 96 in
+    /// the parser): a non-trailing-slash URL with no recognised path
+    /// segment forces the function to allocate a new owned `String`
+    /// before reparsing. The `npm.pkg.github.com/pnpm` test above
+    /// already covers the path-bearing case; this one targets the
+    /// host-only form that drops into `lookup_by_nerf` empty-handed.
+    #[test]
+    fn host_only_url_without_trailing_slash_still_matches() {
+        let headers = build(&[("//reg.com/", "Bearer abc123")]);
+        assert_eq!(headers.for_url("https://reg.com").as_deref(), Some("Bearer abc123"));
+    }
+
+    /// Hits the `None => return String::new()` branch of [`nerf_dart`]
+    /// (and the `?` short-circuit in `ParsedUrl::parse`).
+    #[test]
+    fn nerf_dart_returns_empty_for_malformed_url() {
+        assert_eq!(nerf_dart("not-a-url"), "");
+        assert_eq!(nerf_dart(""), "");
+        // No URL → no match in any non-empty map.
+        let headers = build(&[("//reg.com/", "Bearer abc123")]);
+        assert_eq!(headers.for_url("not-a-url"), None);
+    }
+
+    /// Hits the no-path-separator branch (`None => (rest, "")`) inside
+    /// `ParsedUrl::parse`: the URL has no `/` after the authority.
+    /// The parsed `path` is an empty string, so `nerf_dart` should
+    /// produce `//host/`.
+    #[test]
+    fn nerf_dart_handles_url_with_no_path_separator() {
+        assert_eq!(nerf_dart("https://reg.com"), "//reg.com/");
+        assert_eq!(nerf_dart("https://reg.com:8080"), "//reg.com:8080/");
+    }
+
+    /// Hits the `user.is_empty() && pass.is_empty()` short-circuit in
+    /// `basic_auth_header`: a URL whose authority parses as `@host`
+    /// must not produce a `Basic ` header.
+    #[test]
+    fn empty_user_info_returns_no_basic_header() {
+        let empty = AuthHeaders::default();
+        assert_eq!(empty.for_url("https://@reg.com/"), None);
     }
 }

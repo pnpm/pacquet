@@ -83,3 +83,53 @@ impl PackageVersion {
         format!("{0}{1}", prefix, self.version)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `PackageVersion::fetch_from_registry` must attach the
+    /// registry-keyed `Authorization` header on every tag GET, just
+    /// like `Package::fetch_from_registry`.
+    #[tokio::test]
+    async fn fetch_from_registry_attaches_authorization_header() {
+        let mut server = mockito::Server::new_async().await;
+        let body = r#"{
+            "name": "acme",
+            "version": "1.0.0",
+            "dist": {
+                "integrity": "sha512-AAAA",
+                "shasum": "0000000000000000000000000000000000000000",
+                "tarball": "https://registry.test/acme-1.0.0.tgz"
+            }
+        }"#;
+        let mock = server
+            .mock("GET", "/acme/latest")
+            .match_header("authorization", "Bearer top-secret")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let registry = format!("{}/", server.url());
+        let client = ThrottledClient::default();
+        let auth_headers = AuthHeaders::from_creds_map(
+            [(pacquet_network::nerf_dart(&registry), "Bearer top-secret".to_owned())],
+            None,
+        );
+
+        let pkg_version = PackageVersion::fetch_from_registry(
+            "acme",
+            PackageTag::Latest,
+            &client,
+            &registry,
+            &auth_headers,
+        )
+        .await
+        .expect("server should accept the request once the bearer header is attached");
+        assert_eq!(pkg_version.name, "acme");
+        mock.assert_async().await;
+    }
+}

@@ -1939,6 +1939,7 @@ version = "0.0.1"
 dependencies = [
  "derive_more",
  "miette 7.6.0",
+ "mockito",
  "node-semver",
  "pacquet-diagnostics",
  "pacquet-network",

@@ -1310,3 +1310,47 @@ async fn zero_retries_makes_a_single_attempt() {
     mock.assert_async().await;
     drop(store_dir_keep);
 }
+
+/// When [`AuthHeaders`] resolves a credential for the tarball URL,
+/// the GET request must carry the `Authorization` header — including
+/// for tarball hosts that differ from the metadata host.
+/// `mockito::Matcher::Exact` rejects the request unless the header
+/// matches verbatim, so a missing or wrong header would 501 the
+/// request and fail the integrity check downstream.
+#[tokio::test]
+async fn fetch_attaches_authorization_header_when_creds_match_tarball_url() {
+    let (store_dir_keep, store_path) = tempdir_with_leaked_path();
+    let mut server = mockito::Server::new_async().await;
+    let mock = server
+        .mock("GET", "/pkg.tgz")
+        .match_header("authorization", "Bearer test-token")
+        .with_status(200)
+        .with_body(FASTIFY_ERROR_TARBALL)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let url = format!("{}/pkg.tgz", server.url());
+    let client = ThrottledClient::default();
+    let pkg_integrity = integrity(FASTIFY_ERROR_INTEGRITY);
+    let auth_headers = AuthHeaders::from_creds_map(
+        [(pacquet_network::nerf_dart(&url), "Bearer test-token".to_owned())],
+        None,
+    );
+
+    let (cas_paths, _idx) = fetch_and_extract_with_retry(
+        &client,
+        &url,
+        &pkg_integrity,
+        None,
+        store_path,
+        fast_retry_opts(),
+        &auth_headers,
+    )
+    .await
+    .expect("server should accept the request once the bearer header is attached");
+
+    assert!(cas_paths.contains_key("package.json"));
+    mock.assert_async().await;
+    drop(store_dir_keep);
+}
