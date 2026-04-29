@@ -255,13 +255,13 @@ fn search_script_runtime_returns_none_when_runtime_unknown() {
 /// <https://github.com/pnpm/pacquet/pull/332#issuecomment-4345054524>.
 #[test]
 fn search_script_runtime_propagates_non_not_found_io_errors() {
-    struct PermissionDeniedApi;
-    impl FsReadHead for PermissionDeniedApi {
+    struct PermissionDeniedFs;
+    impl FsReadHead for PermissionDeniedFs {
         fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
             Err(io::Error::from(io::ErrorKind::PermissionDenied))
         }
     }
-    let err = search_script_runtime::<PermissionDeniedApi>(Path::new("any"))
+    let err = search_script_runtime::<PermissionDeniedFs>(Path::new("any"))
         .expect_err("non-NotFound IO error must propagate");
     assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
 }
@@ -272,19 +272,19 @@ fn search_script_runtime_propagates_non_not_found_io_errors() {
 /// compatible with the no-shebang case.
 #[test]
 fn search_script_runtime_reads_zero_bytes_then_falls_through() {
-    struct EmptyReadApi;
-    impl FsReadHead for EmptyReadApi {
+    struct EmptyReadFs;
+    impl FsReadHead for EmptyReadFs {
         fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
             Ok(0)
         }
     }
     // `.js` extension still resolves to `node` even with empty content.
     let rt =
-        search_script_runtime::<EmptyReadApi>(Path::new("/x.js")).unwrap().expect("ext fallback");
+        search_script_runtime::<EmptyReadFs>(Path::new("/x.js")).unwrap().expect("ext fallback");
     assert_eq!(rt.prog.as_deref(), Some("node"));
 
     // No extension and no shebang → Ok(None).
-    let rt = search_script_runtime::<EmptyReadApi>(Path::new("/x")).unwrap();
+    let rt = search_script_runtime::<EmptyReadFs>(Path::new("/x")).unwrap();
     assert_eq!(rt, None);
 }
 
