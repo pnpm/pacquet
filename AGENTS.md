@@ -152,8 +152,26 @@ Refactoring for style alone is not a justification when the task is something
 else; keep the surrounding code shape intact and confine your edits to what
 the task asks for.
 
-Concretely, given a task like swapping `PathBuf::from` for a `Path::new`
-borrow, do not flatten the chain — that churns almost every line:
+The rule is about structural shape, not diff size: a small edit that flattens
+a chain is just as wrong as a large one.
+
+When the change you need can fit inside the existing chain, keep it there.
+For example, swapping a `PathBuf::from` allocation for a `Path::new` borrow:
+
+```diff
+ output
+     .stdout
+     .pipe(String::from_utf8)
+     .expect("convert stdout to UTF-8")
+     .trim_end()
+-    .pipe(PathBuf::from)
++    .pipe(Path::new)
+     .parent()
+     .expect("parent of root manifest")
+     .to_path_buf()
+```
+
+Don't flatten the chain just because you happen to be editing nearby:
 
 ```diff
 -output
@@ -169,23 +187,9 @@ borrow, do not flatten the chain — that churns almost every line:
 +Path::new(stdout.trim_end()).parent().expect("parent of root manifest").to_path_buf()
 ```
 
-Make the smallest edit that achieves the task and keep the chain:
-
-```diff
- output
-     .stdout
-     .pipe(String::from_utf8)
-     .expect("convert stdout to UTF-8")
-     .trim_end()
--    .pipe(PathBuf::from)
-+    .pipe(Path::new)
-     .parent()
-     .expect("parent of root manifest")
-     .to_path_buf()
-```
-
-State the justification explicitly (in your reply, the commit message, or the
-PR description) so a reviewer can confirm the rewrite was warranted. If the
+If you do need to break a chain (compiler error, borrow checker, performance),
+state the justification in your reply, the commit message, or the PR
+description so a reviewer can confirm the rewrite was warranted. If the
 rewrite is purely stylistic, raise it with the user as its own change rather
 than smuggling it into an unrelated edit.
 
