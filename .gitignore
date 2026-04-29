@@ -4,3 +4,5 @@ node_modules
 .npmrc
 /bench-work-env
 *.tmp
+/.claude/settings.local.json
+/.claude/hooks/
