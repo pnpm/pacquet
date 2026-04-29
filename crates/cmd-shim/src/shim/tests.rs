@@ -150,6 +150,14 @@ fn generate_sh_shim_threads_args_when_prog_is_none() {
 /// `generate_sh_shim` with a target that lexically resolves to an absolute
 /// path takes the `path::isAbsolute(shTarget)` branch upstream uses — the
 /// quoted target stays absolute and skips the `$basedir/` prefix.
+///
+/// Unix-only: a path like `/abs/elsewhere/cli` is "absolute" only on Unix.
+/// On Windows, `Path::is_absolute()` requires a drive letter (e.g.
+/// `C:\abs\...`), so the same input takes the relative branch. The shim
+/// produced by pacquet is a `/bin/sh` script regardless of host platform,
+/// but the absolute-vs-relative classification of bin paths is itself
+/// platform-dependent — this test pins behavior on Unix only.
+#[cfg(unix)]
 #[test]
 fn generate_sh_shim_uses_absolute_target_when_no_common_prefix() {
     // `relative_path_from` of two paths with no common root produces an
