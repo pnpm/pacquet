@@ -54,23 +54,23 @@ pub trait FsWrite {
 /// Production implementation, backed by [`std::fs`]. One impl block per
 /// capability trait — production uses the full set; tests pick what they
 /// need.
-pub struct RealFs;
+pub struct RealApi;
 
-impl FsReadToString for RealFs {
+impl FsReadToString for RealApi {
     #[inline]
     fn read_to_string(path: &Path) -> io::Result<String> {
         fs::read_to_string(path)
     }
 }
 
-impl FsCreateDirAll for RealFs {
+impl FsCreateDirAll for RealApi {
     #[inline]
     fn create_dir_all(path: &Path) -> io::Result<()> {
         fs::create_dir_all(path)
     }
 }
 
-impl FsWrite for RealFs {
+impl FsWrite for RealApi {
     #[inline]
     fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
         fs::write(path, contents)
@@ -120,14 +120,14 @@ pub enum WriteModulesManifestError {
 /// upstream `readModulesManifest` at
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L50-L105>.
 ///
-/// Production callers turbofish [`RealFs`]: `read_modules_manifest::<RealFs>(dir)`.
+/// Production callers turbofish [`RealApi`]: `read_modules_manifest::<RealApi>(dir)`.
 /// The bound is the minimal capability ([`FsReadToString`]) so test fakes
 /// only need to implement the method that is actually called.
-pub fn read_modules_manifest<Fs: FsReadToString>(
+pub fn read_modules_manifest<Api: FsReadToString>(
     modules_dir: &Path,
 ) -> Result<Option<ModulesManifest>, ReadModulesManifestError> {
     let manifest_path = modules_dir.join(MODULES_FILENAME);
-    let content = match Fs::read_to_string(&manifest_path) {
+    let content = match Api::read_to_string(&manifest_path) {
         Ok(content) => content,
         Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(source) => {
@@ -157,9 +157,9 @@ pub fn read_modules_manifest<Fs: FsReadToString>(
 /// Mirrors upstream `writeModulesManifest` at
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L111-L138>.
 ///
-/// Production callers turbofish [`RealFs`]: `write_modules_manifest::<RealFs>(dir, &m)`.
+/// Production callers turbofish [`RealApi`]: `write_modules_manifest::<RealApi>(dir, &m)`.
 /// Bounds are minimal: only [`FsCreateDirAll`] and [`FsWrite`] are required.
-pub fn write_modules_manifest<Fs: FsCreateDirAll + FsWrite>(
+pub fn write_modules_manifest<Api: FsCreateDirAll + FsWrite>(
     modules_dir: &Path,
     manifest: &ModulesManifest,
 ) -> Result<(), WriteModulesManifestError> {
@@ -169,12 +169,12 @@ pub fn write_modules_manifest<Fs: FsCreateDirAll + FsWrite>(
     }
     let serialized =
         serde_json::to_string_pretty(&to_save).map_err(WriteModulesManifestError::SerializeJson)?;
-    Fs::create_dir_all(modules_dir).map_err(|source| WriteModulesManifestError::CreateDir {
+    Api::create_dir_all(modules_dir).map_err(|source| WriteModulesManifestError::CreateDir {
         path: modules_dir.to_path_buf(),
         source,
     })?;
     let manifest_path = modules_dir.join(MODULES_FILENAME);
-    Fs::write(&manifest_path, serialized.as_bytes())
+    Api::write(&manifest_path, serialized.as_bytes())
         .map_err(|source| WriteModulesManifestError::WriteFile { path: manifest_path, source })
 }
 
