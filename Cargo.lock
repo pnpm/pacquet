@@ -1774,6 +1774,7 @@ dependencies = [
  "derive_more",
  "miette 7.6.0",
  "pacquet-fs",
+ "rayon",
  "serde_json",
  "tempfile",
 ]

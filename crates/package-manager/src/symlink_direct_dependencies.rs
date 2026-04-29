@@ -93,9 +93,14 @@ where
 /// ones that parse. Locations are direct-dependency symlinks under
 /// `<modules_dir>/<name>` — pacquet has already created them by this point,
 /// and `fs::read` follows the symlink to the real file in the virtual store.
+///
+/// Driven on rayon because each location's read+parse is independent and the
+/// caller is not in an async context. With many direct deps the serial
+/// version added measurable wall time; rayon brings that down to roughly
+/// `N / num_cpus` per-call latency.
 fn collect_bin_sources(locations: &[PathBuf]) -> Vec<PackageBinSource> {
     locations
-        .iter()
+        .par_iter()
         .filter_map(|location| {
             let manifest_path = location.join("package.json");
             let bytes = fs::read(&manifest_path).ok()?;

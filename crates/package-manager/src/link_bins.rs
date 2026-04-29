@@ -1,6 +1,7 @@
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_cmd_shim::{LinkBinsError, PackageBinSource, link_bins_of_packages};
+use rayon::prelude::*;
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -52,8 +53,8 @@ impl<'a> LinkVirtualStoreBins<'a> {
     pub fn run(self) -> Result<(), LinkVirtualStoreBinsError> {
         let LinkVirtualStoreBins { virtual_store_dir } = self;
 
-        let entries = match fs::read_dir(virtual_store_dir) {
-            Ok(entries) => entries,
+        let slots: Vec<PathBuf> = match fs::read_dir(virtual_store_dir) {
+            Ok(entries) => entries.flatten().map(|entry| entry.path()).collect(),
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => {
                 return Err(LinkVirtualStoreBinsError::ReadVirtualStore {
@@ -63,11 +64,16 @@ impl<'a> LinkVirtualStoreBins<'a> {
             }
         };
 
-        for entry in entries.flatten() {
-            let slot_dir = entry.path();
+        // Per-slot work is independent: each writes shims under the slot's
+        // own `<pkg>/node_modules/.bin` directory and reads only the slot's
+        // own children. With ~1300 slots in a real lockfile (the integrated
+        // benchmark fixture), the serial loop was the dominant chunk of
+        // the bin-linking pass — driving it on rayon brings that cost down
+        // to roughly `total_work / num_cpus`.
+        slots.par_iter().try_for_each(|slot_dir| {
             let modules_dir = slot_dir.join("node_modules");
             if !modules_dir.is_dir() {
-                continue;
+                return Ok(());
             }
 
             // Identify the slot's own package by walking `node_modules` and
@@ -78,8 +84,8 @@ impl<'a> LinkVirtualStoreBins<'a> {
             // `<slot>/node_modules/<pkg>/node_modules/.bin`. There's
             // exactly one such candidate per slot — the others are
             // `node_modules/<dep>` symlinks pointing at sibling slots.
-            let Some(self_pkg_dir) = find_slot_own_package_dir(&slot_dir, &modules_dir) else {
-                continue;
+            let Some(self_pkg_dir) = find_slot_own_package_dir(slot_dir, &modules_dir) else {
+                return Ok(());
             };
             let bins_dir = self_pkg_dir.join("node_modules/.bin");
 
@@ -87,10 +93,8 @@ impl<'a> LinkVirtualStoreBins<'a> {
             // *other than* the slot's own package. `link_bins` already
             // skips dot-prefixed entries (`.bin`, `.modules.yaml`, …).
             link_bins_excluding(&modules_dir, &bins_dir, &self_pkg_dir)
-                .map_err(LinkVirtualStoreBinsError::LinkBins)?;
-        }
-
-        Ok(())
+                .map_err(LinkVirtualStoreBinsError::LinkBins)
+        })
     }
 }
 

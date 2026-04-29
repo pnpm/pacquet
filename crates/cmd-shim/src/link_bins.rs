@@ -4,6 +4,7 @@ use crate::{
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
+use rayon::prelude::*;
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -191,9 +192,13 @@ pub fn link_bins_of_packages(
     fs::create_dir_all(bins_dir)
         .map_err(|error| LinkBinsError::CreateBinDir { dir: bins_dir.to_path_buf(), error })?;
 
-    for (bin_name, (command, _pkg)) in &chosen {
-        write_shim(&command.path, &bins_dir.join(bin_name))?;
-    }
+    // Each shim's read-shebang + write-file + chmod sequence is independent
+    // across bin names — no shared state — so drive them on rayon. The hot
+    // path is per-package-bin; without parallelism the per-shim file I/O
+    // serialised across the whole `chosen` map.
+    chosen.par_iter().try_for_each(|(bin_name, (command, _pkg))| {
+        write_shim(&command.path, &bins_dir.join(bin_name))
+    })?;
 
     Ok(())
 }
