@@ -1,4 +1,5 @@
 use super::*;
+use crate::fs_capabilities::{FsReadHead, RealFs};
 
 #[test]
 fn parses_env_node_shebang() {

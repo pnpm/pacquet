@@ -1,6 +1,9 @@
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_cmd_shim::{LinkBinsError, PackageBinSource, link_bins_of_packages};
+use pacquet_cmd_shim::{
+    FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions,
+    FsWriteAtomic, LinkBinsError, PackageBinSource, RealFs, link_bins_of_packages,
+};
 use rayon::prelude::*;
 use std::{
     fs, io,
@@ -34,7 +37,7 @@ pub fn link_direct_dep_bins(modules_dir: &Path, dep_names: &[String]) -> Result<
     if bin_sources.is_empty() {
         return Ok(());
     }
-    link_bins_of_packages(&bin_sources, &modules_dir.join(".bin"))
+    link_bins_of_packages::<RealFs>(&bin_sources, &modules_dir.join(".bin"))
 }
 
 /// Error type of [`LinkVirtualStoreBins`].
@@ -81,10 +84,28 @@ pub struct LinkVirtualStoreBins<'a> {
 
 impl<'a> LinkVirtualStoreBins<'a> {
     pub fn run(self) -> Result<(), LinkVirtualStoreBinsError> {
+        self.run_with::<RealFs>()
+    }
+
+    /// DI-driven entry. Production callers go through [`Self::run`] which
+    /// turbofishes [`RealFs`]; tests inject fakes that fail specific fs
+    /// operations to cover error paths the real fs can't trigger
+    /// portably. See the per-capability DI pattern at
+    /// <https://github.com/pnpm/pacquet/pull/332#issuecomment-4345054524>.
+    pub fn run_with<Fs>(self) -> Result<(), LinkVirtualStoreBinsError>
+    where
+        Fs: FsReadDir
+            + FsReadFile
+            + FsReadString
+            + FsReadHead
+            + FsCreateDirAll
+            + FsWriteAtomic
+            + FsSetPermissions,
+    {
         let LinkVirtualStoreBins { virtual_store_dir } = self;
 
-        let slots: Vec<PathBuf> = match fs::read_dir(virtual_store_dir) {
-            Ok(entries) => entries.flatten().map(|entry| entry.path()).collect(),
+        let slots = match Fs::read_dir(virtual_store_dir) {
+            Ok(slots) => slots,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => {
                 return Err(LinkVirtualStoreBinsError::ReadVirtualStore {
@@ -122,7 +143,7 @@ impl<'a> LinkVirtualStoreBins<'a> {
             // Children of this slot are everything under `node_modules`
             // *other than* the slot's own package. `link_bins` already
             // skips dot-prefixed entries (`.bin`, `.modules.yaml`, …).
-            link_bins_excluding(&modules_dir, &bins_dir, &self_pkg_dir)
+            link_bins_excluding::<Fs>(&modules_dir, &bins_dir, &self_pkg_dir)
                 .map_err(LinkVirtualStoreBinsError::LinkBins)
         })
     }
@@ -152,14 +173,23 @@ fn find_slot_own_package_dir(slot_dir: &Path, modules_dir: &Path) -> Option<Path
 /// Like [`pacquet_cmd_shim::link_bins`] but skipping the slot's own package
 /// from the candidate set. Without this, a slot for `tsc@5.0.0` would link
 /// its own `tsc` bin into its own `node_modules/.bin`, which pnpm doesn't.
-fn link_bins_excluding(
+fn link_bins_excluding<Fs>(
     modules_dir: &Path,
     bins_dir: &Path,
     exclude: &Path,
-) -> Result<(), LinkBinsError> {
+) -> Result<(), LinkBinsError>
+where
+    Fs: FsReadDir
+        + FsReadFile
+        + FsReadString
+        + FsReadHead
+        + FsCreateDirAll
+        + FsWriteAtomic
+        + FsSetPermissions,
+{
     let mut packages: Vec<PackageBinSource> = Vec::new();
 
-    let entries = match fs::read_dir(modules_dir) {
+    let entries = match Fs::read_dir(modules_dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => {
@@ -167,24 +197,24 @@ fn link_bins_excluding(
         }
     };
 
-    for entry in entries.flatten() {
-        let name = entry.file_name();
+    for path in entries {
+        let Some(name) = path.file_name() else {
+            continue;
+        };
         let name_str = name.to_string_lossy();
         if name_str.starts_with('.') {
             continue;
         }
-        let path = entry.path();
 
         if name_str.starts_with('@') {
-            let Ok(scope_entries) = fs::read_dir(&path) else {
+            let Ok(scope_entries) = Fs::read_dir(&path) else {
                 continue;
             };
-            for sub in scope_entries.flatten() {
-                let sub_path = sub.path();
+            for sub_path in scope_entries {
                 if paths_eq(&sub_path, exclude) {
                     continue;
                 }
-                if let Some(pkg) = read_package(&sub_path)? {
+                if let Some(pkg) = read_package::<Fs>(&sub_path)? {
                     packages.push(pkg);
                 }
             }
@@ -194,7 +224,7 @@ fn link_bins_excluding(
         if paths_eq(&path, exclude) {
             continue;
         }
-        if let Some(pkg) = read_package(&path)? {
+        if let Some(pkg) = read_package::<Fs>(&path)? {
             packages.push(pkg);
         }
     }
@@ -203,12 +233,14 @@ fn link_bins_excluding(
         return Ok(());
     }
 
-    link_bins_of_packages(&packages, bins_dir)
+    link_bins_of_packages::<Fs>(&packages, bins_dir)
 }
 
-fn read_package(location: &Path) -> Result<Option<PackageBinSource>, LinkBinsError> {
+fn read_package<Fs: FsReadFile>(
+    location: &Path,
+) -> Result<Option<PackageBinSource>, LinkBinsError> {
     let manifest_path = location.join("package.json");
-    let bytes = match fs::read(&manifest_path) {
+    let bytes = match Fs::read_file(&manifest_path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(LinkBinsError::ReadManifest { path: manifest_path, error }),

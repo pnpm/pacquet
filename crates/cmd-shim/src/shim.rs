@@ -1,6 +1,6 @@
+use crate::fs_capabilities::FsReadHead;
 use std::{
-    fs::File,
-    io::{self, Read},
+    io,
     path::{Component, Path, PathBuf},
 };
 
@@ -26,24 +26,6 @@ fn extension_program(extension: &str) -> Option<&'static str> {
         "ps1" => Some("pwsh"),
         "sh" => Some("sh"),
         _ => None,
-    }
-}
-
-/// Filesystem capability: read up to a buffer of bytes from a file path.
-/// Mirrors the per-capability DI pattern in `pacquet-modules-yaml`. See
-/// the principles documented at
-/// <https://github.com/pnpm/pacquet/pull/332#issuecomment-4345054524>.
-pub trait FsReadHead {
-    fn read_head(path: &Path, buf: &mut [u8]) -> io::Result<usize>;
-}
-
-/// Production filesystem provider.
-pub struct RealFs;
-
-impl FsReadHead for RealFs {
-    fn read_head(path: &Path, buf: &mut [u8]) -> io::Result<usize> {
-        let mut file = File::open(path)?;
-        file.read(buf)
     }
 }
 

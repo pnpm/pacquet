@@ -1,7 +1,11 @@
 use crate::{
     bin_resolver::{Command, get_bins_from_package_manifest, pkg_owns_bin},
+    fs_capabilities::{
+        FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions,
+        FsWriteAtomic,
+    },
     shim::{
-        RealFs, generate_cmd_shim, generate_pwsh_shim, generate_sh_shim, is_shim_pointing_at,
+        generate_cmd_shim, generate_pwsh_shim, generate_sh_shim, is_shim_pointing_at,
         search_script_runtime,
     },
 };
@@ -11,7 +15,7 @@ use rayon::prelude::*;
 use serde_json::Value;
 use std::{
     collections::HashMap,
-    fs, io,
+    io,
     path::{Path, PathBuf},
 };
 
@@ -89,17 +93,29 @@ pub enum LinkBinsError {
 ///
 /// Scoped packages are recursed: `node_modules/@scope/foo` becomes one
 /// candidate. This mirrors `binNamesAndPaths` in upstream `linkBins`.
-pub fn link_bins(modules_dir: &Path, bins_dir: &Path) -> Result<(), LinkBinsError> {
-    let packages = collect_packages_in_modules_dir(modules_dir)?;
-    link_bins_of_packages(&packages, bins_dir)
+pub fn link_bins<Fs>(modules_dir: &Path, bins_dir: &Path) -> Result<(), LinkBinsError>
+where
+    Fs: FsReadDir
+        + FsReadFile
+        + FsReadString
+        + FsReadHead
+        + FsCreateDirAll
+        + FsWriteAtomic
+        + FsSetPermissions,
+{
+    let packages = collect_packages_in_modules_dir::<Fs>(modules_dir)?;
+    link_bins_of_packages::<Fs>(&packages, bins_dir)
 }
 
-fn collect_packages_in_modules_dir(
+fn collect_packages_in_modules_dir<Fs>(
     modules_dir: &Path,
-) -> Result<Vec<PackageBinSource>, LinkBinsError> {
+) -> Result<Vec<PackageBinSource>, LinkBinsError>
+where
+    Fs: FsReadDir + FsReadFile,
+{
     let mut packages = Vec::new();
 
-    let entries = match fs::read_dir(modules_dir) {
+    let entries = match Fs::read_dir(modules_dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(packages),
         Err(error) => {
@@ -107,29 +123,31 @@ fn collect_packages_in_modules_dir(
         }
     };
 
-    for entry in entries.flatten() {
-        let name = entry.file_name();
+    for path in entries {
+        let Some(name) = path.file_name() else {
+            continue;
+        };
         let name_str = name.to_string_lossy();
         if name_str.starts_with('.') {
             continue;
         }
-        let path = entry.path();
 
         if name_str.starts_with('@') {
-            // Scoped: walk one level deeper.
-            let Ok(scope_entries) = fs::read_dir(&path) else {
+            // Scoped: walk one level deeper. Use `flatten` semantics —
+            // missing-or-unreadable scope dirs are silently skipped, same
+            // as the previous `let Ok(...) else continue` shape.
+            let Ok(scope_entries) = Fs::read_dir(&path) else {
                 continue;
             };
-            for sub in scope_entries.flatten() {
-                let sub_path = sub.path();
-                if let Some(pkg) = read_package(&sub_path)? {
+            for sub_path in scope_entries {
+                if let Some(pkg) = read_package::<Fs>(&sub_path)? {
                     packages.push(pkg);
                 }
             }
             continue;
         }
 
-        if let Some(pkg) = read_package(&path)? {
+        if let Some(pkg) = read_package::<Fs>(&path)? {
             packages.push(pkg);
         }
     }
@@ -137,9 +155,11 @@ fn collect_packages_in_modules_dir(
     Ok(packages)
 }
 
-fn read_package(location: &Path) -> Result<Option<PackageBinSource>, LinkBinsError> {
+fn read_package<Fs: FsReadFile>(
+    location: &Path,
+) -> Result<Option<PackageBinSource>, LinkBinsError> {
     let manifest_path = location.join("package.json");
-    let bytes = match fs::read(&manifest_path) {
+    let bytes = match Fs::read_file(&manifest_path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(LinkBinsError::ReadManifest { path: manifest_path, error }),
@@ -163,10 +183,13 @@ fn read_package(location: &Path) -> Result<Option<PackageBinSource>, LinkBinsErr
 /// conflicts via semver (a feature upstream uses for hoisting), since the
 /// virtual-store layout means each bin source is a unique
 /// `(package, version)` slot already.
-pub fn link_bins_of_packages(
+pub fn link_bins_of_packages<Fs>(
     packages: &[PackageBinSource],
     bins_dir: &Path,
-) -> Result<(), LinkBinsError> {
+) -> Result<(), LinkBinsError>
+where
+    Fs: FsReadString + FsReadHead + FsCreateDirAll + FsWriteAtomic + FsSetPermissions,
+{
     let mut chosen: HashMap<String, (Command, &PackageBinSource)> = HashMap::new();
 
     for pkg in packages {
@@ -192,7 +215,7 @@ pub fn link_bins_of_packages(
         return Ok(());
     }
 
-    fs::create_dir_all(bins_dir)
+    Fs::create_dir_all(bins_dir)
         .map_err(|error| LinkBinsError::CreateBinDir { dir: bins_dir.to_path_buf(), error })?;
 
     // Each shim's read-shebang + write-file + chmod sequence is independent
@@ -200,7 +223,7 @@ pub fn link_bins_of_packages(
     // path is per-package-bin; without parallelism the per-shim file I/O
     // serialised across the whole `chosen` map.
     chosen.par_iter().try_for_each(|(bin_name, (command, _pkg))| {
-        write_shim(&command.path, &bins_dir.join(bin_name))
+        write_shim::<Fs>(&command.path, &bins_dir.join(bin_name))
     })?;
 
     Ok(())
@@ -229,8 +252,11 @@ fn pick_winner(bin_name: &str, existing: &str, candidate: &str) -> bool {
 /// `chmodShim` sequence in pnpm v11. Windows `.cmd` / `.ps1` are deferred.
 /// The platform-specific behavior is gated behind `#[cfg(unix)]` so the
 /// build still compiles on Windows.
-fn write_shim(target_path: &Path, shim_path: &Path) -> Result<(), LinkBinsError> {
-    let runtime = search_script_runtime::<RealFs>(target_path).map_err(|error| {
+fn write_shim<Fs>(target_path: &Path, shim_path: &Path) -> Result<(), LinkBinsError>
+where
+    Fs: FsReadString + FsReadHead + FsWriteAtomic + FsSetPermissions,
+{
+    let runtime = search_script_runtime::<Fs>(target_path).map_err(|error| {
         LinkBinsError::ProbeShimSource { path: target_path.to_path_buf(), error }
     })?;
 
@@ -238,7 +264,7 @@ fn write_shim(target_path: &Path, shim_path: &Path) -> Result<(), LinkBinsError>
     // the right target. We only check the `.sh` flavor; if it's correct,
     // the `.cmd`/`.ps1` siblings were written together and are also
     // correct (and if they aren't, rewriting them is cheap).
-    let already_correct = matches!(fs::read_to_string(shim_path), Ok(existing) if is_shim_pointing_at(&existing, target_path));
+    let already_correct = matches!(Fs::read_to_string(shim_path), Ok(existing) if is_shim_pointing_at(&existing, target_path));
 
     let sh_body = generate_sh_shim(target_path, shim_path, runtime.as_ref());
     let cmd_path = with_extension_appended(shim_path, "cmd");
@@ -247,30 +273,26 @@ fn write_shim(target_path: &Path, shim_path: &Path) -> Result<(), LinkBinsError>
     let ps1_body = generate_pwsh_shim(target_path, &ps1_path, runtime.as_ref());
 
     if !already_correct {
-        fs::write(shim_path, sh_body.as_bytes())
+        Fs::write(shim_path, sh_body.as_bytes())
             .map_err(|error| LinkBinsError::WriteShim { path: shim_path.to_path_buf(), error })?;
-        fs::write(&cmd_path, cmd_body.as_bytes())
+        Fs::write(&cmd_path, cmd_body.as_bytes())
             .map_err(|error| LinkBinsError::WriteShim { path: cmd_path.clone(), error })?;
-        fs::write(&ps1_path, ps1_body.as_bytes())
+        Fs::write(&ps1_path, ps1_body.as_bytes())
             .map_err(|error| LinkBinsError::WriteShim { path: ps1_path.clone(), error })?;
     }
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(shim_path, fs::Permissions::from_mode(0o755))
-            .map_err(|error| LinkBinsError::Chmod { path: shim_path.to_path_buf(), error })?;
-        // Make the underlying script executable too. pnpm calls
-        // `fixBin(cmd.path, 0o755)` to do this; we apply the same minimum
-        // mode without rewriting CRLF shebangs (a feature pnpm inherits from
-        // npm's `bin-links/lib/fix-bin.js`). Targets shipped by npm already
-        // use LF in practice, so the simpler chmod-only path is enough for
-        // the install tests this PR ports.
-        if let Ok(metadata) = fs::metadata(target_path) {
-            let mode = metadata.permissions().mode() | 0o111;
-            let _ = fs::set_permissions(target_path, fs::Permissions::from_mode(mode));
-        }
-    }
+    Fs::set_executable(shim_path)
+        .map_err(|error| LinkBinsError::Chmod { path: shim_path.to_path_buf(), error })?;
+    // Make the underlying script executable too. pnpm calls
+    // `fixBin(cmd.path, 0o755)` to do this; we apply the same minimum
+    // mode without rewriting CRLF shebangs (a feature pnpm inherits from
+    // npm's `bin-links/lib/fix-bin.js`). Targets shipped by npm already
+    // use LF in practice, so the simpler chmod-only path is enough for
+    // the install tests this PR ports. Errors here are swallowed —
+    // a missing target shouldn't fail the install (this is post-warm-skip
+    // territory) and pacquet has already verified `target_path` exists
+    // upstream of `write_shim`.
+    let _ = Fs::ensure_executable_bits(target_path);
 
     Ok(())
 }

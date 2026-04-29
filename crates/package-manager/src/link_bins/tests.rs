@@ -209,3 +209,60 @@ fn link_direct_dep_bins_skips_dep_with_missing_manifest() {
     link_direct_dep_bins(&modules, &["foo".to_string()]).unwrap();
     assert!(!modules.join(".bin").exists());
 }
+
+/// `LinkVirtualStoreBins::run_with` propagates a non-`NotFound`
+/// `read_dir` error on the virtual-store directory itself. Real fs
+/// can't trigger this portably; the fake forces the
+/// `ReadVirtualStore` variant.
+#[test]
+fn link_virtual_store_bins_propagates_read_error_via_di() {
+    use pacquet_cmd_shim::{
+        FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions,
+        FsWriteAtomic,
+    };
+    use std::io;
+    struct DenyVirtualStore;
+    impl FsReadDir for DenyVirtualStore {
+        fn read_dir(_: &Path) -> io::Result<Vec<PathBuf>> {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        }
+    }
+    impl FsReadFile for DenyVirtualStore {
+        fn read_file(_: &Path) -> io::Result<Vec<u8>> {
+            unreachable!()
+        }
+    }
+    impl FsReadString for DenyVirtualStore {
+        fn read_to_string(_: &Path) -> io::Result<String> {
+            unreachable!()
+        }
+    }
+    impl FsReadHead for DenyVirtualStore {
+        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+            unreachable!()
+        }
+    }
+    impl FsCreateDirAll for DenyVirtualStore {
+        fn create_dir_all(_: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+    }
+    impl FsWriteAtomic for DenyVirtualStore {
+        fn write(_: &Path, _: &[u8]) -> io::Result<()> {
+            unreachable!()
+        }
+    }
+    impl FsSetPermissions for DenyVirtualStore {
+        fn set_executable(_: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+        fn ensure_executable_bits(_: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+    }
+
+    let err = LinkVirtualStoreBins { virtual_store_dir: Path::new("/anything") }
+        .run_with::<DenyVirtualStore>()
+        .expect_err("read_dir error must propagate");
+    assert!(matches!(err, LinkVirtualStoreBinsError::ReadVirtualStore { .. }));
+}

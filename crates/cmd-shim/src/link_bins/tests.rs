@@ -1,5 +1,7 @@
 use super::*;
+use crate::fs_capabilities::RealFs;
 use serde_json::json;
+use std::fs;
 use tempfile::tempdir;
 
 /// All three shim flavors (`.sh` / no-extension, `.cmd`, `.ps1`) must
@@ -21,7 +23,7 @@ fn writes_all_three_shim_flavors_per_bin() {
     let bins_dir = tmp.path().join("node_modules/.bin");
     let manifest_value: Value =
         serde_json::from_slice(&fs::read(pkg_dir.join("package.json")).unwrap()).unwrap();
-    link_bins_of_packages(
+    link_bins_of_packages::<RealFs>(
         &[PackageBinSource { location: pkg_dir.clone(), manifest: manifest_value }],
         &bins_dir,
     )
@@ -61,7 +63,7 @@ fn writes_shim_for_bin_string() {
     let bins_dir = tmp.path().join("node_modules/.bin");
     let manifest_value: Value =
         serde_json::from_slice(&fs::read(pkg_dir.join("package.json")).unwrap()).unwrap();
-    link_bins_of_packages(
+    link_bins_of_packages::<RealFs>(
         &[PackageBinSource { location: pkg_dir.clone(), manifest: manifest_value }],
         &bins_dir,
     )
@@ -89,7 +91,7 @@ fn writes_shim_for_bin_string() {
     }
 }
 
-/// `link_bins(modulesDir, binsDir)` walks every package and its scoped
+/// `link_bins::<RealFs>(modulesDir, binsDir)` walks every package and its scoped
 /// children. Both regular and `@scope/...` packages must contribute their
 /// bins.
 #[test]
@@ -113,7 +115,7 @@ fn link_bins_walks_modules_and_scopes() {
     fs::create_dir_all(modules.join("not-a-package")).unwrap();
 
     let bins = modules.join(".bin");
-    link_bins(&modules, &bins).unwrap();
+    link_bins::<RealFs>(&modules, &bins).unwrap();
 
     assert!(bins.join("foo").exists(), "foo shim must exist");
     assert!(bins.join("bar").exists(), "scoped @s/bar shim must use bare name `bar`");
@@ -126,7 +128,7 @@ fn link_bins_walks_modules_and_scopes() {
 fn link_bins_handles_missing_modules_dir() {
     let tmp = tempdir().unwrap();
     let bins_dir = tmp.path().join(".bin");
-    link_bins(&tmp.path().join("missing"), &bins_dir).expect("missing modules dir is Ok");
+    link_bins::<RealFs>(&tmp.path().join("missing"), &bins_dir).expect("missing modules dir is Ok");
     assert!(!bins_dir.exists(), "no shims means no bin dir created");
 }
 
@@ -142,7 +144,8 @@ fn link_bins_of_packages_no_op_when_no_bins() {
     let bins = tmp.path().join(".bin");
     let manifest: Value =
         serde_json::from_slice(&fs::read(pkg.join("package.json")).unwrap()).unwrap();
-    link_bins_of_packages(&[PackageBinSource { location: pkg, manifest }], &bins).unwrap();
+    link_bins_of_packages::<RealFs>(&[PackageBinSource { location: pkg, manifest }], &bins)
+        .unwrap();
     assert!(!bins.exists(), "bins dir must not be created when nothing to link");
 }
 
@@ -177,7 +180,7 @@ fn lexical_compare_breaks_tie_when_neither_owns() {
     let bins = tmp.path().join(".bin");
     // Order beta-then-alpha to verify the choice doesn't depend on
     // discovery order.
-    link_bins_of_packages(
+    link_bins_of_packages::<RealFs>(
         &[
             PackageBinSource { location: beta.clone(), manifest: manifest_beta },
             PackageBinSource { location: alpha.clone(), manifest: manifest_alpha },
@@ -203,7 +206,7 @@ fn link_bins_propagates_parse_manifest_error() {
     fs::write(modules.join("broken/package.json"), "{ this is not json").unwrap();
 
     let bins = modules.join(".bin");
-    let err = link_bins(&modules, &bins).expect_err("invalid manifest must surface");
+    let err = link_bins::<RealFs>(&modules, &bins).expect_err("invalid manifest must surface");
     assert!(
         matches!(err, LinkBinsError::ParseManifest { .. }),
         "expected ParseManifest, got {err:?}",
@@ -225,15 +228,244 @@ fn link_bins_skips_existing_shim_with_matching_marker() {
     fs::write(modules.join("foo/f.js"), "#!/usr/bin/env node\n").unwrap();
 
     let bins = modules.join(".bin");
-    link_bins(&modules, &bins).unwrap();
+    link_bins::<RealFs>(&modules, &bins).unwrap();
     let original = fs::read_to_string(bins.join("foo")).unwrap();
     // Append a sentinel — if the second pass rewrites the shim, the
     // sentinel disappears.
     let sentinel = format!("{original}\n# SENTINEL");
     fs::write(bins.join("foo"), &sentinel).unwrap();
 
-    link_bins(&modules, &bins).unwrap();
+    link_bins::<RealFs>(&modules, &bins).unwrap();
     assert_eq!(fs::read_to_string(bins.join("foo")).unwrap(), sentinel);
+}
+
+/// `link_bins_of_packages` propagates a non-`NotFound` `read_dir`
+/// error from the calling context. Use a fake `Fs` that fails the
+/// initial `create_dir_all` to cover the `CreateBinDir` error variant
+/// that real fs can't trigger portably.
+#[test]
+fn link_bins_propagates_create_bin_dir_error_via_di() {
+    use std::io;
+    struct FailingCreateDir;
+    impl FsReadDir for FailingCreateDir {
+        fn read_dir(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+            Ok(vec![])
+        }
+    }
+    impl FsReadFile for FailingCreateDir {
+        fn read_file(_: &Path) -> io::Result<Vec<u8>> {
+            unreachable!("not called when chosen is empty")
+        }
+    }
+    impl FsReadString for FailingCreateDir {
+        fn read_to_string(_: &Path) -> io::Result<String> {
+            unreachable!()
+        }
+    }
+    impl FsReadHead for FailingCreateDir {
+        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+            unreachable!()
+        }
+    }
+    impl FsCreateDirAll for FailingCreateDir {
+        fn create_dir_all(_: &Path) -> io::Result<()> {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        }
+    }
+    impl FsWriteAtomic for FailingCreateDir {
+        fn write(_: &Path, _: &[u8]) -> io::Result<()> {
+            unreachable!()
+        }
+    }
+    impl FsSetPermissions for FailingCreateDir {
+        fn set_executable(_: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+        fn ensure_executable_bits(_: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+    }
+
+    // A package with a bin so `chosen` is non-empty.
+    let manifest = serde_json::json!({"name": "foo", "bin": "cli.js"});
+    let tmp = tempdir().unwrap();
+    let pkg = tmp.path().join("foo");
+    fs::create_dir_all(&pkg).unwrap();
+    fs::write(pkg.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+    let err = link_bins_of_packages::<FailingCreateDir>(
+        &[PackageBinSource { location: pkg, manifest }],
+        Path::new("/anything"),
+    )
+    .expect_err("create_dir_all error must propagate");
+    assert!(matches!(err, LinkBinsError::CreateBinDir { .. }));
+}
+
+/// `link_bins_of_packages` propagates a write failure for the `.sh`
+/// shim. Inject a fake `FsWriteAtomic` that always fails.
+#[test]
+fn link_bins_propagates_write_shim_error_via_di() {
+    use std::io;
+    struct FailingWrite;
+    impl FsReadDir for FailingWrite {
+        fn read_dir(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+            Ok(vec![])
+        }
+    }
+    impl FsReadFile for FailingWrite {
+        fn read_file(_: &Path) -> io::Result<Vec<u8>> {
+            unreachable!()
+        }
+    }
+    impl FsReadString for FailingWrite {
+        fn read_to_string(_: &Path) -> io::Result<String> {
+            // Pretend no existing shim — forces the writer path.
+            Err(io::Error::from(io::ErrorKind::NotFound))
+        }
+    }
+    impl FsReadHead for FailingWrite {
+        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+            // Empty content → no shebang, fall through to extension.
+            Ok(0)
+        }
+    }
+    impl FsCreateDirAll for FailingWrite {
+        fn create_dir_all(_: &Path) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    impl FsWriteAtomic for FailingWrite {
+        fn write(_: &Path, _: &[u8]) -> io::Result<()> {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        }
+    }
+    impl FsSetPermissions for FailingWrite {
+        fn set_executable(_: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+        fn ensure_executable_bits(_: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+    }
+
+    let manifest = serde_json::json!({"name": "foo", "bin": "cli.js"});
+    let tmp = tempdir().unwrap();
+    let pkg = tmp.path().join("foo");
+    fs::create_dir_all(&pkg).unwrap();
+    fs::write(pkg.join("cli.js"), "").unwrap();
+    let err = link_bins_of_packages::<FailingWrite>(
+        &[PackageBinSource { location: pkg, manifest }],
+        &tmp.path().join(".bin"),
+    )
+    .expect_err("write error must propagate");
+    assert!(matches!(err, LinkBinsError::WriteShim { .. }));
+}
+
+/// `link_bins_of_packages` propagates a chmod failure on the shim.
+#[test]
+fn link_bins_propagates_chmod_error_via_di() {
+    use std::io;
+    struct FailingChmod;
+    impl FsReadDir for FailingChmod {
+        fn read_dir(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+            Ok(vec![])
+        }
+    }
+    impl FsReadFile for FailingChmod {
+        fn read_file(_: &Path) -> io::Result<Vec<u8>> {
+            unreachable!()
+        }
+    }
+    impl FsReadString for FailingChmod {
+        fn read_to_string(_: &Path) -> io::Result<String> {
+            Err(io::Error::from(io::ErrorKind::NotFound))
+        }
+    }
+    impl FsReadHead for FailingChmod {
+        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+            Ok(0)
+        }
+    }
+    impl FsCreateDirAll for FailingChmod {
+        fn create_dir_all(_: &Path) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    impl FsWriteAtomic for FailingChmod {
+        fn write(_: &Path, _: &[u8]) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    impl FsSetPermissions for FailingChmod {
+        fn set_executable(_: &Path) -> io::Result<()> {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        }
+        fn ensure_executable_bits(_: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+    }
+
+    let manifest = serde_json::json!({"name": "foo", "bin": "cli.js"});
+    let tmp = tempdir().unwrap();
+    let pkg = tmp.path().join("foo");
+    fs::create_dir_all(&pkg).unwrap();
+    fs::write(pkg.join("cli.js"), "").unwrap();
+    let err = link_bins_of_packages::<FailingChmod>(
+        &[PackageBinSource { location: pkg, manifest }],
+        &tmp.path().join(".bin"),
+    )
+    .expect_err("chmod error must propagate");
+    assert!(matches!(err, LinkBinsError::Chmod { .. }));
+}
+
+/// `link_bins` propagates a non-`NotFound` `read_dir` error on
+/// `<modules_dir>` itself. Real fs can't trigger this portably; the
+/// fake forces the variant.
+#[test]
+fn link_bins_propagates_modules_dir_read_error_via_di() {
+    use std::io;
+    struct FailingModulesRead;
+    impl FsReadDir for FailingModulesRead {
+        fn read_dir(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        }
+    }
+    impl FsReadFile for FailingModulesRead {
+        fn read_file(_: &Path) -> io::Result<Vec<u8>> {
+            unreachable!()
+        }
+    }
+    impl FsReadString for FailingModulesRead {
+        fn read_to_string(_: &Path) -> io::Result<String> {
+            unreachable!()
+        }
+    }
+    impl FsReadHead for FailingModulesRead {
+        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+            unreachable!()
+        }
+    }
+    impl FsCreateDirAll for FailingModulesRead {
+        fn create_dir_all(_: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+    }
+    impl FsWriteAtomic for FailingModulesRead {
+        fn write(_: &Path, _: &[u8]) -> io::Result<()> {
+            unreachable!()
+        }
+    }
+    impl FsSetPermissions for FailingModulesRead {
+        fn set_executable(_: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+        fn ensure_executable_bits(_: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+    }
+
+    let err = link_bins::<FailingModulesRead>(Path::new("/x"), Path::new("/x/.bin"))
+        .expect_err("read_dir error must propagate");
+    assert!(matches!(err, LinkBinsError::CreateBinDir { .. }));
 }
 
 /// Conflict resolution: when two packages declare the same bin name, the
@@ -261,7 +493,7 @@ fn ownership_breaks_bin_conflicts() {
         serde_json::from_slice(&fs::read(other.join("package.json")).unwrap()).unwrap();
 
     let bins = tmp.path().join(".bin");
-    link_bins_of_packages(
+    link_bins_of_packages::<RealFs>(
         &[
             PackageBinSource { location: other.clone(), manifest: manifest_other },
             PackageBinSource { location: npm.clone(), manifest: manifest_npm },
