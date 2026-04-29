@@ -141,6 +141,39 @@ or treating the red as acceptable.
 - Follow [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/naming.html)
   for naming.
 
+### Preserve existing method chains
+
+When editing existing code, do not break a method chain (including `pipe-trait`
+`.pipe(...)` chains) into intermediate `let` bindings unless the task
+specifically requires it. Refactoring style is not a side effect of an
+unrelated change — keep the surrounding code shape intact and confine your
+edits to what the task asks for.
+
+Concretely, do not turn this:
+
+```rust
+output
+    .stdout
+    .pipe(String::from_utf8)
+    .expect("convert stdout to UTF-8")
+    .trim_end()
+    .pipe(PathBuf::from)
+    .parent()
+    .expect("parent of root manifest")
+    .to_path_buf()
+```
+
+into this:
+
+```rust
+let stdout = String::from_utf8(output.stdout).expect("convert stdout to UTF-8");
+Path::new(stdout.trim_end()).parent().expect("parent of root manifest").to_path_buf()
+```
+
+while doing something else. If you genuinely believe a chain should be
+rewritten, raise it with the user as its own change rather than smuggling it
+into an unrelated edit.
+
 ## Code reuse and avoiding duplication
 
 This is a small workspace, but it is still a workspace — duplication is still
