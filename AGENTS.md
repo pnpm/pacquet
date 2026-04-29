@@ -184,11 +184,10 @@ Do not flatten the chain just because you happen to be editing nearby:
 +Path::new(stdout.trim_end()).parent().expect("parent of root manifest").to_path_buf()
 ```
 
-If you do need to break a chain (compiler error, borrow checker, performance),
-state the justification in your reply, the commit message, or the PR
-description so a reviewer can confirm the rewrite was warranted. If the
-rewrite is purely stylistic, raise it with the user as its own change rather
-than smuggling it into an unrelated edit.
+If you do need to break a chain, state the justification in your reply, the
+commit message, or the PR description so a reviewer can confirm the rewrite
+was warranted. If the rewrite is purely stylistic, raise it with the user as
+its own change rather than including it in an unrelated edit.
 
 ## Code reuse and avoiding duplication
 
