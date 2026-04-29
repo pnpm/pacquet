@@ -1,3 +1,4 @@
+mod api;
 mod custom_deserializer;
 mod env_replace;
 mod npmrc_auth;
@@ -5,6 +6,7 @@ mod npmrc_auth;
 mod test_env_guard;
 mod workspace_yaml;
 
+pub use api::{EnvVar, RealApi};
 pub use env_replace::{EnvReplaceError, env_replace};
 pub use npmrc_auth::NpmrcAuth;
 
@@ -274,16 +276,15 @@ impl Npmrc {
     /// come from `pnpm-workspace.yaml` or CLI flags, matching pnpm 11.
     ///
     /// The yaml wins over `.npmrc` on any key it sets.
-    pub fn current<Error, CurrentDir, HomeDir, Env, Default>(
+    pub fn current<Api, Error, CurrentDir, HomeDir, Default>(
         current_dir: CurrentDir,
         home_dir: HomeDir,
-        env: Env,
         default: Default,
     ) -> Self
     where
+        Api: EnvVar,
         CurrentDir: FnOnce() -> Result<PathBuf, Error>,
         HomeDir: FnOnce() -> Option<PathBuf>,
-        Env: Fn(&str) -> Option<String>,
         Default: FnOnce() -> Npmrc,
     {
         let mut npmrc = default();
@@ -296,7 +297,7 @@ impl Npmrc {
             .and_then(|dir| read_npmrc(dir))
             .or_else(|| home_dir().and_then(|dir| read_npmrc(&dir)));
         let mut auth = auth_source
-            .map(|text| crate::npmrc_auth::NpmrcAuth::from_ini(&text, &env))
+            .map(|text| crate::npmrc_auth::NpmrcAuth::from_ini::<Api>(&text))
             .unwrap_or_default();
         // Phase 1 of auth wiring: write `registry` from `.npmrc` and
         // surface env-replace warnings. Phase 2 (building the actual
@@ -459,12 +460,17 @@ mod tests {
         assert_eq!(without_slash.registry, "https://yagiz.co/");
     }
 
-    /// Empty-env closure used by the tests below — every `.npmrc` we
-    /// hand `Npmrc::current` is free of `${VAR}` placeholders, so we
-    /// never need a real lookup. Keeping the closure local avoids
-    /// pulling `std::env::var` into the test's view of the world.
-    fn no_env(_: &str) -> Option<String> {
-        None
+    /// Test fake that always reports an empty environment. Every
+    /// `.npmrc` the tests below feed `Npmrc::current` is free of
+    /// `${VAR}` placeholders, so the real lookup is never needed —
+    /// using a stateless unit struct keeps the suite from depending
+    /// on `std::env::var`. See `plans/PORTING_GUIDE.md` for the
+    /// trait-per-capability DI pattern.
+    struct NoEnv;
+    impl EnvVar for NoEnv {
+        fn var(_: &str) -> Option<String> {
+            None
+        }
     }
 
     #[test]
@@ -472,10 +478,9 @@ mod tests {
         let tmp = tempdir().unwrap();
         fs::write(tmp.path().join(".npmrc"), "registry=https://cwd.example")
             .expect("write to .npmrc");
-        let config = Npmrc::current(
+        let config = Npmrc::current::<NoEnv, _, _, _, _>(
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || unreachable!("shouldn't reach home dir"),
-            no_env,
             Npmrc::new,
         );
         assert_eq!(config.registry, "https://cwd.example/");
@@ -490,10 +495,9 @@ mod tests {
         let non_auth_ini = "symlink=false\nlockfile=true\nhoist=false\nnode-linker=hoisted\n";
         fs::write(tmp.path().join(".npmrc"), non_auth_ini).expect("write to .npmrc");
         let defaults = Npmrc::new();
-        let config = Npmrc::current(
+        let config = Npmrc::current::<NoEnv, _, _, _, _>(
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || None,
-            no_env,
             Npmrc::new,
         );
         assert_eq!(config.symlink, defaults.symlink);
@@ -514,10 +518,9 @@ mod tests {
         let ini = "fetch-retries=99\nfetch-retry-factor=99\nfetch-retry-mintimeout=99\nfetch-retry-maxtimeout=99\n";
         fs::write(tmp.path().join(".npmrc"), ini).expect("write to .npmrc");
         let defaults = Npmrc::new();
-        let config = Npmrc::current(
+        let config = Npmrc::current::<NoEnv, _, _, _, _>(
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || None,
-            no_env,
             Npmrc::new,
         );
         assert_eq!(config.fetch_retries, defaults.fetch_retries);
@@ -531,10 +534,9 @@ mod tests {
         let tmp = tempdir().unwrap();
         // write invalid utf-8 value to npmrc
         fs::write(tmp.path().join(".npmrc"), b"Hello \xff World").expect("write to .npmrc");
-        let config = Npmrc::current(
+        let config = Npmrc::current::<NoEnv, _, _, _, _>(
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || None,
-            no_env,
             Npmrc::new,
         );
         assert!(config.symlink); // default — invalid .npmrc is silently ignored
@@ -546,10 +548,9 @@ mod tests {
         let home_dir = tempdir().unwrap();
         fs::write(home_dir.path().join(".npmrc"), "registry=https://home.example")
             .expect("write to .npmrc");
-        let config = Npmrc::current(
+        let config = Npmrc::current::<NoEnv, _, _, _, _>(
             || current_dir.path().to_path_buf().pipe(Ok::<_, ()>),
             || home_dir.path().to_path_buf().pipe(Some),
-            no_env,
             Npmrc::new,
         );
         assert_eq!(config.registry, "https://home.example/");
@@ -572,10 +573,9 @@ mod tests {
         .expect("write to .npmrc");
         fs::write(tmp.path().join("pnpm-workspace.yaml"), "registry: https://from-yaml.test\n")
             .expect("write to pnpm-workspace.yaml");
-        let config = Npmrc::current(
+        let config = Npmrc::current::<NoEnv, _, _, _, _>(
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || unreachable!("shouldn't reach home dir"),
-            no_env,
             Npmrc::new,
         );
         assert_eq!(config.registry, "https://from-yaml.test/");
@@ -599,10 +599,9 @@ mod tests {
             .expect("write to .npmrc");
         fs::write(tmp.path().join("pnpm-workspace.yaml"), "registry: https://from-yaml.test\n")
             .expect("write to pnpm-workspace.yaml");
-        let config = Npmrc::current(
+        let config = Npmrc::current::<NoEnv, _, _, _, _>(
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || unreachable!("shouldn't reach home dir"),
-            no_env,
             Npmrc::new,
         );
         assert_eq!(config.registry, "https://from-yaml.test/");
@@ -617,8 +616,11 @@ mod tests {
             .expect("write to pnpm-workspace.yaml");
         // No `.npmrc` anywhere, but a parent dir has `pnpm-workspace.yaml` —
         // the yaml should still be applied.
-        let config =
-            Npmrc::current(|| nested.clone().pipe(Ok::<_, ()>), || None, no_env, Npmrc::new);
+        let config = Npmrc::current::<NoEnv, _, _, _, _>(
+            || nested.clone().pipe(Ok::<_, ()>),
+            || None,
+            Npmrc::new,
+        );
         assert!(!config.symlink);
     }
 
@@ -626,10 +628,9 @@ mod tests {
     pub fn test_current_folder_fallback_to_default() {
         let current_dir = tempdir().unwrap();
         let home_dir = tempdir().unwrap();
-        let config = Npmrc::current(
+        let config = Npmrc::current::<NoEnv, _, _, _, _>(
             || current_dir.path().to_path_buf().pipe(Ok::<_, ()>),
             || home_dir.path().to_path_buf().pipe(Some),
-            no_env,
             || serde_ini::from_str("symlink=false").unwrap(),
         );
         assert!(!config.symlink);

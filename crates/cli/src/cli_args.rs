@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 use install::InstallArgs;
 use miette::Context;
 use pacquet_executor::execute_shell;
-use pacquet_npmrc::Npmrc;
+use pacquet_npmrc::{Npmrc, RealApi};
 use pacquet_package_manifest::PackageManifest;
 use run::RunArgs;
 use std::{env, path::PathBuf};
@@ -54,11 +54,13 @@ impl CliArgs {
     pub async fn run(self) -> miette::Result<()> {
         let CliArgs { command, dir } = self;
         let manifest_path = || dir.join("package.json");
+        // Production callers turbofish `RealApi` explicitly so the
+        // dependency-injection plumbing is visible at the call site.
+        // See `plans/PORTING_GUIDE.md` for the pattern and rationale.
         let npmrc = || {
-            Npmrc::current(
+            Npmrc::current::<RealApi, _, _, _, _>(
                 env::current_dir,
                 home::home_dir,
-                |key| env::var(key).ok(),
                 Default::default,
             )
             .leak()

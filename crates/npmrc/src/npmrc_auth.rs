@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use pacquet_network::{AuthHeaders, base64_encode, nerf_dart};
 
-use crate::{Npmrc, env_replace::env_replace};
+use crate::{Npmrc, api::EnvVar, env_replace::env_replace};
 
 /// Subset of `.npmrc` keys pacquet honours for registry / auth setup.
 ///
@@ -70,12 +70,10 @@ impl RawCreds {
 impl NpmrcAuth {
     /// Parse an `.npmrc` file's contents and pick out the auth/network keys.
     /// Unknown keys are silently dropped. `${VAR}` placeholders inside
-    /// values are resolved via `env`; placeholders that cannot be
-    /// resolved leave the value verbatim and emit a warning.
-    pub fn from_ini<Env>(text: &str, env: Env) -> Self
-    where
-        Env: Fn(&str) -> Option<String>,
-    {
+    /// values are resolved via the [`EnvVar`] capability; placeholders
+    /// that cannot be resolved leave the value verbatim and emit a
+    /// warning.
+    pub fn from_ini<Api: EnvVar>(text: &str) -> Self {
         let mut auth = NpmrcAuth::default();
         for line in text.lines() {
             let line = line.trim();
@@ -94,14 +92,14 @@ impl NpmrcAuth {
 
             // Apply ${VAR} substitution to both the key and the value,
             // matching `readAndFilterNpmrc` in pnpm's `loadNpmrcFiles.ts`.
-            let key = match env_replace(raw_key, &env) {
+            let key = match env_replace::<Api>(raw_key) {
                 Ok(value) => value,
                 Err(error) => {
                     auth.warnings.push(error.to_string());
                     raw_key.to_owned()
                 }
             };
-            let value = match env_replace(raw_value, &env) {
+            let value = match env_replace::<Api>(raw_value) {
                 Ok(value) => value,
                 Err(error) => {
                     auth.warnings.push(error.to_string());
@@ -267,14 +265,21 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    fn no_env(_: &str) -> Option<String> {
-        None
+    /// Test fake: the process environment is empty. Per the DI
+    /// pattern in `plans/PORTING_GUIDE.md`, the fake is a unit struct
+    /// scoped to the test module; tests turbofish it through the
+    /// generic slot.
+    struct NoEnv;
+    impl EnvVar for NoEnv {
+        fn var(_: &str) -> Option<String> {
+            None
+        }
     }
 
     #[test]
     fn picks_up_registry_and_normalises_trailing_slash() {
         let ini = "registry=https://r.example\n";
-        let auth = NpmrcAuth::from_ini(ini, no_env);
+        let auth = NpmrcAuth::from_ini::<NoEnv>(ini);
         assert_eq!(auth.registry.as_deref(), Some("https://r.example"));
 
         let mut npmrc = Npmrc::new();
@@ -285,7 +290,7 @@ mod tests {
     #[test]
     fn preserves_existing_trailing_slash() {
         let mut npmrc = Npmrc::new();
-        NpmrcAuth::from_ini("registry=https://r.example/\n", no_env).apply_to(&mut npmrc);
+        NpmrcAuth::from_ini::<NoEnv>("registry=https://r.example/\n").apply_to(&mut npmrc);
         assert_eq!(npmrc.registry, "https://r.example/");
     }
 
@@ -299,7 +304,7 @@ node-linker=hoisted
 ";
         let npmrc_before = Npmrc::new();
         let mut npmrc = Npmrc::new();
-        NpmrcAuth::from_ini(ini, no_env).apply_to(&mut npmrc);
+        NpmrcAuth::from_ini::<NoEnv>(ini).apply_to(&mut npmrc);
         assert_eq!(npmrc.store_dir, npmrc_before.store_dir);
         assert_eq!(npmrc.lockfile, npmrc_before.lockfile);
         assert_eq!(npmrc.hoist, npmrc_before.hoist);
@@ -315,21 +320,21 @@ node-linker=hoisted
 registry=https://r.example
 # trailing comment
 ";
-        let auth = NpmrcAuth::from_ini(ini, no_env);
+        let auth = NpmrcAuth::from_ini::<NoEnv>(ini);
         assert_eq!(auth.registry.as_deref(), Some("https://r.example"));
     }
 
     #[test]
     fn ignores_malformed_lines() {
         let ini = "not_a_key_value\nregistry=https://r.example\n=orphan_equals\n";
-        let auth = NpmrcAuth::from_ini(ini, no_env);
+        let auth = NpmrcAuth::from_ini::<NoEnv>(ini);
         assert_eq!(auth.registry.as_deref(), Some("https://r.example"));
     }
 
     #[test]
     fn parses_per_registry_auth_token() {
         let ini = "//npm.pkg.github.com/pnpm/:_authToken=ghp_xxx\n";
-        let auth = NpmrcAuth::from_ini(ini, no_env);
+        let auth = NpmrcAuth::from_ini::<NoEnv>(ini);
         assert_eq!(
             auth.creds_by_uri
                 .get("//npm.pkg.github.com/pnpm/")
@@ -341,7 +346,7 @@ registry=https://r.example
     #[test]
     fn parses_default_auth_token_and_keys_to_registry() {
         let ini = "_authToken=top-secret\n";
-        let auth = NpmrcAuth::from_ini(ini, no_env);
+        let auth = NpmrcAuth::from_ini::<NoEnv>(ini);
         assert_eq!(auth.default_creds.auth_token.as_deref(), Some("top-secret"));
 
         let mut npmrc = Npmrc::new();
@@ -354,9 +359,14 @@ registry=https://r.example
 
     #[test]
     fn env_replace_substitutes_token() {
+        struct EnvWithToken;
+        impl EnvVar for EnvWithToken {
+            fn var(name: &str) -> Option<String> {
+                (name == "TOKEN").then(|| "abc123".to_owned())
+            }
+        }
         let ini = "//reg.com/:_authToken=${TOKEN}\n";
-        let env = |key: &str| (key == "TOKEN").then(|| "abc123".to_owned());
-        let auth = NpmrcAuth::from_ini(ini, env);
+        let auth = NpmrcAuth::from_ini::<EnvWithToken>(ini);
         assert_eq!(
             auth.creds_by_uri.get("//reg.com/").map(|creds| creds.auth_token.as_deref()),
             Some(Some("abc123")),
@@ -366,7 +376,7 @@ registry=https://r.example
     #[test]
     fn env_replace_failure_warns_and_keeps_raw_value() {
         let ini = "//reg.com/:_authToken=${MISSING}\n";
-        let auth = NpmrcAuth::from_ini(ini, no_env);
+        let auth = NpmrcAuth::from_ini::<NoEnv>(ini);
         assert_eq!(
             auth.creds_by_uri.get("//reg.com/").map(|creds| creds.auth_token.as_deref()),
             Some(Some("${MISSING}")),
@@ -383,7 +393,7 @@ registry=https://r.example
         let password_b64 = base64_encode(raw_password);
         let ini = format!("//reg.com/:username=alice\n//reg.com/:_password={password_b64}\n",);
         let mut npmrc = Npmrc::new();
-        NpmrcAuth::from_ini(&ini, no_env).apply_to(&mut npmrc);
+        NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to(&mut npmrc);
         assert_eq!(
             npmrc.auth_headers.for_url("https://reg.com/").as_deref(),
             Some(format!("Basic {}", base64_encode("alice:p@ss")).as_str()),
@@ -395,7 +405,7 @@ registry=https://r.example
         let pair = base64_encode("alice:p@ss");
         let ini = format!("//reg.com/:_auth={pair}\n");
         let mut npmrc = Npmrc::new();
-        NpmrcAuth::from_ini(&ini, no_env).apply_to(&mut npmrc);
+        NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to(&mut npmrc);
         assert_eq!(
             npmrc.auth_headers.for_url("https://reg.com/").as_deref(),
             Some(format!("Basic {pair}").as_str()),

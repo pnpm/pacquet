@@ -178,7 +178,7 @@ impl<'a> ParsedUrl<'a> {
         let (host, port) = match host_port.rsplit_once(':') {
             // Skip IPv6 brackets — pnpm doesn't, but neither does any
             // npm registry we care about. Documenting the limit here
-            // rather than silently mis-parsing.
+            // rather than silently misparsing.
             Some((host, port)) if !host.contains('[') => (host, Some(port)),
             _ => (host_port, None),
         };

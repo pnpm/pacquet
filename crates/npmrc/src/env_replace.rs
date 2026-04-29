@@ -2,8 +2,9 @@
 //!
 //! Ports pnpm's [`@pnpm/config.env-replace`](https://github.com/pnpm/components/blob/9c2bd17/config/env-replace/env-replace.ts):
 //! occurrences of `${VAR}` (with optional `${VAR:-default}` fallback) are
-//! replaced with the value from `env`. Backslashes immediately preceding
-//! the `$` escape the placeholder so it is left as-is.
+//! replaced with the value the [`EnvVar`] capability returns for `VAR`.
+//! Backslashes immediately preceding the `$` escape the placeholder so
+//! it is left as-is.
 //!
 //! The mirrored behaviours are:
 //! * pattern: `${IDENT}` or `${IDENT:-default}`. `IDENT` is any non-empty
@@ -19,8 +20,15 @@
 //! * empty variable + default present: the default wins; this is
 //!   pnpm's behaviour even though plain shell `${VAR:-default}` would
 //!   also use the default for the empty case.
+//!
+//! Production callers thread `RealApi` (which delegates to
+//! `std::env::var`) through the turbofish slot. Tests provide their
+//! own per-test unit struct, per the DI pattern in
+//! [`plans/PORTING_GUIDE.md`](../../../plans/PORTING_GUIDE.md).
 
 use std::fmt;
+
+use crate::api::EnvVar;
 
 /// A single missing variable surfaced from [`env_replace`].
 ///
@@ -43,13 +51,12 @@ impl fmt::Display for EnvReplaceError {
 impl std::error::Error for EnvReplaceError {}
 
 /// Replace every `${VAR}` (or `${VAR:-default}`) placeholder in `text`
-/// with its value from `env`. Returns an error on the first
+/// with the value [`Api::var`] returns. Returns an error on the first
 /// unresolvable placeholder so the caller can warn and skip the line,
 /// matching pnpm's `substituteEnv`.
-pub fn env_replace<Env>(text: &str, env: Env) -> Result<String, EnvReplaceError>
-where
-    Env: Fn(&str) -> Option<String>,
-{
+///
+/// [`Api::var`]: EnvVar::var
+pub fn env_replace<Api: EnvVar>(text: &str) -> Result<String, EnvReplaceError> {
     let bytes = text.as_bytes();
     let mut output = String::with_capacity(text.len());
     let mut index = 0;
@@ -93,7 +100,7 @@ where
                 Some(separator) => (&inside[..separator], Some(&inside[separator + 2..])),
                 None => (inside, None),
             };
-            let value = env(var_name).filter(|value| !value.is_empty());
+            let value = Api::var(var_name).filter(|value| !value.is_empty());
             match (value, default) {
                 (Some(value), _) => output.push_str(&value),
                 (None, Some(default)) => output.push_str(default),
@@ -132,85 +139,133 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    fn env_of<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + use<'a> {
-        move |key| pairs.iter().find(|(name, _)| *name == key).map(|(_, value)| value.to_string())
+    /// Empty env: no variable is ever set. Used by tests that only
+    /// exercise the literal-passthrough or escape paths.
+    struct NoEnv;
+    impl EnvVar for NoEnv {
+        fn var(_: &str) -> Option<String> {
+            None
+        }
     }
 
     #[test]
     fn substitutes_simple_placeholder() {
-        let env = env_of(&[("TOKEN", "abc123")]);
-        assert_eq!(env_replace("Bearer ${TOKEN}", &env).unwrap(), "Bearer abc123");
+        struct EnvWithToken;
+        impl EnvVar for EnvWithToken {
+            fn var(name: &str) -> Option<String> {
+                (name == "TOKEN").then(|| "abc123".to_owned())
+            }
+        }
+        assert_eq!(env_replace::<EnvWithToken>("Bearer ${TOKEN}").unwrap(), "Bearer abc123");
     }
 
     #[test]
     fn returns_error_on_missing_variable() {
-        let env = env_of(&[]);
-        let result = env_replace("${MISSING}", env).unwrap_err();
+        let result = env_replace::<NoEnv>("${MISSING}").unwrap_err();
         assert_eq!(result.placeholder, "${MISSING}");
         assert_eq!(result.to_string(), "Failed to replace env in config: ${MISSING}");
     }
 
     #[test]
     fn uses_default_when_variable_unset() {
-        let env = env_of(&[]);
-        assert_eq!(env_replace("${MISSING:-fallback}", env).unwrap(), "fallback");
+        assert_eq!(env_replace::<NoEnv>("${MISSING:-fallback}").unwrap(), "fallback");
     }
 
     #[test]
     fn uses_default_when_variable_empty() {
-        let env = env_of(&[("EMPTY", "")]);
-        assert_eq!(env_replace("${EMPTY:-fallback}", env).unwrap(), "fallback");
+        struct EmptyEnv;
+        impl EnvVar for EmptyEnv {
+            fn var(name: &str) -> Option<String> {
+                (name == "EMPTY").then(String::new)
+            }
+        }
+        assert_eq!(env_replace::<EmptyEnv>("${EMPTY:-fallback}").unwrap(), "fallback");
     }
 
     #[test]
     fn variable_wins_over_default_when_set() {
-        let env = env_of(&[("PORT", "8080")]);
-        assert_eq!(env_replace("${PORT:-3000}", env).unwrap(), "8080");
+        struct EnvWithPort;
+        impl EnvVar for EnvWithPort {
+            fn var(name: &str) -> Option<String> {
+                (name == "PORT").then(|| "8080".to_owned())
+            }
+        }
+        assert_eq!(env_replace::<EnvWithPort>("${PORT:-3000}").unwrap(), "8080");
     }
 
     #[test]
     fn passthrough_when_no_placeholder() {
-        assert_eq!(env_replace("plain string", env_of(&[])).unwrap(), "plain string");
+        assert_eq!(env_replace::<NoEnv>("plain string").unwrap(), "plain string");
     }
 
     #[test]
     fn lone_dollar_is_left_alone() {
-        assert_eq!(env_replace("$ price", env_of(&[])).unwrap(), "$ price");
+        assert_eq!(env_replace::<NoEnv>("$ price").unwrap(), "$ price");
     }
 
     #[test]
     fn malformed_placeholder_is_left_alone() {
-        // No closing brace, no nested `$`, etc.
-        assert_eq!(env_replace("${OPEN", env_of(&[])).unwrap(), "${OPEN");
-        assert_eq!(env_replace("${A$B}", env_of(&[("A$B", "x")])).unwrap(), "${A$B}");
+        // No closing brace, nested `$`, etc.
+        assert_eq!(env_replace::<NoEnv>("${OPEN").unwrap(), "${OPEN");
+        struct EnvWithDollarKey;
+        impl EnvVar for EnvWithDollarKey {
+            fn var(_: &str) -> Option<String> {
+                unreachable!("malformed placeholder must short-circuit before any var lookup")
+            }
+        }
+        assert_eq!(env_replace::<EnvWithDollarKey>("${A$B}").unwrap(), "${A$B}");
     }
 
     #[test]
     fn odd_backslash_count_escapes_placeholder() {
         // One literal backslash => placeholder treated as literal text.
-        let env = env_of(&[("X", "y")]);
-        assert_eq!(env_replace(r"\${X}", &env).unwrap(), "${X}");
+        struct EnvWithX;
+        impl EnvVar for EnvWithX {
+            fn var(_: &str) -> Option<String> {
+                unreachable!("escaped placeholder must short-circuit before any var lookup")
+            }
+        }
+        assert_eq!(env_replace::<EnvWithX>(r"\${X}").unwrap(), "${X}");
     }
 
     #[test]
     fn even_backslash_count_keeps_half_and_substitutes() {
         // Two literal backslashes => one literal `\` plus expanded value.
-        let env = env_of(&[("X", "y")]);
-        assert_eq!(env_replace(r"\\${X}", &env).unwrap(), r"\y");
+        struct EnvWithX;
+        impl EnvVar for EnvWithX {
+            fn var(name: &str) -> Option<String> {
+                (name == "X").then(|| "y".to_owned())
+            }
+        }
+        assert_eq!(env_replace::<EnvWithX>(r"\\${X}").unwrap(), r"\y");
     }
 
     #[test]
     fn handles_multiple_placeholders() {
-        let env = env_of(&[("A", "1"), ("B", "2")]);
-        assert_eq!(env_replace("${A}-${B}-${A}", env).unwrap(), "1-2-1");
+        // `static` scenario data inside the test fn matches the
+        // pattern in `plans/PORTING_GUIDE.md`: keep the fake stateless
+        // by stashing variation in a `static`, not in `&self`.
+        static ENV: &[(&str, &str)] = &[("A", "1"), ("B", "2")];
+        struct StaticEnv;
+        impl EnvVar for StaticEnv {
+            fn var(name: &str) -> Option<String> {
+                ENV.iter().find(|(key, _)| *key == name).map(|(_, value)| (*value).to_owned())
+            }
+        }
+        assert_eq!(env_replace::<StaticEnv>("${A}-${B}-${A}").unwrap(), "1-2-1");
     }
 
     #[test]
     fn placeholder_inside_url() {
         // The actual .npmrc shape pnpm users hit.
-        let env = env_of(&[("NPM_TOKEN", "secret")]);
+        struct EnvWithToken;
+        impl EnvVar for EnvWithToken {
+            fn var(name: &str) -> Option<String> {
+                (name == "NPM_TOKEN").then(|| "secret".to_owned())
+            }
+        }
         assert_eq!(
-            env_replace("//registry.npmjs.org/:_authToken=${NPM_TOKEN}", env).unwrap(),
+            env_replace::<EnvWithToken>("//registry.npmjs.org/:_authToken=${NPM_TOKEN}").unwrap(),
             "//registry.npmjs.org/:_authToken=secret",
         );
     }
