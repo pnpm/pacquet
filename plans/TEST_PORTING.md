@@ -4,6 +4,13 @@ Scope: Stage 1 from pnpm/pacquet#299. The target behavior is `pacquet install --
 
 Unless otherwise noted, TypeScript paths are relative to the TypeScript repo root, and Rust commands are run from this Rust repo root. Line numbers point at the TypeScript tests as found during this audit. Some tests are not frozen-lockfile tests themselves, but they exercise shared code or invariants that the frozen/headless installer must preserve.
 
+**Do not stop at the per-package `test/` directories.** In addition to the unit and integration tests that live next to each TypeScript package (e.g. `installing/deps-installer/test/`, `installing/deps-restorer/test/`, `network/auth-header/test/`, `config/reader/test/`, etc.), the upstream repo has a top-level **`pnpm/test/`** directory that contains CLI-level, end-to-end integration tests for almost every feature in pnpm — install, monorepo/workspaces, lifecycle scripts, lockfile, global virtual store, runtime install, publish, link, store, prune, audit, dedupe, exec, run, and so on. These tests drive the real `pnpm` CLI binary and exercise behaviors that the per-package tests do not (config resolution end-to-end, exit codes, stdout/stderr formatting, multi-step CLI flows). When porting any feature, you must:
+
+1. Look in the per-package `test/` directory for that feature's package, **and**
+2. Look in `pnpm/test/` for matching CLI-level coverage (e.g. `pnpm/test/install/`, `pnpm/test/monorepo/`, `pnpm/test/install/lifecycleScripts.ts`, `pnpm/test/install/globalVirtualStore.ts`, `pnpm/test/install/runtimeOnFail.ts`, etc.).
+
+This plan already cites a handful of `pnpm/test/...` files inline next to the feature they belong to, but those citations are not exhaustive — treat `pnpm/test/` as a parallel test tree to be audited for every feature you port, not just the ones it is already mentioned under. Skipping `pnpm/test/` is the single most common way a port misses behavioral coverage.
+
 Expected-failing test ports should live under a `known_failures` test module and use `pacquet_testing_utils::allow_known_failure!` at the not-yet-implemented subject-under-test boundary. List all expected failures with `just known-failures`.
 
 Test the tests before marking them ported. After porting a test, temporarily modify the relevant implementation path so the test should fail, run that test, and verify it fails for the expected reason. Revert the temporary breakage before committing. This guards against porting tests that execute but do not actually detect the behavior they claim to cover. See https://github.com/pnpm/pacquet/issues/299#issuecomment-4323032648.
