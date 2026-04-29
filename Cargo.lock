@@ -1897,6 +1897,7 @@ dependencies = [
  "rayon",
  "reflink-copy",
  "serde-saphyr",
+ "serde_json",
  "ssri",
  "tempfile",
  "tokio",

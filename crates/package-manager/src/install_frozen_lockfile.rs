@@ -1,6 +1,6 @@
 use crate::{
-    CreateVirtualStore, CreateVirtualStoreError, SymlinkDirectDependencies,
-    SymlinkDirectDependenciesError,
+    CreateVirtualStore, CreateVirtualStoreError, LinkBins, LinkBinsError,
+    SymlinkDirectDependencies, SymlinkDirectDependenciesError,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
@@ -19,6 +19,7 @@ use std::collections::HashMap;
 /// * Import the files from the store dir to each `node_modules/.pacquet/{name}@{version}/node_modules/{name}/`.
 /// * Create dependency symbolic links in each `node_modules/.pacquet/{name}@{version}/node_modules/`.
 /// * Create a symbolic link at each `node_modules/{name}`.
+/// * Create `.bin` symlinks for all installed packages with executables.
 #[must_use]
 pub struct InstallFrozenLockfile<'a, DependencyGroupList>
 where
@@ -40,6 +41,9 @@ pub enum InstallFrozenLockfileError {
 
     #[diagnostic(transparent)]
     SymlinkDirectDependencies(#[error(source)] SymlinkDirectDependenciesError),
+
+    #[diagnostic(transparent)]
+    LinkBins(#[error(source)] LinkBinsError),
 }
 
 impl<'a, DependencyGroupList> InstallFrozenLockfile<'a, DependencyGroupList>
@@ -59,14 +63,25 @@ where
 
         // TODO: check if the lockfile is out-of-date
 
+        // Collect once so we can pass the same slice to both symlink and bin-link steps.
+        let dependency_groups: Vec<DependencyGroup> = dependency_groups.into_iter().collect();
+
         CreateVirtualStore { http_client, config, packages, snapshots }
             .run()
             .await
             .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
 
-        SymlinkDirectDependencies { config, importers, dependency_groups }
+        SymlinkDirectDependencies {
+            config,
+            importers,
+            dependency_groups: dependency_groups.iter().copied(),
+        }
+        .run()
+        .map_err(InstallFrozenLockfileError::SymlinkDirectDependencies)?;
+
+        LinkBins { config, importers, packages, snapshots, dependency_groups: &dependency_groups }
             .run()
-            .map_err(InstallFrozenLockfileError::SymlinkDirectDependencies)?;
+            .map_err(InstallFrozenLockfileError::LinkBins)?;
 
         Ok(())
     }
