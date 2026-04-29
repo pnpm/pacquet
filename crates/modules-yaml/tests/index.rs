@@ -128,3 +128,70 @@ fn read_empty_modules_manifest_returns_none() {
     let modules_yaml = read_modules_manifest(&modules_dir).expect("read manifest");
     assert_eq!(modules_yaml, None);
 }
+
+// The next three tests cover behavior branches that pnpm only exercises
+// transitively via install-level integration tests in `pnpm/test/`
+// (e.g., custom virtualStoreDir at
+// https://github.com/pnpm/pnpm/blob/1819226b51/pnpm/test/monorepo/index.ts#L1467-L1545).
+// Those install tests are gated on the install pipeline being ported, so
+// these direct unit tests guard the behavior in the meantime.
+
+// Reading a manifest whose `virtualStoreDir` is already absolute must
+// preserve it verbatim, matching upstream
+// https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L66-L70.
+#[test]
+fn read_preserves_absolute_virtual_store_dir() {
+    let temp_dir = tempfile::tempdir().expect("create temporary directory");
+    let modules_dir = temp_dir.path().join("node_modules");
+    fs::create_dir_all(&modules_dir).expect("create modules dir");
+    let custom_store = temp_dir.path().join("custom-store");
+    let raw = json!({ "virtualStoreDir": &custom_store, "layoutVersion": 1 }).to_string();
+    fs::write(modules_dir.join(".modules.yaml"), raw).expect("write fixture");
+
+    let manifest =
+        read_modules_manifest(&modules_dir).expect("read manifest").expect("manifest exists");
+    let stored = manifest["virtualStoreDir"].as_str().expect("virtualStoreDir is a string");
+    eprintln!("stored virtualStoreDir: {stored}");
+    assert_eq!(Path::new(stored), custom_store);
+}
+
+// `writeModulesManifest` sorts `skipped` in place before serializing,
+// matching upstream
+// https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L117.
+#[test]
+fn write_sorts_skipped_array() {
+    let temp_dir = tempfile::tempdir().expect("create temporary directory");
+    let modules_dir = temp_dir.path();
+    let manifest = json!({
+        "layoutVersion": 1,
+        "skipped": ["zeta", "alpha", "mu"],
+    });
+
+    write_modules_manifest(modules_dir, &manifest).expect("write manifest");
+    let raw =
+        fs::read_to_string(modules_dir.join(".modules.yaml")).expect("read raw .modules.yaml");
+    let parsed: Value = serde_json::from_str(&raw).expect("parse raw .modules.yaml");
+    assert_eq!(parsed["skipped"], json!(["alpha", "mu", "zeta"]));
+}
+
+// A null `publicHoistPattern` is removed before serializing because the
+// YAML writer fails on undefined fields upstream. Matches
+// https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L123-L125.
+#[test]
+fn write_removes_null_public_hoist_pattern() {
+    let temp_dir = tempfile::tempdir().expect("create temporary directory");
+    let modules_dir = temp_dir.path();
+    let manifest = json!({
+        "layoutVersion": 1,
+        "publicHoistPattern": null,
+    });
+
+    write_modules_manifest(modules_dir, &manifest).expect("write manifest");
+    let raw =
+        fs::read_to_string(modules_dir.join(".modules.yaml")).expect("read raw .modules.yaml");
+    let parsed: Value = serde_json::from_str(&raw).expect("parse raw .modules.yaml");
+    assert!(
+        parsed.get("publicHoistPattern").is_none(),
+        "publicHoistPattern was kept after write: {parsed}",
+    );
+}
