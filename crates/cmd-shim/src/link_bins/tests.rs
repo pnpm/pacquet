@@ -417,6 +417,157 @@ fn link_bins_propagates_chmod_error_via_di() {
     assert!(matches!(err, LinkBinsError::Chmod { .. }));
 }
 
+/// `link_bins_of_packages` propagates a non-`NotFound` IO error from
+/// `search_script_runtime` (the `ProbeShimSource` variant). Forced via
+/// a fake `FsReadHead` that fails with permission-denied — the wider
+/// `write_shim` -> `search_script_runtime` chain remains unchanged.
+#[test]
+fn link_bins_propagates_probe_shim_source_error_via_di() {
+    use std::io;
+    struct FailingProbe;
+    impl FsReadDir for FailingProbe {
+        fn read_dir(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+            Ok(vec![])
+        }
+    }
+    impl FsReadFile for FailingProbe {
+        fn read_file(_: &Path) -> io::Result<Vec<u8>> {
+            unreachable!()
+        }
+    }
+    impl FsReadString for FailingProbe {
+        fn read_to_string(_: &Path) -> io::Result<String> {
+            unreachable!()
+        }
+    }
+    impl FsReadHead for FailingProbe {
+        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        }
+    }
+    impl FsCreateDirAll for FailingProbe {
+        fn create_dir_all(_: &Path) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    impl FsWriteAtomic for FailingProbe {
+        fn write(_: &Path, _: &[u8]) -> io::Result<()> {
+            unreachable!()
+        }
+    }
+    impl FsSetPermissions for FailingProbe {
+        fn set_executable(_: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+        fn ensure_executable_bits(_: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+    }
+
+    let manifest = serde_json::json!({"name": "foo", "bin": "cli.js"});
+    let tmp = tempdir().unwrap();
+    let pkg = tmp.path().join("foo");
+    fs::create_dir_all(&pkg).unwrap();
+    let err = link_bins_of_packages::<FailingProbe>(
+        &[PackageBinSource { location: pkg, manifest }],
+        &tmp.path().join(".bin"),
+    )
+    .expect_err("probe error must propagate");
+    assert!(matches!(err, LinkBinsError::ProbeShimSource { .. }));
+}
+
+/// `link_bins` propagates a non-`NotFound` IO error from reading a
+/// child `package.json` (the `ReadManifest` variant). Forced via a
+/// fake `FsReadFile` that always returns `PermissionDenied`.
+#[test]
+fn link_bins_propagates_read_manifest_error_via_di() {
+    use std::io;
+    struct DenyManifestRead;
+    impl FsReadDir for DenyManifestRead {
+        fn read_dir(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+            Ok(vec!["foo".into()])
+        }
+    }
+    impl FsReadFile for DenyManifestRead {
+        fn read_file(_: &Path) -> io::Result<Vec<u8>> {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        }
+    }
+    impl FsReadString for DenyManifestRead {
+        fn read_to_string(_: &Path) -> io::Result<String> {
+            unreachable!()
+        }
+    }
+    impl FsReadHead for DenyManifestRead {
+        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+            unreachable!()
+        }
+    }
+    impl FsCreateDirAll for DenyManifestRead {
+        fn create_dir_all(_: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+    }
+    impl FsWriteAtomic for DenyManifestRead {
+        fn write(_: &Path, _: &[u8]) -> io::Result<()> {
+            unreachable!()
+        }
+    }
+    impl FsSetPermissions for DenyManifestRead {
+        fn set_executable(_: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+        fn ensure_executable_bits(_: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+    }
+
+    let err = link_bins::<DenyManifestRead>(Path::new("/x"), Path::new("/x/.bin"))
+        .expect_err("read_manifest error must propagate");
+    assert!(matches!(err, LinkBinsError::ReadManifest { .. }));
+}
+
+/// `pick_winner` `(true, false)` arm — existing owns, candidate
+/// doesn't → existing wins. The other arm (`(false, true)`) is
+/// covered by `ownership_breaks_bin_conflicts` further down.
+#[test]
+fn ownership_breaks_bin_conflicts_when_existing_owns() {
+    let tmp = tempdir().unwrap();
+    let other = tmp.path().join("other");
+    let npm = tmp.path().join("npm");
+    for d in [&other, &npm] {
+        fs::create_dir_all(d).unwrap();
+        fs::write(d.join("npx"), "#!/usr/bin/env node\n").unwrap();
+    }
+    fs::write(npm.join("package.json"), json!({"name": "npm", "bin": {"npx": "npx"}}).to_string())
+        .unwrap();
+    fs::write(
+        other.join("package.json"),
+        json!({"name": "other", "bin": {"npx": "npx"}}).to_string(),
+    )
+    .unwrap();
+
+    let manifest_other: Value =
+        serde_json::from_slice(&fs::read(other.join("package.json")).unwrap()).unwrap();
+    let manifest_npm: Value =
+        serde_json::from_slice(&fs::read(npm.join("package.json")).unwrap()).unwrap();
+
+    // Order npm-first; this exercises the (true, false) arm because
+    // `npm` (existing) owns and `other` (candidate) doesn't.
+    let bins = tmp.path().join(".bin");
+    link_bins_of_packages::<RealFs>(
+        &[
+            PackageBinSource { location: npm.clone(), manifest: manifest_npm },
+            PackageBinSource { location: other.clone(), manifest: manifest_other },
+        ],
+        &bins,
+    )
+    .unwrap();
+
+    let body = fs::read_to_string(bins.join("npx")).unwrap();
+    assert!(body.contains("/npm/npx"), "existing-owns winner must be `npm`, body:\n{body}");
+}
+
 /// `link_bins` propagates a non-`NotFound` `read_dir` error on
 /// `<modules_dir>` itself. Real fs can't trigger this portably; the
 /// fake forces the variant.

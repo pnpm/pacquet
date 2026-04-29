@@ -315,6 +315,65 @@ fn directories_bin_missing_directory_returns_empty() {
     assert!(get_bins_from_package_manifest(&manifest, &pkg).is_empty());
 }
 
+/// `directories.bin` filters out files whose basename fails the
+/// URL-safe-name guard. Pin via a `..` filename — once the
+/// path-traversal guard already passed (the dir was a real subdir),
+/// a *file* inside it with an unsafe name still gets dropped.
+#[test]
+fn directories_bin_filters_unsafe_file_names() {
+    let tmp = tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    let bin_dir = pkg.join("bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    fs::write(bin_dir.join("good"), "").unwrap();
+    fs::write(bin_dir.join("bad space"), "").unwrap();
+
+    let manifest = json!({
+        "name": "tool",
+        "version": "1.0.0",
+        "directories": {"bin": "bin"},
+    });
+    let mut commands = get_bins_from_package_manifest(&manifest, &pkg);
+    commands.sort_by(|a, b| a.name.cmp(&b.name));
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].name, "good");
+}
+
+/// Empty bin name returns false — the `is_empty` guard inside
+/// `is_safe_bin_name`. Exercised via a `bin` object with an empty key.
+#[test]
+fn empty_bin_key_is_rejected() {
+    let manifest = json!({
+        "name": "x",
+        "version": "1.0.0",
+        "bin": {"": "ok.js", "good": "ok.js"},
+    });
+    let commands = get_bins_from_package_manifest(&manifest, Path::new("/p"));
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].name, "good");
+}
+
+/// `lexical_normalize` `CurDir` branch — drops `.` segments. Visible
+/// via `is_subdir` accepting a target with embedded `./` that resolves
+/// inside the package root.
+#[test]
+fn directories_bin_handles_curdir_in_relative_path() {
+    let tmp = tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    let bin_dir = pkg.join("bin-dir");
+    fs::create_dir_all(&bin_dir).unwrap();
+    fs::write(bin_dir.join("cli"), "").unwrap();
+
+    let manifest = json!({
+        "name": "tool",
+        "version": "1.0.0",
+        "directories": {"bin": "./bin-dir"},
+    });
+    let commands = get_bins_from_package_manifest(&manifest, &pkg);
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].name, "cli");
+}
+
 /// `bin` field takes precedence over `directories.bin` when both are
 /// present. Mirrors upstream's order-of-checks in
 /// `getBinsFromPackageManifest`.
