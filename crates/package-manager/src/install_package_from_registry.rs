@@ -74,16 +74,21 @@ impl<'a> InstallPackageFromRegistry<'a> {
                 tag,
                 http_client,
                 &config.registry,
+                &config.auth_headers,
             )
             .await
             .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
             self.install_package_version(&package_version).await?;
             package_version
         } else {
-            let package =
-                Package::fetch_from_registry(registry_name, http_client, &config.registry)
-                    .await
-                    .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
+            let package = Package::fetch_from_registry(
+                registry_name,
+                http_client,
+                &config.registry,
+                &config.auth_headers,
+            )
+            .await
+            .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
             let package_version = package.pinned_version(version_range).unwrap(); // TODO: propagate error for when no version satisfies range
             self.install_package_version(package_version).await?;
             package_version.clone()
@@ -127,6 +132,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
             package_id: &package_id,
             prefetched_cas_paths: None,
             retry_opts: retry_opts_from_config(config),
+            auth_headers: &config.auth_headers,
         }
         .run_with_mem_cache(tarball_mem_cache)
         .await
@@ -195,6 +201,7 @@ mod tests {
             fetch_retry_factor: 10,
             fetch_retry_mintimeout: 10_000,
             fetch_retry_maxtimeout: 60_000,
+            auth_headers: Default::default(),
         }
     }
 

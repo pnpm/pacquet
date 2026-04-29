@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use pacquet_network::ThrottledClient;
+use pacquet_network::{AuthHeaders, ThrottledClient};
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 
@@ -29,18 +29,21 @@ impl PackageVersion {
         tag: PackageTag,
         http_client: &ThrottledClient,
         registry: &str,
+        auth_headers: &AuthHeaders,
     ) -> Result<Self, RegistryError> {
         let url = || format!("{registry}{name}/{tag}");
         let network_error = |error| NetworkError { error, url: url() };
 
-        http_client
-            .acquire()
-            .await
-            .get(url())
-            .header(
-                "accept",
-                "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-            )
+        let mut request = http_client.acquire().await.get(url()).header(
+            "accept",
+            "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+        );
+        // Same auth flow as `Package::fetch_from_registry` — see the
+        // doc comment there.
+        if let Some(value) = auth_headers.for_url(&url()) {
+            request = request.header("authorization", value);
+        }
+        request
             .send()
             .await
             .map_err(network_error)?

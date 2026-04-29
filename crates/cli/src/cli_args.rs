@@ -54,7 +54,15 @@ impl CliArgs {
     pub async fn run(self) -> miette::Result<()> {
         let CliArgs { command, dir } = self;
         let manifest_path = || dir.join("package.json");
-        let npmrc = || Npmrc::current(env::current_dir, home::home_dir, Default::default).leak();
+        let npmrc = || {
+            Npmrc::current(
+                env::current_dir,
+                home::home_dir,
+                |key| env::var(key).ok(),
+                Default::default,
+            )
+            .leak()
+        };
         // `require_lockfile` is the "this subcommand cannot run without a
         // lockfile loaded" signal, used by `State::init` to override
         // `config.lockfile=false`. Only `install --frozen-lockfile` needs

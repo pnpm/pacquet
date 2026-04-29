@@ -163,6 +163,7 @@ async fn packages_under_orgs_should_work() {
         prefetched_cas_paths: None,
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_without_mem_cache()
     .await
@@ -209,6 +210,7 @@ async fn should_throw_error_on_checksum_mismatch() {
         prefetched_cas_paths: None,
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_without_mem_cache()
     .await
@@ -282,6 +284,7 @@ async fn reuses_cached_cas_paths_when_index_entry_is_live() {
         prefetched_cas_paths: None,
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_without_mem_cache()
     .await
@@ -339,6 +342,7 @@ async fn reuses_prefetched_cas_paths_when_provided() {
         prefetched_cas_paths: Some(&prefetched),
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_without_mem_cache()
     .await
@@ -564,6 +568,7 @@ async fn falls_through_when_cafs_file_missing() {
         prefetched_cas_paths: None,
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_without_mem_cache()
     .await
@@ -621,6 +626,7 @@ async fn falls_through_when_digest_is_malformed() {
         prefetched_cas_paths: None,
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_without_mem_cache()
     .await
@@ -681,6 +687,7 @@ async fn falls_through_when_cafs_path_is_a_directory() {
         prefetched_cas_paths: None,
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_without_mem_cache()
     .await
@@ -751,6 +758,7 @@ async fn falls_through_when_cafs_path_is_a_symlink() {
         prefetched_cas_paths: None,
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_without_mem_cache()
     .await
@@ -966,6 +974,7 @@ async fn retries_then_succeeds_on_transient_5xx() {
         None,
         store_path,
         fast_retry_opts(),
+        &AuthHeaders::default(),
     )
     .await
     .expect("transient 503 should be followed by a successful retry");
@@ -1010,6 +1019,7 @@ async fn retries_integrity_mismatch_until_exhausted() {
         None,
         store_path,
         fast_retry_opts(),
+        &AuthHeaders::default(),
     )
     .await
     .expect_err("integrity mismatch should exhaust the retry budget");
@@ -1038,6 +1048,7 @@ async fn fails_fast_on_404() {
         None,
         store_path,
         fast_retry_opts(),
+        &AuthHeaders::default(),
     )
     .await
     .expect_err("404 must fail-fast without retry");
@@ -1075,6 +1086,7 @@ async fn retries_other_4xx_codes() {
         None,
         store_path,
         fast_retry_opts(),
+        &AuthHeaders::default(),
     )
     .await
     .expect_err("non-401/403/404 4xx should exhaust the retry budget");
@@ -1106,6 +1118,7 @@ async fn retry_exhaustion_returns_last_error() {
         None,
         store_path,
         fast_retry_opts(),
+        &AuthHeaders::default(),
     )
     .await
     .expect_err("permanent 500s should exhaust the retry budget");
@@ -1212,6 +1225,8 @@ fn run_with_mem_cache_does_not_deadlock_on_dashmap_shard_contention() {
                 let url1: &'static str = Box::leak(url1.into_boxed_str());
                 let url2: &'static str = Box::leak(url2.into_boxed_str());
 
+                let auth_headers: &'static AuthHeaders =
+                    Box::leak(Box::new(AuthHeaders::default()));
                 let make_dts = |url: &'static str| DownloadTarballToStore {
                     http_client: client,
                     store_dir: store_path,
@@ -1225,6 +1240,7 @@ fn run_with_mem_cache_does_not_deadlock_on_dashmap_shard_contention() {
                     prefetched_cas_paths: None,
                     verified_files_cache: SharedVerifiedFilesCache::default(),
                     retry_opts: RetryOpts { retries: 0, ..RetryOpts::default() },
+                    auth_headers,
                 };
 
                 // Spawn each task and yield once before the next so the
@@ -1280,9 +1296,17 @@ async fn zero_retries_makes_a_single_attempt() {
     let pkg_integrity = integrity(FASTIFY_ERROR_INTEGRITY);
     let opts = RetryOpts { retries: 0, ..fast_retry_opts() };
 
-    fetch_and_extract_with_retry(&client, &url, &pkg_integrity, None, store_path, opts)
-        .await
-        .expect_err("retries=0 must surface the first failure");
+    fetch_and_extract_with_retry(
+        &client,
+        &url,
+        &pkg_integrity,
+        None,
+        store_path,
+        opts,
+        &AuthHeaders::default(),
+    )
+    .await
+    .expect_err("retries=0 must surface the first failure");
     mock.assert_async().await;
     drop(store_dir_keep);
 }

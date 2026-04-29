@@ -11,6 +11,7 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
+pacquet-network   = { workspace = true }
 pacquet-store-dir = { workspace = true }
 
 home          = { workspace = true }
@@ -19,6 +20,7 @@ serde         = { workspace = true }
 serde-saphyr  = { workspace = true }
 serde_ini     = { workspace = true }
 smart-default = { workspace = true }
+tracing       = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

@@ -117,6 +117,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             package_id: &package_id,
             prefetched_cas_paths,
             retry_opts: retry_opts_from_config(config),
+            auth_headers: &config.auth_headers,
         }
         .run_without_mem_cache()
         .await

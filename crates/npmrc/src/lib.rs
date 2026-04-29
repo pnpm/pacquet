@@ -1,14 +1,19 @@
 mod custom_deserializer;
+mod env_replace;
 mod npmrc_auth;
 #[cfg(test)]
 mod test_env_guard;
 mod workspace_yaml;
 
+pub use env_replace::{EnvReplaceError, env_replace};
+pub use npmrc_auth::NpmrcAuth;
+
+use pacquet_network::AuthHeaders;
 use pacquet_store_dir::StoreDir;
 use pipe_trait::Pipe;
 use serde::Deserialize;
 use smart_default::SmartDefault;
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, sync::Arc};
 
 use crate::custom_deserializer::{
     bool_true, default_fetch_retries, default_fetch_retry_factor, default_fetch_retry_maxtimeout,
@@ -237,6 +242,17 @@ pub struct Npmrc {
     #[default(_code = "default_fetch_retry_maxtimeout()")]
     #[serde(default = "default_fetch_retry_maxtimeout", deserialize_with = "deserialize_u64")]
     pub fetch_retry_maxtimeout: u64,
+
+    /// URL-keyed `Authorization` header lookup, built from the parsed
+    /// `.npmrc` creds. Empty by default; populated by
+    /// [`NpmrcAuth::apply_to`] during [`Npmrc::current`].
+    ///
+    /// `serde(skip)` because it isn't a `.npmrc` key — it's the
+    /// post-processed result of merging credential keys into a
+    /// nerf-darted lookup table. The TLS / proxy bag will eventually
+    /// land here via the same shape.
+    #[serde(skip)]
+    pub auth_headers: Arc<AuthHeaders>,
 }
 
 impl Npmrc {
@@ -258,14 +274,16 @@ impl Npmrc {
     /// come from `pnpm-workspace.yaml` or CLI flags, matching pnpm 11.
     ///
     /// The yaml wins over `.npmrc` on any key it sets.
-    pub fn current<Error, CurrentDir, HomeDir, Default>(
+    pub fn current<Error, CurrentDir, HomeDir, Env, Default>(
         current_dir: CurrentDir,
         home_dir: HomeDir,
+        env: Env,
         default: Default,
     ) -> Self
     where
         CurrentDir: FnOnce() -> Result<PathBuf, Error>,
         HomeDir: FnOnce() -> Option<PathBuf>,
+        Env: Fn(&str) -> Option<String>,
         Default: FnOnce() -> Npmrc,
     {
         let mut npmrc = default();
@@ -277,9 +295,15 @@ impl Npmrc {
             .as_ref()
             .and_then(|dir| read_npmrc(dir))
             .or_else(|| home_dir().and_then(|dir| read_npmrc(&dir)));
-        if let Some(text) = auth_source {
-            crate::npmrc_auth::NpmrcAuth::from_ini(&text).apply_to(&mut npmrc);
-        }
+        let mut auth = auth_source
+            .map(|text| crate::npmrc_auth::NpmrcAuth::from_ini(&text, &env))
+            .unwrap_or_default();
+        // Phase 1 of auth wiring: write `registry` from `.npmrc` and
+        // surface env-replace warnings. Phase 2 (building the actual
+        // [`AuthHeaders`] map) waits until after `pnpm-workspace.yaml`
+        // has had a chance to override `registry`, so default-registry
+        // creds end up keyed at whatever URL pnpm would use to fetch.
+        auth.apply_registry_and_warn(&mut npmrc);
 
         // Layer pnpm-workspace.yaml overrides on top. Missing file or
         // unreadable yaml is silently ignored, matching .npmrc's
@@ -290,6 +314,12 @@ impl Npmrc {
             let base_dir = path.parent().unwrap_or(&start).to_path_buf();
             settings.apply_to(&mut npmrc, &base_dir);
         }
+
+        // Phase 2: now that `npmrc.registry` is final, materialise the
+        // [`AuthHeaders`] lookup. Even when no creds were configured
+        // we still build an empty table keyed off `registry` so
+        // `for_url()` lookups never panic.
+        auth.build_auth_headers(&mut npmrc);
 
         npmrc
     }
@@ -429,6 +459,14 @@ mod tests {
         assert_eq!(without_slash.registry, "https://yagiz.co/");
     }
 
+    /// Empty-env closure used by the tests below — every `.npmrc` we
+    /// hand `Npmrc::current` is free of `${VAR}` placeholders, so we
+    /// never need a real lookup. Keeping the closure local avoids
+    /// pulling `std::env::var` into the test's view of the world.
+    fn no_env(_: &str) -> Option<String> {
+        None
+    }
+
     #[test]
     pub fn npmrc_in_current_folder_applies_registry() {
         let tmp = tempdir().unwrap();
@@ -437,6 +475,7 @@ mod tests {
         let config = Npmrc::current(
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || unreachable!("shouldn't reach home dir"),
+            no_env,
             Npmrc::new,
         );
         assert_eq!(config.registry, "https://cwd.example/");
@@ -451,8 +490,12 @@ mod tests {
         let non_auth_ini = "symlink=false\nlockfile=true\nhoist=false\nnode-linker=hoisted\n";
         fs::write(tmp.path().join(".npmrc"), non_auth_ini).expect("write to .npmrc");
         let defaults = Npmrc::new();
-        let config =
-            Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new);
+        let config = Npmrc::current(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || None,
+            no_env,
+            Npmrc::new,
+        );
         assert_eq!(config.symlink, defaults.symlink);
         assert_eq!(config.lockfile, defaults.lockfile);
         assert_eq!(config.hoist, defaults.hoist);
@@ -471,8 +514,12 @@ mod tests {
         let ini = "fetch-retries=99\nfetch-retry-factor=99\nfetch-retry-mintimeout=99\nfetch-retry-maxtimeout=99\n";
         fs::write(tmp.path().join(".npmrc"), ini).expect("write to .npmrc");
         let defaults = Npmrc::new();
-        let config =
-            Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new);
+        let config = Npmrc::current(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || None,
+            no_env,
+            Npmrc::new,
+        );
         assert_eq!(config.fetch_retries, defaults.fetch_retries);
         assert_eq!(config.fetch_retry_factor, defaults.fetch_retry_factor);
         assert_eq!(config.fetch_retry_mintimeout, defaults.fetch_retry_mintimeout);
@@ -484,8 +531,12 @@ mod tests {
         let tmp = tempdir().unwrap();
         // write invalid utf-8 value to npmrc
         fs::write(tmp.path().join(".npmrc"), b"Hello \xff World").expect("write to .npmrc");
-        let config =
-            Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new);
+        let config = Npmrc::current(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || None,
+            no_env,
+            Npmrc::new,
+        );
         assert!(config.symlink); // default — invalid .npmrc is silently ignored
     }
 
@@ -498,9 +549,44 @@ mod tests {
         let config = Npmrc::current(
             || current_dir.path().to_path_buf().pipe(Ok::<_, ()>),
             || home_dir.path().to_path_buf().pipe(Some),
+            no_env,
             Npmrc::new,
         );
         assert_eq!(config.registry, "https://home.example/");
+    }
+
+    /// Default-registry creds (a bare `_authToken=…` in `.npmrc`)
+    /// must end up keyed at whatever registry pnpm would actually
+    /// hit, even when `pnpm-workspace.yaml` overrides the `registry`
+    /// after `.npmrc` is parsed. The two-phase
+    /// `apply_registry_and_warn` / `build_auth_headers` split inside
+    /// `Npmrc::current` is the mechanism that delays nerf-darting
+    /// until after the override has landed.
+    #[test]
+    pub fn default_creds_track_workspace_yaml_registry_override() {
+        let tmp = tempdir().unwrap();
+        fs::write(
+            tmp.path().join(".npmrc"),
+            "registry=https://from-npmrc.test/\n_authToken=top-secret\n",
+        )
+        .expect("write to .npmrc");
+        fs::write(tmp.path().join("pnpm-workspace.yaml"), "registry: https://from-yaml.test\n")
+            .expect("write to pnpm-workspace.yaml");
+        let config = Npmrc::current(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || unreachable!("shouldn't reach home dir"),
+            no_env,
+            Npmrc::new,
+        );
+        assert_eq!(config.registry, "https://from-yaml.test/");
+        // The creds should match against the YAML-overridden registry.
+        assert_eq!(
+            config.auth_headers.for_url("https://from-yaml.test/foo").as_deref(),
+            Some("Bearer top-secret"),
+        );
+        // And not against the original `.npmrc` registry, since the
+        // override is canonical.
+        assert_eq!(config.auth_headers.for_url("https://from-npmrc.test/foo"), None);
     }
 
     #[test]
@@ -516,6 +602,7 @@ mod tests {
         let config = Npmrc::current(
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || unreachable!("shouldn't reach home dir"),
+            no_env,
             Npmrc::new,
         );
         assert_eq!(config.registry, "https://from-yaml.test/");
@@ -530,7 +617,8 @@ mod tests {
             .expect("write to pnpm-workspace.yaml");
         // No `.npmrc` anywhere, but a parent dir has `pnpm-workspace.yaml` —
         // the yaml should still be applied.
-        let config = Npmrc::current(|| nested.clone().pipe(Ok::<_, ()>), || None, Npmrc::new);
+        let config =
+            Npmrc::current(|| nested.clone().pipe(Ok::<_, ()>), || None, no_env, Npmrc::new);
         assert!(!config.symlink);
     }
 
@@ -541,6 +629,7 @@ mod tests {
         let config = Npmrc::current(
             || current_dir.path().to_path_buf().pipe(Ok::<_, ()>),
             || home_dir.path().to_path_buf().pipe(Some),
+            no_env,
             || serde_ini::from_str("symlink=false").unwrap(),
         );
         assert!(!config.symlink);

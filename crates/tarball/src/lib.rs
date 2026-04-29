@@ -10,7 +10,7 @@ use dashmap::DashMap;
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use pacquet_fs::file_mode;
-use pacquet_network::ThrottledClient;
+use pacquet_network::{AuthHeaders, ThrottledClient};
 use pacquet_store_dir::{
     CafsFileInfo, PackageFilesIndex, SharedReadonlyStoreIndex, SharedVerifiedFilesCache, StoreDir,
     StoreIndexError, StoreIndexWriter, WriteCasFileError, store_index_key,
@@ -668,6 +668,13 @@ pub struct DownloadTarballToStore<'a> {
     /// with `package_integrity` to form the SQLite index key per pnpm v11's
     /// `storeIndexKey`.
     pub package_id: &'a str,
+    /// URL-keyed `Authorization` header lookup, built from the parsed
+    /// `.npmrc` creds. Resolved per request so a tarball served from a
+    /// different host than the registry still picks up its own header.
+    /// Mirrors pnpm's
+    /// [`getAuthHeaderByURI`](https://github.com/pnpm/pnpm/blob/601317e7a3/network/auth-header/src/index.ts)
+    /// pattern.
+    pub auth_headers: &'a AuthHeaders,
     /// Pre-fetched cache lookups built once at install start
     /// ([`prefetch_cas_paths`]). When `Some`, this is consulted first;
     /// the per-snapshot SQLite + integrity-check round-trip is skipped
@@ -728,6 +735,7 @@ async fn fetch_and_extract_once(
     package_integrity: &Integrity,
     package_unpacked_size: Option<usize>,
     store_dir: &'static StoreDir,
+    auth_headers: &AuthHeaders,
 ) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
     let network_error =
         |error| TarballError::FetchTarball(NetworkError { url: package_url.to_string(), error });
@@ -737,7 +745,16 @@ async fn fetch_and_extract_once(
     // batch of futures `connect()` while previous bodies are still
     // draining, breaking the bound on concurrent open sockets.
     let client = http_client.acquire().await;
-    let response_head = client.get(package_url).send().await.map_err(network_error)?;
+    let mut request = client.get(package_url);
+    // Match pnpm's tarball download path
+    // ([`remoteTarballFetcher.ts`](https://github.com/pnpm/pnpm/blob/601317e7a3/fetching/tarball-fetcher/src/remoteTarballFetcher.ts#L66-L70)):
+    // resolve the per-URL auth header and attach it. Tarball hosts that
+    // differ from the metadata host still pick up the header keyed at
+    // the registry's nerf-darted URI.
+    if let Some(value) = auth_headers.for_url(package_url) {
+        request = request.header("authorization", value);
+    }
+    let response_head = request.send().await.map_err(network_error)?;
 
     let status = response_head.status();
     if !status.is_success() {
@@ -855,6 +872,7 @@ async fn fetch_and_extract_with_retry(
     package_unpacked_size: Option<usize>,
     store_dir: &'static StoreDir,
     retry_opts: RetryOpts,
+    auth_headers: &AuthHeaders,
 ) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
     let mut attempt: u32 = 0;
     loop {
@@ -864,6 +882,7 @@ async fn fetch_and_extract_with_retry(
             package_integrity,
             package_unpacked_size,
             store_dir,
+            auth_headers,
         )
         .await;
         match result {
@@ -959,6 +978,7 @@ impl<'a> DownloadTarballToStore<'a> {
             verify_store_integrity,
             prefetched_cas_paths,
             retry_opts,
+            auth_headers,
             ..
         } = self;
         let store_index = self.store_index.clone();
@@ -1037,6 +1057,7 @@ impl<'a> DownloadTarballToStore<'a> {
             package_unpacked_size,
             store_dir,
             retry_opts,
+            auth_headers,
         )
         .await?;
 

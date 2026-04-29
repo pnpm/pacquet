@@ -1863,6 +1863,7 @@ name = "pacquet-network"
 version = "0.0.1"
 dependencies = [
  "pipe-trait",
+ "pretty_assertions",
  "reqwest",
  "tokio",
 ]
@@ -1872,6 +1873,7 @@ name = "pacquet-npmrc"
 version = "0.0.1"
 dependencies = [
  "home",
+ "pacquet-network",
  "pacquet-store-dir",
  "pipe-trait",
  "pretty_assertions",
@@ -1880,6 +1882,7 @@ dependencies = [
  "serde_ini",
  "smart-default",
  "tempfile",
+ "tracing",
 ]
 
 [[package]]
