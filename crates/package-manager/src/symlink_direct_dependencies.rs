@@ -1,11 +1,11 @@
 use crate::symlink_package;
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_lockfile::{Lockfile, PkgName, PkgNameVerPeer, ProjectSnapshot};
+use pacquet_lockfile::{Lockfile, PackageKey, PkgName, PkgNameVerPeer, ProjectSnapshot};
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::DependencyGroup;
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// This subroutine creates symbolic links in the `node_modules` directory for
 /// the direct dependencies. The targets of the link are the virtual directories.
@@ -21,6 +21,9 @@ where
     pub config: &'static Npmrc,
     pub importers: &'a HashMap<String, ProjectSnapshot>,
     pub dependency_groups: DependencyGroupList,
+    /// Snapshot keys that were skipped due to platform incompatibility.
+    /// Symlinks to these packages are not created.
+    pub skipped_snapshots: &'a HashSet<PackageKey>,
 }
 
 /// Error type of [`SymlinkDirectDependencies`].
@@ -39,7 +42,8 @@ where
 {
     /// Execute the subroutine.
     pub fn run(self) -> Result<(), SymlinkDirectDependenciesError> {
-        let SymlinkDirectDependencies { config, importers, dependency_groups } = self;
+        let SymlinkDirectDependencies { config, importers, dependency_groups, skipped_snapshots } =
+            self;
 
         let project_snapshot = importers.get(Lockfile::ROOT_IMPORTER_KEY).ok_or_else(|| {
             SymlinkDirectDependenciesError::MissingRootImporter {
@@ -49,6 +53,10 @@ where
 
         project_snapshot
             .dependencies_by_groups(dependency_groups)
+            .filter(|(name, spec)| {
+                let key = PkgNameVerPeer::new(PkgName::clone(name), spec.version.clone());
+                !skipped_snapshots.contains(&key)
+            })
             .collect::<Vec<_>>()
             .par_iter()
             .for_each(|(name, spec)| {

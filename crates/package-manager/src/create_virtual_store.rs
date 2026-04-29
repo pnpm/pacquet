@@ -10,7 +10,7 @@ use pacquet_npmrc::Npmrc;
 use pacquet_store_dir::{StoreIndex, StoreIndexWriter, store_index_key};
 use pacquet_tarball::prefetch_cas_paths;
 use pipe_trait::Pipe;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// This subroutine generates filesystem layout for the virtual store at `node_modules/.pacquet`.
 #[must_use]
@@ -19,6 +19,10 @@ pub struct CreateVirtualStore<'a> {
     pub config: &'static Npmrc,
     pub packages: Option<&'a HashMap<PackageKey, PackageMetadata>>,
     pub snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,
+    /// Snapshot keys that should be skipped because they are optional
+    /// dependencies that are incompatible with the current platform.
+    /// Computed by [`InstallFrozenLockfile`] before calling this subroutine.
+    pub skipped_snapshots: &'a HashSet<PackageKey>,
 }
 
 /// Error type of [`CreateVirtualStore`].
@@ -43,7 +47,8 @@ pub enum CreateVirtualStoreError {
 impl<'a> CreateVirtualStore<'a> {
     /// Execute the subroutine.
     pub async fn run(self) -> Result<(), CreateVirtualStoreError> {
-        let CreateVirtualStore { http_client, config, packages, snapshots } = self;
+        let CreateVirtualStore { http_client, config, packages, snapshots, skipped_snapshots } =
+            self;
 
         let Some(snapshots) = snapshots else {
             // No snapshots to install. If the lockfile also has no project deps
@@ -162,6 +167,18 @@ impl<'a> CreateVirtualStore<'a> {
         type SnapshotWithCacheKey<'a> = (&'a PackageKey, &'a SnapshotEntry, Option<String>);
         let snapshot_entries: Vec<SnapshotWithCacheKey<'_>> = snapshots
             .iter()
+            .filter(|(snapshot_key, _)| {
+                if skipped_snapshots.contains(snapshot_key) {
+                    tracing::debug!(
+                        target: "pacquet::install",
+                        %snapshot_key,
+                        "skipping optional snapshot: incompatible with current platform",
+                    );
+                    false
+                } else {
+                    true
+                }
+            })
             .map(|(snapshot_key, snapshot)| {
                 snapshot_cache_key(snapshot_key, packages).map(|key| (snapshot_key, snapshot, key))
             })
