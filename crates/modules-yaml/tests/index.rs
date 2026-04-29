@@ -189,15 +189,15 @@ fn write_sorts_skipped_array() {
 #[test]
 fn read_propagates_non_not_found_io_error() {
     use std::io;
-    struct FailingFs;
-    impl FsReadToString for FailingFs {
+    struct FailingRead;
+    impl FsReadToString for FailingRead {
         fn read_to_string(_: &Path) -> io::Result<String> {
             Err(io::Error::new(io::ErrorKind::PermissionDenied, "mocked"))
         }
     }
 
     let modules_dir = Path::new("/dev/null/unused");
-    let err = read_modules_manifest::<FailingFs>(modules_dir).expect_err("expected error");
+    let err = read_modules_manifest::<FailingRead>(modules_dir).expect_err("expected error");
     eprintln!("error: {err}");
     assert!(matches!(err, pacquet_modules_yaml::ReadModulesManifestError::ReadFile { .. }));
 }
@@ -207,15 +207,15 @@ fn read_propagates_non_not_found_io_error() {
 #[test]
 fn read_propagates_parse_error() {
     use std::io;
-    struct BadYamlFs;
-    impl FsReadToString for BadYamlFs {
+    struct BadYamlContent;
+    impl FsReadToString for BadYamlContent {
         fn read_to_string(_: &Path) -> io::Result<String> {
             Ok("{ this is not valid yaml or json".to_string())
         }
     }
 
     let modules_dir = Path::new("/dev/null/unused");
-    let err = read_modules_manifest::<BadYamlFs>(modules_dir).expect_err("expected error");
+    let err = read_modules_manifest::<BadYamlContent>(modules_dir).expect_err("expected error");
     eprintln!("error: {err}");
     assert!(matches!(err, pacquet_modules_yaml::ReadModulesManifestError::ParseYaml { .. }));
 }
@@ -226,15 +226,15 @@ fn read_propagates_parse_error() {
 #[test]
 fn read_returns_none_for_null_document() {
     use std::io;
-    struct NullDocFs;
-    impl FsReadToString for NullDocFs {
+    struct NullDocContent;
+    impl FsReadToString for NullDocContent {
         fn read_to_string(_: &Path) -> io::Result<String> {
             Ok("null\n".to_string())
         }
     }
 
     let modules_dir = Path::new("/dev/null/unused");
-    let result = read_modules_manifest::<NullDocFs>(modules_dir).expect("read manifest");
+    let result = read_modules_manifest::<NullDocContent>(modules_dir).expect("read manifest");
     assert_eq!(result, None);
 }
 
@@ -245,20 +245,20 @@ fn read_returns_none_for_null_document() {
 #[test]
 fn write_propagates_create_dir_error() {
     use std::io;
-    struct FailingMkdirFs;
-    impl FsCreateDirAll for FailingMkdirFs {
+    struct FailingMkdir;
+    impl FsCreateDirAll for FailingMkdir {
         fn create_dir_all(_: &Path) -> io::Result<()> {
             Err(io::Error::new(io::ErrorKind::PermissionDenied, "mocked"))
         }
     }
-    impl FsWrite for FailingMkdirFs {
+    impl FsWrite for FailingMkdir {
         fn write(_: &Path, _: &[u8]) -> io::Result<()> {
             unreachable!("write must not be called when create_dir_all fails");
         }
     }
 
     let modules_dir = Path::new("/dev/null/unused");
-    let err = write_modules_manifest::<FailingMkdirFs>(modules_dir, &json!({}))
+    let err = write_modules_manifest::<FailingMkdir>(modules_dir, &json!({}))
         .expect_err("expected error");
     eprintln!("error: {err}");
     assert!(matches!(err, pacquet_modules_yaml::WriteModulesManifestError::CreateDir { .. }));
@@ -269,20 +269,20 @@ fn write_propagates_create_dir_error() {
 #[test]
 fn write_propagates_write_error() {
     use std::io;
-    struct FailingWriteFs;
-    impl FsCreateDirAll for FailingWriteFs {
+    struct FailingWrite;
+    impl FsCreateDirAll for FailingWrite {
         fn create_dir_all(_: &Path) -> io::Result<()> {
             Ok(())
         }
     }
-    impl FsWrite for FailingWriteFs {
+    impl FsWrite for FailingWrite {
         fn write(_: &Path, _: &[u8]) -> io::Result<()> {
             Err(io::Error::other("mocked write failure"))
         }
     }
 
     let modules_dir = Path::new("/dev/null/unused");
-    let err = write_modules_manifest::<FailingWriteFs>(modules_dir, &json!({}))
+    let err = write_modules_manifest::<FailingWrite>(modules_dir, &json!({}))
         .expect_err("expected error");
     eprintln!("error: {err}");
     assert!(matches!(err, pacquet_modules_yaml::WriteModulesManifestError::WriteFile { .. }));
