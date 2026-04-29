@@ -52,8 +52,9 @@ pub fn pkg_owns_bin(bin_name: &str, pkg_name: &str) -> bool {
 /// 2. `bin` as an object. Each `(commandName, relativePath)` becomes a
 ///    command, with `@scope/` stripped from the key.
 /// 3. Fallback: `directories.bin` — every regular file under the directory
-///    becomes a command. Pacquet's first iteration omits this path; pnpm tests
-///    that exercise it are listed in `plans/TEST_PORTING.md`.
+///    becomes a command, with the file basename as the bin name. The
+///    directory itself must resolve under `pkg_path` (`is_subdir`); a
+///    `directories.bin` that escapes via `..` returns an empty list.
 ///
 /// Validation, exactly mirroring pnpm:
 ///
@@ -66,10 +67,45 @@ pub fn get_bins_from_package_manifest(manifest: &Value, pkg_path: &Path) -> Vec<
     if let Some(bin) = manifest.get("bin") {
         return commands_from_bin(bin, pkg_name, pkg_path);
     }
-    // `directories.bin` deferred — see the module-level note. Returning an
-    // empty list matches pnpm's behavior when neither `bin` nor an existing
-    // `directories.bin` is present.
+    if let Some(bin_dir_rel) =
+        manifest.get("directories").and_then(|d| d.get("bin")).and_then(Value::as_str)
+    {
+        return commands_from_directories_bin(bin_dir_rel, pkg_path);
+    }
     Vec::new()
+}
+
+/// Walk every regular file under `<pkg_path>/<bin_dir_rel>` and emit one
+/// [`Command`] per file. Mirrors pnpm's `findFiles` + the `directories.bin`
+/// branch in `getBinsFromPackageManifest`:
+/// <https://github.com/pnpm/pnpm/blob/4750fd370c/bins/resolver/src/index.ts>.
+///
+/// Symlinks are not followed — pnpm uses `tinyglobby` with
+/// `followSymbolicLinks: false`. Missing directory degrades to an empty
+/// list (pnpm's `ENOENT` short-circuit).
+fn commands_from_directories_bin(bin_dir_rel: &str, pkg_path: &Path) -> Vec<Command> {
+    let bin_dir = pkg_path.join(bin_dir_rel);
+    if !is_subdir(pkg_path, &bin_dir) {
+        return Vec::new();
+    }
+    if !bin_dir.exists() {
+        return Vec::new();
+    }
+    let mut commands = Vec::new();
+    for entry in walkdir::WalkDir::new(&bin_dir).follow_links(false).into_iter().flatten() {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let Some(name) = entry.path().file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        // Same URL-safe-name guard as the keyed-bin path.
+        if !is_safe_bin_name(name) {
+            continue;
+        }
+        commands.push(Command { name: name.to_string(), path: entry.path().to_path_buf() });
+    }
+    commands
 }
 
 fn commands_from_bin(bin: &Value, pkg_name: Option<&str>, pkg_path: &Path) -> Vec<Command> {

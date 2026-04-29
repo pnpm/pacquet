@@ -1777,6 +1777,7 @@ dependencies = [
  "rayon",
  "serde_json",
  "tempfile",
+ "walkdir",
 ]
 
 [[package]]

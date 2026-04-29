@@ -183,6 +183,106 @@ pub fn generate_sh_shim(
     sh
 }
 
+/// Generate the Windows `.cmd` shim contents for `target_path`. Mirrors
+/// `generateCmdShim` in upstream cmd-shim. Pacquet skips the
+/// `nodePath`/`prependToPath`/`nodeExecPath`/`progArgs` features that
+/// upstream supports — we only ever write a "plain" cmd shim.
+///
+/// CRLF line endings are part of the on-disk contract for `.cmd` files
+/// on Windows, so the template uses literal `\r\n`.
+pub fn generate_cmd_shim(
+    target_path: &Path,
+    shim_path: &Path,
+    runtime: Option<&ScriptRuntime>,
+) -> String {
+    let cmd_target_rel = relative_target_windows(target_path, shim_path);
+    let quoted_target = if Path::new(&cmd_target_rel).is_absolute() {
+        format!("\"{cmd_target_rel}\"")
+    } else {
+        format!("\"%~dp0\\{cmd_target_rel}\"")
+    };
+
+    let mut cmd = String::from("@SETLOCAL\r\n");
+
+    match runtime {
+        Some(ScriptRuntime { prog: Some(prog), args }) => {
+            let long_prog = format!("\"%~dp0\\{prog}.exe\"");
+            cmd.push_str(&format!(
+                "@IF EXIST {long_prog} (\r\n  {long_prog} {args} {quoted_target} %*\r\n) ELSE (\r\n  @SET PATHEXT=%PATHEXT:;.JS;=;%\r\n  {prog} {args} {quoted_target} %*\r\n)\r\n",
+            ));
+        }
+        runtime_opt => {
+            let args = runtime_opt.map(|r| r.args.as_str()).unwrap_or("");
+            // No runtime detected — exec the target directly.
+            cmd.push_str(&format!("@{quoted_target} {args} %*\r\n"));
+        }
+    }
+
+    cmd
+}
+
+/// Generate the cross-shell PowerShell `.ps1` shim contents for
+/// `target_path`. Mirrors `generatePwshShim` in upstream cmd-shim,
+/// minus the `nodePath`/`prependToPath`/`nodeExecPath`/`progArgs`
+/// branches we don't use. The shim self-detects Windows vs. POSIX-ish
+/// pwsh and adjusts the executable suffix accordingly.
+pub fn generate_pwsh_shim(
+    target_path: &Path,
+    shim_path: &Path,
+    runtime: Option<&ScriptRuntime>,
+) -> String {
+    let sh_target = relative_target(target_path, shim_path);
+    let quoted_target = if Path::new(&sh_target).is_absolute() {
+        format!("\"{sh_target}\"")
+    } else {
+        format!("\"$basedir/{sh_target}\"")
+    };
+
+    let mut pwsh = String::from(PWSH_SHIM_HEADER);
+
+    match runtime {
+        Some(ScriptRuntime { prog: Some(prog), args }) => {
+            let long_prog = format!("\"$basedir/{prog}$exe\"");
+            let prog_quoted = format!("\"{prog}$exe\"");
+            pwsh.push_str(&format!(
+                "\n$ret=0\nif (Test-Path {long_prog}) {{\n  # Support pipeline input\n  if ($MyInvocation.ExpectingInput) {{\n    $input | & {long_prog} {args} {quoted_target} $args\n  }} else {{\n    & {long_prog} {args} {quoted_target} $args\n  }}\n  $ret=$LASTEXITCODE\n}} else {{\n  # Support pipeline input\n  if ($MyInvocation.ExpectingInput) {{\n    $input | & {prog_quoted} {args} {quoted_target} $args\n  }} else {{\n    & {prog_quoted} {args} {quoted_target} $args\n  }}\n  $ret=$LASTEXITCODE\n}}\nexit $ret\n",
+            ));
+        }
+        runtime_opt => {
+            let args = runtime_opt.map(|r| r.args.as_str()).unwrap_or("");
+            pwsh.push_str(&format!(
+                "\n# Support pipeline input\nif ($MyInvocation.ExpectingInput) {{\n  $input | & {quoted_target} {args} $args\n}} else {{\n  & {quoted_target} {args} $args\n}}\nexit $LASTEXITCODE\n",
+            ));
+        }
+    }
+
+    pwsh
+}
+
+/// `.ps1` template prelude — sets up `$basedir` and `$exe` exactly like
+/// upstream's `generatePwshShim`.
+const PWSH_SHIM_HEADER: &str = "\
+#!/usr/bin/env pwsh
+$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent
+
+$exe=\"\"
+if ($PSVersionTable.PSVersion -lt \"6.0\" -or $IsWindows) {
+  # Fix case when both the Windows and Linux builds of Node
+  # are installed in the same directory
+  $exe=\".exe\"
+}";
+
+/// Compute the Windows-style relative path from `shim_path`'s parent
+/// directory to `target_path`. The `.cmd` shim uses backslashes, so we
+/// convert the lexical-relative result. Falls back to the absolute path
+/// if the relative computation fails — same shape as
+/// [`relative_target`] but with the slash direction flipped.
+fn relative_target_windows(target_path: &Path, shim_path: &Path) -> String {
+    let shim_dir = shim_path.parent().unwrap_or_else(|| Path::new(""));
+    let rel = relative_path_from(shim_dir, target_path);
+    rel.to_string_lossy().replace('/', "\\")
+}
+
 const SH_SHIM_HEADER: &str = "\
 #!/bin/sh
 basedir=$(dirname \"$(echo \"$0\" | sed -e 's,\\\\,/,g')\")

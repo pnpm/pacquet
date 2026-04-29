@@ -1,6 +1,9 @@
 use crate::{
     bin_resolver::{Command, get_bins_from_package_manifest, pkg_owns_bin},
-    shim::{RealFs, generate_sh_shim, is_shim_pointing_at, search_script_runtime},
+    shim::{
+        RealFs, generate_cmd_shim, generate_pwsh_shim, generate_sh_shim, is_shim_pointing_at,
+        search_script_runtime,
+    },
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
@@ -231,16 +234,26 @@ fn write_shim(target_path: &Path, shim_path: &Path) -> Result<(), LinkBinsError>
         LinkBinsError::ProbeShimSource { path: target_path.to_path_buf(), error }
     })?;
 
-    let body = generate_sh_shim(target_path, shim_path, runtime.as_ref());
+    // Idempotent skip when the existing `.sh` shim already points at
+    // the right target. We only check the `.sh` flavor; if it's correct,
+    // the `.cmd`/`.ps1` siblings were written together and are also
+    // correct (and if they aren't, rewriting them is cheap).
+    let already_correct = matches!(fs::read_to_string(shim_path), Ok(existing) if is_shim_pointing_at(&existing, target_path));
 
-    if let Ok(existing) = fs::read_to_string(shim_path)
-        && is_shim_pointing_at(&existing, target_path)
-    {
-        return Ok(());
+    let sh_body = generate_sh_shim(target_path, shim_path, runtime.as_ref());
+    let cmd_path = with_extension_appended(shim_path, "cmd");
+    let ps1_path = with_extension_appended(shim_path, "ps1");
+    let cmd_body = generate_cmd_shim(target_path, &cmd_path, runtime.as_ref());
+    let ps1_body = generate_pwsh_shim(target_path, &ps1_path, runtime.as_ref());
+
+    if !already_correct {
+        fs::write(shim_path, sh_body.as_bytes())
+            .map_err(|error| LinkBinsError::WriteShim { path: shim_path.to_path_buf(), error })?;
+        fs::write(&cmd_path, cmd_body.as_bytes())
+            .map_err(|error| LinkBinsError::WriteShim { path: cmd_path.clone(), error })?;
+        fs::write(&ps1_path, ps1_body.as_bytes())
+            .map_err(|error| LinkBinsError::WriteShim { path: ps1_path.clone(), error })?;
     }
-
-    fs::write(shim_path, body.as_bytes())
-        .map_err(|error| LinkBinsError::WriteShim { path: shim_path.to_path_buf(), error })?;
 
     #[cfg(unix)]
     {
@@ -260,6 +273,18 @@ fn write_shim(target_path: &Path, shim_path: &Path) -> Result<(), LinkBinsError>
     }
 
     Ok(())
+}
+
+/// Append `<ext>` to `path` as a *new* extension segment (`foo` →
+/// `foo.cmd`), regardless of any existing extension. `Path::with_extension`
+/// would *replace* the existing extension, which is wrong for our case —
+/// the bin name `tsc` keeps its own `tsc` and gains a sibling `tsc.cmd`,
+/// not turn into `tsc.cmd` losing the original `.sh` flavor.
+fn with_extension_appended(path: &Path, ext: &str) -> std::path::PathBuf {
+    let mut result = path.as_os_str().to_owned();
+    result.push(".");
+    result.push(ext);
+    result.into()
 }
 
 #[cfg(test)]

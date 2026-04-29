@@ -1,5 +1,7 @@
 use super::*;
 use serde_json::json;
+use std::fs;
+use tempfile::tempdir;
 
 #[test]
 fn bin_as_string_uses_package_name() {
@@ -215,4 +217,123 @@ fn bin_object_with_non_string_value_is_skipped() {
     let commands = get_bins_from_package_manifest(&manifest, Path::new("/p"));
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].name, "good");
+}
+
+/// Mirrors pnpm's "find all the bin files from a bin directory"
+/// (<https://github.com/pnpm/pnpm/blob/4750fd370c/bins/resolver/test/index.ts#L37-L57>).
+/// Every regular file under `directories.bin`, including files in
+/// subdirectories, becomes a command.
+#[test]
+fn directories_bin_walks_files_recursively() {
+    let tmp = tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    let bin_dir = pkg.join("bin-dir");
+    fs::create_dir_all(bin_dir.join("subdir")).unwrap();
+    fs::write(bin_dir.join("rootBin.js"), "").unwrap();
+    fs::write(bin_dir.join("subdir/subBin.js"), "").unwrap();
+
+    let manifest = json!({
+        "name": "bin-dir",
+        "version": "1.0.0",
+        "directories": {"bin": "bin-dir"},
+    });
+    let mut commands = get_bins_from_package_manifest(&manifest, &pkg);
+    commands.sort_by(|a, b| a.name.cmp(&b.name));
+    assert_eq!(commands.len(), 2);
+    assert_eq!(commands[0].name, "rootBin.js");
+    assert_eq!(commands[0].path, bin_dir.join("rootBin.js"));
+    assert_eq!(commands[1].name, "subBin.js");
+    assert_eq!(commands[1].path, bin_dir.join("subdir/subBin.js"));
+}
+
+/// Mirrors pnpm's "skip directories.bin with path traversal"
+/// (<https://github.com/pnpm/pnpm/blob/4750fd370c/bins/resolver/test/index.ts#L150-L170>).
+/// `directories.bin: '../../target'` must be rejected by the `is_subdir`
+/// guard.
+#[test]
+fn directories_bin_rejects_path_traversal() {
+    let tmp = tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    fs::create_dir_all(&pkg).unwrap();
+    // Create a sibling outside the package; the traversal value would
+    // otherwise reach this directory.
+    fs::create_dir_all(tmp.path().join("siblings")).unwrap();
+
+    let manifest = json!({
+        "name": "malicious",
+        "version": "1.0.0",
+        "directories": {"bin": "../../../../tmp/target"},
+    });
+    assert!(get_bins_from_package_manifest(&manifest, &pkg).is_empty());
+
+    let manifest = json!({
+        "name": "malicious",
+        "version": "1.0.0",
+        "directories": {"bin": "../siblings"},
+    });
+    assert!(get_bins_from_package_manifest(&manifest, &pkg).is_empty());
+}
+
+/// Mirrors pnpm's `path-traversal.test.ts`
+/// (<https://github.com/pnpm/pnpm/blob/4750fd370c/bins/resolver/test/path-traversal.test.ts>).
+/// A `directories.bin` value that resolves outside the package root via
+/// `..` must yield no commands, even though the target dir exists and
+/// has files in it.
+#[test]
+fn directories_bin_rejects_real_path_traversal() {
+    let tmp = tempdir().unwrap();
+    let secret_dir = tmp.path().join("secret");
+    fs::create_dir_all(&secret_dir).unwrap();
+    fs::write(secret_dir.join("secret.sh"), "echo secret").unwrap();
+
+    let pkg = tmp.path().join("pkg");
+    fs::create_dir_all(&pkg).unwrap();
+
+    // From `<tmp>/pkg`, `../secret` reaches `<tmp>/secret`. The
+    // `is_subdir` guard must reject this even though the resolved path
+    // exists and contains files.
+    let manifest = json!({
+        "name": "malicious",
+        "version": "1.0.0",
+        "directories": {"bin": "../secret"},
+    });
+    assert!(get_bins_from_package_manifest(&manifest, &pkg).is_empty());
+}
+
+/// `directories.bin` pointing at a non-existent subdirectory must
+/// degrade to an empty list (pnpm's `ENOENT` swallowing in `findFiles`).
+#[test]
+fn directories_bin_missing_directory_returns_empty() {
+    let tmp = tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    fs::create_dir_all(&pkg).unwrap();
+    let manifest = json!({
+        "name": "x",
+        "version": "1.0.0",
+        "directories": {"bin": "missing-dir"},
+    });
+    assert!(get_bins_from_package_manifest(&manifest, &pkg).is_empty());
+}
+
+/// `bin` field takes precedence over `directories.bin` when both are
+/// present. Mirrors upstream's order-of-checks in
+/// `getBinsFromPackageManifest`.
+#[test]
+fn bin_field_takes_precedence_over_directories_bin() {
+    let tmp = tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    let bin_dir = pkg.join("legacy-bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    fs::write(bin_dir.join("ignored.js"), "").unwrap();
+    fs::write(pkg.join("primary.js"), "").unwrap();
+
+    let manifest = json!({
+        "name": "tool",
+        "version": "1.0.0",
+        "bin": "primary.js",
+        "directories": {"bin": "legacy-bin"},
+    });
+    let commands = get_bins_from_package_manifest(&manifest, &pkg);
+    assert_eq!(commands.len(), 1, "bin field wins, directories.bin is ignored");
+    assert_eq!(commands[0].name, "tool");
 }

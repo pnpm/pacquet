@@ -310,3 +310,73 @@ fn real_fs_read_head_propagates_not_found() {
     let err = RealFs::read_head(Path::new("/no/such/file"), &mut buf).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::NotFound);
 }
+
+/// `generate_cmd_shim` produces a Windows `.cmd` shim with CRLF line
+/// endings, `%~dp0\<rel>` for the target, and the
+/// `@IF EXIST … (… ) ELSE ( @SET PATHEXT=... … )` exec block matching
+/// upstream's template.
+#[test]
+fn generate_cmd_shim_matches_pnpm_template() {
+    let target = Path::new("/proj/node_modules/typescript/bin/tsc");
+    let shim = Path::new("/proj/node_modules/.bin/tsc.cmd");
+    let runtime = ScriptRuntime { prog: Some("node".into()), args: String::new() };
+    let body = generate_cmd_shim(target, shim, Some(&runtime));
+
+    assert!(body.starts_with("@SETLOCAL\r\n"), "must start with @SETLOCAL CRLF");
+    assert!(
+        body.contains("@IF EXIST \"%~dp0\\node.exe\" (\r\n  \"%~dp0\\node.exe\"  \"%~dp0\\..\\typescript\\bin\\tsc\" %*\r\n) ELSE (\r\n  @SET PATHEXT=%PATHEXT:;.JS;=;%\r\n  node  \"%~dp0\\..\\typescript\\bin\\tsc\" %*\r\n)\r\n"),
+        "exec block must match pnpm's generateCmdShim template, body was:\n{body}",
+    );
+}
+
+/// `generate_cmd_shim` with no runtime exec's the target directly via
+/// the `@<target> %*` shape.
+#[test]
+fn generate_cmd_shim_emits_direct_exec_when_no_runtime() {
+    let target = Path::new("/p/cli");
+    let shim = Path::new("/p/.bin/cli.cmd");
+    let body = generate_cmd_shim(target, shim, None);
+    assert!(
+        body.contains("@\"%~dp0\\..\\cli\""),
+        "no-runtime arm must exec the target directly, body:\n{body}",
+    );
+}
+
+/// `generate_pwsh_shim` produces a `.ps1` shim with the `$basedir`
+/// header, `Test-Path "$basedir/<prog>$exe"` exec block, and pipeline-
+/// input handling matching upstream.
+#[test]
+fn generate_pwsh_shim_matches_pnpm_template() {
+    let target = Path::new("/proj/node_modules/typescript/bin/tsc");
+    let shim = Path::new("/proj/node_modules/.bin/tsc.ps1");
+    let runtime = ScriptRuntime { prog: Some("node".into()), args: String::new() };
+    let body = generate_pwsh_shim(target, shim, Some(&runtime));
+
+    assert!(body.starts_with("#!/usr/bin/env pwsh\n"), "ps1 shim must start with pwsh shebang");
+    assert!(
+        body.contains("$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent"),
+        "must declare $basedir from MyInvocation",
+    );
+    assert!(body.contains("$exe=\".exe\""), "Windows-detection branch must set $exe to .exe");
+    assert!(
+        body.contains(
+            "if (Test-Path \"$basedir/node$exe\") {\n  # Support pipeline input\n  if ($MyInvocation.ExpectingInput) {\n    $input | & \"$basedir/node$exe\"  \"$basedir/../typescript/bin/tsc\" $args\n  } else {\n    & \"$basedir/node$exe\"  \"$basedir/../typescript/bin/tsc\" $args\n  }",
+        ),
+        "exec-with-basedir-prog block must match pnpm's generatePwshShim template, body was:\n{body}",
+    );
+    assert!(body.ends_with("exit $ret\n"));
+}
+
+/// `generate_pwsh_shim` with no runtime falls back to executing the
+/// target directly with `$LASTEXITCODE` propagation.
+#[test]
+fn generate_pwsh_shim_emits_direct_exec_when_no_runtime() {
+    let target = Path::new("/p/cli");
+    let shim = Path::new("/p/.bin/cli.ps1");
+    let body = generate_pwsh_shim(target, shim, None);
+    assert!(
+        body.contains("& \"$basedir/../cli\""),
+        "no-runtime arm must exec the target directly, body:\n{body}",
+    );
+    assert!(body.ends_with("exit $LASTEXITCODE\n"));
+}

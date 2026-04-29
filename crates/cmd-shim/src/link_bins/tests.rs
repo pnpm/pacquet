@@ -2,6 +2,47 @@ use super::*;
 use serde_json::json;
 use tempfile::tempdir;
 
+/// All three shim flavors (`.sh` / no-extension, `.cmd`, `.ps1`) must
+/// be written for every linked bin so a project installed on Linux
+/// remains usable on Windows after a `git clone`. Mirrors pnpm's
+/// always-write-all-flavors behavior.
+#[test]
+fn writes_all_three_shim_flavors_per_bin() {
+    let tmp = tempdir().unwrap();
+    let pkg_dir = tmp.path().join("node_modules/foo");
+    fs::create_dir_all(&pkg_dir).unwrap();
+    fs::write(
+        pkg_dir.join("package.json"),
+        json!({"name": "foo", "version": "1.0.0", "bin": "cli.js"}).to_string(),
+    )
+    .unwrap();
+    fs::write(pkg_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+
+    let bins_dir = tmp.path().join("node_modules/.bin");
+    let manifest_value: Value =
+        serde_json::from_slice(&fs::read(pkg_dir.join("package.json")).unwrap()).unwrap();
+    link_bins_of_packages(
+        &[PackageBinSource { location: pkg_dir.clone(), manifest: manifest_value }],
+        &bins_dir,
+    )
+    .unwrap();
+
+    let sh = bins_dir.join("foo");
+    let cmd = bins_dir.join("foo.cmd");
+    let ps1 = bins_dir.join("foo.ps1");
+    assert!(sh.exists(), "missing .sh shim");
+    assert!(cmd.exists(), "missing .cmd shim");
+    assert!(ps1.exists(), "missing .ps1 shim");
+
+    let cmd_body = fs::read_to_string(&cmd).unwrap();
+    assert!(cmd_body.starts_with("@SETLOCAL\r\n"), "cmd shim must use CRLF SETLOCAL");
+    assert!(cmd_body.contains("\"%~dp0\\..\\foo\\cli.js\""), "cmd target should be windows-style");
+
+    let ps1_body = fs::read_to_string(&ps1).unwrap();
+    assert!(ps1_body.starts_with("#!/usr/bin/env pwsh\n"));
+    assert!(ps1_body.contains("\"$basedir/../foo/cli.js\""));
+}
+
 /// End-to-end exercise: a package with a `bin` field has a shim written
 /// into the bins dir, the shim references the correct relative path,
 /// and (on Unix) both the shim and the target are executable.
