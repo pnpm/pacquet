@@ -102,6 +102,15 @@ Warnings are errors (`--deny warnings` in lint). Do not silence them with
 - When porting behavior from pnpm, port the relevant pnpm tests too (as Rust
   tests) whenever they translate. Matching test coverage is the easiest way
   to prove behavioral parity.
+- The active test-porting plan lives in
+  [`plans/TEST_PORTING.md`](./plans/TEST_PORTING.md). It enumerates the
+  upstream TypeScript tests scheduled to be ported (with file paths and line
+  numbers) and the conventions expected of the ports — `known_failures`
+  modules, `pacquet_testing_utils::allow_known_failure!` at the
+  not-yet-implemented boundary, and the practice of temporarily breaking the
+  subject under test to verify the ported test actually catches the
+  regression. Consult it before adding ported tests, and update its
+  checkboxes as items land.
 
 ### Running tests narrowly
 
