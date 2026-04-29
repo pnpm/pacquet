@@ -173,10 +173,58 @@ let stdout = String::from_utf8(output.stdout).expect("convert stdout to UTF-8");
 Path::new(stdout.trim_end()).parent().expect("parent of root manifest").to_path_buf()
 ```
 
-If you do have a justification, state it explicitly (in your reply, the commit
-message, or the PR description) so a reviewer can confirm the rewrite was
-warranted. If the rewrite is purely stylistic, raise it with the user as its
-own change rather than smuggling it into an unrelated edit.
+If you do have a justification — say, you've been asked to swap an
+unnecessary `PathBuf::from` allocation for a `Path::new` borrow — make the
+smallest edit that achieves it and keep the chain:
+
+```rust
+output
+    .stdout
+    .pipe(String::from_utf8)
+    .expect("convert stdout to UTF-8")
+    .trim_end()
+    .pipe(Path::new)
+    .parent()
+    .expect("parent of root manifest")
+    .to_path_buf()
+```
+
+The two diffs against the original chain make the difference concrete. The
+flattened rewrite churns almost every line:
+
+```diff
+-output
+-    .stdout
+-    .pipe(String::from_utf8)
+-    .expect("convert stdout to UTF-8")
+-    .trim_end()
+-    .pipe(PathBuf::from)
+-    .parent()
+-    .expect("parent of root manifest")
+-    .to_path_buf()
++let stdout = String::from_utf8(output.stdout).expect("convert stdout to UTF-8");
++Path::new(stdout.trim_end()).parent().expect("parent of root manifest").to_path_buf()
+```
+
+The chain-preserving rewrite touches exactly the line that needs to change:
+
+```diff
+ output
+     .stdout
+     .pipe(String::from_utf8)
+     .expect("convert stdout to UTF-8")
+     .trim_end()
+-    .pipe(PathBuf::from)
++    .pipe(Path::new)
+     .parent()
+     .expect("parent of root manifest")
+     .to_path_buf()
+```
+
+Always state the justification explicitly (in your reply, the commit message,
+or the PR description) so a reviewer can confirm the rewrite was warranted.
+If the rewrite is purely stylistic, raise it with the user as its own change
+rather than smuggling it into an unrelated edit.
 
 ## Code reuse and avoiding duplication
 
