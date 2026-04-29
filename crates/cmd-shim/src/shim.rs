@@ -35,7 +35,7 @@ fn extension_program(extension: &str) -> Option<&'static str> {
 ///
 /// 1. If the file exists and starts with a shebang, parse `prog` + `args` from
 ///    it.
-/// 2. Otherwise fall through to [`extension_program`] on the file's extension.
+/// 2. Otherwise fall through to `extension_program` on the file's extension.
 /// 3. If neither yields a runtime, return `None` — `generate_sh_shim` handles
 ///    that by exec'ing the target directly.
 ///
