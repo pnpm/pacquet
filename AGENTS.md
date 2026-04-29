@@ -144,12 +144,15 @@ or treating the red as acceptable.
 ### Preserve existing method chains
 
 When editing existing code, do not break a method chain (including `pipe-trait`
-`.pipe(...)` chains) into intermediate `let` bindings unless the task
-specifically requires it. Refactoring style is not a side effect of an
-unrelated change — keep the surrounding code shape intact and confine your
-edits to what the task asks for.
+`.pipe(...)` chains) into intermediate `let` bindings unless you can justify
+the rewrite — for example, the chain stops compiling after your edit, the
+borrow checker rejects it, breaking it up yields a meaningful performance win,
+or there is some other concrete reason the chain cannot stay as it is.
+Refactoring for style alone is not a justification when the task is something
+else; keep the surrounding code shape intact and confine your edits to what
+the task asks for.
 
-Concretely, do not turn this:
+Concretely, when no such justification exists, leave a chain like this alone:
 
 ```rust
 output
@@ -163,16 +166,17 @@ output
     .to_path_buf()
 ```
 
-into this:
+Do not flatten it into intermediate bindings:
 
 ```rust
 let stdout = String::from_utf8(output.stdout).expect("convert stdout to UTF-8");
 Path::new(stdout.trim_end()).parent().expect("parent of root manifest").to_path_buf()
 ```
 
-while doing something else. If you genuinely believe a chain should be
-rewritten, raise it with the user as its own change rather than smuggling it
-into an unrelated edit.
+If you do have a justification, state it explicitly (in your reply, the commit
+message, or the PR description) so a reviewer can confirm the rewrite was
+warranted. If the rewrite is purely stylistic, raise it with the user as its
+own change rather than smuggling it into an unrelated edit.
 
 ## Code reuse and avoiding duplication
 
