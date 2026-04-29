@@ -1851,9 +1851,13 @@ dependencies = [
 name = "pacquet-modules-yaml"
 version = "0.0.1"
 dependencies = [
+ "derive_more",
+ "httpdate",
+ "pacquet-diagnostics",
  "pacquet-testing-utils",
  "pipe-trait",
  "pretty_assertions",
+ "serde-saphyr",
  "serde_json",
  "tempfile",
 ]

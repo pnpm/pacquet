@@ -11,6 +11,12 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
+pacquet-diagnostics = { workspace = true }
+
+derive_more  = { workspace = true }
+httpdate     = { workspace = true }
+serde-saphyr = { workspace = true }
+serde_json   = { workspace = true }
 
 [dev-dependencies]
 pacquet-testing-utils = { workspace = true }
