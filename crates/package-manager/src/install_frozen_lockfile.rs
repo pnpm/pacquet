@@ -1,6 +1,6 @@
 use crate::{
-    CreateVirtualStore, CreateVirtualStoreError, SymlinkDirectDependencies,
-    SymlinkDirectDependenciesError,
+    CreateVirtualStore, CreateVirtualStoreError, LinkVirtualStoreBins, LinkVirtualStoreBinsError,
+    SymlinkDirectDependencies, SymlinkDirectDependenciesError,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
@@ -40,6 +40,9 @@ pub enum InstallFrozenLockfileError {
 
     #[diagnostic(transparent)]
     SymlinkDirectDependencies(#[error(source)] SymlinkDirectDependenciesError),
+
+    #[diagnostic(transparent)]
+    LinkVirtualStoreBins(#[error(source)] LinkVirtualStoreBinsError),
 }
 
 impl<'a, DependencyGroupList> InstallFrozenLockfile<'a, DependencyGroupList>
@@ -67,6 +70,14 @@ where
         SymlinkDirectDependencies { config, importers, dependency_groups }
             .run()
             .map_err(InstallFrozenLockfileError::SymlinkDirectDependencies)?;
+
+        // Link the bins of each virtual-store slot's children into the
+        // slot's own `node_modules/.bin`. Pnpm runs this from
+        // `linkBinsOfDependencies` during the headless install. See
+        // <https://github.com/pnpm/pnpm/blob/4750fd370c/building/during-install/src/index.ts#L258-L309>.
+        LinkVirtualStoreBins { virtual_store_dir: &config.virtual_store_dir }
+            .run()
+            .map_err(InstallFrozenLockfileError::LinkVirtualStoreBins)?;
 
         Ok(())
     }
