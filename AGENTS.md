@@ -145,11 +145,11 @@ or treating the red as acceptable.
 
 When editing existing code, do not break a method chain (including `pipe-trait`
 `.pipe(...)` chains) into intermediate `let` bindings unless you can justify
-the rewrite — for example, the chain stops compiling after your edit, the
-borrow checker rejects it, breaking it up yields a meaningful performance win,
-or there is some other concrete reason the chain cannot stay as it is.
+the rewrite. Valid justifications include a chain that fails to compile after
+your edit, a borrow checker rejection, a meaningful performance win from
+splitting it up, or any other concrete reason the chain cannot stay as it is.
 Refactoring for style alone is not a justification when the task is something
-else; keep the surrounding code shape intact and confine your edits to what
+else. Keep the surrounding code shape intact and confine your edits to what
 the task asks for.
 
 The rule is about structural shape, not diff size: a small edit that flattens
@@ -171,7 +171,7 @@ For example, swapping a `PathBuf::from` allocation for a `Path::new` borrow:
      .to_path_buf()
 ```
 
-Don't flatten the chain just because you happen to be editing nearby:
+Do not flatten the chain just because you happen to be editing nearby:
 
 ```diff
 -output
