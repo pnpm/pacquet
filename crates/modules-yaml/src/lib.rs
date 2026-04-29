@@ -30,6 +30,39 @@ pub const MODULES_FILENAME: &str = ".modules.yaml";
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L101-L103>.
 pub const DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH: u64 = 120;
 
+/// Mockable interface to filesystem operations used by this crate.
+///
+/// Each method delegates to the corresponding [`std::fs`] function in the
+/// production [`RealFs`] implementation. Tests inject a fake to drive I/O
+/// error paths that are otherwise unreachable. The pattern mirrors
+/// `parallel-disk-usage`'s `FsApi` trait at
+/// <https://github.com/KSXGitHub/parallel-disk-usage/blob/2aa39917f9/src/app/hdd.rs#L25-L35>.
+pub trait FsApi {
+    fn read_to_string(path: &Path) -> io::Result<String>;
+    fn create_dir_all(path: &Path) -> io::Result<()>;
+    fn write(path: &Path, contents: &[u8]) -> io::Result<()>;
+}
+
+/// Production implementation of [`FsApi`] backed by [`std::fs`].
+pub struct RealFs;
+
+impl FsApi for RealFs {
+    #[inline]
+    fn read_to_string(path: &Path) -> io::Result<String> {
+        fs::read_to_string(path)
+    }
+
+    #[inline]
+    fn create_dir_all(path: &Path) -> io::Result<()> {
+        fs::create_dir_all(path)
+    }
+
+    #[inline]
+    fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
+        fs::write(path, contents)
+    }
+}
+
 /// Free-form representation of a `.modules.yaml` manifest.
 ///
 /// pnpm carries a strongly-typed `Modules` interface upstream. Pacquet keeps
@@ -72,11 +105,15 @@ pub enum WriteModulesManifestError {
 /// Returns `Ok(None)` when the file does not exist or is empty, matching
 /// upstream `readModulesManifest` at
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L50-L105>.
-pub fn read_modules_manifest(
+///
+/// Production callers turbofish [`RealFs`]: `read_modules_manifest::<RealFs>(dir)`.
+/// Tests can substitute a fake [`FsApi`] implementation to drive I/O error
+/// paths.
+pub fn read_modules_manifest<Fs: FsApi>(
     modules_dir: &Path,
 ) -> Result<Option<ModulesManifest>, ReadModulesManifestError> {
     let manifest_path = modules_dir.join(MODULES_FILENAME);
-    let content = match fs::read_to_string(&manifest_path) {
+    let content = match Fs::read_to_string(&manifest_path) {
         Ok(content) => content,
         Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(source) => {
@@ -105,7 +142,9 @@ pub fn read_modules_manifest(
 ///
 /// Mirrors upstream `writeModulesManifest` at
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L111-L138>.
-pub fn write_modules_manifest(
+///
+/// Production callers turbofish [`RealFs`]: `write_modules_manifest::<RealFs>(dir, &m)`.
+pub fn write_modules_manifest<Fs: FsApi>(
     modules_dir: &Path,
     manifest: &ModulesManifest,
 ) -> Result<(), WriteModulesManifestError> {
@@ -115,12 +154,12 @@ pub fn write_modules_manifest(
     }
     let serialized =
         serde_json::to_string_pretty(&to_save).map_err(WriteModulesManifestError::SerializeJson)?;
-    fs::create_dir_all(modules_dir).map_err(|source| WriteModulesManifestError::CreateDir {
+    Fs::create_dir_all(modules_dir).map_err(|source| WriteModulesManifestError::CreateDir {
         path: modules_dir.to_path_buf(),
         source,
     })?;
     let manifest_path = modules_dir.join(MODULES_FILENAME);
-    fs::write(&manifest_path, serialized)
+    Fs::write(&manifest_path, serialized.as_bytes())
         .map_err(|source| WriteModulesManifestError::WriteFile { path: manifest_path, source })
 }
 

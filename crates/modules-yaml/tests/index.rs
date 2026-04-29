@@ -1,4 +1,4 @@
-use pacquet_modules_yaml::{read_modules_manifest, write_modules_manifest};
+use pacquet_modules_yaml::{FsApi, RealFs, read_modules_manifest, write_modules_manifest};
 use pipe_trait::Pipe;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -32,8 +32,8 @@ fn write_modules_manifest_and_read_modules_manifest() {
         "virtualStoreDirMaxLength": 120,
     });
 
-    write_modules_manifest(modules_dir, &modules_yaml).expect("write manifest");
-    let actual = read_modules_manifest(modules_dir).expect("read manifest");
+    write_modules_manifest::<RealFs>(modules_dir, &modules_yaml).expect("write manifest");
+    let actual = read_modules_manifest::<RealFs>(modules_dir).expect("read manifest");
     assert_eq!(actual, Some(modules_yaml));
 
     let raw =
@@ -52,7 +52,7 @@ fn write_modules_manifest_and_read_modules_manifest() {
 fn read_legacy_shamefully_hoist_true_manifest() {
     let modules_dir =
         env!("CARGO_MANIFEST_DIR").pipe(Path::new).join("tests/fixtures/old-shamefully-hoist");
-    let modules_yaml = read_modules_manifest(&modules_dir)
+    let modules_yaml = read_modules_manifest::<RealFs>(&modules_dir)
         .expect("read manifest")
         .expect("modules manifest exists");
 
@@ -72,7 +72,7 @@ fn read_legacy_shamefully_hoist_true_manifest() {
 fn read_legacy_shamefully_hoist_false_manifest() {
     let modules_dir =
         env!("CARGO_MANIFEST_DIR").pipe(Path::new).join("tests/fixtures/old-no-shamefully-hoist");
-    let modules_yaml = read_modules_manifest(&modules_dir)
+    let modules_yaml = read_modules_manifest::<RealFs>(&modules_dir)
         .expect("read manifest")
         .expect("modules manifest exists");
 
@@ -115,8 +115,8 @@ fn write_modules_manifest_creates_node_modules_directory() {
         "virtualStoreDirMaxLength": 120,
     });
 
-    write_modules_manifest(&modules_dir, &modules_yaml).expect("write manifest");
-    let actual = read_modules_manifest(&modules_dir).expect("read manifest");
+    write_modules_manifest::<RealFs>(&modules_dir, &modules_yaml).expect("write manifest");
+    let actual = read_modules_manifest::<RealFs>(&modules_dir).expect("read manifest");
     assert_eq!(actual, Some(modules_yaml));
 }
 
@@ -125,7 +125,7 @@ fn write_modules_manifest_creates_node_modules_directory() {
 fn read_empty_modules_manifest_returns_none() {
     let modules_dir =
         env!("CARGO_MANIFEST_DIR").pipe(Path::new).join("tests/fixtures/empty-modules-yaml");
-    let modules_yaml = read_modules_manifest(&modules_dir).expect("read manifest");
+    let modules_yaml = read_modules_manifest::<RealFs>(&modules_dir).expect("read manifest");
     assert_eq!(modules_yaml, None);
 }
 
@@ -148,8 +148,9 @@ fn read_preserves_absolute_virtual_store_dir() {
     let raw = json!({ "virtualStoreDir": &custom_store, "layoutVersion": 1 }).to_string();
     fs::write(modules_dir.join(".modules.yaml"), raw).expect("write fixture");
 
-    let manifest =
-        read_modules_manifest(&modules_dir).expect("read manifest").expect("manifest exists");
+    let manifest = read_modules_manifest::<RealFs>(&modules_dir)
+        .expect("read manifest")
+        .expect("manifest exists");
     let stored = manifest["virtualStoreDir"].as_str().expect("virtualStoreDir is a string");
     eprintln!("stored virtualStoreDir: {stored}");
     assert_eq!(Path::new(stored), custom_store);
@@ -167,11 +168,140 @@ fn write_sorts_skipped_array() {
         "skipped": ["zeta", "alpha", "mu"],
     });
 
-    write_modules_manifest(modules_dir, &manifest).expect("write manifest");
+    write_modules_manifest::<RealFs>(modules_dir, &manifest).expect("write manifest");
     let raw =
         fs::read_to_string(modules_dir.join(".modules.yaml")).expect("read raw .modules.yaml");
     let parsed: Value = serde_json::from_str(&raw).expect("parse raw .modules.yaml");
     assert_eq!(parsed["skipped"], json!(["alpha", "mu", "zeta"]));
+}
+
+// The next five tests use dependency injection to drive I/O outcomes that
+// are awkward or impossible to provoke with the real filesystem. The
+// `FsApi`/`RealFs` pattern mirrors `parallel-disk-usage` at
+// https://github.com/KSXGitHub/parallel-disk-usage/blob/2aa39917f9/src/app/hdd.rs#L25-L74
+// and the test fakes follow
+// https://github.com/KSXGitHub/parallel-disk-usage/blob/2aa39917f9/src/app/hdd/test.rs#L42-L64.
+
+// `read_modules_manifest` should map a non-`NotFound` I/O error from
+// `read_to_string` to `ReadModulesManifestError::ReadFile`.
+#[test]
+fn read_propagates_non_not_found_io_error() {
+    use std::io;
+    struct FailingFs;
+    impl FsApi for FailingFs {
+        fn read_to_string(_: &Path) -> io::Result<String> {
+            Err(io::Error::new(io::ErrorKind::PermissionDenied, "mocked"))
+        }
+        fn create_dir_all(_: &Path) -> io::Result<()> {
+            unreachable!("create_dir_all should not be called by read_modules_manifest");
+        }
+        fn write(_: &Path, _: &[u8]) -> io::Result<()> {
+            unreachable!("write should not be called by read_modules_manifest");
+        }
+    }
+
+    let modules_dir = Path::new("/dev/null/unused");
+    let err = read_modules_manifest::<FailingFs>(modules_dir).expect_err("expected error");
+    eprintln!("error: {err}");
+    assert!(matches!(err, pacquet_modules_yaml::ReadModulesManifestError::ReadFile { .. }));
+}
+
+// `read_modules_manifest` should surface a YAML parse failure as
+// `ReadModulesManifestError::ParseYaml`.
+#[test]
+fn read_propagates_parse_error() {
+    use std::io;
+    struct BadYamlFs;
+    impl FsApi for BadYamlFs {
+        fn read_to_string(_: &Path) -> io::Result<String> {
+            Ok("{ this is not valid yaml or json".to_string())
+        }
+        fn create_dir_all(_: &Path) -> io::Result<()> {
+            unreachable!("create_dir_all should not be called by read_modules_manifest");
+        }
+        fn write(_: &Path, _: &[u8]) -> io::Result<()> {
+            unreachable!("write should not be called by read_modules_manifest");
+        }
+    }
+
+    let modules_dir = Path::new("/dev/null/unused");
+    let err = read_modules_manifest::<BadYamlFs>(modules_dir).expect_err("expected error");
+    eprintln!("error: {err}");
+    assert!(matches!(err, pacquet_modules_yaml::ReadModulesManifestError::ParseYaml { .. }));
+}
+
+// A YAML document that parses to `null` should yield `Ok(None)`, matching
+// upstream's `if (!modulesRaw) return modulesRaw;` at
+// https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L55.
+#[test]
+fn read_returns_none_for_null_document() {
+    use std::io;
+    struct NullDocFs;
+    impl FsApi for NullDocFs {
+        fn read_to_string(_: &Path) -> io::Result<String> {
+            Ok("null\n".to_string())
+        }
+        fn create_dir_all(_: &Path) -> io::Result<()> {
+            unreachable!("create_dir_all should not be called by read_modules_manifest");
+        }
+        fn write(_: &Path, _: &[u8]) -> io::Result<()> {
+            unreachable!("write should not be called by read_modules_manifest");
+        }
+    }
+
+    let modules_dir = Path::new("/dev/null/unused");
+    let result = read_modules_manifest::<NullDocFs>(modules_dir).expect("read manifest");
+    assert_eq!(result, None);
+}
+
+// `write_modules_manifest` should map a `create_dir_all` failure to
+// `WriteModulesManifestError::CreateDir`.
+#[test]
+fn write_propagates_create_dir_error() {
+    use std::io;
+    struct FailingMkdirFs;
+    impl FsApi for FailingMkdirFs {
+        fn read_to_string(_: &Path) -> io::Result<String> {
+            unreachable!("read_to_string should not be called by write_modules_manifest");
+        }
+        fn create_dir_all(_: &Path) -> io::Result<()> {
+            Err(io::Error::new(io::ErrorKind::PermissionDenied, "mocked"))
+        }
+        fn write(_: &Path, _: &[u8]) -> io::Result<()> {
+            unreachable!("write must not be called when create_dir_all fails");
+        }
+    }
+
+    let modules_dir = Path::new("/dev/null/unused");
+    let err = write_modules_manifest::<FailingMkdirFs>(modules_dir, &json!({}))
+        .expect_err("expected error");
+    eprintln!("error: {err}");
+    assert!(matches!(err, pacquet_modules_yaml::WriteModulesManifestError::CreateDir { .. }));
+}
+
+// `write_modules_manifest` should map a `write` failure to
+// `WriteModulesManifestError::WriteFile` after `create_dir_all` succeeds.
+#[test]
+fn write_propagates_write_error() {
+    use std::io;
+    struct FailingWriteFs;
+    impl FsApi for FailingWriteFs {
+        fn read_to_string(_: &Path) -> io::Result<String> {
+            unreachable!("read_to_string should not be called by write_modules_manifest");
+        }
+        fn create_dir_all(_: &Path) -> io::Result<()> {
+            Ok(())
+        }
+        fn write(_: &Path, _: &[u8]) -> io::Result<()> {
+            Err(io::Error::other("mocked write failure"))
+        }
+    }
+
+    let modules_dir = Path::new("/dev/null/unused");
+    let err = write_modules_manifest::<FailingWriteFs>(modules_dir, &json!({}))
+        .expect_err("expected error");
+    eprintln!("error: {err}");
+    assert!(matches!(err, pacquet_modules_yaml::WriteModulesManifestError::WriteFile { .. }));
 }
 
 // A null `publicHoistPattern` is removed before serializing because the
@@ -186,7 +316,7 @@ fn write_removes_null_public_hoist_pattern() {
         "publicHoistPattern": null,
     });
 
-    write_modules_manifest(modules_dir, &manifest).expect("write manifest");
+    write_modules_manifest::<RealFs>(modules_dir, &manifest).expect("write manifest");
     let raw =
         fs::read_to_string(modules_dir.join(".modules.yaml")).expect("read raw .modules.yaml");
     let parsed: Value = serde_json::from_str(&raw).expect("parse raw .modules.yaml");
