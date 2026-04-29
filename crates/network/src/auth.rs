@@ -21,8 +21,8 @@ use std::collections::HashMap;
 /// of each registry URL. Pacquet builds one of these from the parsed
 /// `.npmrc` and shares it across every HTTP call made during install.
 ///
-/// Construct via [`AuthHeaders::from_iter`] or [`AuthHeaders::default`]
-/// (empty). Look up via [`AuthHeaders::for_url`].
+/// Construct via [`AuthHeaders::from_creds_map`], [`AuthHeaders::from_map`],
+/// or [`AuthHeaders::default`] (empty). Look up via [`AuthHeaders::for_url`].
 #[derive(Debug, Default, Clone)]
 pub struct AuthHeaders {
     /// Keys are the nerf-darted form (`//host[:port]/path/`). Values
