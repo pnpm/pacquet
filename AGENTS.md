@@ -152,9 +152,6 @@ Refactoring for style alone is not a justification when the task is something
 else. Keep the surrounding code shape intact and confine your edits to what
 the task asks for.
 
-The rule is about structural shape, not diff size: a small edit that flattens
-a chain is just as wrong as a large one.
-
 When the change you need can fit inside the existing chain, keep it there.
 For example, swapping a `PathBuf::from` allocation for a `Path::new` borrow:
 
