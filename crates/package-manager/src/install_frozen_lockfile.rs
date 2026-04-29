@@ -1,6 +1,7 @@
 use crate::{
     CreateVirtualStore, CreateVirtualStoreError, LinkBins, LinkBinsError,
-    SymlinkDirectDependencies, SymlinkDirectDependenciesError, check_platform::is_platform_supported,
+    SymlinkDirectDependencies, SymlinkDirectDependenciesError,
+    check_platform::is_platform_supported,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
@@ -76,10 +77,16 @@ where
         let skipped_snapshots =
             compute_skipped_snapshots(importers, snapshots, packages.unwrap_or(&HashMap::new()));
 
-        CreateVirtualStore { http_client, config, packages, snapshots, skipped_snapshots: &skipped_snapshots }
-            .run()
-            .await
-            .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
+        CreateVirtualStore {
+            http_client,
+            config,
+            packages,
+            snapshots,
+            skipped_snapshots: &skipped_snapshots,
+        }
+        .run()
+        .await
+        .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
 
         SymlinkDirectDependencies {
             config,
@@ -90,9 +97,16 @@ where
         .run()
         .map_err(InstallFrozenLockfileError::SymlinkDirectDependencies)?;
 
-        LinkBins { config, importers, packages, snapshots, dependency_groups: &dependency_groups }
-            .run()
-            .map_err(InstallFrozenLockfileError::LinkBins)?;
+        LinkBins {
+            config,
+            importers,
+            packages,
+            snapshots,
+            dependency_groups: &dependency_groups,
+            skipped_snapshots: &skipped_snapshots,
+        }
+        .run()
+        .map_err(InstallFrozenLockfileError::LinkBins)?;
 
         Ok(())
     }
@@ -127,7 +141,11 @@ fn compute_skipped_snapshots(
     // (key, is_on_optional_path)
     let mut queue: VecDeque<(PackageKey, bool)> = VecDeque::new();
 
-    let enqueue = |key: PackageKey, is_optional: bool, required: &mut HashSet<PackageKey>, optional_only: &mut HashSet<PackageKey>, queue: &mut VecDeque<(PackageKey, bool)>| {
+    let enqueue = |key: PackageKey,
+                   is_optional: bool,
+                   required: &mut HashSet<PackageKey>,
+                   optional_only: &mut HashSet<PackageKey>,
+                   queue: &mut VecDeque<(PackageKey, bool)>| {
         if is_optional {
             if !required.contains(&key) && optional_only.insert(key.clone()) {
                 queue.push_back((key, true));
@@ -143,10 +161,9 @@ fn compute_skipped_snapshots(
 
     // Seed from root importer's direct dependencies.
     if let Some(root) = importers.get(Lockfile::ROOT_IMPORTER_KEY) {
-        for (name, spec) in root.dependencies_by_groups([
-            DependencyGroup::Prod,
-            DependencyGroup::Dev,
-        ]) {
+        for (name, spec) in
+            root.dependencies_by_groups([DependencyGroup::Prod, DependencyGroup::Dev])
+        {
             let key = PkgNameVerPeer::new(name.clone(), spec.version.clone());
             enqueue(key, false, &mut required, &mut optional_only, &mut queue);
         }
@@ -177,11 +194,7 @@ fn compute_skipped_snapshots(
         .filter(|key| {
             let metadata_key = key.without_peer();
             let Some(meta) = packages.get(&metadata_key) else { return false };
-            !is_platform_supported(
-                meta.os.as_deref(),
-                meta.cpu.as_deref(),
-                meta.libc.as_deref(),
-            )
+            !is_platform_supported(meta.os.as_deref(), meta.cpu.as_deref(), meta.libc.as_deref())
         })
         .collect()
 }
