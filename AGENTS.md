@@ -152,45 +152,8 @@ Refactoring for style alone is not a justification when the task is something
 else; keep the surrounding code shape intact and confine your edits to what
 the task asks for.
 
-Concretely, when no such justification exists, leave a chain like this alone:
-
-```rust
-output
-    .stdout
-    .pipe(String::from_utf8)
-    .expect("convert stdout to UTF-8")
-    .trim_end()
-    .pipe(PathBuf::from)
-    .parent()
-    .expect("parent of root manifest")
-    .to_path_buf()
-```
-
-Do not flatten it into intermediate bindings:
-
-```rust
-let stdout = String::from_utf8(output.stdout).expect("convert stdout to UTF-8");
-Path::new(stdout.trim_end()).parent().expect("parent of root manifest").to_path_buf()
-```
-
-If you do have a justification — say, you've been asked to swap an
-unnecessary `PathBuf::from` allocation for a `Path::new` borrow — make the
-smallest edit that achieves it and keep the chain:
-
-```rust
-output
-    .stdout
-    .pipe(String::from_utf8)
-    .expect("convert stdout to UTF-8")
-    .trim_end()
-    .pipe(Path::new)
-    .parent()
-    .expect("parent of root manifest")
-    .to_path_buf()
-```
-
-The two diffs against the original chain make the difference concrete. The
-flattened rewrite churns almost every line:
+Concretely, given a task like swapping `PathBuf::from` for a `Path::new`
+borrow, do not flatten the chain — that churns almost every line:
 
 ```diff
 -output
@@ -206,7 +169,7 @@ flattened rewrite churns almost every line:
 +Path::new(stdout.trim_end()).parent().expect("parent of root manifest").to_path_buf()
 ```
 
-The chain-preserving rewrite touches exactly the line that needs to change:
+Make the smallest edit that achieves the task and keep the chain:
 
 ```diff
  output
@@ -221,10 +184,10 @@ The chain-preserving rewrite touches exactly the line that needs to change:
      .to_path_buf()
 ```
 
-Always state the justification explicitly (in your reply, the commit message,
-or the PR description) so a reviewer can confirm the rewrite was warranted.
-If the rewrite is purely stylistic, raise it with the user as its own change
-rather than smuggling it into an unrelated edit.
+State the justification explicitly (in your reply, the commit message, or the
+PR description) so a reviewer can confirm the rewrite was warranted. If the
+rewrite is purely stylistic, raise it with the user as its own change rather
+than smuggling it into an unrelated edit.
 
 ## Code reuse and avoiding duplication
 
