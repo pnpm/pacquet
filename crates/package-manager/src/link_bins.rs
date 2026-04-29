@@ -2,7 +2,7 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_cmd_shim::{
     FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions,
-    FsWriteAtomic, LinkBinsError, PackageBinSource, RealFs, link_bins_of_packages,
+    FsWriteAtomic, LinkBinsError, PackageBinSource, RealApi, link_bins_of_packages,
 };
 use rayon::prelude::*;
 use std::{
@@ -37,7 +37,7 @@ pub fn link_direct_dep_bins(modules_dir: &Path, dep_names: &[String]) -> Result<
     if bin_sources.is_empty() {
         return Ok(());
     }
-    link_bins_of_packages::<RealFs>(&bin_sources, &modules_dir.join(".bin"))
+    link_bins_of_packages::<RealApi>(&bin_sources, &modules_dir.join(".bin"))
 }
 
 /// Error type of [`LinkVirtualStoreBins`].
@@ -84,17 +84,17 @@ pub struct LinkVirtualStoreBins<'a> {
 
 impl<'a> LinkVirtualStoreBins<'a> {
     pub fn run(self) -> Result<(), LinkVirtualStoreBinsError> {
-        self.run_with::<RealFs>()
+        self.run_with::<RealApi>()
     }
 
     /// DI-driven entry. Production callers go through [`Self::run`] which
-    /// turbofishes [`RealFs`]; tests inject fakes that fail specific fs
+    /// turbofishes [`RealApi`]; tests inject fakes that fail specific fs
     /// operations to cover error paths the real fs can't trigger
     /// portably. See the per-capability DI pattern at
     /// <https://github.com/pnpm/pacquet/pull/332#issuecomment-4345054524>.
-    pub fn run_with<Fs>(self) -> Result<(), LinkVirtualStoreBinsError>
+    pub fn run_with<Api>(self) -> Result<(), LinkVirtualStoreBinsError>
     where
-        Fs: FsReadDir
+        Api: FsReadDir
             + FsReadFile
             + FsReadString
             + FsReadHead
@@ -104,7 +104,7 @@ impl<'a> LinkVirtualStoreBins<'a> {
     {
         let LinkVirtualStoreBins { virtual_store_dir } = self;
 
-        let slots = match Fs::read_dir(virtual_store_dir) {
+        let slots = match Api::read_dir(virtual_store_dir) {
             Ok(slots) => slots,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => {
@@ -143,7 +143,7 @@ impl<'a> LinkVirtualStoreBins<'a> {
             // Children of this slot are everything under `node_modules`
             // *other than* the slot's own package. `link_bins` already
             // skips dot-prefixed entries (`.bin`, `.modules.yaml`, …).
-            link_bins_excluding::<Fs>(&modules_dir, &bins_dir, &self_pkg_dir)
+            link_bins_excluding::<Api>(&modules_dir, &bins_dir, &self_pkg_dir)
                 .map_err(LinkVirtualStoreBinsError::LinkBins)
         })
     }
@@ -173,13 +173,13 @@ fn find_slot_own_package_dir(slot_dir: &Path, modules_dir: &Path) -> Option<Path
 /// Like [`pacquet_cmd_shim::link_bins`] but skipping the slot's own package
 /// from the candidate set. Without this, a slot for `tsc@5.0.0` would link
 /// its own `tsc` bin into its own `node_modules/.bin`, which pnpm doesn't.
-fn link_bins_excluding<Fs>(
+fn link_bins_excluding<Api>(
     modules_dir: &Path,
     bins_dir: &Path,
     exclude: &Path,
 ) -> Result<(), LinkBinsError>
 where
-    Fs: FsReadDir
+    Api: FsReadDir
         + FsReadFile
         + FsReadString
         + FsReadHead
@@ -189,7 +189,7 @@ where
 {
     let mut packages: Vec<PackageBinSource> = Vec::new();
 
-    let entries = match Fs::read_dir(modules_dir) {
+    let entries = match Api::read_dir(modules_dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => {
@@ -207,14 +207,14 @@ where
         }
 
         if name_str.starts_with('@') {
-            let Ok(scope_entries) = Fs::read_dir(&path) else {
+            let Ok(scope_entries) = Api::read_dir(&path) else {
                 continue;
             };
             for sub_path in scope_entries {
                 if paths_eq(&sub_path, exclude) {
                     continue;
                 }
-                if let Some(pkg) = read_package::<Fs>(&sub_path)? {
+                if let Some(pkg) = read_package::<Api>(&sub_path)? {
                     packages.push(pkg);
                 }
             }
@@ -224,7 +224,7 @@ where
         if paths_eq(&path, exclude) {
             continue;
         }
-        if let Some(pkg) = read_package::<Fs>(&path)? {
+        if let Some(pkg) = read_package::<Api>(&path)? {
             packages.push(pkg);
         }
     }
@@ -233,14 +233,14 @@ where
         return Ok(());
     }
 
-    link_bins_of_packages::<Fs>(&packages, bins_dir)
+    link_bins_of_packages::<Api>(&packages, bins_dir)
 }
 
-fn read_package<Fs: FsReadFile>(
+fn read_package<Api: FsReadFile>(
     location: &Path,
 ) -> Result<Option<PackageBinSource>, LinkBinsError> {
     let manifest_path = location.join("package.json");
-    let bytes = match Fs::read_file(&manifest_path) {
+    let bytes = match Api::read_file(&manifest_path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(LinkBinsError::ReadManifest { path: manifest_path, error }),

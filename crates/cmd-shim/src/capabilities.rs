@@ -1,5 +1,5 @@
 //! Per-capability dependency-injection traits and the production
-//! [`RealFs`] provider. Mirrors the pattern documented at
+//! [`RealApi`] provider. Mirrors the pattern documented at
 //! <https://github.com/pnpm/pacquet/pull/332#issuecomment-4345054524>:
 //!
 //! 1. One trait per capability.
@@ -66,9 +66,9 @@ pub trait FsSetPermissions {
 
 /// The production filesystem provider — every method delegates straight
 /// to `std::fs`.
-pub struct RealFs;
+pub struct RealApi;
 
-impl FsReadHead for RealFs {
+impl FsReadHead for RealApi {
     fn read_head(path: &Path, buf: &mut [u8]) -> io::Result<usize> {
         use std::io::Read;
         let mut file = std::fs::File::open(path)?;
@@ -76,37 +76,37 @@ impl FsReadHead for RealFs {
     }
 }
 
-impl FsReadFile for RealFs {
+impl FsReadFile for RealApi {
     fn read_file(path: &Path) -> io::Result<Vec<u8>> {
         std::fs::read(path)
     }
 }
 
-impl FsReadString for RealFs {
+impl FsReadString for RealApi {
     fn read_to_string(path: &Path) -> io::Result<String> {
         std::fs::read_to_string(path)
     }
 }
 
-impl FsReadDir for RealFs {
+impl FsReadDir for RealApi {
     fn read_dir(path: &Path) -> io::Result<Vec<std::path::PathBuf>> {
         Ok(std::fs::read_dir(path)?.flatten().map(|entry| entry.path()).collect())
     }
 }
 
-impl FsCreateDirAll for RealFs {
+impl FsCreateDirAll for RealApi {
     fn create_dir_all(path: &Path) -> io::Result<()> {
         std::fs::create_dir_all(path)
     }
 }
 
-impl FsWriteAtomic for RealFs {
+impl FsWriteAtomic for RealApi {
     fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
         std::fs::write(path, bytes)
     }
 }
 
-impl FsSetPermissions for RealFs {
+impl FsSetPermissions for RealApi {
     fn set_executable(path: &Path) -> io::Result<()> {
         #[cfg(unix)]
         {

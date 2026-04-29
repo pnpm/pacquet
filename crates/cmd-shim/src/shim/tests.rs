@@ -1,5 +1,5 @@
 use super::*;
-use crate::fs_capabilities::{FsReadHead, RealFs};
+use crate::capabilities::{FsReadHead, RealApi};
 
 #[test]
 fn parses_env_node_shebang() {
@@ -213,7 +213,7 @@ fn search_script_runtime_reads_shebang_from_real_file() {
     let tmp = tempdir().unwrap();
     let path = tmp.path().join("script");
     std::fs::write(&path, "#!/usr/bin/env node\nbody\n").unwrap();
-    let rt = search_script_runtime::<RealFs>(&path).unwrap().expect("runtime detected");
+    let rt = search_script_runtime::<RealApi>(&path).unwrap().expect("runtime detected");
     assert_eq!(rt.prog.as_deref(), Some("node"));
 }
 
@@ -222,7 +222,7 @@ fn search_script_runtime_reads_shebang_from_real_file() {
 #[test]
 fn search_script_runtime_returns_none_for_missing_file() {
     let nonexistent = Path::new("/definitely/not/a/real/path/cli");
-    assert_eq!(search_script_runtime::<RealFs>(nonexistent).unwrap(), None);
+    assert_eq!(search_script_runtime::<RealApi>(nonexistent).unwrap(), None);
 }
 
 /// `search_script_runtime` falls through to extension lookup when the
@@ -234,7 +234,7 @@ fn search_script_runtime_falls_back_to_extension() {
     let tmp = tempdir().unwrap();
     let path = tmp.path().join("script.js");
     std::fs::write(&path, "console.log('no shebang')\n").unwrap();
-    let rt = search_script_runtime::<RealFs>(&path).unwrap().expect("extension fallback");
+    let rt = search_script_runtime::<RealApi>(&path).unwrap().expect("extension fallback");
     assert_eq!(rt.prog.as_deref(), Some("node"));
 }
 
@@ -246,7 +246,7 @@ fn search_script_runtime_returns_none_when_runtime_unknown() {
     let tmp = tempdir().unwrap();
     let path = tmp.path().join("script.unknown_ext");
     std::fs::write(&path, "no shebang here\n").unwrap();
-    assert_eq!(search_script_runtime::<RealFs>(&path).unwrap(), None);
+    assert_eq!(search_script_runtime::<RealApi>(&path).unwrap(), None);
 }
 
 /// `search_script_runtime` propagates IO errors that aren't `NotFound`.
@@ -255,13 +255,13 @@ fn search_script_runtime_returns_none_when_runtime_unknown() {
 /// <https://github.com/pnpm/pacquet/pull/332#issuecomment-4345054524>.
 #[test]
 fn search_script_runtime_propagates_non_not_found_io_errors() {
-    struct PermissionDeniedFs;
-    impl FsReadHead for PermissionDeniedFs {
+    struct PermissionDeniedApi;
+    impl FsReadHead for PermissionDeniedApi {
         fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
             Err(io::Error::from(io::ErrorKind::PermissionDenied))
         }
     }
-    let err = search_script_runtime::<PermissionDeniedFs>(Path::new("any"))
+    let err = search_script_runtime::<PermissionDeniedApi>(Path::new("any"))
         .expect_err("non-NotFound IO error must propagate");
     assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
 }
@@ -272,23 +272,23 @@ fn search_script_runtime_propagates_non_not_found_io_errors() {
 /// compatible with the no-shebang case.
 #[test]
 fn search_script_runtime_reads_zero_bytes_then_falls_through() {
-    struct EmptyReadFs;
-    impl FsReadHead for EmptyReadFs {
+    struct EmptyReadApi;
+    impl FsReadHead for EmptyReadApi {
         fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
             Ok(0)
         }
     }
     // `.js` extension still resolves to `node` even with empty content.
     let rt =
-        search_script_runtime::<EmptyReadFs>(Path::new("/x.js")).unwrap().expect("ext fallback");
+        search_script_runtime::<EmptyReadApi>(Path::new("/x.js")).unwrap().expect("ext fallback");
     assert_eq!(rt.prog.as_deref(), Some("node"));
 
     // No extension and no shebang → Ok(None).
-    let rt = search_script_runtime::<EmptyReadFs>(Path::new("/x")).unwrap();
+    let rt = search_script_runtime::<EmptyReadApi>(Path::new("/x")).unwrap();
     assert_eq!(rt, None);
 }
 
-/// `RealFs::read_head` is the production capability. Tests that exercise
+/// `RealApi::read_head` is the production capability. Tests that exercise
 /// it indirectly cover most paths; this one pins the contract directly.
 #[test]
 fn real_fs_read_head_reads_up_to_buffer_size() {
@@ -297,18 +297,18 @@ fn real_fs_read_head_reads_up_to_buffer_size() {
     let path = tmp.path().join("data");
     std::fs::write(&path, "hello world").unwrap();
     let mut buf = [0u8; 1024];
-    let read = RealFs::read_head(&path, &mut buf).unwrap();
+    let read = RealApi::read_head(&path, &mut buf).unwrap();
     assert_eq!(read, 11);
     assert_eq!(&buf[..read], b"hello world");
 }
 
-/// `RealFs::read_head` propagates `NotFound` so the shebang reader can
+/// `RealApi::read_head` propagates `NotFound` so the shebang reader can
 /// distinguish a missing file from a real IO error and degrade to
 /// `Ok(None)`.
 #[test]
 fn real_fs_read_head_propagates_not_found() {
     let mut buf = [0u8; 16];
-    let err = RealFs::read_head(Path::new("/no/such/file"), &mut buf).unwrap_err();
+    let err = RealApi::read_head(Path::new("/no/such/file"), &mut buf).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::NotFound);
 }
 

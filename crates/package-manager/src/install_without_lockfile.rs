@@ -7,7 +7,7 @@ use dashmap::DashSet;
 use derive_more::{Display, Error};
 use futures_util::future;
 use miette::Diagnostic;
-use pacquet_cmd_shim::{LinkBinsError, RealFs, link_bins};
+use pacquet_cmd_shim::{LinkBinsError, RealApi, link_bins};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
@@ -184,7 +184,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
         // iterator was already consumed by the install loop above; pnpm's
         // own `linkBins(modulesDir, binsDir)` overload uses the same
         // strategy.
-        link_bins::<RealFs>(&config.modules_dir, &config.modules_dir.join(".bin"))
+        link_bins::<RealApi>(&config.modules_dir, &config.modules_dir.join(".bin"))
             .map_err(InstallWithoutLockfileError::LinkBins)?;
 
         LinkVirtualStoreBins { virtual_store_dir: &config.virtual_store_dir }

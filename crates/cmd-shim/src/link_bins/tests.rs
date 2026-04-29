@@ -1,5 +1,5 @@
 use super::*;
-use crate::fs_capabilities::RealFs;
+use crate::capabilities::RealApi;
 use serde_json::json;
 use std::fs;
 use tempfile::tempdir;
@@ -23,7 +23,7 @@ fn writes_all_three_shim_flavors_per_bin() {
     let bins_dir = tmp.path().join("node_modules/.bin");
     let manifest_value: Value =
         serde_json::from_slice(&fs::read(pkg_dir.join("package.json")).unwrap()).unwrap();
-    link_bins_of_packages::<RealFs>(
+    link_bins_of_packages::<RealApi>(
         &[PackageBinSource { location: pkg_dir.clone(), manifest: manifest_value }],
         &bins_dir,
     )
@@ -63,7 +63,7 @@ fn writes_shim_for_bin_string() {
     let bins_dir = tmp.path().join("node_modules/.bin");
     let manifest_value: Value =
         serde_json::from_slice(&fs::read(pkg_dir.join("package.json")).unwrap()).unwrap();
-    link_bins_of_packages::<RealFs>(
+    link_bins_of_packages::<RealApi>(
         &[PackageBinSource { location: pkg_dir.clone(), manifest: manifest_value }],
         &bins_dir,
     )
@@ -91,7 +91,7 @@ fn writes_shim_for_bin_string() {
     }
 }
 
-/// `link_bins::<RealFs>(modulesDir, binsDir)` walks every package and its scoped
+/// `link_bins::<RealApi>(modulesDir, binsDir)` walks every package and its scoped
 /// children. Both regular and `@scope/...` packages must contribute their
 /// bins.
 #[test]
@@ -115,7 +115,7 @@ fn link_bins_walks_modules_and_scopes() {
     fs::create_dir_all(modules.join("not-a-package")).unwrap();
 
     let bins = modules.join(".bin");
-    link_bins::<RealFs>(&modules, &bins).unwrap();
+    link_bins::<RealApi>(&modules, &bins).unwrap();
 
     assert!(bins.join("foo").exists(), "foo shim must exist");
     assert!(bins.join("bar").exists(), "scoped @s/bar shim must use bare name `bar`");
@@ -128,7 +128,8 @@ fn link_bins_walks_modules_and_scopes() {
 fn link_bins_handles_missing_modules_dir() {
     let tmp = tempdir().unwrap();
     let bins_dir = tmp.path().join(".bin");
-    link_bins::<RealFs>(&tmp.path().join("missing"), &bins_dir).expect("missing modules dir is Ok");
+    link_bins::<RealApi>(&tmp.path().join("missing"), &bins_dir)
+        .expect("missing modules dir is Ok");
     assert!(!bins_dir.exists(), "no shims means no bin dir created");
 }
 
@@ -144,7 +145,7 @@ fn link_bins_of_packages_no_op_when_no_bins() {
     let bins = tmp.path().join(".bin");
     let manifest: Value =
         serde_json::from_slice(&fs::read(pkg.join("package.json")).unwrap()).unwrap();
-    link_bins_of_packages::<RealFs>(&[PackageBinSource { location: pkg, manifest }], &bins)
+    link_bins_of_packages::<RealApi>(&[PackageBinSource { location: pkg, manifest }], &bins)
         .unwrap();
     assert!(!bins.exists(), "bins dir must not be created when nothing to link");
 }
@@ -180,7 +181,7 @@ fn lexical_compare_breaks_tie_when_neither_owns() {
     let bins = tmp.path().join(".bin");
     // Order beta-then-alpha to verify the choice doesn't depend on
     // discovery order.
-    link_bins_of_packages::<RealFs>(
+    link_bins_of_packages::<RealApi>(
         &[
             PackageBinSource { location: beta.clone(), manifest: manifest_beta },
             PackageBinSource { location: alpha.clone(), manifest: manifest_alpha },
@@ -206,7 +207,7 @@ fn link_bins_propagates_parse_manifest_error() {
     fs::write(modules.join("broken/package.json"), "{ this is not json").unwrap();
 
     let bins = modules.join(".bin");
-    let err = link_bins::<RealFs>(&modules, &bins).expect_err("invalid manifest must surface");
+    let err = link_bins::<RealApi>(&modules, &bins).expect_err("invalid manifest must surface");
     assert!(
         matches!(err, LinkBinsError::ParseManifest { .. }),
         "expected ParseManifest, got {err:?}",
@@ -228,19 +229,19 @@ fn link_bins_skips_existing_shim_with_matching_marker() {
     fs::write(modules.join("foo/f.js"), "#!/usr/bin/env node\n").unwrap();
 
     let bins = modules.join(".bin");
-    link_bins::<RealFs>(&modules, &bins).unwrap();
+    link_bins::<RealApi>(&modules, &bins).unwrap();
     let original = fs::read_to_string(bins.join("foo")).unwrap();
     // Append a sentinel — if the second pass rewrites the shim, the
     // sentinel disappears.
     let sentinel = format!("{original}\n# SENTINEL");
     fs::write(bins.join("foo"), &sentinel).unwrap();
 
-    link_bins::<RealFs>(&modules, &bins).unwrap();
+    link_bins::<RealApi>(&modules, &bins).unwrap();
     assert_eq!(fs::read_to_string(bins.join("foo")).unwrap(), sentinel);
 }
 
 /// `link_bins_of_packages` propagates a non-`NotFound` `read_dir`
-/// error from the calling context. Use a fake `Fs` that fails the
+/// error from the calling context. Use a fake `Api` that fails the
 /// initial `create_dir_all` to cover the `CreateBinDir` error variant
 /// that real fs can't trigger portably.
 #[test]
@@ -555,7 +556,7 @@ fn ownership_breaks_bin_conflicts_when_existing_owns() {
     // Order npm-first; this exercises the (true, false) arm because
     // `npm` (existing) owns and `other` (candidate) doesn't.
     let bins = tmp.path().join(".bin");
-    link_bins_of_packages::<RealFs>(
+    link_bins_of_packages::<RealApi>(
         &[
             PackageBinSource { location: npm.clone(), manifest: manifest_npm },
             PackageBinSource { location: other.clone(), manifest: manifest_other },
@@ -644,7 +645,7 @@ fn ownership_breaks_bin_conflicts() {
         serde_json::from_slice(&fs::read(other.join("package.json")).unwrap()).unwrap();
 
     let bins = tmp.path().join(".bin");
-    link_bins_of_packages::<RealFs>(
+    link_bins_of_packages::<RealApi>(
         &[
             PackageBinSource { location: other.clone(), manifest: manifest_other },
             PackageBinSource { location: npm.clone(), manifest: manifest_npm },

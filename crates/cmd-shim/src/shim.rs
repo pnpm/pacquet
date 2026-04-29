@@ -1,4 +1,4 @@
-use crate::fs_capabilities::FsReadHead;
+use crate::capabilities::FsReadHead;
 use std::{
     io,
     path::{Component, Path, PathBuf},
@@ -43,10 +43,10 @@ fn extension_program(extension: &str) -> Option<&'static str> {
 /// doesn't fail the whole install. Other IO errors propagate, since pacquet
 /// has already verified the bin path resolves under the package root by
 /// this point and a real failure deserves to surface.
-pub fn search_script_runtime<Fs: FsReadHead>(path: &Path) -> io::Result<Option<ScriptRuntime>> {
+pub fn search_script_runtime<Api: FsReadHead>(path: &Path) -> io::Result<Option<ScriptRuntime>> {
     let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("");
 
-    let runtime_from_shebang = read_shebang::<Fs>(path)?;
+    let runtime_from_shebang = read_shebang::<Api>(path)?;
     if let Some(rt) = runtime_from_shebang {
         return Ok(Some(rt));
     }
@@ -58,9 +58,9 @@ pub fn search_script_runtime<Fs: FsReadHead>(path: &Path) -> io::Result<Option<S
     Ok(None)
 }
 
-fn read_shebang<Fs: FsReadHead>(path: &Path) -> io::Result<Option<ScriptRuntime>> {
+fn read_shebang<Api: FsReadHead>(path: &Path) -> io::Result<Option<ScriptRuntime>> {
     let mut buffer = [0u8; 512];
-    let read = match Fs::read_head(path, &mut buffer) {
+    let read = match Api::read_head(path, &mut buffer) {
         Ok(read) => read,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),

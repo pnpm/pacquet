@@ -1,6 +1,6 @@
 use crate::{
     bin_resolver::{Command, get_bins_from_package_manifest, pkg_owns_bin},
-    fs_capabilities::{
+    capabilities::{
         FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions,
         FsWriteAtomic,
     },
@@ -93,9 +93,9 @@ pub enum LinkBinsError {
 ///
 /// Scoped packages are recursed: `node_modules/@scope/foo` becomes one
 /// candidate. This mirrors `binNamesAndPaths` in upstream `linkBins`.
-pub fn link_bins<Fs>(modules_dir: &Path, bins_dir: &Path) -> Result<(), LinkBinsError>
+pub fn link_bins<Api>(modules_dir: &Path, bins_dir: &Path) -> Result<(), LinkBinsError>
 where
-    Fs: FsReadDir
+    Api: FsReadDir
         + FsReadFile
         + FsReadString
         + FsReadHead
@@ -103,19 +103,19 @@ where
         + FsWriteAtomic
         + FsSetPermissions,
 {
-    let packages = collect_packages_in_modules_dir::<Fs>(modules_dir)?;
-    link_bins_of_packages::<Fs>(&packages, bins_dir)
+    let packages = collect_packages_in_modules_dir::<Api>(modules_dir)?;
+    link_bins_of_packages::<Api>(&packages, bins_dir)
 }
 
-fn collect_packages_in_modules_dir<Fs>(
+fn collect_packages_in_modules_dir<Api>(
     modules_dir: &Path,
 ) -> Result<Vec<PackageBinSource>, LinkBinsError>
 where
-    Fs: FsReadDir + FsReadFile,
+    Api: FsReadDir + FsReadFile,
 {
     let mut packages = Vec::new();
 
-    let entries = match Fs::read_dir(modules_dir) {
+    let entries = match Api::read_dir(modules_dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(packages),
         Err(error) => {
@@ -136,18 +136,18 @@ where
             // Scoped: walk one level deeper. Use `flatten` semantics —
             // missing-or-unreadable scope dirs are silently skipped, same
             // as the previous `let Ok(...) else continue` shape.
-            let Ok(scope_entries) = Fs::read_dir(&path) else {
+            let Ok(scope_entries) = Api::read_dir(&path) else {
                 continue;
             };
             for sub_path in scope_entries {
-                if let Some(pkg) = read_package::<Fs>(&sub_path)? {
+                if let Some(pkg) = read_package::<Api>(&sub_path)? {
                     packages.push(pkg);
                 }
             }
             continue;
         }
 
-        if let Some(pkg) = read_package::<Fs>(&path)? {
+        if let Some(pkg) = read_package::<Api>(&path)? {
             packages.push(pkg);
         }
     }
@@ -155,11 +155,11 @@ where
     Ok(packages)
 }
 
-fn read_package<Fs: FsReadFile>(
+fn read_package<Api: FsReadFile>(
     location: &Path,
 ) -> Result<Option<PackageBinSource>, LinkBinsError> {
     let manifest_path = location.join("package.json");
-    let bytes = match Fs::read_file(&manifest_path) {
+    let bytes = match Api::read_file(&manifest_path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(LinkBinsError::ReadManifest { path: manifest_path, error }),
@@ -183,12 +183,12 @@ fn read_package<Fs: FsReadFile>(
 /// conflicts via semver (a feature upstream uses for hoisting), since the
 /// virtual-store layout means each bin source is a unique
 /// `(package, version)` slot already.
-pub fn link_bins_of_packages<Fs>(
+pub fn link_bins_of_packages<Api>(
     packages: &[PackageBinSource],
     bins_dir: &Path,
 ) -> Result<(), LinkBinsError>
 where
-    Fs: FsReadString + FsReadHead + FsCreateDirAll + FsWriteAtomic + FsSetPermissions,
+    Api: FsReadString + FsReadHead + FsCreateDirAll + FsWriteAtomic + FsSetPermissions,
 {
     let mut chosen: HashMap<String, (Command, &PackageBinSource)> = HashMap::new();
 
@@ -215,7 +215,7 @@ where
         return Ok(());
     }
 
-    Fs::create_dir_all(bins_dir)
+    Api::create_dir_all(bins_dir)
         .map_err(|error| LinkBinsError::CreateBinDir { dir: bins_dir.to_path_buf(), error })?;
 
     // Each shim's read-shebang + write-file + chmod sequence is independent
@@ -223,7 +223,7 @@ where
     // path is per-package-bin; without parallelism the per-shim file I/O
     // serialised across the whole `chosen` map.
     chosen.par_iter().try_for_each(|(bin_name, (command, _pkg))| {
-        write_shim::<Fs>(&command.path, &bins_dir.join(bin_name))
+        write_shim::<Api>(&command.path, &bins_dir.join(bin_name))
     })?;
 
     Ok(())
@@ -252,11 +252,11 @@ fn pick_winner(bin_name: &str, existing: &str, candidate: &str) -> bool {
 /// `chmodShim` sequence in pnpm v11. Windows `.cmd` / `.ps1` are deferred.
 /// The platform-specific behavior is gated behind `#[cfg(unix)]` so the
 /// build still compiles on Windows.
-fn write_shim<Fs>(target_path: &Path, shim_path: &Path) -> Result<(), LinkBinsError>
+fn write_shim<Api>(target_path: &Path, shim_path: &Path) -> Result<(), LinkBinsError>
 where
-    Fs: FsReadString + FsReadHead + FsWriteAtomic + FsSetPermissions,
+    Api: FsReadString + FsReadHead + FsWriteAtomic + FsSetPermissions,
 {
-    let runtime = search_script_runtime::<Fs>(target_path).map_err(|error| {
+    let runtime = search_script_runtime::<Api>(target_path).map_err(|error| {
         LinkBinsError::ProbeShimSource { path: target_path.to_path_buf(), error }
     })?;
 
@@ -264,7 +264,7 @@ where
     // the right target. We only check the `.sh` flavor; if it's correct,
     // the `.cmd`/`.ps1` siblings were written together and are also
     // correct (and if they aren't, rewriting them is cheap).
-    let already_correct = matches!(Fs::read_to_string(shim_path), Ok(existing) if is_shim_pointing_at(&existing, target_path));
+    let already_correct = matches!(Api::read_to_string(shim_path), Ok(existing) if is_shim_pointing_at(&existing, target_path));
 
     let sh_body = generate_sh_shim(target_path, shim_path, runtime.as_ref());
     let cmd_path = with_extension_appended(shim_path, "cmd");
@@ -273,15 +273,15 @@ where
     let ps1_body = generate_pwsh_shim(target_path, &ps1_path, runtime.as_ref());
 
     if !already_correct {
-        Fs::write(shim_path, sh_body.as_bytes())
+        Api::write(shim_path, sh_body.as_bytes())
             .map_err(|error| LinkBinsError::WriteShim { path: shim_path.to_path_buf(), error })?;
-        Fs::write(&cmd_path, cmd_body.as_bytes())
+        Api::write(&cmd_path, cmd_body.as_bytes())
             .map_err(|error| LinkBinsError::WriteShim { path: cmd_path.clone(), error })?;
-        Fs::write(&ps1_path, ps1_body.as_bytes())
+        Api::write(&ps1_path, ps1_body.as_bytes())
             .map_err(|error| LinkBinsError::WriteShim { path: ps1_path.clone(), error })?;
     }
 
-    Fs::set_executable(shim_path)
+    Api::set_executable(shim_path)
         .map_err(|error| LinkBinsError::Chmod { path: shim_path.to_path_buf(), error })?;
     // Make the underlying script executable too. pnpm calls
     // `fixBin(cmd.path, 0o755)` to do this; we apply the same minimum
@@ -292,7 +292,7 @@ where
     // a missing target shouldn't fail the install (this is post-warm-skip
     // territory) and pacquet has already verified `target_path` exists
     // upstream of `write_shim`.
-    let _ = Fs::ensure_executable_bits(target_path);
+    let _ = Api::ensure_executable_bits(target_path);
 
     Ok(())
 }

@@ -18,11 +18,11 @@
 //! `plans/TEST_PORTING.md`.
 
 mod bin_resolver;
-mod fs_capabilities;
+mod capabilities;
 mod link_bins;
 mod shim;
 
 pub use bin_resolver::*;
-pub use fs_capabilities::*;
+pub use capabilities::*;
 pub use link_bins::*;
 pub use shim::*;
