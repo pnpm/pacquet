@@ -30,33 +30,47 @@ pub const MODULES_FILENAME: &str = ".modules.yaml";
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L101-L103>.
 pub const DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH: u64 = 120;
 
-/// Mockable interface to filesystem operations used by this crate.
+/// Capability trait: read a file's contents into a [`String`].
 ///
-/// Each method delegates to the corresponding [`std::fs`] function in the
-/// production [`RealFs`] implementation. Tests inject a fake to drive I/O
-/// error paths that are otherwise unreachable. The pattern mirrors
-/// `parallel-disk-usage`'s `FsApi` trait at
-/// <https://github.com/KSXGitHub/parallel-disk-usage/blob/2aa39917f9/src/app/hdd.rs#L25-L35>.
-pub trait FsApi {
+/// One trait per filesystem capability so each function declares only what
+/// it actually uses, and so test fakes only implement the methods that
+/// will be exercised. Pattern follows the per-capability typeclass style
+/// rather than `parallel-disk-usage`'s lumped `FsApi` at
+/// <https://github.com/KSXGitHub/parallel-disk-usage/blob/2aa39917f9/src/app/hdd.rs#L29-L35>.
+pub trait FsReadToString {
     fn read_to_string(path: &Path) -> io::Result<String>;
+}
+
+/// Capability trait: create a directory and any missing parents.
+pub trait FsCreateDirAll {
     fn create_dir_all(path: &Path) -> io::Result<()>;
+}
+
+/// Capability trait: write bytes to a file, replacing existing contents.
+pub trait FsWrite {
     fn write(path: &Path, contents: &[u8]) -> io::Result<()>;
 }
 
-/// Production implementation of [`FsApi`] backed by [`std::fs`].
+/// Production implementation, backed by [`std::fs`]. One impl block per
+/// capability trait — production uses the full set; tests pick what they
+/// need.
 pub struct RealFs;
 
-impl FsApi for RealFs {
+impl FsReadToString for RealFs {
     #[inline]
     fn read_to_string(path: &Path) -> io::Result<String> {
         fs::read_to_string(path)
     }
+}
 
+impl FsCreateDirAll for RealFs {
     #[inline]
     fn create_dir_all(path: &Path) -> io::Result<()> {
         fs::create_dir_all(path)
     }
+}
 
+impl FsWrite for RealFs {
     #[inline]
     fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
         fs::write(path, contents)
@@ -107,9 +121,9 @@ pub enum WriteModulesManifestError {
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L50-L105>.
 ///
 /// Production callers turbofish [`RealFs`]: `read_modules_manifest::<RealFs>(dir)`.
-/// Tests can substitute a fake [`FsApi`] implementation to drive I/O error
-/// paths.
-pub fn read_modules_manifest<Fs: FsApi>(
+/// The bound is the minimal capability ([`FsReadToString`]) so test fakes
+/// only need to implement the method that is actually called.
+pub fn read_modules_manifest<Fs: FsReadToString>(
     modules_dir: &Path,
 ) -> Result<Option<ModulesManifest>, ReadModulesManifestError> {
     let manifest_path = modules_dir.join(MODULES_FILENAME);
@@ -144,7 +158,8 @@ pub fn read_modules_manifest<Fs: FsApi>(
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L111-L138>.
 ///
 /// Production callers turbofish [`RealFs`]: `write_modules_manifest::<RealFs>(dir, &m)`.
-pub fn write_modules_manifest<Fs: FsApi>(
+/// Bounds are minimal: only [`FsCreateDirAll`] and [`FsWrite`] are required.
+pub fn write_modules_manifest<Fs: FsCreateDirAll + FsWrite>(
     modules_dir: &Path,
     manifest: &ModulesManifest,
 ) -> Result<(), WriteModulesManifestError> {

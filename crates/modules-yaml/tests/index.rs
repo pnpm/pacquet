@@ -1,4 +1,6 @@
-use pacquet_modules_yaml::{FsApi, RealFs, read_modules_manifest, write_modules_manifest};
+use pacquet_modules_yaml::{
+    FsCreateDirAll, FsReadToString, FsWrite, RealFs, read_modules_manifest, write_modules_manifest,
+};
 use pipe_trait::Pipe;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -176,11 +178,11 @@ fn write_sorts_skipped_array() {
 }
 
 // The next five tests use dependency injection to drive I/O outcomes that
-// are awkward or impossible to provoke with the real filesystem. The
-// `FsApi`/`RealFs` pattern mirrors `parallel-disk-usage` at
-// https://github.com/KSXGitHub/parallel-disk-usage/blob/2aa39917f9/src/app/hdd.rs#L25-L74
-// and the test fakes follow
-// https://github.com/KSXGitHub/parallel-disk-usage/blob/2aa39917f9/src/app/hdd/test.rs#L42-L64.
+// are awkward or impossible to provoke with the real filesystem. Each fake
+// implements only the capability trait the function under test consumes —
+// so a read fake never has to declare `write`. This is the
+// interface-segregation refinement of the lumped `FsApi` pattern at
+// https://github.com/KSXGitHub/parallel-disk-usage/blob/2aa39917f9/src/app/hdd.rs#L25-L35.
 
 // `read_modules_manifest` should map a non-`NotFound` I/O error from
 // `read_to_string` to `ReadModulesManifestError::ReadFile`.
@@ -188,15 +190,9 @@ fn write_sorts_skipped_array() {
 fn read_propagates_non_not_found_io_error() {
     use std::io;
     struct FailingFs;
-    impl FsApi for FailingFs {
+    impl FsReadToString for FailingFs {
         fn read_to_string(_: &Path) -> io::Result<String> {
             Err(io::Error::new(io::ErrorKind::PermissionDenied, "mocked"))
-        }
-        fn create_dir_all(_: &Path) -> io::Result<()> {
-            unreachable!("create_dir_all should not be called by read_modules_manifest");
-        }
-        fn write(_: &Path, _: &[u8]) -> io::Result<()> {
-            unreachable!("write should not be called by read_modules_manifest");
         }
     }
 
@@ -212,15 +208,9 @@ fn read_propagates_non_not_found_io_error() {
 fn read_propagates_parse_error() {
     use std::io;
     struct BadYamlFs;
-    impl FsApi for BadYamlFs {
+    impl FsReadToString for BadYamlFs {
         fn read_to_string(_: &Path) -> io::Result<String> {
             Ok("{ this is not valid yaml or json".to_string())
-        }
-        fn create_dir_all(_: &Path) -> io::Result<()> {
-            unreachable!("create_dir_all should not be called by read_modules_manifest");
-        }
-        fn write(_: &Path, _: &[u8]) -> io::Result<()> {
-            unreachable!("write should not be called by read_modules_manifest");
         }
     }
 
@@ -237,15 +227,9 @@ fn read_propagates_parse_error() {
 fn read_returns_none_for_null_document() {
     use std::io;
     struct NullDocFs;
-    impl FsApi for NullDocFs {
+    impl FsReadToString for NullDocFs {
         fn read_to_string(_: &Path) -> io::Result<String> {
             Ok("null\n".to_string())
-        }
-        fn create_dir_all(_: &Path) -> io::Result<()> {
-            unreachable!("create_dir_all should not be called by read_modules_manifest");
-        }
-        fn write(_: &Path, _: &[u8]) -> io::Result<()> {
-            unreachable!("write should not be called by read_modules_manifest");
         }
     }
 
@@ -255,18 +239,19 @@ fn read_returns_none_for_null_document() {
 }
 
 // `write_modules_manifest` should map a `create_dir_all` failure to
-// `WriteModulesManifestError::CreateDir`.
+// `WriteModulesManifestError::CreateDir`. The fake still has to implement
+// `FsWrite` because the function bound includes it, but the body asserts
+// that `write` is never reached on this code path.
 #[test]
 fn write_propagates_create_dir_error() {
     use std::io;
     struct FailingMkdirFs;
-    impl FsApi for FailingMkdirFs {
-        fn read_to_string(_: &Path) -> io::Result<String> {
-            unreachable!("read_to_string should not be called by write_modules_manifest");
-        }
+    impl FsCreateDirAll for FailingMkdirFs {
         fn create_dir_all(_: &Path) -> io::Result<()> {
             Err(io::Error::new(io::ErrorKind::PermissionDenied, "mocked"))
         }
+    }
+    impl FsWrite for FailingMkdirFs {
         fn write(_: &Path, _: &[u8]) -> io::Result<()> {
             unreachable!("write must not be called when create_dir_all fails");
         }
@@ -285,13 +270,12 @@ fn write_propagates_create_dir_error() {
 fn write_propagates_write_error() {
     use std::io;
     struct FailingWriteFs;
-    impl FsApi for FailingWriteFs {
-        fn read_to_string(_: &Path) -> io::Result<String> {
-            unreachable!("read_to_string should not be called by write_modules_manifest");
-        }
+    impl FsCreateDirAll for FailingWriteFs {
         fn create_dir_all(_: &Path) -> io::Result<()> {
             Ok(())
         }
+    }
+    impl FsWrite for FailingWriteFs {
         fn write(_: &Path, _: &[u8]) -> io::Result<()> {
             Err(io::Error::other("mocked write failure"))
         }
