@@ -1,8 +1,7 @@
 use std::env::temp_dir;
 
 use clap::Parser;
-use pacquet_registry_mock::{MockInstanceOptions, PreparedRegistryInfo};
-use portpicker::pick_unused_port;
+use pacquet_registry_mock::{MockInstanceOptions, PreparedRegistryInfo, pick_unused_port};
 use reqwest::Client;
 use tokio::time::Duration;
 
