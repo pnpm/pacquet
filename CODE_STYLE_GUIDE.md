@@ -383,16 +383,13 @@ fn walk_deps_inner(/* ... */) { /* ... */ }
 ```
 
 ```rust
-// Good: public doc describes observable behavior; implementation note
-// stays on the implementation
+// Good: public doc describes observable behavior
 /// Builds the lockfile by walking dependencies.
 ///
 /// Cycles in the dependency graph are reported as
 /// [`LockfileError::CycleDetected`].
 pub fn build_lockfile(/* ... */) { /* ... */ }
 
-// Walks the dependency graph iteratively to avoid stack overflow on
-// pathological inputs.
 fn walk_deps_inner(/* ... */) { /* ... */ }
 ```
 
