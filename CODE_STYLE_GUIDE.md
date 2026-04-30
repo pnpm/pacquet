@@ -366,6 +366,24 @@ However, piping through any unary function **is** preferred when it continues an
 manifest.summarize().pipe(Some)
 ```
 
+### Doc comment intra-links
+
+When a doc comment (`/// ` or `//! `) mentions an identifier (type, trait, function, method, module, constant, macro, etc.) that is intra-linkable from the current scope, write the mention as a [rustdoc intra-doc link][intra-doc-links] rather than as bare prose. Intra-doc links give readers one-click navigation and let rustdoc warn when a referenced item is renamed or removed, so the docs stay in sync with the code.
+
+[intra-doc-links]: https://doc.rust-lang.org/rustdoc/write-documentation/linking-to-items-by-name.html
+
+```rust
+// Good
+/// Installs the package described by [`PackageManifest`] into [`Store`].
+pub fn install(manifest: &PackageManifest, store: &Store) { /* ... */ }
+
+// Bad: identifiers are mentioned as bare prose
+/// Installs the package described by `PackageManifest` into `Store`.
+pub fn install(manifest: &PackageManifest, store: &Store) { /* ... */ }
+```
+
+If the identifier is not directly in scope, use a path link (`` [`crate::store::Store`] ``) or a disambiguated link (`` [`Store`](crate::store::Store) ``) rather than dropping back to bare prose. Reserve plain backticks for things that genuinely cannot be linked, such as identifiers from external code that rustdoc cannot resolve, shell commands, file paths, or literal values.
+
 ### Error Handling
 
 - Use `derive_more` for error types. Only derive the traits that are actually used:
