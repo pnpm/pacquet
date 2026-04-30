@@ -6,7 +6,7 @@
 //! The manifest is stored at `<modules_dir>/.modules.yaml`, where
 //! `modules_dir` is the path of a `node_modules` directory. The on-disk
 //! format is JSON (which YAML accepts), so reads use a YAML parser and
-//! writes emit `serde_json::to_string_pretty` output to match pnpm exactly.
+//! writes emit [`serde_json::to_string_pretty`] output to match pnpm exactly.
 
 use derive_more::{Display, Error};
 use pacquet_diagnostics::miette::{self, Diagnostic};
@@ -80,7 +80,7 @@ impl FsWrite for RealApi {
 /// Free-form representation of a `.modules.yaml` manifest.
 ///
 /// pnpm carries a strongly-typed `Modules` interface upstream. Pacquet keeps
-/// the manifest as a `serde_json::Value` while the surrounding install
+/// the manifest as a [`serde_json::Value`] while the surrounding install
 /// pipeline is being ported; the on-disk format is JSON regardless.
 pub type ModulesManifest = Value;
 
