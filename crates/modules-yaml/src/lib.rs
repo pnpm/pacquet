@@ -134,9 +134,6 @@ pub fn read_modules_manifest<Api: FsReadToString>(
             return Err(ReadModulesManifestError::ReadFile { path: manifest_path, source });
         }
     };
-    if content.trim().is_empty() {
-        return Ok(None);
-    }
     let mut manifest: Value =
         serde_saphyr::from_str(&content).map_err(|source| ReadModulesManifestError::ParseYaml {
             path: manifest_path.clone(),
