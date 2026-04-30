@@ -368,9 +368,9 @@ manifest.summarize().pipe(Some)
 
 ### Documentation comments
 
-Outer doc comments (`///`) and inner doc comments (`//!`) are part of the public API surface: `rustdoc` renders them for readers who may never look at the source. Do not reference items more private than the item being documented — private modules, private functions, private types, private fields, or private constants from a `pub` item; private-or-`pub(crate)` items from a `pub` item; private items from a `pub(crate)` item; and so on. A reader who only sees the rendered docs cannot follow such a reference, and intra-doc links to inaccessible items become broken links in `cargo doc` output.
+Outer doc comments (`///`) and inner doc comments (`//!`) are part of the public API surface. `rustdoc` renders them for readers who may never look at the source. Do not reference items more private than the item being documented. Disallowed references include a private function named in the doc comment of a `pub` item, a `pub(crate)` type named in the doc comment of a `pub` item, and a private constant named in the doc comment of a `pub(crate)` item. A reader who only sees the rendered docs cannot follow such a reference, and intra-doc links to inaccessible items become broken links in `cargo doc` output.
 
-If the explanation genuinely depends on the private detail, either widen the visibility of the referenced item (with a re-export if appropriate) or move the explanation into a regular `//` comment on the implementation, where readers of the source can see it. Reserve `///` and `//!` for things a downstream user of the item needs to know; use `//` for notes useful only to someone reading the source.
+If the explanation genuinely depends on the private detail, choose one of two fixes. The first option is to widen the visibility of the referenced item, adding a re-export when one fits the API. The second option is to move the explanation into a regular `//` comment on the implementation, where readers of the source can see it. Reserve `///` and `//!` for things a downstream user of the item needs to know. Use `//` for notes useful only to someone reading the source.
 
 ```rust
 // Bad: public doc references a private helper
