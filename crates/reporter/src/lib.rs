@@ -138,9 +138,9 @@ fn now_millis() -> u128 {
 
 /// Capability for reading process environment variables.
 ///
-/// Lets [`resolve_hostname`] (and any future env-dependent helper in this
-/// crate) be exercised without touching the real process environment. The
-/// production implementation is [`RealEnvVar`].
+/// Lets env-dependent helpers in this crate be exercised without touching
+/// the real process environment. The production implementation is
+/// [`RealEnvVar`].
 pub trait EnvVar {
     fn var(name: &str) -> Option<String>;
 }
