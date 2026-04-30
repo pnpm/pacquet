@@ -15,6 +15,8 @@ Expected-failing test ports should live under a `known_failures` test module and
 
 Test the tests before marking them ported. After porting a test, temporarily modify the relevant implementation path so the test should fail, run that test, and verify it fails for the expected reason. Revert the temporary breakage before committing. This guards against porting tests that execute but do not actually detect the behavior they claim to cover. See https://github.com/pnpm/pacquet/issues/299#issuecomment-4323032648.
 
+It doesn't hurt to have more tests than pnpm. The lists in this plan are a floor, not a ceiling: porting upstream coverage is the minimum bar for behavioral parity, but you are encouraged to add extra Rust-side tests beyond what pnpm has whenever they exercise edge cases, regressions, or invariants the upstream suite does not cover. Pacquet-only tests are welcome — add them alongside the ported ones rather than holding back coverage to keep the two suites symmetric.
+
 ## `.modules.yaml` Write And Verify
 
 Primary tests:
