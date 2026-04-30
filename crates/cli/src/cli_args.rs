@@ -56,7 +56,8 @@ impl CliArgs {
         let manifest_path = || dir.join("package.json");
         // Production callers turbofish `RealApi` explicitly so the
         // dependency-injection plumbing is visible at the call site.
-        // See `plans/PORTING_GUIDE.md` for the pattern and rationale.
+        // See [pnpm/pacquet#339](https://github.com/pnpm/pacquet/issues/339)
+        // for the pattern and rationale.
         let npmrc = || {
             Npmrc::current::<RealApi, _, _, _, _>(
                 env::current_dir,

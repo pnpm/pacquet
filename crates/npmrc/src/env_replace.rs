@@ -23,8 +23,8 @@
 //!
 //! Production callers thread `RealApi` (which delegates to
 //! `std::env::var`) through the turbofish slot. Tests provide their
-//! own per-test unit struct, per the DI pattern in
-//! [`plans/PORTING_GUIDE.md`](../../../plans/PORTING_GUIDE.md).
+//! own per-test unit struct, per the DI pattern from
+//! [pnpm/pacquet#339](https://github.com/pnpm/pacquet/issues/339).
 
 use std::fmt;
 
@@ -246,8 +246,10 @@ mod tests {
     #[test]
     fn handles_multiple_placeholders() {
         // `static` scenario data inside the test fn matches the
-        // pattern in `plans/PORTING_GUIDE.md`: keep the fake stateless
-        // by stashing variation in a `static`, not in `&self`.
+        // pattern from
+        // [pnpm/pacquet#339](https://github.com/pnpm/pacquet/issues/339):
+        // keep the fake stateless by stashing variation in a `static`,
+        // not in `&self`.
         static ENV: &[(&str, &str)] = &[("A", "1"), ("B", "2")];
         struct StaticEnv;
         impl EnvVar for StaticEnv {

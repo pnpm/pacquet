@@ -1,7 +1,7 @@
 //! Capability traits and the project-wide [`RealApi`] provider.
 //!
 //! Mirrors the dependency-injection pattern documented in
-//! [`plans/PORTING_GUIDE.md`](../../../plans/PORTING_GUIDE.md): one
+//! [pnpm/pacquet#339](https://github.com/pnpm/pacquet/issues/339): one
 //! trait per capability, one provider gathering every capability impl
 //! used across the codebase, all methods static. Production callers
 //! turbofish the real provider explicitly

@@ -464,8 +464,8 @@ mod tests {
     /// `.npmrc` the tests below feed `Npmrc::current` is free of
     /// `${VAR}` placeholders, so the real lookup is never needed —
     /// using a stateless unit struct keeps the suite from depending
-    /// on `std::env::var`. See `plans/PORTING_GUIDE.md` for the
-    /// trait-per-capability DI pattern.
+    /// on `std::env::var`. See [pnpm/pacquet#339](https://github.com/pnpm/pacquet/issues/339)
+    /// for the trait-per-capability DI pattern.
     struct NoEnv;
     impl EnvVar for NoEnv {
         fn var(_: &str) -> Option<String> {

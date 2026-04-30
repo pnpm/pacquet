@@ -262,9 +262,10 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     /// Test fake: the process environment is empty. Per the DI
-    /// pattern in `plans/PORTING_GUIDE.md`, the fake is a unit struct
-    /// scoped to the test module; tests turbofish it through the
-    /// generic slot.
+    /// pattern from
+    /// [pnpm/pacquet#339](https://github.com/pnpm/pacquet/issues/339),
+    /// the fake is a unit struct scoped to the test module; tests
+    /// turbofish it through the generic slot.
     struct NoEnv;
     impl EnvVar for NoEnv {
         fn var(_: &str) -> Option<String> {
