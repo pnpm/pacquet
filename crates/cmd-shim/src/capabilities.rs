@@ -20,7 +20,7 @@ use std::{io, path::Path};
 /// [`crate::read_head_filled`] for that — it stays generic over this
 /// trait so test fakes don't have to grow.
 ///
-/// Used by [`crate::search_script_runtime`] (via `read_head_filled`)
+/// Used by [`crate::search_script_runtime`] (via [`crate::read_head_filled`])
 /// to detect the script runtime via the shebang at the head of a bin
 /// file.
 pub trait FsReadHead {

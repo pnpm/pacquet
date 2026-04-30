@@ -66,7 +66,8 @@ pub enum LinkVirtualStoreBinsError {
 /// `<depNode.dir>/node_modules/.bin`.
 ///
 /// Pacquet's virtual store layout already exposes a slot's children as
-/// siblings via `create_symlink_layout`. So once the symlinks exist, walking
+/// siblings via [`create_symlink_layout`](crate::create_symlink_layout()).
+/// So once the symlinks exist, walking
 /// the slot's `node_modules` and excluding the package itself gives the same
 /// child-set pnpm uses, and the bins go into the package's own
 /// `node_modules/.bin` (i.e. nested *one level deeper* than the slot's
