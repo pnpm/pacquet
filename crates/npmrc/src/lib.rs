@@ -635,4 +635,33 @@ mod tests {
         );
         assert!(!config.symlink);
     }
+
+    /// Threads a `${VAR}` placeholder through `Npmrc::current` so the
+    /// `Api: EnvVar` bound is actually exercised end-to-end. Without
+    /// this test the [`NoEnv`] fake's `var` body would be unreachable
+    /// from `lib.rs` tests because none of the other `.npmrc`
+    /// fixtures here carry a `${VAR}` reference, and `env_replace`
+    /// short-circuits before invoking `Api::var` for placeholder-free
+    /// values.
+    #[test]
+    pub fn env_replace_runs_via_npmrc_current_with_no_env_fake() {
+        let tmp = tempdir().unwrap();
+        fs::write(tmp.path().join(".npmrc"), "//reg.com/:_authToken=${MISSING_TOKEN}\n")
+            .expect("write to .npmrc");
+        let config = Npmrc::current::<NoEnv, _, _, _, _>(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || unreachable!("shouldn't reach home dir"),
+            Npmrc::new,
+        );
+        // The substitution failed (NoEnv reports the var as unset) so
+        // the parser kept the raw `${MISSING_TOKEN}` value verbatim
+        // and emitted a warning. The `Authorization` header attached
+        // for `https://reg.com/` is `Bearer ${MISSING_TOKEN}` —
+        // confirming that `env_replace` did call into `NoEnv::var`,
+        // saw `None`, and surfaced the literal placeholder.
+        assert_eq!(
+            config.auth_headers.for_url("https://reg.com/foo").as_deref(),
+            Some("Bearer ${MISSING_TOKEN}"),
+        );
+    }
 }
