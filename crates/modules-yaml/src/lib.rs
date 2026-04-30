@@ -328,3 +328,6 @@ fn path_to_value(path: &Path) -> Value {
 fn http_date_now() -> String {
     httpdate::fmt_http_date(SystemTime::now())
 }
+
+#[cfg(test)]
+mod edge_cases;
