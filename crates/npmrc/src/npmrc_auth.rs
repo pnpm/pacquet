@@ -80,10 +80,6 @@ impl NpmrcAuth {
             if line.is_empty() || line.starts_with(';') || line.starts_with('#') {
                 continue;
             }
-            // `[section]` headers aren't meaningful in .npmrc; skip them.
-            if line.starts_with('[') && line.ends_with(']') {
-                continue;
-            }
             let Some((raw_key, raw_value)) = line.split_once('=') else {
                 continue;
             };
@@ -409,13 +405,16 @@ registry=https://r.example
         );
     }
 
-    /// `[section]` headers are not meaningful in `.npmrc`; the parser
-    /// should skip them silently.
+    /// `[section]`-style headers are not legal `.npmrc` syntax (npm's
+    /// rc files are flat key/value pairs). Smoke-test that they are
+    /// dropped silently — they fall through the no-`=` branch in
+    /// `from_ini` so the parser never tries to interpret them.
     #[test]
-    fn ini_section_headers_are_skipped() {
+    fn ini_section_headers_are_dropped_silently() {
         let ini = "[default]\nregistry=https://r.example\n[other]\n";
         let auth = NpmrcAuth::from_ini::<NoEnv>(ini);
         assert_eq!(auth.registry.as_deref(), Some("https://r.example"));
+        assert_eq!(auth.warnings, Vec::<String>::new());
     }
 
     /// When a `${VAR}` placeholder appears in the *key* and cannot be

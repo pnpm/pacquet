@@ -421,16 +421,19 @@ mod tests {
         assert_eq!(AuthHeaders::default().for_url("http://reg.com"), None);
     }
 
-    /// Hits the trailing-slash-append branch in `for_url` (line 96 in
-    /// the parser): a non-trailing-slash URL with no recognised path
-    /// segment forces the function to allocate a new owned `String`
-    /// before reparsing. The `npm.pkg.github.com/pnpm` test above
-    /// already covers the path-bearing case; this one targets the
-    /// host-only form that drops into `lookup_by_nerf` empty-handed.
+    /// Specifically exercises the trailing-slash-append branch in
+    /// [`AuthHeaders::for_url`]: the URL ends without a `/` *and*
+    /// names a path segment (`/scope`). Without the append,
+    /// `nerf_dart` would drop the segment and miss the token; with
+    /// it, the lookup walks `//reg.com/scope/`. Removing the append
+    /// branch makes this test fail — `registry_with_pathname_matches_metadata_and_tarballs`
+    /// alone is not enough because its host-only assertion would
+    /// pass via `ParsedUrl::parse`'s no-path branch even without
+    /// the append.
     #[test]
-    fn host_only_url_without_trailing_slash_still_matches() {
-        let headers = build(&[("//reg.com/", "Bearer abc123")]);
-        assert_eq!(headers.for_url("https://reg.com").as_deref(), Some("Bearer abc123"));
+    fn slash_append_branch_lets_path_segment_match() {
+        let headers = build(&[("//reg.com/scope/", "Bearer scoped")]);
+        assert_eq!(headers.for_url("https://reg.com/scope").as_deref(), Some("Bearer scoped"),);
     }
 
     /// Hits the `None => return String::new()` branch of [`nerf_dart`]
