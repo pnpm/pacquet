@@ -78,6 +78,14 @@ just registry-mock launch # start a mocked registry server (optional)
 just test                 # run tests
 ```
 
+When porting tests from the upstream `pnpm/pnpm` TypeScript repository, see
+[`plans/TEST_PORTING.md`](./plans/TEST_PORTING.md). It tracks the tests
+scheduled for porting (with upstream file paths and line numbers), the
+expected layout for not-yet-implemented behavior (`known_failures` modules
+guarded by `pacquet_testing_utils::allow_known_failure!`), and the
+verification step of temporarily breaking the implementation to confirm a
+ported test actually fails for the right reason before committing.
+
 ## Benchmarking
 
 First, start a local registry server, such as [verdaccio](https://verdaccio.org/):
