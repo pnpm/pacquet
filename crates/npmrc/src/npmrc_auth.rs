@@ -90,6 +90,14 @@ mod tests {
         // These are all project-structural settings that pnpm 11 only reads
         // from pnpm-workspace.yaml now. Writing them to .npmrc should be a
         // no-op.
+        //
+        // `Npmrc::new()` reads `PNPM_HOME` / `XDG_DATA_HOME` to compute
+        // `store_dir`, and the env-mutating tests in `custom_deserializer`
+        // toggle those vars under `EnvGuard`. Hold the same lock so a
+        // parallel test can't change the env between the two `Npmrc::new()`
+        // snapshots compared below. Proper fix is dependency injection —
+        // see the TODO on `default_store_dir`.
+        let _g = crate::test_env_guard::EnvGuard::snapshot(["PNPM_HOME", "XDG_DATA_HOME"]);
         let ini = "
 store-dir=/should/not/apply
 lockfile=false
