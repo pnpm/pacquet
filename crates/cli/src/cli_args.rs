@@ -5,12 +5,13 @@ pub mod store;
 
 use crate::State;
 use add::AddArgs;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use install::InstallArgs;
 use miette::Context;
 use pacquet_executor::execute_shell;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::PackageManifest;
+use pacquet_reporter::{NdjsonReporter, SilentReporter};
 use run::RunArgs;
 use std::{env, path::PathBuf};
 use store::StoreCommand;
@@ -28,6 +29,30 @@ pub struct CliArgs {
     /// Set working directory.
     #[clap(short = 'C', long, default_value = ".")]
     pub dir: PathBuf,
+
+    /// How install progress is rendered.
+    ///
+    /// `ndjson` writes pnpm-shaped log records as newline-delimited JSON
+    /// to stderr, suitable for piping into `@pnpm/cli.default-reporter`.
+    /// `silent` drops every event. The default is `silent` until the
+    /// in-process default renderer lands; the spawn-and-pipe wiring is
+    /// tracked separately (see #344).
+    #[clap(long, value_enum, default_value_t = ReporterType::Silent)]
+    pub reporter: ReporterType,
+}
+
+/// Selectable rendering strategy for log events.
+///
+/// Mirrors the names pnpm uses for `--reporter` (`default`, `ndjson`,
+/// `silent`, `append-only`). Only the variants pacquet currently supports
+/// are listed; the others land alongside the default-reporter spawn-and-
+/// pipe (tracked under #344).
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ReporterType {
+    /// Newline-delimited JSON in pnpm's wire format on stderr.
+    Ndjson,
+    /// No progress output.
+    Silent,
 }
 
 #[derive(Subcommand, Debug)]
@@ -52,7 +77,7 @@ pub enum CliCommand {
 impl CliArgs {
     /// Execute the command
     pub async fn run(self) -> miette::Result<()> {
-        let CliArgs { command, dir } = self;
+        let CliArgs { command, dir, reporter } = self;
         let manifest_path = || dir.join("package.json");
         let npmrc = || Npmrc::current(env::current_dir, home::home_dir, Default::default).leak();
         // `require_lockfile` is the "this subcommand cannot run without a
@@ -70,10 +95,17 @@ impl CliArgs {
             CliCommand::Init => {
                 PackageManifest::init(&manifest_path()).wrap_err("initialize package.json")?;
             }
-            CliCommand::Add(args) => args.run(state(false)?).await?,
+            CliCommand::Add(args) => match reporter {
+                ReporterType::Ndjson => args.run::<NdjsonReporter>(state(false)?).await?,
+                ReporterType::Silent => args.run::<SilentReporter>(state(false)?).await?,
+            },
             CliCommand::Install(args) => {
                 let require_lockfile = args.frozen_lockfile;
-                args.run(state(require_lockfile)?).await?
+                let state = state(require_lockfile)?;
+                match reporter {
+                    ReporterType::Ndjson => args.run::<NdjsonReporter>(state).await?,
+                    ReporterType::Silent => args.run::<SilentReporter>(state).await?,
+                }
             }
             CliCommand::Test => {
                 let manifest = PackageManifest::from_path(manifest_path())

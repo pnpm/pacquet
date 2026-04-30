@@ -17,6 +17,7 @@ pacquet-network          = { workspace = true }
 pacquet-npmrc            = { workspace = true }
 pacquet-package-manifest = { workspace = true }
 pacquet-registry         = { workspace = true }
+pacquet-reporter         = { workspace = true }
 pacquet-store-dir        = { workspace = true }
 pacquet-tarball          = { workspace = true }
 

@@ -1755,6 +1755,7 @@ dependencies = [
  "pacquet-package-manager",
  "pacquet-package-manifest",
  "pacquet-registry",
+ "pacquet-reporter",
  "pacquet-store-dir",
  "pacquet-tarball",
  "pacquet-testing-utils",
@@ -1900,6 +1901,7 @@ dependencies = [
  "pacquet-package-manifest",
  "pacquet-registry",
  "pacquet-registry-mock",
+ "pacquet-reporter",
  "pacquet-store-dir",
  "pacquet-tarball",
  "pacquet-testing-utils",
@@ -1963,6 +1965,16 @@ dependencies = [
  "sysinfo",
  "tokio",
  "which",
+]
+
+[[package]]
+name = "pacquet-reporter"
+version = "0.0.1"
+dependencies = [
+ "insta",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

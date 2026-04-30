@@ -8,6 +8,7 @@ use pacquet_lockfile::Lockfile;
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
+use pacquet_reporter::{LogEvent, LogLevel, Reporter, Stage, StageLog};
 use pacquet_tarball::MemCache;
 
 /// This subroutine does everything `pacquet install` is supposed to do.
@@ -53,7 +54,7 @@ where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
     /// Execute the subroutine.
-    pub async fn run(self) -> Result<(), InstallError> {
+    pub async fn run<R: Reporter>(self) -> Result<(), InstallError> {
         let Install {
             tarball_mem_cache,
             resolved_packages,
@@ -64,6 +65,18 @@ where
             dependency_groups,
             frozen_lockfile,
         } = self;
+
+        // Project root for the bunyan-envelope `prefix`. pnpm uses the
+        // workspace path; the closest pacquet equivalent is the directory
+        // holding `package.json`.
+        let prefix =
+            manifest.path().parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+
+        R::emit(&LogEvent::Stage(StageLog {
+            level: LogLevel::Debug,
+            prefix: prefix.clone(),
+            stage: Stage::ImportingStarted,
+        }));
 
         tracing::info!(target: "pacquet::install", "Start all");
 
@@ -118,6 +131,13 @@ where
         }
 
         tracing::info!(target: "pacquet::install", "Complete all");
+
+        R::emit(&LogEvent::Stage(StageLog {
+            level: LogLevel::Debug,
+            prefix,
+            stage: Stage::ImportingDone,
+        }));
+
         Ok(())
     }
 }
@@ -129,6 +149,7 @@ mod tests {
     use pacquet_package_manifest::{DependencyGroup, PackageManifest};
     use pacquet_registry_mock::AutoMockInstance;
     use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
+    use std::sync::Mutex;
     use tempfile::tempdir;
 
     #[tokio::test]
@@ -172,7 +193,7 @@ mod tests {
             frozen_lockfile: false,
             resolved_packages: &Default::default(),
         }
-        .run()
+        .run::<pacquet_reporter::SilentReporter>()
         .await
         .expect("install should succeed");
 
@@ -220,7 +241,7 @@ mod tests {
             frozen_lockfile: true,
             resolved_packages: &Default::default(),
         }
-        .run()
+        .run::<pacquet_reporter::SilentReporter>()
         .await;
 
         assert!(matches!(result, Err(InstallError::NoLockfile)));
@@ -255,7 +276,7 @@ mod tests {
             frozen_lockfile: false,
             resolved_packages: &Default::default(),
         }
-        .run()
+        .run::<pacquet_reporter::SilentReporter>()
         .await;
 
         assert!(matches!(result, Err(InstallError::UnsupportedLockfileMode)));
@@ -321,7 +342,7 @@ mod tests {
             frozen_lockfile: true,
             resolved_packages: &Default::default(),
         }
-        .run()
+        .run::<pacquet_reporter::SilentReporter>()
         .await
         .expect("--frozen-lockfile + empty lockfile should succeed via InstallFrozenLockfile");
 
@@ -378,7 +399,7 @@ mod tests {
             frozen_lockfile: false,
             resolved_packages: &Default::default(),
         }
-        .run()
+        .run::<pacquet_reporter::SilentReporter>()
         .await
         .expect("npm-alias install should succeed");
 
@@ -452,7 +473,7 @@ mod tests {
             frozen_lockfile: false,
             resolved_packages: &Default::default(),
         }
-        .run()
+        .run::<pacquet_reporter::SilentReporter>()
         .await
         .expect("unversioned npm-alias install should succeed (defaults to latest)");
 
@@ -511,10 +532,88 @@ mod tests {
             frozen_lockfile: true,
             resolved_packages: &Default::default(),
         }
-        .run()
+        .run::<pacquet_reporter::SilentReporter>()
         .await;
 
         assert!(matches!(result, Err(InstallError::NoLockfile)));
+        drop(dir);
+    }
+
+    /// `Install::run` emits `pnpm:stage` events bracketing the install:
+    /// `importing_started` before any work, `importing_done` after the
+    /// install completes successfully. On the success path, both fire in
+    /// order; on an early-error path (e.g. `NoLockfile`), only
+    /// `importing_started` fires. This matches pnpm's stage semantics —
+    /// the JS reporter relies on the started/done pairing to drive its
+    /// progress UI.
+    ///
+    /// Uses the recording-fake DI pattern from
+    /// <https://github.com/pnpm/pacquet/issues/339>: a unit-struct
+    /// reporter declared inside the test body, recording into a `static`
+    /// mutex declared in the same body. The mutex is per-test-fn, so
+    /// concurrent tests don't race on it.
+    #[tokio::test]
+    async fn install_emits_stage_events_bracketing_the_run() {
+        static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+
+        struct RecordingReporter;
+        impl Reporter for RecordingReporter {
+            fn emit(event: &LogEvent) {
+                EVENTS.lock().unwrap().push(event.clone());
+            }
+        }
+
+        let dir = tempdir().unwrap();
+        let store_dir = dir.path().join("pacquet-store");
+        let project_root = dir.path().join("project");
+        let modules_dir = project_root.join("node_modules");
+        let virtual_store_dir = modules_dir.join(".pacquet");
+
+        let manifest_path = dir.path().join("package.json");
+        let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+        let mut config = Npmrc::new();
+        config.lockfile = false;
+        config.store_dir = store_dir.into();
+        config.modules_dir = modules_dir.to_path_buf();
+        config.virtual_store_dir = virtual_store_dir;
+        let config = config.leak();
+
+        // Empty v9 lockfile: `--frozen-lockfile` walks an empty snapshot
+        // set successfully, which is the cheapest "real" install path.
+        let lockfile: Lockfile = serde_saphyr::from_str(concat!(
+            "lockfileVersion: '9.0'\n",
+            "importers:\n",
+            "  .:\n",
+            "    dependencies: {}\n",
+            "packages: {}\n",
+            "snapshots: {}\n",
+        ))
+        .expect("parse minimal v9 lockfile");
+
+        Install {
+            tarball_mem_cache: &Default::default(),
+            http_client: &Default::default(),
+            config,
+            manifest: &manifest,
+            lockfile: Some(&lockfile),
+            dependency_groups: [DependencyGroup::Prod],
+            frozen_lockfile: true,
+            resolved_packages: &Default::default(),
+        }
+        .run::<RecordingReporter>()
+        .await
+        .expect("empty-lockfile frozen install should succeed");
+
+        let captured = EVENTS.lock().unwrap();
+        let stages: Vec<Stage> = captured
+            .iter()
+            .map(|e| match e {
+                LogEvent::Stage(StageLog { stage, .. }) => *stage,
+            })
+            .collect();
+        assert_eq!(stages, [Stage::ImportingStarted, Stage::ImportingDone]);
+
         drop(dir);
     }
 }
