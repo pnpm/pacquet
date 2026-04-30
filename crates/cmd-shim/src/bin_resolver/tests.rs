@@ -248,30 +248,34 @@ fn directories_bin_walks_files_recursively() {
 
 /// Mirrors pnpm's "skip directories.bin with path traversal"
 /// (<https://github.com/pnpm/pnpm/blob/4750fd370c/bins/resolver/test/index.ts#L150-L170>).
-/// `directories.bin: '../../target'` must be rejected by the `is_subdir`
-/// guard.
+/// `directories.bin: '../sibling'` must be rejected by the `is_subdir`
+/// guard. The sibling directory is populated with a real file so a
+/// regression that disables `is_subdir` would observably emit that file
+/// as a command — without the file the test would pass for the wrong
+/// reason (empty dir → empty commands).
 #[test]
 fn directories_bin_rejects_path_traversal() {
     let tmp = tempdir().unwrap();
     let pkg = tmp.path().join("pkg");
     fs::create_dir_all(&pkg).unwrap();
-    // Create a sibling outside the package; the traversal value would
-    // otherwise reach this directory.
-    fs::create_dir_all(tmp.path().join("siblings")).unwrap();
 
-    let manifest = json!({
-        "name": "malicious",
-        "version": "1.0.0",
-        "directories": {"bin": "../../../../tmp/target"},
-    });
-    assert!(get_bins_from_package_manifest(&manifest, &pkg).is_empty());
+    // Sibling dir reachable via `../siblings` from the package root —
+    // populated with a "smoking gun" file the resolver would emit if
+    // it failed to reject the traversal.
+    let siblings = tmp.path().join("siblings");
+    fs::create_dir_all(&siblings).unwrap();
+    fs::write(siblings.join("smoking-gun"), "").unwrap();
 
     let manifest = json!({
         "name": "malicious",
         "version": "1.0.0",
         "directories": {"bin": "../siblings"},
     });
-    assert!(get_bins_from_package_manifest(&manifest, &pkg).is_empty());
+    assert!(
+        get_bins_from_package_manifest(&manifest, &pkg).is_empty(),
+        "is_subdir guard must reject `..`-escapes from the pkg root, even \
+         when the resolved directory exists and has files",
+    );
 }
 
 /// Mirrors pnpm's `path-traversal.test.ts`

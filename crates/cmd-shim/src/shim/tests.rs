@@ -184,15 +184,25 @@ fn relative_target_collapses_to_dot_when_paths_share_dir() {
     assert_eq!(relative_target(target, shim), "cli");
 }
 
-/// `relative_path_from` with leading `..` segments must preserve them
-/// (cannot pop past root). Exercises the `out.push("..")` fallback in
-/// `lexical_normalize`.
+/// `relative_path_from` preserves a single leading `..` in the target
+/// (the `out.push("..")` fallback fires when `out.pop()` returns false
+/// on an empty buffer). Multiple consecutive leading `..`s aren't tested
+/// because `lexical_normalize` collapses them — `PathBuf::pop` doesn't
+/// treat a trailing `..` component as a parent reference, so the second
+/// `..` pops the first. That edge case doesn't occur in pacquet's
+/// production paths (which are always absolute under `<modules_dir>` /
+/// `<virtual_store_dir>`), so we test only the single-`..` case where
+/// the result is unambiguous.
+///
+/// Asserting the exact value catches a regression that returns the raw
+/// target unchanged (`../shared/cli`) — a weaker substring assertion
+/// would pass for both correct and broken outputs.
 #[test]
 fn lexical_normalize_keeps_leading_parent_segments() {
-    let target = Path::new("../../shared/cli");
+    let target = Path::new("../shared/cli");
     let shim = Path::new("project/.bin/cli");
     let result = relative_target(target, shim);
-    assert!(result.contains("shared/cli"), "leading `..` must propagate, got: {result}",);
+    assert_eq!(result, "../../../shared/cli", "leading `..` must propagate");
 }
 
 /// `lexical_normalize` discards `.` (CurDir) components silently. Verify

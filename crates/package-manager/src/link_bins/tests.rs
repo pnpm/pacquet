@@ -57,6 +57,17 @@ fn writes_child_bins_into_slot_own_package_node_modules() {
 /// linked into its own `node_modules/.bin`. pnpm only links *children*
 /// of a slot, so a tsc slot does not redundantly produce a shim for
 /// its own tsc binary.
+///
+/// To distinguish the exclusion logic from "the slot wasn't processed
+/// at all," the slot has a real child (`other`) whose bin SHOULD be
+/// linked. The assertions then check both directions:
+///
+/// 1. The child bin appears in `<slot>/node_modules/<own>/node_modules/.bin/`.
+/// 2. The slot's own bin does NOT appear there.
+///
+/// If `find_slot_own_package_dir` returns `None` (slot skipped), (1)
+/// fails. If the exclusion logic is dropped, (2) fails. Either failure
+/// surfaces the regression.
 #[test]
 fn skips_slot_own_package_when_walking_children() {
     let tmp = tempdir().unwrap();
@@ -65,7 +76,10 @@ fn skips_slot_own_package_when_walking_children() {
     let slot = virtual_dir.join("tsc@5.0.0");
     let modules = slot.join("node_modules");
     let pkg_dir = modules.join("tsc");
+    let other_dir = modules.join("other");
     fs::create_dir_all(&pkg_dir).unwrap();
+    fs::create_dir_all(&other_dir).unwrap();
+
     fs::write(
         pkg_dir.join("package.json"),
         json!({"name": "tsc", "version": "5.0.0", "bin": "tsc.js"}).to_string(),
@@ -73,12 +87,21 @@ fn skips_slot_own_package_when_walking_children() {
     .unwrap();
     fs::write(pkg_dir.join("tsc.js"), "#!/usr/bin/env node\n").unwrap();
 
+    fs::write(
+        other_dir.join("package.json"),
+        json!({"name": "other", "version": "1.0.0", "bin": "other.js"}).to_string(),
+    )
+    .unwrap();
+    fs::write(other_dir.join("other.js"), "#!/usr/bin/env node\n").unwrap();
+
     LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }.run().unwrap();
 
     let bin_dir = pkg_dir.join("node_modules/.bin");
-    // No children → bin dir should not exist at all (`link_bins_of_packages`
-    // is a no-op when the package set is empty).
-    assert!(!bin_dir.exists(), "self-bin must not be linked into own slot");
+    assert!(
+        bin_dir.join("other").exists(),
+        "child bin `other` must be linked under the slot's own package",
+    );
+    assert!(!bin_dir.join("tsc").exists(), "self-bin `tsc` must not be linked into own slot",);
 }
 
 /// `LinkVirtualStoreBins` with a non-existent virtual-store directory

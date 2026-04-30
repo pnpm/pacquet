@@ -531,35 +531,41 @@ fn link_bins_propagates_read_manifest_error_via_di() {
 /// `pick_winner` `(true, false)` arm — existing owns, candidate
 /// doesn't → existing wins. The other arm (`(false, true)`) is
 /// covered by `ownership_breaks_bin_conflicts` further down.
+///
+/// Uses `aaa-other` (lexically less than `npm`) as the non-owner so
+/// the test fails when ownership is broken: with the rule disabled
+/// the lexical fallback picks `aaa-other`, the assertion observes
+/// `/aaa-other/npx` instead of `/npm/npx`. A package named `other`
+/// would lexically lose to `npm` regardless, masking the regression.
 #[test]
 fn ownership_breaks_bin_conflicts_when_existing_owns() {
     let tmp = tempdir().unwrap();
-    let other = tmp.path().join("other");
+    let aaa_other = tmp.path().join("aaa-other");
     let npm = tmp.path().join("npm");
-    for d in [&other, &npm] {
+    for d in [&aaa_other, &npm] {
         fs::create_dir_all(d).unwrap();
         fs::write(d.join("npx"), "#!/usr/bin/env node\n").unwrap();
     }
     fs::write(npm.join("package.json"), json!({"name": "npm", "bin": {"npx": "npx"}}).to_string())
         .unwrap();
     fs::write(
-        other.join("package.json"),
-        json!({"name": "other", "bin": {"npx": "npx"}}).to_string(),
+        aaa_other.join("package.json"),
+        json!({"name": "aaa-other", "bin": {"npx": "npx"}}).to_string(),
     )
     .unwrap();
 
     let manifest_other: Value =
-        serde_json::from_slice(&fs::read(other.join("package.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(aaa_other.join("package.json")).unwrap()).unwrap();
     let manifest_npm: Value =
         serde_json::from_slice(&fs::read(npm.join("package.json")).unwrap()).unwrap();
 
     // Order npm-first; this exercises the (true, false) arm because
-    // `npm` (existing) owns and `other` (candidate) doesn't.
+    // `npm` (existing) owns and `aaa-other` (candidate) doesn't.
     let bins = tmp.path().join(".bin");
     link_bins_of_packages::<RealApi>(
         &[
             PackageBinSource { location: npm.clone(), manifest: manifest_npm },
-            PackageBinSource { location: other.clone(), manifest: manifest_other },
+            PackageBinSource { location: aaa_other.clone(), manifest: manifest_other },
         ],
         &bins,
     )
@@ -622,32 +628,38 @@ fn link_bins_propagates_modules_dir_read_error_via_di() {
 
 /// Conflict resolution: when two packages declare the same bin name, the
 /// owning package wins.
+///
+/// Uses `aaa-other` (lexically less than `npm`) as the non-owner so the
+/// test fails when ownership is broken: with the rule disabled the
+/// lexical fallback picks `aaa-other`, the assertion observes
+/// `/aaa-other/npx` instead of `/npm/npx`. A package named `other`
+/// would lexically lose to `npm` regardless, masking the regression.
 #[test]
 fn ownership_breaks_bin_conflicts() {
     let tmp = tempdir().unwrap();
     let npm = tmp.path().join("npm");
-    let other = tmp.path().join("other");
-    for d in [&npm, &other] {
+    let aaa_other = tmp.path().join("aaa-other");
+    for d in [&npm, &aaa_other] {
         fs::create_dir_all(d).unwrap();
         fs::write(d.join("npx"), "#!/usr/bin/env node\n").unwrap();
     }
     fs::write(npm.join("package.json"), json!({"name": "npm", "bin": {"npx": "npx"}}).to_string())
         .unwrap();
     fs::write(
-        other.join("package.json"),
-        json!({"name": "other", "bin": {"npx": "npx"}}).to_string(),
+        aaa_other.join("package.json"),
+        json!({"name": "aaa-other", "bin": {"npx": "npx"}}).to_string(),
     )
     .unwrap();
 
     let manifest_npm: Value =
         serde_json::from_slice(&fs::read(npm.join("package.json")).unwrap()).unwrap();
     let manifest_other: Value =
-        serde_json::from_slice(&fs::read(other.join("package.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(aaa_other.join("package.json")).unwrap()).unwrap();
 
     let bins = tmp.path().join(".bin");
     link_bins_of_packages::<RealApi>(
         &[
-            PackageBinSource { location: other.clone(), manifest: manifest_other },
+            PackageBinSource { location: aaa_other.clone(), manifest: manifest_other },
             PackageBinSource { location: npm.clone(), manifest: manifest_npm },
         ],
         &bins,
