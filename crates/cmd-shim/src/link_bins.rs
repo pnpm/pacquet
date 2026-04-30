@@ -1,8 +1,7 @@
 use crate::{
     bin_resolver::{Command, get_bins_from_package_manifest, pkg_owns_bin},
     capabilities::{
-        FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions,
-        FsWrite,
+        FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions, FsWrite,
     },
     shim::{
         generate_cmd_shim, generate_pwsh_shim, generate_sh_shim, is_shim_pointing_at,

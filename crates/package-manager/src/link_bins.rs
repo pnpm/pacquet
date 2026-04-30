@@ -1,8 +1,8 @@
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_cmd_shim::{
-    FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions,
-    FsWrite, LinkBinsError, PackageBinSource, RealApi, link_bins_of_packages,
+    FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions, FsWrite,
+    LinkBinsError, PackageBinSource, RealApi, link_bins_of_packages,
 };
 use rayon::prelude::*;
 use std::{
