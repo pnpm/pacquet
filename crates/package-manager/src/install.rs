@@ -66,9 +66,18 @@ where
             frozen_lockfile,
         } = self;
 
-        // Project root for the bunyan-envelope `prefix`. pnpm uses the
-        // workspace path; the closest pacquet equivalent is the directory
-        // holding `package.json`.
+        // Project root for the bunyan-envelope `prefix`. Upstream pnpm
+        // emits this as `lockfileDir` — the directory containing
+        // `pnpm-lock.yaml`, which equals the workspace root when one is
+        // present. Pacquet has no workspace support yet, so the manifest's
+        // parent directory is the correct value today.
+        //
+        // TODO: once workspace support lands, replace this with the
+        // resolved workspace dir so per-importer stage events carry the
+        // right prefix. The upstream helper to mirror is
+        // `findWorkspaceDir`, which walks up from the cwd looking for
+        // `pnpm-workspace.yaml`:
+        // <https://github.com/pnpm/pnpm/blob/3b12eb27de/workspace/root-finder/src/index.ts>.
         let prefix =
             manifest.path().parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
 
