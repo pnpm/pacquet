@@ -37,7 +37,11 @@ pub struct CliArgs {
     /// `silent` drops every event. The default is `silent` until the
     /// in-process default renderer lands; the spawn-and-pipe wiring is
     /// tracked separately (see #344).
-    #[clap(long, value_enum, default_value_t = ReporterType::Silent)]
+    ///
+    /// `global = true` makes the flag accepted on either side of the
+    /// subcommand (`pacquet --reporter=ndjson install` and
+    /// `pacquet install --reporter=ndjson` both work), matching pnpm.
+    #[clap(long, value_enum, default_value_t = ReporterType::Silent, global = true)]
     pub reporter: ReporterType,
 }
 
