@@ -424,12 +424,12 @@ mod tests {
     /// Specifically exercises the trailing-slash-append branch in
     /// [`AuthHeaders::for_url`]: the URL ends without a `/` *and*
     /// names a path segment (`/scope`). Without the append,
-    /// `nerf_dart` would drop the segment and miss the token; with
+    /// [`nerf_dart`] would drop the segment and miss the token; with
     /// it, the lookup walks `//reg.com/scope/`. Removing the append
-    /// branch makes this test fail — `registry_with_pathname_matches_metadata_and_tarballs`
-    /// alone is not enough because its host-only assertion would
-    /// pass via `ParsedUrl::parse`'s no-path branch even without
-    /// the append.
+    /// branch makes this test fail.
+    /// [`registry_with_pathname_matches_metadata_and_tarballs`] alone
+    /// is not enough because its host-only assertion would pass via
+    /// [`ParsedUrl::parse`]'s no-path branch even without the append.
     #[test]
     fn slash_append_branch_lets_path_segment_match() {
         let headers = build(&[("//reg.com/scope/", "Bearer scoped")]);
@@ -437,7 +437,7 @@ mod tests {
     }
 
     /// Hits the `None => return String::new()` branch of [`nerf_dart`]
-    /// (and the `?` short-circuit in `ParsedUrl::parse`).
+    /// (and the `?` short-circuit in [`ParsedUrl::parse`]).
     #[test]
     fn nerf_dart_returns_empty_for_malformed_url() {
         assert_eq!(nerf_dart("not-a-url"), "");
@@ -448,8 +448,8 @@ mod tests {
     }
 
     /// Hits the no-path-separator branch (`None => (rest, "")`) inside
-    /// `ParsedUrl::parse`: the URL has no `/` after the authority.
-    /// The parsed `path` is an empty string, so `nerf_dart` should
+    /// [`ParsedUrl::parse`]: the URL has no `/` after the authority.
+    /// The parsed `path` is an empty string, so [`nerf_dart`] should
     /// produce `//host/`.
     #[test]
     fn nerf_dart_handles_url_with_no_path_separator() {
@@ -458,8 +458,8 @@ mod tests {
     }
 
     /// Hits the `user.is_empty() && pass.is_empty()` short-circuit in
-    /// `basic_auth_header`: a URL whose authority parses as `@host`
-    /// must not produce a `Basic ` header.
+    /// [`ParsedUrl::basic_auth_header`]: a URL whose authority parses
+    /// as `@host` must not produce a `Basic ` header.
     #[test]
     fn empty_user_info_returns_no_basic_header() {
         let empty = AuthHeaders::default();

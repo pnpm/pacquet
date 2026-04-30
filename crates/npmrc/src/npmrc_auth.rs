@@ -407,8 +407,9 @@ registry=https://r.example
 
     /// `[section]`-style headers are not legal `.npmrc` syntax (npm's
     /// rc files are flat key/value pairs). Smoke-test that they are
-    /// dropped silently — they fall through the no-`=` branch in
-    /// `from_ini` so the parser never tries to interpret them.
+    /// dropped silently. They fall through the no-`=` branch in
+    /// [`NpmrcAuth::from_ini`] so the parser never tries to interpret
+    /// them.
     #[test]
     fn ini_section_headers_are_dropped_silently() {
         let ini = "[default]\nregistry=https://r.example\n[other]\n";
@@ -432,8 +433,8 @@ registry=https://r.example
     }
 
     /// Top-level `_auth=`, `username=`, and `_password=` lines should
-    /// land on `default_creds` so the resolved registry's nerf-darted
-    /// URI gets a `Basic` header.
+    /// land on [`NpmrcAuth::default_creds`] so the resolved registry's
+    /// nerf-darted URI gets a `Basic` header.
     #[test]
     fn top_level_auth_pair_keys_to_default_registry_basic_header() {
         let pair = base64_encode("bob:hunter2");
@@ -460,8 +461,8 @@ registry=https://r.example
     }
 
     /// A `//host/:_password=…` line on its own (no matching `username`)
-    /// produces no `Basic` header — the credential shape needs both
-    /// halves. Hits the `None` fallthrough in `creds_to_header`.
+    /// produces no `Basic` header. The credential shape needs both
+    /// halves. Hits the `None` fallthrough in [`creds_to_header`].
     #[test]
     fn lone_per_registry_password_produces_no_header() {
         let ini = format!("//reg.com/:_password={}\n", base64_encode("solo"));
@@ -471,9 +472,9 @@ registry=https://r.example
     }
 
     /// Per-registry creds with a recognisable suffix should be carried
-    /// through `build_auth_headers` and surface as a `Basic` header for
-    /// matching URLs. Exercises the `auth_header_by_uri.insert(...)`
-    /// branch in [`NpmrcAuth::build_auth_headers`].
+    /// through [`NpmrcAuth::build_auth_headers`] and surface as a
+    /// `Basic` header for matching URLs. Exercises the
+    /// `auth_header_by_uri.insert(...)` branch.
     #[test]
     fn per_registry_username_password_apply_through_build_auth_headers() {
         let raw_password = "hunter2";
@@ -488,11 +489,11 @@ registry=https://r.example
         );
     }
 
-    /// `//host/:somethingUnknown=value` lines are dropped silently:
-    /// `split_creds_key` returns `None` for anything outside
+    /// `//host/:somethingUnknown=value` lines are dropped silently.
+    /// [`split_creds_key`] returns `None` for anything outside
     /// [`CREDS_SUFFIXES`], and the line then falls through to
-    /// `apply_creds_field` on `default_creds` with a non-matching
-    /// field. Exercises both no-match arms.
+    /// [`apply_creds_field`] on [`NpmrcAuth::default_creds`] with a
+    /// non-matching field. Exercises both no-match arms.
     #[test]
     fn unknown_per_registry_suffix_is_silently_dropped() {
         let ini = "//reg.example/:registry=https://other.example/\n";
@@ -502,9 +503,9 @@ registry=https://r.example
         assert_eq!(auth.warnings, Vec::<String>::new());
     }
 
-    /// `apply_registry_and_warn` should drain the warning queue —
-    /// pnpm's `substituteEnv` writes the same string to stderr via
-    /// `globalWarn` once per resolution failure.
+    /// [`NpmrcAuth::apply_registry_and_warn`] should drain the warning
+    /// queue. Pnpm's `substituteEnv` writes the same string to stderr
+    /// via `globalWarn` once per resolution failure.
     #[test]
     fn apply_registry_and_warn_drains_warnings() {
         let ini = "//reg.com/:_authToken=${MISSING}\n";
@@ -515,9 +516,9 @@ registry=https://r.example
         assert!(auth.warnings.is_empty(), "warnings should be drained after flush");
     }
 
-    /// When `_password` is *not* valid base64, `creds_to_header`
+    /// When `_password` is *not* valid base64, [`creds_to_header`]
     /// falls back to using the raw string verbatim. Mirrors the
-    /// `unwrap_or_else` branch in `creds_to_header`. Pnpm's
+    /// `unwrap_or_else` branch inside that function. Pnpm's
     /// `parseBasicAuth` doesn't have this exact fallback (it always
     /// `atob`s), but pacquet's tolerance avoids losing the credential
     /// for `.npmrc` files where `_password` was already a raw value.

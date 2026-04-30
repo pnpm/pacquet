@@ -13,9 +13,9 @@
 //!   half of the backslashes are kept (one literal `\\` per pair).
 //! * odd-number-of-backslashes prefix: the placeholder is left literal
 //!   and one backslash is consumed.
-//! * unset variable + no default: the call returns
-//!   [`EnvReplaceError::Missing`] rather than substituting an empty
-//!   string. Pacquet surfaces the same condition as a warning, matching
+//! * unset variable + no default: the call returns an
+//!   [`EnvReplaceError`] rather than substituting an empty string.
+//!   Pacquet surfaces the same condition as a warning, matching
 //!   `loadNpmrcFiles.ts`'s `substituteEnv`.
 //! * empty variable + default present: the default wins; this is
 //!   pnpm's behaviour even though plain shell `${VAR:-default}` would
@@ -204,7 +204,7 @@ mod tests {
     }
 
     /// Hits the early-`None` branch of `bytes.get(start + 1)?` inside
-    /// `find_placeholder_end`: the input ends on a `$` with no byte
+    /// [`find_placeholder_end`]: the input ends on a `$` with no byte
     /// to peek at.
     #[test]
     fn trailing_dollar_with_no_byte_after_is_passthrough() {
@@ -213,8 +213,8 @@ mod tests {
     }
 
     /// A nested `$` or `{` inside a placeholder body, or an unclosed
-    /// `${...`, leaves the input verbatim. `NoEnv` would also return
-    /// `None` for any lookup — but the parser must short-circuit
+    /// `${...`, leaves the input verbatim. [`NoEnv`] would also return
+    /// `None` for any lookup, but the parser must short-circuit
     /// *before* the lookup, so swapping in a richer fake would still
     /// be a no-op.
     #[test]
@@ -224,7 +224,7 @@ mod tests {
     }
 
     /// One literal backslash escapes the placeholder; the parser
-    /// must skip the var lookup entirely. `NoEnv` is sufficient
+    /// must skip the var lookup entirely. [`NoEnv`] is sufficient
     /// because the lookup never runs in this branch.
     #[test]
     fn odd_backslash_count_escapes_placeholder() {

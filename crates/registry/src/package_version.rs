@@ -88,9 +88,9 @@ impl PackageVersion {
 mod tests {
     use super::*;
 
-    /// `PackageVersion::fetch_from_registry` must attach the
+    /// [`PackageVersion::fetch_from_registry`] must attach the
     /// registry-keyed `Authorization` header on every tag GET, just
-    /// like `Package::fetch_from_registry`.
+    /// like [`crate::Package::fetch_from_registry`].
     #[tokio::test]
     async fn fetch_from_registry_attaches_authorization_header() {
         let mut server = mockito::Server::new_async().await;

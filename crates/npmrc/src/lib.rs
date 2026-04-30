@@ -560,8 +560,9 @@ mod tests {
     /// must end up keyed at whatever registry pnpm would actually
     /// hit, even when `pnpm-workspace.yaml` overrides the `registry`
     /// after `.npmrc` is parsed. The two-phase
-    /// `apply_registry_and_warn` / `build_auth_headers` split inside
-    /// `Npmrc::current` is the mechanism that delays nerf-darting
+    /// [`NpmrcAuth::apply_registry_and_warn`] /
+    /// [`NpmrcAuth::build_auth_headers`] split inside
+    /// [`Npmrc::current`] is the mechanism that delays nerf-darting
     /// until after the override has landed.
     #[test]
     pub fn default_creds_track_workspace_yaml_registry_override() {
@@ -636,13 +637,13 @@ mod tests {
         assert!(!config.symlink);
     }
 
-    /// Threads a `${VAR}` placeholder through `Npmrc::current` so the
-    /// `Api: EnvVar` bound is actually exercised end-to-end. Without
-    /// this test the [`NoEnv`] fake's `var` body would be unreachable
-    /// from `lib.rs` tests because none of the other `.npmrc`
-    /// fixtures here carry a `${VAR}` reference, and `env_replace`
-    /// short-circuits before invoking `Api::var` for placeholder-free
-    /// values.
+    /// Threads a `${VAR}` placeholder through [`Npmrc::current`] so
+    /// the `Api: EnvVar` bound is actually exercised end-to-end.
+    /// Without this test the [`NoEnv`] fake's `var` body would be
+    /// unreachable from `lib.rs` tests because none of the other
+    /// `.npmrc` fixtures here carry a `${VAR}` reference, and
+    /// [`env_replace`] short-circuits before invoking
+    /// [`EnvVar::var`] for placeholder-free values.
     #[test]
     pub fn env_replace_runs_via_npmrc_current_with_no_env_fake() {
         let tmp = tempdir().unwrap();

@@ -126,8 +126,8 @@ mod tests {
         assert_eq!(version.serialize(false), "^3.2.1");
     }
 
-    /// `Package::fetch_from_registry` must attach the registry-keyed
-    /// `Authorization` header on every metadata GET — even for the
+    /// [`Package::fetch_from_registry`] must attach the registry-keyed
+    /// `Authorization` header on every metadata GET, even for the
     /// abbreviated install-v1 endpoint. `mockito::Matcher::Exact`
     /// rejects the request unless the header arrives verbatim, so a
     /// missing or wrong header would 501 the request and propagate as
