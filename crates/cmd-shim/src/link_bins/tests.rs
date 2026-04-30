@@ -240,6 +240,37 @@ fn link_bins_skips_existing_shim_with_matching_marker() {
     assert_eq!(fs::read_to_string(bins.join("foo")).unwrap(), sentinel);
 }
 
+/// `link_bins` must NOT skip when only the canonical `.sh` shim exists
+/// — the `.cmd` and `.ps1` siblings could be missing because an older
+/// pacquet wrote `.sh`-only or a partial-write crash interrupted the
+/// writer mid-batch. Gating on the `.sh` marker alone (an earlier
+/// version of `write_shim`) caused those upgrade paths to leave the
+/// missing siblings permanently absent.
+#[test]
+fn link_bins_rewrites_when_only_sh_flavor_exists() {
+    let tmp = tempdir().unwrap();
+    let modules = tmp.path().join("node_modules");
+    fs::create_dir_all(modules.join("foo")).unwrap();
+    fs::write(modules.join("foo/package.json"), json!({"name": "foo", "bin": "f.js"}).to_string())
+        .unwrap();
+    fs::write(modules.join("foo/f.js"), "#!/usr/bin/env node\n").unwrap();
+
+    let bins = modules.join(".bin");
+    link_bins::<RealApi>(&modules, &bins).unwrap();
+
+    // Simulate the partial-write / older-pacquet state: delete the
+    // .cmd and .ps1 siblings, leaving only the `.sh` shim with its
+    // (still correct) target marker.
+    fs::remove_file(bins.join("foo.cmd")).unwrap();
+    fs::remove_file(bins.join("foo.ps1")).unwrap();
+
+    link_bins::<RealApi>(&modules, &bins).unwrap();
+
+    assert!(bins.join("foo").exists(), ".sh shim must remain");
+    assert!(bins.join("foo.cmd").exists(), ".cmd sibling must be re-created on second pass");
+    assert!(bins.join("foo.ps1").exists(), ".ps1 sibling must be re-created on second pass");
+}
+
 /// `link_bins_of_packages` propagates a non-`NotFound` `read_dir`
 /// error from the calling context. Use a fake `Api` that fails the
 /// initial `create_dir_all` to cover the `CreateBinDir` error variant

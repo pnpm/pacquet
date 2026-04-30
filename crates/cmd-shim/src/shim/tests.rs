@@ -12,14 +12,18 @@ fn parses_env_node_shebang() {
 fn parses_env_dash_s_shebang() {
     let rt = parse_shebang("#!/usr/bin/env -S node --experimental").unwrap();
     assert_eq!(rt.prog.as_deref(), Some("node"));
-    assert_eq!(rt.args, "--experimental");
+    // Leading space is preserved — upstream's regex group 2 captures the
+    // separator. Pinning `" --experimental"` (with the space) is what
+    // makes the rendered shim's `exec` line match upstream byte-for-byte.
+    assert_eq!(rt.args, " --experimental");
 }
 
 #[test]
 fn parses_direct_shebang() {
     let rt = parse_shebang("#!/bin/sh -e").unwrap();
     assert_eq!(rt.prog.as_deref(), Some("/bin/sh"));
-    assert_eq!(rt.args, "-e");
+    // Leading space preserved — see `parses_env_dash_s_shebang`.
+    assert_eq!(rt.args, " -e");
 }
 
 #[test]

@@ -80,17 +80,25 @@ pub fn parse_shebang_from_bytes(bytes: &[u8]) -> Option<ScriptRuntime> {
 /// `^#!\s*(?:/usr/bin/env(?:\s+-S\s*)?)?\s*([^ \t]+)(.*)$`.
 ///
 /// Recognises `#!/usr/bin/env <prog>`, `#!/usr/bin/env -S <prog>`, and any
-/// direct `#!/path/to/<prog>` shebang. The captured `args` is the trailing
-/// portion of the line, with any surrounding whitespace preserved exactly the
-/// way upstream's regex match would.
+/// direct `#!/path/to/<prog>` shebang. `args` is captured **including the
+/// leading whitespace** that separates it from `prog` — this matches
+/// upstream's regex group 2 (`(.*)`), which captures everything from after
+/// `prog`'s end-of-match to end of line. Preserving the leading whitespace
+/// is what produces the byte-identical shim text upstream emits (e.g. the
+/// double space between `$basedir/sh` and `-e` in the rendered exec line).
 fn parse_shebang(line: &str) -> Option<ScriptRuntime> {
     let rest = line.strip_prefix("#!")?.trim_start();
     let (rest, _) = strip_env_prefix(rest);
     let rest = rest.trim_start();
 
-    let mut split = rest.splitn(2, [' ', '\t']);
-    let prog = split.next()?;
-    let args = split.next().unwrap_or("");
+    // Slice at the first space or tab; the args slice keeps the separator
+    // so the rendered shim matches upstream byte-for-byte. Using `splitn`
+    // would discard the separator and silently drop one space from the
+    // `exec` line.
+    let (prog, args) = match rest.find([' ', '\t']) {
+        Some(idx) => rest.split_at(idx),
+        None => (rest, ""),
+    };
 
     if prog.is_empty() {
         return None;

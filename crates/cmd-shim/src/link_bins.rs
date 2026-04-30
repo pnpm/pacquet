@@ -260,17 +260,26 @@ where
         LinkBinsError::ProbeShimSource { path: target_path.to_path_buf(), error }
     })?;
 
-    // Idempotent skip when the existing `.sh` shim already points at
-    // the right target. We only check the `.sh` flavor; if it's correct,
-    // the `.cmd`/`.ps1` siblings were written together and are also
-    // correct (and if they aren't, rewriting them is cheap).
-    let already_correct = matches!(Api::read_to_string(shim_path), Ok(existing) if is_shim_pointing_at(&existing, target_path));
-
     let sh_body = generate_sh_shim(target_path, shim_path, runtime.as_ref());
     let cmd_path = with_extension_appended(shim_path, "cmd");
     let ps1_path = with_extension_appended(shim_path, "ps1");
     let cmd_body = generate_cmd_shim(target_path, &cmd_path, runtime.as_ref());
     let ps1_body = generate_pwsh_shim(target_path, &ps1_path, runtime.as_ref());
+
+    // Idempotent skip only fires when **all three** flavors are already
+    // present and the canonical `.sh` shim points at the right target.
+    // Gating on the `.sh` flavor alone (an earlier version of this code)
+    // left the upgrade path broken: if a previous install — older
+    // pacquet, partial-write crash — wrote `.sh` correctly but never
+    // wrote `.cmd`/`.ps1`, the marker check would short-circuit and
+    // the missing siblings would never be repaired.
+    let sh_marker_ok = matches!(
+        Api::read_to_string(shim_path),
+        Ok(existing) if is_shim_pointing_at(&existing, target_path),
+    );
+    let cmd_exists = Api::read_to_string(&cmd_path).is_ok();
+    let ps1_exists = Api::read_to_string(&ps1_path).is_ok();
+    let already_correct = sh_marker_ok && cmd_exists && ps1_exists;
 
     if !already_correct {
         Api::write(shim_path, sh_body.as_bytes())
