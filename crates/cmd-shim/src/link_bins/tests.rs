@@ -295,7 +295,7 @@ fn link_bins_propagates_create_bin_dir_error_via_di() {
         }
     }
     impl FsReadHead for FailingCreateDir {
-        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+        fn read_head(_: &Path, _: u64, _: &mut [u8]) -> io::Result<usize> {
             unreachable!()
         }
     }
@@ -355,7 +355,7 @@ fn link_bins_propagates_write_shim_error_via_di() {
         }
     }
     impl FsReadHead for FailingWrite {
-        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+        fn read_head(_: &Path, _: u64, _: &mut [u8]) -> io::Result<usize> {
             // Empty content → no shebang, fall through to extension.
             Ok(0)
         }
@@ -413,7 +413,7 @@ fn link_bins_propagates_chmod_error_via_di() {
         }
     }
     impl FsReadHead for FailingChmod {
-        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+        fn read_head(_: &Path, _: u64, _: &mut [u8]) -> io::Result<usize> {
             Ok(0)
         }
     }
@@ -475,7 +475,7 @@ fn link_bins_propagates_target_chmod_error_via_di() {
         }
     }
     impl FsReadHead for FailingTargetChmod {
-        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+        fn read_head(_: &Path, _: u64, _: &mut [u8]) -> io::Result<usize> {
             Ok(0)
         }
     }
@@ -538,7 +538,7 @@ fn link_bins_swallows_target_chmod_not_found_via_di() {
         }
     }
     impl FsReadHead for NotFoundTargetChmod {
-        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+        fn read_head(_: &Path, _: u64, _: &mut [u8]) -> io::Result<usize> {
             Ok(0)
         }
     }
@@ -597,7 +597,7 @@ fn link_bins_propagates_probe_shim_source_error_via_di() {
         }
     }
     impl FsReadHead for FailingProbe {
-        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+        fn read_head(_: &Path, _: u64, _: &mut [u8]) -> io::Result<usize> {
             Err(io::Error::from(io::ErrorKind::PermissionDenied))
         }
     }
@@ -655,7 +655,7 @@ fn link_bins_propagates_read_manifest_error_via_di() {
         }
     }
     impl FsReadHead for DenyManifestRead {
-        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+        fn read_head(_: &Path, _: u64, _: &mut [u8]) -> io::Result<usize> {
             unreachable!()
         }
     }
@@ -753,7 +753,7 @@ fn link_bins_propagates_modules_dir_read_error_via_di() {
         }
     }
     impl FsReadHead for FailingModulesRead {
-        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+        fn read_head(_: &Path, _: u64, _: &mut [u8]) -> io::Result<usize> {
             unreachable!()
         }
     }

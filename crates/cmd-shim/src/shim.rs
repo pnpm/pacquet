@@ -60,12 +60,39 @@ pub fn search_script_runtime<Api: FsReadHead>(path: &Path) -> io::Result<Option<
 
 fn read_shebang<Api: FsReadHead>(path: &Path) -> io::Result<Option<ScriptRuntime>> {
     let mut buffer = [0u8; 512];
-    let read = match Api::read_head(path, &mut buffer) {
+    let read = match read_head_filled::<Api>(path, &mut buffer) {
         Ok(read) => read,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
     Ok(parse_shebang_from_bytes(&buffer[..read]))
+}
+
+/// Read up to `buf.len()` bytes from `path` into `buf`, looping over
+/// the [`FsReadHead`] capability until either the buffer is full or
+/// the underlying read returns 0 (EOF). Returns the number of bytes
+/// actually filled (which can be `< buf.len()` for a short file).
+///
+/// `FsReadHead::read_head` mirrors a single `read(2)` syscall, which
+/// POSIX permits to return short. This loop collects short reads so
+/// the shebang parser sees a complete view of the head of the file
+/// even on pseudo-fs paths (`/proc`, `/sys`, FUSE, …) where short
+/// reads are common. On regular files at offset 0 the underlying
+/// `read` returns the whole prefix in one syscall, so the loop adds
+/// no extra syscalls in the hot path — just one branch.
+///
+/// Kept generic over [`FsReadHead`] so tests can plug in a fake that
+/// deliberately returns short and verify the loop accumulates
+/// correctly.
+pub fn read_head_filled<Api: FsReadHead>(path: &Path, buf: &mut [u8]) -> io::Result<usize> {
+    let mut total = 0;
+    while total < buf.len() {
+        match Api::read_head(path, total as u64, &mut buf[total..])? {
+            0 => break, // EOF
+            n => total += n,
+        }
+    }
+    Ok(total)
 }
 
 /// Parse the runtime out of the first line of a script's content. Pure

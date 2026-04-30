@@ -13,11 +13,18 @@
 
 use std::{io, path::Path};
 
-/// Read up to a buffer of bytes from a file path. Used by
-/// [`crate::search_script_runtime`] to detect the script runtime via
-/// the shebang.
+/// Read up to `buf.len()` bytes of `path` starting at byte `offset`.
+/// **Single underlying syscall** — POSIX `read(2)` is allowed to
+/// return fewer bytes than requested (a "short read"), so callers
+/// that need a fully-filled buffer must loop. Use
+/// [`crate::read_head_filled`] for that — it stays generic over this
+/// trait so test fakes don't have to grow.
+///
+/// Used by [`crate::search_script_runtime`] (via `read_head_filled`)
+/// to detect the script runtime via the shebang at the head of a bin
+/// file.
 pub trait FsReadHead {
-    fn read_head(path: &Path, buf: &mut [u8]) -> io::Result<usize>;
+    fn read_head(path: &Path, offset: u64, buf: &mut [u8]) -> io::Result<usize>;
 }
 
 /// Read the entire contents of a file into a `Vec<u8>`. Used to read
@@ -78,9 +85,12 @@ pub trait FsSetPermissions {
 pub struct RealApi;
 
 impl FsReadHead for RealApi {
-    fn read_head(path: &Path, buf: &mut [u8]) -> io::Result<usize> {
-        use std::io::Read;
+    fn read_head(path: &Path, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+        use std::io::{Read, Seek, SeekFrom};
         let mut file = std::fs::File::open(path)?;
+        if offset > 0 {
+            file.seek(SeekFrom::Start(offset))?;
+        }
         file.read(buf)
     }
 }

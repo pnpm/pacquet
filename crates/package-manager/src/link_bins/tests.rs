@@ -307,7 +307,7 @@ fn link_virtual_store_bins_propagates_read_error_via_di() {
         }
     }
     impl FsReadHead for DenyVirtualStore {
-        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+        fn read_head(_: &Path, _: u64, _: &mut [u8]) -> io::Result<usize> {
             unreachable!()
         }
     }

@@ -271,7 +271,7 @@ fn search_script_runtime_returns_none_when_runtime_unknown() {
 fn search_script_runtime_propagates_non_not_found_io_errors() {
     struct PermissionDeniedApi;
     impl FsReadHead for PermissionDeniedApi {
-        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+        fn read_head(_: &Path, _: u64, _: &mut [u8]) -> io::Result<usize> {
             Err(io::Error::from(io::ErrorKind::PermissionDenied))
         }
     }
@@ -288,7 +288,7 @@ fn search_script_runtime_propagates_non_not_found_io_errors() {
 fn search_script_runtime_reads_zero_bytes_then_falls_through() {
     struct EmptyReadApi;
     impl FsReadHead for EmptyReadApi {
-        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+        fn read_head(_: &Path, _: u64, _: &mut [u8]) -> io::Result<usize> {
             Ok(0)
         }
     }
@@ -311,7 +311,7 @@ fn real_fs_read_head_reads_up_to_buffer_size() {
     let path = tmp.path().join("data");
     std::fs::write(&path, "hello world").unwrap();
     let mut buf = [0u8; 1024];
-    let read = RealApi::read_head(&path, &mut buf).unwrap();
+    let read = RealApi::read_head(&path, 0, &mut buf).unwrap();
     assert_eq!(read, 11);
     assert_eq!(&buf[..read], b"hello world");
 }
@@ -322,8 +322,134 @@ fn real_fs_read_head_reads_up_to_buffer_size() {
 #[test]
 fn real_fs_read_head_propagates_not_found() {
     let mut buf = [0u8; 16];
-    let err = RealApi::read_head(Path::new("/no/such/file"), &mut buf).unwrap_err();
+    let err = RealApi::read_head(Path::new("/no/such/file"), 0, &mut buf).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::NotFound);
+}
+
+/// `read_head_filled` against the real filesystem fills the buffer in
+/// one underlying syscall (the common case) and returns the exact byte
+/// count.
+#[test]
+fn read_head_filled_real_fs_long_file_fills_buffer() {
+    use tempfile::tempdir;
+    let tmp = tempdir().unwrap();
+    let path = tmp.path().join("long");
+    let payload: Vec<u8> = (0..1024).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&path, &payload).unwrap();
+
+    let mut buf = [0u8; 256];
+    let read = read_head_filled::<RealApi>(&path, &mut buf).unwrap();
+    assert_eq!(read, 256);
+    assert_eq!(&buf[..], &payload[..256]);
+}
+
+/// `read_head_filled` against a file shorter than the buffer returns
+/// the partial count (EOF terminates the loop without erroring).
+#[test]
+fn read_head_filled_real_fs_short_file_returns_partial() {
+    use tempfile::tempdir;
+    let tmp = tempdir().unwrap();
+    let path = tmp.path().join("short");
+    std::fs::write(&path, "#!/bin/sh\n").unwrap();
+
+    let mut buf = [0u8; 256];
+    let read = read_head_filled::<RealApi>(&path, &mut buf).unwrap();
+    assert_eq!(read, 10);
+    assert_eq!(&buf[..read], b"#!/bin/sh\n");
+}
+
+/// `read_head_filled` accumulates short reads from the underlying
+/// capability — the very behaviour the loop exists to provide. A fake
+/// that always returns short proves the loop calls the trait
+/// repeatedly with advancing offsets until the buffer is full.
+///
+/// Pinning this with a fake is the only way to verify the loop
+/// without a pseudo-fs to test against: real filesystems essentially
+/// never return short reads at offset 0.
+#[test]
+fn read_head_filled_accumulates_short_reads_from_fake() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Tracks the offsets each call sees, plus how many bytes the
+    /// fake produces per call. We deliver the input slice to the
+    /// caller `chunk_size` bytes at a time so the loop must run
+    /// multiple iterations to fill its buffer.
+    static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static LAST_OFFSETS: [AtomicUsize; 4] = [
+        AtomicUsize::new(usize::MAX),
+        AtomicUsize::new(usize::MAX),
+        AtomicUsize::new(usize::MAX),
+        AtomicUsize::new(usize::MAX),
+    ];
+    const PAYLOAD: &[u8] = b"abcdefghij"; // 10 bytes
+    const CHUNK_SIZE: usize = 3;
+
+    struct ShortReader;
+    impl FsReadHead for ShortReader {
+        fn read_head(_: &Path, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+            let i = CALL_COUNT.fetch_add(1, Ordering::Relaxed);
+            if i < LAST_OFFSETS.len() {
+                LAST_OFFSETS[i].store(offset as usize, Ordering::Relaxed);
+            }
+            let off = offset as usize;
+            if off >= PAYLOAD.len() {
+                return Ok(0); // EOF
+            }
+            let remaining = &PAYLOAD[off..];
+            let take = remaining.len().min(buf.len()).min(CHUNK_SIZE);
+            buf[..take].copy_from_slice(&remaining[..take]);
+            Ok(take)
+        }
+    }
+
+    let mut buf = [0u8; 8];
+    let read = read_head_filled::<ShortReader>(Path::new("any"), &mut buf).unwrap();
+    assert_eq!(read, 8, "loop must accumulate short reads to fill the buffer");
+    assert_eq!(&buf[..], b"abcdefgh");
+
+    // The loop made three calls (3 + 3 + 2 bytes) at offsets 0, 3, 6.
+    assert_eq!(CALL_COUNT.load(Ordering::Relaxed), 3);
+    assert_eq!(LAST_OFFSETS[0].load(Ordering::Relaxed), 0);
+    assert_eq!(LAST_OFFSETS[1].load(Ordering::Relaxed), 3);
+    assert_eq!(LAST_OFFSETS[2].load(Ordering::Relaxed), 6);
+}
+
+/// `read_head_filled` terminates when the underlying capability
+/// returns 0 (EOF) — short file shorter than the buffer.
+#[test]
+fn read_head_filled_terminates_on_zero_byte_read_from_fake() {
+    struct EofAfterOne;
+    impl FsReadHead for EofAfterOne {
+        fn read_head(_: &Path, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+            if offset == 0 && !buf.is_empty() {
+                buf[0] = b'X';
+                Ok(1)
+            } else {
+                Ok(0) // EOF on subsequent calls
+            }
+        }
+    }
+
+    let mut buf = [0u8; 16];
+    let read = read_head_filled::<EofAfterOne>(Path::new("any"), &mut buf).unwrap();
+    assert_eq!(read, 1, "loop must stop on EOF, returning the partial count");
+    assert_eq!(buf[0], b'X');
+}
+
+/// `read_head_filled` propagates non-EOF errors from the first call
+/// without retrying.
+#[test]
+fn read_head_filled_propagates_io_error_from_fake() {
+    struct AlwaysErrors;
+    impl FsReadHead for AlwaysErrors {
+        fn read_head(_: &Path, _: u64, _: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        }
+    }
+
+    let mut buf = [0u8; 16];
+    let err = read_head_filled::<AlwaysErrors>(Path::new("any"), &mut buf).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
 }
 
 /// `generate_cmd_shim` produces a Windows `.cmd` shim with CRLF line
