@@ -241,7 +241,7 @@ fn link_direct_dep_bins_skips_dep_with_missing_manifest() {
 fn link_virtual_store_bins_propagates_read_error_via_di() {
     use pacquet_cmd_shim::{
         FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions,
-        FsWriteAtomic,
+        FsWrite,
     };
     use std::io;
     struct DenyVirtualStore;
@@ -270,7 +270,7 @@ fn link_virtual_store_bins_propagates_read_error_via_di() {
             unreachable!()
         }
     }
-    impl FsWriteAtomic for DenyVirtualStore {
+    impl FsWrite for DenyVirtualStore {
         fn write(_: &Path, _: &[u8]) -> io::Result<()> {
             unreachable!()
         }

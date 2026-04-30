@@ -51,7 +51,16 @@ pub trait FsCreateDirAll {
 /// Write `bytes` to `path`, replacing the file's contents if it
 /// exists. Used to write the three shim flavors (`.sh`, `.cmd`,
 /// `.ps1`).
-pub trait FsWriteAtomic {
+///
+/// **Not atomic.** This trait promises only what `std::fs::write`
+/// promises: a single `write(2)` call, no tempfile-rename guard.
+/// A SIGINT mid-write can leave a truncated file. If a future
+/// caller needs atomic write semantics, build it on top of this
+/// trait (write to a sibling tempfile, then rename) rather than
+/// hiding the algorithm inside the capability — keeping the trait
+/// minimal lets every callsite see exactly what guarantees it
+/// inherits.
+pub trait FsWrite {
     fn write(path: &Path, bytes: &[u8]) -> io::Result<()>;
 }
 
@@ -100,7 +109,7 @@ impl FsCreateDirAll for RealApi {
     }
 }
 
-impl FsWriteAtomic for RealApi {
+impl FsWrite for RealApi {
     fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
         std::fs::write(path, bytes)
     }

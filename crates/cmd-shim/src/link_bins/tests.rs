@@ -304,7 +304,7 @@ fn link_bins_propagates_create_bin_dir_error_via_di() {
             Err(io::Error::from(io::ErrorKind::PermissionDenied))
         }
     }
-    impl FsWriteAtomic for FailingCreateDir {
+    impl FsWrite for FailingCreateDir {
         fn write(_: &Path, _: &[u8]) -> io::Result<()> {
             unreachable!()
         }
@@ -333,7 +333,7 @@ fn link_bins_propagates_create_bin_dir_error_via_di() {
 }
 
 /// `link_bins_of_packages` propagates a write failure for the `.sh`
-/// shim. Inject a fake `FsWriteAtomic` that always fails.
+/// shim. Inject a fake `FsWrite` that always fails.
 #[test]
 fn link_bins_propagates_write_shim_error_via_di() {
     use std::io;
@@ -365,7 +365,7 @@ fn link_bins_propagates_write_shim_error_via_di() {
             Ok(())
         }
     }
-    impl FsWriteAtomic for FailingWrite {
+    impl FsWrite for FailingWrite {
         fn write(_: &Path, _: &[u8]) -> io::Result<()> {
             Err(io::Error::from(io::ErrorKind::PermissionDenied))
         }
@@ -422,7 +422,7 @@ fn link_bins_propagates_chmod_error_via_di() {
             Ok(())
         }
     }
-    impl FsWriteAtomic for FailingChmod {
+    impl FsWrite for FailingChmod {
         fn write(_: &Path, _: &[u8]) -> io::Result<()> {
             Ok(())
         }
@@ -482,7 +482,7 @@ fn link_bins_propagates_probe_shim_source_error_via_di() {
             Ok(())
         }
     }
-    impl FsWriteAtomic for FailingProbe {
+    impl FsWrite for FailingProbe {
         fn write(_: &Path, _: &[u8]) -> io::Result<()> {
             unreachable!()
         }
@@ -540,7 +540,7 @@ fn link_bins_propagates_read_manifest_error_via_di() {
             unreachable!()
         }
     }
-    impl FsWriteAtomic for DenyManifestRead {
+    impl FsWrite for DenyManifestRead {
         fn write(_: &Path, _: &[u8]) -> io::Result<()> {
             unreachable!()
         }
@@ -638,7 +638,7 @@ fn link_bins_propagates_modules_dir_read_error_via_di() {
             unreachable!()
         }
     }
-    impl FsWriteAtomic for FailingModulesRead {
+    impl FsWrite for FailingModulesRead {
         fn write(_: &Path, _: &[u8]) -> io::Result<()> {
             unreachable!()
         }

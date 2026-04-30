@@ -2,7 +2,7 @@ use crate::{
     bin_resolver::{Command, get_bins_from_package_manifest, pkg_owns_bin},
     capabilities::{
         FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions,
-        FsWriteAtomic,
+        FsWrite,
     },
     shim::{
         generate_cmd_shim, generate_pwsh_shim, generate_sh_shim, is_shim_pointing_at,
@@ -100,7 +100,7 @@ where
         + FsReadString
         + FsReadHead
         + FsCreateDirAll
-        + FsWriteAtomic
+        + FsWrite
         + FsSetPermissions,
 {
     let packages = collect_packages_in_modules_dir::<Api>(modules_dir)?;
@@ -188,7 +188,7 @@ pub fn link_bins_of_packages<Api>(
     bins_dir: &Path,
 ) -> Result<(), LinkBinsError>
 where
-    Api: FsReadString + FsReadHead + FsCreateDirAll + FsWriteAtomic + FsSetPermissions,
+    Api: FsReadString + FsReadHead + FsCreateDirAll + FsWrite + FsSetPermissions,
 {
     let mut chosen: HashMap<String, (Command, &PackageBinSource)> = HashMap::new();
 
@@ -254,7 +254,7 @@ fn pick_winner(bin_name: &str, existing: &str, candidate: &str) -> bool {
 /// build still compiles on Windows.
 fn write_shim<Api>(target_path: &Path, shim_path: &Path) -> Result<(), LinkBinsError>
 where
-    Api: FsReadString + FsReadHead + FsWriteAtomic + FsSetPermissions,
+    Api: FsReadString + FsReadHead + FsWrite + FsSetPermissions,
 {
     let runtime = search_script_runtime::<Api>(target_path).map_err(|error| {
         LinkBinsError::ProbeShimSource { path: target_path.to_path_buf(), error }

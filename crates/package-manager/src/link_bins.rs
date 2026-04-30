@@ -2,7 +2,7 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_cmd_shim::{
     FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions,
-    FsWriteAtomic, LinkBinsError, PackageBinSource, RealApi, link_bins_of_packages,
+    FsWrite, LinkBinsError, PackageBinSource, RealApi, link_bins_of_packages,
 };
 use rayon::prelude::*;
 use std::{
@@ -99,7 +99,7 @@ impl<'a> LinkVirtualStoreBins<'a> {
             + FsReadString
             + FsReadHead
             + FsCreateDirAll
-            + FsWriteAtomic
+            + FsWrite
             + FsSetPermissions,
     {
         let LinkVirtualStoreBins { virtual_store_dir } = self;
@@ -184,7 +184,7 @@ where
         + FsReadString
         + FsReadHead
         + FsCreateDirAll
-        + FsWriteAtomic
+        + FsWrite
         + FsSetPermissions,
 {
     let mut packages: Vec<PackageBinSource> = Vec::new();
