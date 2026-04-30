@@ -24,7 +24,6 @@ doc  = false
 assert_cmd = { workspace = true }
 clap       = { workspace = true }
 pipe-trait = { workspace = true }
-portpicker = { workspace = true }
 reqwest    = { workspace = true }
 serde      = { workspace = true }
 serde_json = { workspace = true }
