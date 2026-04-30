@@ -357,9 +357,9 @@ fn empty_bin_key_is_rejected() {
     assert_eq!(commands[0].name, "good");
 }
 
-/// `lexical_normalize` `CurDir` branch — drops `.` segments. Visible
-/// via `is_subdir` accepting a target with embedded `./` that resolves
-/// inside the package root.
+/// [`super::lexical_normalize`] `CurDir` branch — drops `.` segments.
+/// Visible via [`super::is_subdir`] accepting a target with embedded `./`
+/// that resolves inside the package root.
 #[test]
 fn directories_bin_handles_curdir_in_relative_path() {
     let tmp = tempdir().unwrap();

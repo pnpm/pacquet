@@ -53,15 +53,15 @@ pub fn pkg_owns_bin(bin_name: &str, pkg_name: &str) -> bool {
 ///    command, with `@scope/` stripped from the key.
 /// 3. Fallback: `directories.bin` — every regular file under the directory
 ///    becomes a command, with the file basename as the bin name. The
-///    directory itself must resolve under `pkg_path` (`is_subdir`); a
-///    `directories.bin` that escapes via `..` returns an empty list.
+///    directory itself must resolve under `pkg_path`; a `directories.bin`
+///    that escapes via `..` returns an empty list.
 ///
 /// Validation, exactly mirroring pnpm:
 ///
 /// - Bin name must be URL-safe (`name == encodeURIComponent(name)`) or be the
 ///   single-character `$`. This is the path-traversal guard.
-/// - Bin path must resolve under `pkg_path` (`is_subdir`). Prevents a
-///   malicious manifest from writing shims that exec a sibling package.
+/// - Bin path must resolve under `pkg_path`. Prevents a malicious manifest
+///   from writing shims that exec a sibling package.
 pub fn get_bins_from_package_manifest(manifest: &Value, pkg_path: &Path) -> Vec<Command> {
     let pkg_name = manifest.get("name").and_then(Value::as_str);
     if let Some(bin) = manifest.get("bin") {

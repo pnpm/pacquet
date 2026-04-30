@@ -65,9 +65,9 @@ fn writes_child_bins_into_slot_own_package_node_modules() {
 /// 1. The child bin appears in `<slot>/node_modules/<own>/node_modules/.bin/`.
 /// 2. The slot's own bin does NOT appear there.
 ///
-/// If `find_slot_own_package_dir` returns `None` (slot skipped), (1)
-/// fails. If the exclusion logic is dropped, (2) fails. Either failure
-/// surfaces the regression.
+/// If [`super::find_slot_own_package_dir`] returns `None` (slot skipped),
+/// (1) fails. If the exclusion logic is dropped, (2) fails. Either
+/// failure surfaces the regression.
 #[test]
 fn skips_slot_own_package_when_walking_children() {
     let tmp = tempdir().unwrap();
@@ -104,7 +104,7 @@ fn skips_slot_own_package_when_walking_children() {
     assert!(!bin_dir.join("tsc").exists(), "self-bin `tsc` must not be linked into own slot",);
 }
 
-/// `LinkVirtualStoreBins` with a non-existent virtual-store directory
+/// [`LinkVirtualStoreBins`] with a non-existent virtual-store directory
 /// must be a no-op (`Ok`) — a fresh install where the dir doesn't exist
 /// yet must not error out.
 #[test]
@@ -115,7 +115,7 @@ fn link_virtual_store_bins_no_op_when_dir_missing() {
 }
 
 /// Slot whose name has a `+` (scope separator) resolves to
-/// `node_modules/<scope>/<name>`. Pins `find_slot_own_package_dir`'s
+/// `node_modules/<scope>/<name>`. Pins [`super::find_slot_own_package_dir`]'s
 /// scoped branch — the un-scoped branch is exercised by the existing
 /// `writes_child_bins_into_slot_own_package_node_modules` test.
 #[test]
@@ -148,7 +148,7 @@ fn link_virtual_store_bins_handles_scoped_slot_name() {
 }
 
 /// Peer-resolved slots have version segments that contain additional
-/// `@` characters (one per peer spec). `find_slot_own_package_dir`
+/// `@` characters (one per peer spec). [`super::find_slot_own_package_dir`]
 /// must parse the package-name boundary from the **left**, not the
 /// right, otherwise it splits inside a peer spec and silently fails
 /// to locate the own package — bins of children of the slot then
@@ -204,9 +204,9 @@ fn link_virtual_store_bins_skips_slot_without_node_modules() {
     LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }.run().unwrap();
 }
 
-/// `link_direct_dep_bins` walks the project's `node_modules/<dep>`
+/// [`link_direct_dep_bins`] walks the project's `node_modules/<dep>`
 /// symlinks and writes a shim per declared bin. End-to-end exercise of
-/// the path that runs after `SymlinkDirectDependencies`.
+/// the path that runs after [`crate::SymlinkDirectDependencies`].
 #[test]
 fn link_direct_dep_bins_writes_shims_for_each_dep() {
     let tmp = tempdir().unwrap();
@@ -225,9 +225,9 @@ fn link_direct_dep_bins_writes_shims_for_each_dep() {
     assert!(is_shim_pointing_at(&body, &foo_dir.join("cli.js")));
 }
 
-/// `link_direct_dep_bins` with no deps is a no-op — must not even
+/// [`link_direct_dep_bins`] with no deps is a no-op — must not even
 /// create the `.bin` directory. Mirrors the early-return of
-/// `link_bins_of_packages`.
+/// [`pacquet_cmd_shim::link_bins_of_packages`].
 #[test]
 fn link_direct_dep_bins_no_op_for_empty_dep_list() {
     let tmp = tempdir().unwrap();
@@ -237,7 +237,7 @@ fn link_direct_dep_bins_no_op_for_empty_dep_list() {
     assert!(!modules.join(".bin").exists());
 }
 
-/// `link_direct_dep_bins` resolves the dep name through the symlink
+/// [`link_direct_dep_bins`] resolves the dep name through the symlink
 /// pacquet creates under `<modules_dir>/<name>`. Pin that the manifest
 /// is read from the symlink's *target*, not the symlink path itself.
 #[test]
@@ -268,7 +268,7 @@ fn link_direct_dep_bins_follows_symlink_to_real_package() {
 }
 
 /// Skip dep names whose symlink points at a non-existent target.
-/// `link_direct_dep_bins` filters those silently because the
+/// [`link_direct_dep_bins`] filters those silently because the
 /// surrounding install pipeline has already populated whatever it could.
 #[test]
 fn link_direct_dep_bins_skips_dep_with_missing_manifest() {
@@ -280,10 +280,10 @@ fn link_direct_dep_bins_skips_dep_with_missing_manifest() {
     assert!(!modules.join(".bin").exists());
 }
 
-/// `LinkVirtualStoreBins::run_with` propagates a non-`NotFound`
+/// [`LinkVirtualStoreBins::run_with`] propagates a non-`NotFound`
 /// `read_dir` error on the virtual-store directory itself. Real fs
 /// can't trigger this portably; the fake forces the
-/// `ReadVirtualStore` variant.
+/// [`LinkVirtualStoreBinsError::ReadVirtualStore`] variant.
 #[test]
 fn link_virtual_store_bins_propagates_read_error_via_di() {
     use pacquet_cmd_shim::{

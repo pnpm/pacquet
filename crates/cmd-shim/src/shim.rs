@@ -35,8 +35,9 @@ fn extension_program(extension: &str) -> Option<&'static str> {
 ///
 /// 1. If the file exists and starts with a shebang, parse `prog` + `args` from
 ///    it.
-/// 2. Otherwise fall through to `extension_program` on the file's extension.
-/// 3. If neither yields a runtime, return `None` — `generate_sh_shim` handles
+/// 2. Otherwise look up a default runtime by file extension (e.g. `.js` →
+///    `node`, `.cmd` → `cmd`).
+/// 3. If neither yields a runtime, return `None` — [`generate_sh_shim`] handles
 ///    that by exec'ing the target directly.
 ///
 /// `NotFound` reading the file degrades to `Ok(None)` so a missing-bin race
@@ -73,7 +74,7 @@ fn read_shebang<Api: FsReadHead>(path: &Path) -> io::Result<Option<ScriptRuntime
 /// the underlying read returns 0 (EOF). Returns the number of bytes
 /// actually filled (which can be `< buf.len()` for a short file).
 ///
-/// `FsReadHead::read_head` mirrors a single `read(2)` syscall, which
+/// [`FsReadHead::read_head`] mirrors a single `read(2)` syscall, which
 /// POSIX permits to return short. This loop collects short reads so
 /// the shebang parser sees a complete view of the head of the file
 /// even on pseudo-fs paths (`/proc`, `/sys`, FUSE, …) where short

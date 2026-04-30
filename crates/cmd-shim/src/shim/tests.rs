@@ -95,8 +95,8 @@ fn extension_program_covers_every_known_extension() {
     assert_eq!(extension_program(""), None);
 }
 
-/// `parse_shebang` returns None when the line lacks `#!` entirely (handled
-/// elsewhere) or when it's `#!` with only whitespace after — the
+/// [`super::parse_shebang`] returns None when the line lacks `#!` entirely
+/// (handled elsewhere) or when it's `#!` with only whitespace after — the
 /// `prog.is_empty()` guard.
 #[test]
 fn parse_shebang_returns_none_for_empty_prog() {
@@ -105,7 +105,7 @@ fn parse_shebang_returns_none_for_empty_prog() {
     assert!(parse_shebang("not a shebang").is_none());
 }
 
-/// `parse_shebang_from_bytes` is the byte-level entry. It must trim a
+/// [`parse_shebang_from_bytes`] is the byte-level entry. It must trim a
 /// leading BOM-free CRLF first line and survive non-UTF-8 bytes (lossy
 /// decoding).
 #[test]
@@ -121,7 +121,7 @@ fn parse_shebang_from_bytes_handles_crlf_and_lossy_utf8() {
     assert_eq!(rt.prog.as_deref(), Some("node"));
 }
 
-/// `generate_sh_shim` with `runtime: None` emits the `exit $?` arm that
+/// [`generate_sh_shim`] with `runtime: None` emits the `exit $?` arm that
 /// upstream uses when no interpreter could be inferred. The shim execs the
 /// target directly.
 #[test]
@@ -136,10 +136,10 @@ fn generate_sh_shim_emits_direct_exec_when_no_runtime() {
     assert!(body.ends_with("# cmd-shim-target=/proj/node_modules/foo/bin/cli\n"));
 }
 
-/// `generate_sh_shim` with `runtime: Some(.. prog: None ..)` uses the same
+/// [`generate_sh_shim`] with `runtime: Some(.. prog: None ..)` uses the same
 /// no-runtime arm, but threading the explicit `args`. Mirrors upstream's
 /// fallback when `prog` couldn't be inferred but the runtime probe still
-/// returned a `ScriptRuntime { prog: None, args }`.
+/// returned a [`ScriptRuntime`] with `prog: None`.
 #[test]
 fn generate_sh_shim_threads_args_when_prog_is_none() {
     let target = Path::new("/p/cli");
@@ -152,7 +152,7 @@ fn generate_sh_shim_threads_args_when_prog_is_none() {
     );
 }
 
-/// `generate_sh_shim` with a target that lexically resolves to an absolute
+/// [`generate_sh_shim`] with a target that lexically resolves to an absolute
 /// path takes the `path::isAbsolute(shTarget)` branch upstream uses — the
 /// quoted target stays absolute and skips the `$basedir/` prefix.
 ///
@@ -179,8 +179,8 @@ fn generate_sh_shim_uses_absolute_target_when_no_common_prefix() {
     );
 }
 
-/// `relative_target` of `from == to_parent` collapses to `.` (the
-/// `result.is_empty()` branch in `relative_path_from`).
+/// [`super::relative_target`] of `from == to_parent` collapses to `.` (the
+/// `result.is_empty()` branch in [`super::relative_path_from`]).
 #[test]
 fn relative_target_collapses_to_dot_when_paths_share_dir() {
     let target = Path::new("/proj/.bin/cli");
@@ -188,10 +188,10 @@ fn relative_target_collapses_to_dot_when_paths_share_dir() {
     assert_eq!(relative_target(target, shim), "cli");
 }
 
-/// `relative_path_from` preserves a single leading `..` in the target
-/// (the `out.push("..")` fallback fires when `out.pop()` returns false
-/// on an empty buffer). Multiple consecutive leading `..`s aren't tested
-/// because `lexical_normalize` collapses them — `PathBuf::pop` doesn't
+/// [`super::relative_path_from`] preserves a single leading `..` in the
+/// target (the `out.push("..")` fallback fires when `out.pop()` returns
+/// false on an empty buffer). Multiple consecutive leading `..`s aren't
+/// tested because [`super::lexical_normalize`] collapses them — `PathBuf::pop` doesn't
 /// treat a trailing `..` component as a parent reference, so the second
 /// `..` pops the first. That edge case doesn't occur in pacquet's
 /// production paths (which are always absolute under `<modules_dir>` /
@@ -209,9 +209,9 @@ fn lexical_normalize_keeps_leading_parent_segments() {
     assert_eq!(result, "../../../shared/cli", "leading `..` must propagate");
 }
 
-/// `lexical_normalize` discards `.` (CurDir) components silently. Verify
-/// via `relative_target` — a target with embedded `./` resolves the same
-/// as without.
+/// [`super::lexical_normalize`] discards `.` (CurDir) components silently.
+/// Verify via [`super::relative_target`] — a target with embedded `./`
+/// resolves the same as without.
 #[test]
 fn lexical_normalize_drops_curdir_components() {
     let with_dot = relative_target(Path::new("/p/foo/./cli"), Path::new("/p/.bin/x"));
@@ -219,7 +219,7 @@ fn lexical_normalize_drops_curdir_components() {
     assert_eq!(with_dot, without_dot);
 }
 
-/// `search_script_runtime` reads a real file with a shebang and returns
+/// [`search_script_runtime`] reads a real file with a shebang and returns
 /// the prog from it. End-to-end of the production path.
 #[test]
 fn search_script_runtime_reads_shebang_from_real_file() {
@@ -231,7 +231,7 @@ fn search_script_runtime_reads_shebang_from_real_file() {
     assert_eq!(rt.prog.as_deref(), Some("node"));
 }
 
-/// `search_script_runtime` on a missing file must degrade to `Ok(None)`
+/// [`search_script_runtime`] on a missing file must degrade to `Ok(None)`
 /// — the install otherwise races against bin file extraction.
 #[test]
 fn search_script_runtime_returns_none_for_missing_file() {
@@ -239,7 +239,7 @@ fn search_script_runtime_returns_none_for_missing_file() {
     assert_eq!(search_script_runtime::<RealApi>(nonexistent).unwrap(), None);
 }
 
-/// `search_script_runtime` falls through to extension lookup when the
+/// [`search_script_runtime`] falls through to extension lookup when the
 /// file has no shebang. A `.js` file without `#!` must still resolve to
 /// `node`.
 #[test]
@@ -252,7 +252,7 @@ fn search_script_runtime_falls_back_to_extension() {
     assert_eq!(rt.prog.as_deref(), Some("node"));
 }
 
-/// `search_script_runtime` returns `Ok(None)` when neither shebang nor
+/// [`search_script_runtime`] returns `Ok(None)` when neither shebang nor
 /// extension yields a runtime. Pure no-runtime path.
 #[test]
 fn search_script_runtime_returns_none_when_runtime_unknown() {
@@ -263,9 +263,9 @@ fn search_script_runtime_returns_none_when_runtime_unknown() {
     assert_eq!(search_script_runtime::<RealApi>(&path).unwrap(), None);
 }
 
-/// `search_script_runtime` propagates IO errors that aren't `NotFound`.
+/// [`search_script_runtime`] propagates IO errors that aren't `NotFound`.
 /// Real-fs can't trigger e.g. `PermissionDenied` portably, so plug a
-/// fake `FsReadHead` per the DI principles in
+/// fake [`FsReadHead`] per the DI principles in
 /// <https://github.com/pnpm/pacquet/pull/332#issuecomment-4345054524>.
 #[test]
 fn search_script_runtime_propagates_non_not_found_io_errors() {
@@ -280,7 +280,7 @@ fn search_script_runtime_propagates_non_not_found_io_errors() {
     assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
 }
 
-/// A `FsReadHead` that returns 0 bytes (empty file) yields no shebang —
+/// A [`FsReadHead`] that returns 0 bytes (empty file) yields no shebang —
 /// the parse step then falls through to the extension fallback. Pin the
 /// behavior so a future tweak to the empty-buffer handling stays
 /// compatible with the no-shebang case.
@@ -302,8 +302,9 @@ fn search_script_runtime_reads_zero_bytes_then_falls_through() {
     assert_eq!(rt, None);
 }
 
-/// `RealApi::read_head` is the production capability. Tests that exercise
-/// it indirectly cover most paths; this one pins the contract directly.
+/// [`RealApi::read_head`](RealApi) is the production capability. Tests
+/// that exercise it indirectly cover most paths; this one pins the
+/// contract directly.
 #[test]
 fn real_fs_read_head_reads_up_to_buffer_size() {
     use tempfile::tempdir;
@@ -316,7 +317,7 @@ fn real_fs_read_head_reads_up_to_buffer_size() {
     assert_eq!(&buf[..read], b"hello world");
 }
 
-/// `RealApi::read_head` propagates `NotFound` so the shebang reader can
+/// [`RealApi::read_head`](RealApi) propagates `NotFound` so the shebang reader can
 /// distinguish a missing file from a real IO error and degrade to
 /// `Ok(None)`.
 #[test]
@@ -326,7 +327,7 @@ fn real_fs_read_head_propagates_not_found() {
     assert_eq!(err.kind(), io::ErrorKind::NotFound);
 }
 
-/// `read_head_filled` against the real filesystem fills the buffer in
+/// [`read_head_filled`] against the real filesystem fills the buffer in
 /// one underlying syscall (the common case) and returns the exact byte
 /// count.
 #[test]
@@ -343,7 +344,7 @@ fn read_head_filled_real_fs_long_file_fills_buffer() {
     assert_eq!(&buf[..], &payload[..256]);
 }
 
-/// `read_head_filled` against a file shorter than the buffer returns
+/// [`read_head_filled`] against a file shorter than the buffer returns
 /// the partial count (EOF terminates the loop without erroring).
 #[test]
 fn read_head_filled_real_fs_short_file_returns_partial() {
@@ -358,7 +359,7 @@ fn read_head_filled_real_fs_short_file_returns_partial() {
     assert_eq!(&buf[..read], b"#!/bin/sh\n");
 }
 
-/// `read_head_filled` accumulates short reads from the underlying
+/// [`read_head_filled`] accumulates short reads from the underlying
 /// capability — the very behaviour the loop exists to provide. A fake
 /// that always returns short proves the loop calls the trait
 /// repeatedly with advancing offsets until the buffer is full.
@@ -414,7 +415,7 @@ fn read_head_filled_accumulates_short_reads_from_fake() {
     assert_eq!(LAST_OFFSETS[2].load(Ordering::Relaxed), 6);
 }
 
-/// `read_head_filled` terminates when the underlying capability
+/// [`read_head_filled`] terminates when the underlying capability
 /// returns 0 (EOF) — short file shorter than the buffer.
 #[test]
 fn read_head_filled_terminates_on_zero_byte_read_from_fake() {
@@ -436,7 +437,7 @@ fn read_head_filled_terminates_on_zero_byte_read_from_fake() {
     assert_eq!(buf[0], b'X');
 }
 
-/// `read_head_filled` propagates non-EOF errors from the first call
+/// [`read_head_filled`] propagates non-EOF errors from the first call
 /// without retrying.
 #[test]
 fn read_head_filled_propagates_io_error_from_fake() {
@@ -452,7 +453,7 @@ fn read_head_filled_propagates_io_error_from_fake() {
     assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
 }
 
-/// `generate_cmd_shim` produces a Windows `.cmd` shim with CRLF line
+/// [`generate_cmd_shim`] produces a Windows `.cmd` shim with CRLF line
 /// endings, `%~dp0\<rel>` for the target, and the
 /// `@IF EXIST … (… ) ELSE ( @SET PATHEXT=... … )` exec block matching
 /// upstream's template.
@@ -470,7 +471,7 @@ fn generate_cmd_shim_matches_pnpm_template() {
     );
 }
 
-/// `generate_cmd_shim` with no runtime exec's the target directly via
+/// [`generate_cmd_shim`] with no runtime exec's the target directly via
 /// the `@<target> %*` shape.
 #[test]
 fn generate_cmd_shim_emits_direct_exec_when_no_runtime() {
@@ -483,7 +484,7 @@ fn generate_cmd_shim_emits_direct_exec_when_no_runtime() {
     );
 }
 
-/// `generate_pwsh_shim` produces a `.ps1` shim with the `$basedir`
+/// [`generate_pwsh_shim`] produces a `.ps1` shim with the `$basedir`
 /// header, `Test-Path "$basedir/<prog>$exe"` exec block, and pipeline-
 /// input handling matching upstream.
 #[test]
@@ -508,7 +509,7 @@ fn generate_pwsh_shim_matches_pnpm_template() {
     assert!(body.ends_with("exit $ret\n"));
 }
 
-/// `generate_pwsh_shim` with no runtime falls back to executing the
+/// [`generate_pwsh_shim`] with no runtime falls back to executing the
 /// target directly with `$LASTEXITCODE` propagation.
 #[test]
 fn generate_pwsh_shim_emits_direct_exec_when_no_runtime() {
