@@ -75,6 +75,53 @@ use std::{path::PathBuf, sync::Arc};
 use std::os::unix::fs::PermissionsExt;
 ```
 
+### No star imports
+
+**Never use star (glob) imports.** This rule has no exceptions and applies to every file in the workspace — production code, tests, integration tests, build scripts, and developer tooling under `tasks/`. The ban covers every form of star import:
+
+- `use super::*;` in test modules.
+- `pub use module::*;` re-exports in `lib.rs` and other module roots.
+- External-crate preludes such as `use rayon::prelude::*;` or `use assert_cmd::prelude::*;`.
+- `use crate::*;`, `use self::*;`, and any other `use ...::*;`.
+
+Always import items explicitly by name. Merge them with braces, as described in the previous section.
+
+```rust
+// Bad
+#[cfg(test)]
+mod tests {
+    use super::*;
+    // ...
+}
+
+// Good
+#[cfg(test)]
+mod tests {
+    use super::{ParsedThing, parse_thing};
+    // ...
+}
+```
+
+```rust
+// Bad
+pub use comver::*;
+pub use load_lockfile::*;
+
+// Good
+pub use comver::ComVer;
+pub use load_lockfile::{LoadLockfileError, load_lockfile};
+```
+
+```rust
+// Bad
+use rayon::prelude::*;
+
+// Good
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
+```
+
+Star imports make it hard to tell where a name comes from, hide accidental shadowing, and make tooling (and humans) work harder during review. Listing items explicitly is a small, one-time cost that pays back every time someone reads the file.
+
 ### Generic Parameter Naming
 
 Use **descriptive names** for type parameters, not single letters:
