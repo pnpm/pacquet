@@ -194,3 +194,56 @@ fn should_install_circular_dependencies() {
 
     drop((root, mock_instance)); // cleanup
 }
+
+/// End-to-end coverage for `${VAR}` substitution in `.npmrc`.
+///
+/// `<RealApi as EnvVar>::var` (the `std::env::var` bridge in
+/// `crates/npmrc/src/api.rs`) is unreachable by every other test
+/// because `add_mocked_registry` writes literal values, so
+/// `env_replace` short-circuits at the no-`$` branch.
+///
+/// This test rewrites the registry URL to `${PACQUET_TEST_REGISTRY}`,
+/// sets that variable on the spawned process, and asserts the install
+/// succeeds.
+///
+/// Mirrors pnpm's [`installing/deps-installer/test/install/auth.ts`](https://github.com/pnpm/pnpm/blob/601317e7a3/installing/deps-installer/test/install/auth.ts)
+/// in shape.
+#[test]
+fn install_resolves_env_var_in_npmrc_registry() {
+    let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
+        CommandTempCwd::init().add_mocked_registry();
+    let AddMockedRegistry { mock_instance, npmrc_path, .. } = npmrc_info;
+
+    eprintln!("Patching .npmrc to use ${{PACQUET_TEST_REGISTRY}}...");
+    // Replace the literal `registry=` line written by
+    // `add_mocked_registry` with one that references an env var.
+    // Keep the other lines (`store-dir`, `cache-dir`) intact.
+    let mocked_registry_url = mock_instance.url();
+    let original = fs::read_to_string(&npmrc_path).expect("read .npmrc");
+    let patched = original
+        .replace(&format!("registry={mocked_registry_url}"), "registry=${PACQUET_TEST_REGISTRY}");
+    assert_ne!(original, patched, ".npmrc layout drifted; update this test");
+    fs::write(&npmrc_path, &patched).expect("rewrite .npmrc");
+
+    eprintln!("Creating package.json...");
+    let manifest_path = workspace.join("package.json");
+    let package_json_content = serde_json::json!({
+        "dependencies": {
+            "@pnpm.e2e/hello-world-js-bin-parent": "1.0.0",
+        },
+    });
+    fs::write(&manifest_path, package_json_content.to_string()).expect("write to package.json");
+
+    eprintln!("Executing command with PACQUET_TEST_REGISTRY set...");
+    pacquet
+        .with_env("PACQUET_TEST_REGISTRY", &mocked_registry_url)
+        .with_arg("install")
+        .assert()
+        .success();
+
+    eprintln!("Make sure the package was actually fetched from the resolved registry");
+    let symlink_path = workspace.join("node_modules/@pnpm.e2e/hello-world-js-bin-parent");
+    assert!(is_symlink_or_junction(&symlink_path).unwrap());
+
+    drop((root, mock_instance)); // cleanup
+}
