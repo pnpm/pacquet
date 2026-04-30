@@ -56,7 +56,7 @@ impl From<ComVer> for String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::ComVer;
     use pretty_assertions::assert_eq;
 
     #[test]

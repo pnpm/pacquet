@@ -80,7 +80,7 @@ mod tests {
     use node_semver::Version;
     use pretty_assertions::assert_eq;
 
-    use super::*;
+    use super::PackageVersion;
     use crate::package_distribution::PackageDistribution;
 
     #[test]

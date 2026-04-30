@@ -74,7 +74,7 @@ impl InstallArgs {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::InstallDependencyOptions;
     use pacquet_package_manifest::DependencyGroup;
     use pretty_assertions::assert_eq;
 

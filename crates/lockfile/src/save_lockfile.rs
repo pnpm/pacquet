@@ -37,7 +37,8 @@ impl Lockfile {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::SaveLockfileError;
+    use crate::Lockfile;
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
     use text_block_macros::text_block;

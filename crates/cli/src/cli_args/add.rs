@@ -107,7 +107,7 @@ impl AddArgs {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::AddDependencyOptions;
     use pacquet_package_manifest::DependencyGroup;
     use pretty_assertions::assert_eq;
 

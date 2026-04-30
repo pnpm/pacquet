@@ -173,10 +173,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::default_store_dir;
+    #[cfg(windows)]
+    use super::{default_store_dir_windows, get_drive_letter};
     use crate::test_env_guard::EnvGuard;
+    use pacquet_store_dir::StoreDir;
     use pretty_assertions::assert_eq;
     use std::env;
+    #[cfg(windows)]
+    use std::path::Path;
 
     fn display_store_dir(store_dir: &StoreDir) -> String {
         store_dir.display().to_string().replace('\\', "/")

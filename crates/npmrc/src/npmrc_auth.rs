@@ -64,7 +64,8 @@ impl NpmrcAuth {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::NpmrcAuth;
+    use crate::Npmrc;
     use pretty_assertions::assert_eq;
 
     #[test]

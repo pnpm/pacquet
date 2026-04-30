@@ -1,8 +1,8 @@
 #![cfg(unix)] // running this on windows result in 'program not found'
 pub mod _utils;
-pub use _utils::*;
+pub use _utils::index_file_contents;
 
-use assert_cmd::prelude::*;
+use assert_cmd::assert::OutputAssertExt;
 use command_extra::CommandExtra;
 use pacquet_testing_utils::{
     bin::{AddMockedRegistry, CommandTempCwd},

@@ -1,4 +1,4 @@
-use assert_cmd::prelude::*;
+use assert_cmd::cargo::CommandCargoExt;
 use command_extra::CommandExtra;
 use pacquet_registry_mock::AutoMockInstance;
 use std::{fs, path::PathBuf, process::Command};

@@ -1,4 +1,4 @@
-use assert_cmd::prelude::*;
+use assert_cmd::assert::OutputAssertExt;
 use command_extra::CommandExtra;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_testing_utils::{

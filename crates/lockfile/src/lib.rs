@@ -15,21 +15,23 @@ mod serialize_yaml;
 mod snapshot_dep_ref;
 mod snapshot_entry;
 
-pub use comver::*;
-pub use load_lockfile::*;
-pub use lockfile_version::*;
-pub use package_metadata::*;
-pub use pkg_name::*;
-pub use pkg_name_suffix::*;
-pub use pkg_name_ver::*;
-pub use pkg_name_ver_peer::*;
-pub use pkg_ver_peer::*;
-pub use project_snapshot::*;
-pub use resolution::*;
-pub use resolved_dependency::*;
-pub use save_lockfile::*;
-pub use snapshot_dep_ref::*;
-pub use snapshot_entry::*;
+pub use comver::{ComVer, ParseComVerError};
+pub use load_lockfile::LoadLockfileError;
+pub use lockfile_version::{LockfileVersion, LockfileVersionError};
+pub use package_metadata::{PackageMetadata, PeerDependencyMeta};
+pub use pkg_name::{ParsePkgNameError, PkgName};
+pub use pkg_name_suffix::{ParsePkgNameSuffixError, PkgNameSuffix};
+pub use pkg_name_ver::{ParsePkgNameVerError, PkgNameVer};
+pub use pkg_name_ver_peer::{ParsePkgNameVerPeerError, PkgNameVerPeer};
+pub use pkg_ver_peer::{ParsePkgVerPeerError, PkgVerPeer};
+pub use project_snapshot::ProjectSnapshot;
+pub use resolution::{
+    DirectoryResolution, GitResolution, LockfileResolution, RegistryResolution, TarballResolution,
+};
+pub use resolved_dependency::{ResolvedDependencyMap, ResolvedDependencySpec};
+pub use save_lockfile::SaveLockfileError;
+pub use snapshot_dep_ref::{ParseSnapshotDepRefError, SnapshotDepRef};
+pub use snapshot_entry::SnapshotEntry;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

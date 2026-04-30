@@ -124,7 +124,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Install, InstallError};
     use pacquet_npmrc::Npmrc;
     use pacquet_package_manifest::{DependencyGroup, PackageManifest};
     use pacquet_registry_mock::AutoMockInstance;

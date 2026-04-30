@@ -2,7 +2,7 @@ use crate::{LinkFileError, link_file};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_npmrc::PackageImportMethod;
-use rayon::prelude::*;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
     collections::{HashMap, HashSet},
     fs, io,

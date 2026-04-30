@@ -507,7 +507,13 @@ fn strip_dash_suffix(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    #[cfg(unix)]
+    use super::{EMFILE, ENFILE, retry_on_fd_pressure};
+    use super::{
+        EnsureFileError, ensure_file, file_equals_bytes, is_transient_rename_error,
+        rename_with_retry, temp_path_for,
+    };
+    use std::{fs, io, path::Path};
     use tempfile::tempdir;
 
     /// New-file path: contents land on disk. Mode handling is covered

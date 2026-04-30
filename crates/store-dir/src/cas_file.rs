@@ -85,7 +85,9 @@ impl StoreDir {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::StoreDir;
+    use sha2::{Digest, Sha512};
+    use std::path::PathBuf;
 
     #[test]
     fn cas_file_path() {
