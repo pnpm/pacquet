@@ -1,10 +1,10 @@
 use crate::{
     PreparedRegistryInfo, RegistryAnchor, RegistryInfo,
-    kill_verdaccio::kill_all_verdaccio_children, node_registry_mock, port_to_url::port_to_url,
+    kill_verdaccio::kill_all_verdaccio_children, node_registry_mock, pick_port::pick_unused_port,
+    port_to_url::port_to_url,
 };
 use assert_cmd::prelude::*;
 use pipe_trait::Pipe;
-use portpicker::pick_unused_port;
 use reqwest::Client;
 use std::{
     fs::File,
