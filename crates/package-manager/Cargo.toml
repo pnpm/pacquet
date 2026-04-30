@@ -43,4 +43,5 @@ pretty_assertions = { workspace = true }
 serde-saphyr      = { workspace = true }
 ssri              = { workspace = true }
 tempfile          = { workspace = true }
+text-block-macros = { workspace = true }
 walkdir           = { workspace = true }

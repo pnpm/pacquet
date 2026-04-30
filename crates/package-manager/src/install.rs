@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::{
     InstallFrozenLockfile, InstallFrozenLockfileError, InstallWithoutLockfile,
     InstallWithoutLockfileError, ResolvedPackages,
@@ -70,16 +72,16 @@ where
         // emits this as `lockfileDir` — the directory containing
         // `pnpm-lock.yaml`, which equals the workspace root when one is
         // present. Pacquet has no workspace support yet, so the manifest's
-        // parent directory is the correct value today.
-        //
-        // TODO: once workspace support lands, replace this with the
-        // resolved workspace dir so per-importer stage events carry the
-        // right prefix. The upstream helper to mirror is
-        // `findWorkspaceDir`, which walks up from the cwd looking for
-        // `pnpm-workspace.yaml`:
-        // <https://github.com/pnpm/pnpm/blob/3b12eb27de/workspace/root-finder/src/index.ts>.
-        let prefix =
-            manifest.path().parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        // parent directory is the correct value today; tracked as
+        // pnpm/pacquet#357 (resolve via a `findWorkspaceDir`-equivalent
+        // once workspaces land).
+        let prefix = manifest
+            .path()
+            .parent()
+            .map(Path::to_str)
+            .map(Option::<&str>::unwrap)
+            .unwrap()
+            .to_owned();
 
         R::emit(&LogEvent::Stage(StageLog {
             level: LogLevel::Debug,
@@ -160,6 +162,7 @@ mod tests {
     use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
     use std::sync::Mutex;
     use tempfile::tempdir;
+    use text_block_macros::text_block;
 
     #[tokio::test]
     async fn should_install_dependencies() {
@@ -331,14 +334,14 @@ mod tests {
         // run through `CreateVirtualStore` with an empty snapshot set,
         // which is a successful no-op. That's enough to prove we took
         // the frozen branch.
-        let lockfile: Lockfile = serde_saphyr::from_str(concat!(
-            "lockfileVersion: '9.0'\n",
-            "importers:\n",
-            "  .:\n",
-            "    dependencies: {}\n",
-            "packages: {}\n",
-            "snapshots: {}\n",
-        ))
+        let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+            "lockfileVersion: '9.0'"
+            "importers:"
+            "  .:"
+            "    dependencies: {}"
+            "packages: {}"
+            "snapshots: {}"
+        })
         .expect("parse minimal v9 lockfile");
 
         Install {
@@ -548,19 +551,13 @@ mod tests {
         drop(dir);
     }
 
-    /// `Install::run` emits `pnpm:stage` events bracketing the install:
+    /// [`Install::run`] emits `pnpm:stage` events bracketing the install:
     /// `importing_started` before any work, `importing_done` after the
     /// install completes successfully. On the success path, both fire in
-    /// order; on an early-error path (e.g. `NoLockfile`), only
-    /// `importing_started` fires. This matches pnpm's stage semantics —
-    /// the JS reporter relies on the started/done pairing to drive its
-    /// progress UI.
-    ///
-    /// Uses the recording-fake DI pattern from
-    /// <https://github.com/pnpm/pacquet/issues/339>: a unit-struct
-    /// reporter declared inside the test body, recording into a `static`
-    /// mutex declared in the same body. The mutex is per-test-fn, so
-    /// concurrent tests don't race on it.
+    /// order; on an early-error path (e.g. [`InstallError::NoLockfile`]),
+    /// only `importing_started` fires. This matches pnpm's stage
+    /// semantics — the JS reporter relies on the started/done pairing to
+    /// drive its progress UI.
     #[tokio::test]
     async fn install_emits_stage_events_bracketing_the_run() {
         static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
@@ -590,14 +587,14 @@ mod tests {
 
         // Empty v9 lockfile: `--frozen-lockfile` walks an empty snapshot
         // set successfully, which is the cheapest "real" install path.
-        let lockfile: Lockfile = serde_saphyr::from_str(concat!(
-            "lockfileVersion: '9.0'\n",
-            "importers:\n",
-            "  .:\n",
-            "    dependencies: {}\n",
-            "packages: {}\n",
-            "snapshots: {}\n",
-        ))
+        let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+            "lockfileVersion: '9.0'"
+            "importers:"
+            "  .:"
+            "    dependencies: {}"
+            "packages: {}"
+            "snapshots: {}"
+        })
         .expect("parse minimal v9 lockfile");
 
         Install {

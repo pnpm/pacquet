@@ -1912,6 +1912,7 @@ dependencies = [
  "serde-saphyr",
  "ssri",
  "tempfile",
+ "text-block-macros",
  "tokio",
  "tracing",
  "walkdir",
@@ -1972,6 +1973,7 @@ name = "pacquet-reporter"
 version = "0.0.1"
 dependencies = [
  "insta",
+ "pipe-trait",
  "pretty_assertions",
  "serde",
  "serde_json",

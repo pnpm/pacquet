@@ -6,14 +6,11 @@
 //! [`@pnpm/core-loggers`](https://github.com/pnpm/pnpm/tree/3b12eb27de/core/core-loggers/src)
 //! defines for each channel.
 //!
-//! Design background: <https://github.com/pnpm/pacquet/issues/344>.
-//!
 //! # Adding a channel
 //!
 //! Only the variants pacquet currently emits live in [`LogEvent`]. New
 //! channels are added incrementally as the surrounding code starts using
-//! them; the sweep across already-ported code is tracked in
-//! <https://github.com/pnpm/pacquet/issues/347>.
+//! them.
 
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -38,7 +35,7 @@ pub enum LogEvent {
 /// `pnpm:stage` payload.
 ///
 /// `prefix` is the project root path the stage applies to, matching pnpm's
-/// usage. `stage` is the phase marker.
+/// usage. `stage` is the phase marker — see [`Stage`].
 #[derive(Debug, Clone, Serialize)]
 pub struct StageLog {
     pub level: LogLevel,
@@ -56,11 +53,14 @@ pub enum Stage {
     ImportingDone,
 }
 
-/// Severity level on the bunyan envelope.
+/// Severity level on the [bunyan]-shaped envelope.
 ///
-/// pnpm's logger uses the bole library, which writes one of these strings
+/// pnpm's logger uses the [bole] library, which writes one of these strings
 /// for every record. Each channel pins the level pnpm itself uses (e.g.
 /// `pnpm:stage` is always emitted at `debug`).
+///
+/// [bunyan]: https://github.com/trentm/node-bunyan
+/// [bole]: https://github.com/rvagg/bole
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
@@ -72,15 +72,13 @@ pub enum LogLevel {
 
 /// Capability for emitting log events.
 ///
-/// Follows the dependency-injection pattern documented in
-/// <https://github.com/pnpm/pacquet/issues/339>: methods are associated
-/// functions (no `&self`), implementations are unit structs, and any
-/// implementation-internal state lives in module-level `static`s. Functions
-/// that emit take a generic `R: Reporter` and call `R::emit(...)`; the
-/// production entry point monomorphises with the chosen sink.
+/// Implementations are unit structs; any implementation-internal state
+/// lives in module-level `static`s. Emitting code is generic over
+/// `R: Reporter` and calls `R::emit(...)`; the production entry point
+/// monomorphises with the chosen sink.
 ///
-/// `emit` must not panic. A serialization or I/O failure is swallowed so a
-/// reporter problem can never crash an install.
+/// [`Reporter::emit`] must not panic. A serialization or I/O failure is
+/// swallowed so a reporter problem can never crash an install.
 pub trait Reporter {
     fn emit(event: &LogEvent);
 }
@@ -92,14 +90,16 @@ impl Reporter for SilentReporter {
     fn emit(_event: &LogEvent) {}
 }
 
-/// `--reporter=ndjson`: writes one bunyan-shaped JSON record per event to
+/// `--reporter=ndjson`: writes one [bunyan]-shaped JSON record per event to
 /// stderr, terminated by `\n`. The wire format matches what pnpm itself
 /// produces under `--reporter=ndjson`, so the same consumers work
 /// unmodified.
 ///
 /// Today this writes synchronously under the stderr lock. When the volume
 /// of emit sites grows past coarse start/end markers, the writer should
-/// move behind an MPSC channel (see #344's Implementation notes).
+/// move behind an MPSC channel.
+///
+/// [bunyan]: https://github.com/trentm/node-bunyan
 pub struct NdjsonReporter;
 
 impl Reporter for NdjsonReporter {
@@ -119,11 +119,10 @@ fn write_record(buf: &mut Vec<u8>, event: &LogEvent) -> serde_json::Result<()> {
     serde_json::to_writer(buf, &envelope)
 }
 
-/// Wraps a [`LogEvent`] with the bunyan envelope fields pnpm's logger adds.
-///
-/// `#[serde(flatten)]` merges the channel-specific tag (`"name": "pnpm:..."`)
-/// and payload fields up to the top level of the JSON object so the wire
-/// format is one flat record per line.
+// Wraps a [`LogEvent`] with the bunyan envelope fields pnpm's logger adds.
+// `#[serde(flatten)]` merges the channel-specific tag and payload fields up
+// to the top level of the JSON object so the wire format is one flat record
+// per line.
 #[derive(Serialize)]
 struct Envelope<'a> {
     time: u128,
@@ -137,28 +136,56 @@ fn now_millis() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
 }
 
-/// Best-effort hostname for the bunyan envelope.
+/// Capability for reading process environment variables.
 ///
-/// pnpm's logger (via `bole`) populates this from `os.hostname()`. Pacquet
+/// Lets [`resolve_hostname`] (and any future env-dependent helper in this
+/// crate) be exercised without touching the real process environment. The
+/// production implementation is [`RealEnvVar`].
+pub trait EnvVar {
+    fn var(name: &str) -> Option<String>;
+}
+
+/// Production [`EnvVar`] backed by [`std::env::var`].
+pub struct RealEnvVar;
+
+impl EnvVar for RealEnvVar {
+    fn var(name: &str) -> Option<String> {
+        std::env::var(name).ok()
+    }
+}
+
+/// Resolve the hostname for the [bunyan]-shaped envelope from `E`.
+///
+/// pnpm's logger (via [bole]) populates this from `os.hostname()`. Pacquet
 /// reads it from the standard environment variables instead so we don't
 /// pay for a syscall on every reporter init: `HOSTNAME` on Unix shells,
 /// `COMPUTERNAME` on Windows. Empty string when neither is set —
 /// downstream consumers (notably `@pnpm/cli.default-reporter`) only
 /// dispatch on `name`, so this field is informational.
+///
+/// [bunyan]: https://github.com/trentm/node-bunyan
+/// [bole]: https://github.com/rvagg/bole
+fn resolve_hostname<E: EnvVar>() -> String {
+    E::var("HOSTNAME").or_else(|| E::var("COMPUTERNAME")).unwrap_or_default()
+}
+
+// Cached hostname for production use. Kept non-generic because `static`
+// items inside generic functions are *not* monomorphised per type
+// parameter, so a generic `OnceLock` cache would leak the first
+// instantiation's value across every `E`.
 fn hostname() -> &'static str {
     use std::sync::OnceLock;
     static HOSTNAME: OnceLock<String> = OnceLock::new();
-    HOSTNAME
-        .get_or_init(|| {
-            std::env::var("HOSTNAME").or_else(|_| std::env::var("COMPUTERNAME")).unwrap_or_default()
-        })
-        .as_str()
+    HOSTNAME.get_or_init(resolve_hostname::<RealEnvVar>).as_str()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
     use std::sync::Mutex;
 
+    use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
     use serde_json::Value;
 
@@ -178,9 +205,11 @@ mod tests {
         let envelope =
             Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
 
-        let json: Value =
-            serde_json::from_str(&serde_json::to_string(&envelope).expect("serialize envelope"))
-                .expect("parse JSON");
+        let json: Value = envelope
+            .pipe_ref(serde_json::to_string)
+            .expect("serialize envelope")
+            .pipe_as_ref(serde_json::from_str)
+            .expect("parse JSON");
 
         assert_eq!(json["name"], "pnpm:stage");
         assert_eq!(json["stage"], "importing_started");
@@ -206,7 +235,7 @@ mod tests {
         }
     }
 
-    /// `SilentReporter` is observably a no-op: any test fake is harder to
+    /// [`SilentReporter`] is observably a no-op: any test fake is harder to
     /// write than just calling it.
     #[test]
     fn silent_reporter_drops_events() {
@@ -219,12 +248,6 @@ mod tests {
         }));
     }
 
-    /// Recording fake per the DI pattern in
-    /// <https://github.com/pnpm/pacquet/issues/339>: a unit struct declared
-    /// inside the `#[test]` body, recording into a `static` mutex declared
-    /// in the same body so the per-test isolation `#339` calls for stays
-    /// intact. This is the shape every consumer test in the workspace
-    /// should follow when asserting against emitted events.
     #[test]
     fn recording_fake_captures_emitted_events() {
         static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
@@ -261,5 +284,71 @@ mod tests {
             &captured[1],
             LogEvent::Stage(StageLog { stage: Stage::ImportingDone, .. })
         ));
+    }
+
+    // Per-thread mock environment used by the [`resolve_hostname`] tests.
+    // `cargo nextest` runs each test in its own process, and the std test
+    // runner runs each test on its own thread, so a `thread_local!` is
+    // enough isolation either way.
+    struct MockEnv;
+
+    thread_local! {
+        static MOCK_ENV: RefCell<HashMap<&'static str, &'static str>> =
+            RefCell::new(HashMap::new());
+    }
+
+    impl EnvVar for MockEnv {
+        fn var(name: &str) -> Option<String> {
+            MOCK_ENV.with(|m| m.borrow().get(name).map(|s| (*s).to_string()))
+        }
+    }
+
+    fn with_mock_env<R>(entries: &[(&'static str, &'static str)], f: impl FnOnce() -> R) -> R {
+        MOCK_ENV.with(|m| {
+            let mut map = m.borrow_mut();
+            map.clear();
+            for (k, v) in entries {
+                map.insert(k, v);
+            }
+        });
+        let result = f();
+        MOCK_ENV.with(|m| m.borrow_mut().clear());
+        result
+    }
+
+    /// `HOSTNAME` is the preferred source — Unix shells set it.
+    #[test]
+    fn resolve_hostname_prefers_hostname_env() {
+        let got = with_mock_env(&[("HOSTNAME", "unix-host")], resolve_hostname::<MockEnv>);
+        assert_eq!(got, "unix-host");
+    }
+
+    /// On Windows, `COMPUTERNAME` is the standard variable; pacquet falls
+    /// back to it when `HOSTNAME` is unset.
+    #[test]
+    fn resolve_hostname_falls_back_to_computername() {
+        let got = with_mock_env(&[("COMPUTERNAME", "WIN-PC")], resolve_hostname::<MockEnv>);
+        assert_eq!(got, "WIN-PC");
+    }
+
+    /// When both are set, `HOSTNAME` wins. Some Windows shells (e.g. Git
+    /// Bash, WSL bridges) populate both; the Unix-style variable is the
+    /// one pnpm itself observes via `os.hostname()` indirection on
+    /// MINGW/MSYS hosts.
+    #[test]
+    fn resolve_hostname_hostname_wins_over_computername() {
+        let got = with_mock_env(
+            &[("HOSTNAME", "primary"), ("COMPUTERNAME", "secondary")],
+            resolve_hostname::<MockEnv>,
+        );
+        assert_eq!(got, "primary");
+    }
+
+    /// Neither set → empty string. The bunyan envelope's `hostname` field
+    /// is informational, so this is acceptable rather than an error.
+    #[test]
+    fn resolve_hostname_empty_when_unset() {
+        let got = with_mock_env(&[], resolve_hostname::<MockEnv>);
+        assert_eq!(got, "");
     }
 }
