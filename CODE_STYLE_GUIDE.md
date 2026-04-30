@@ -366,6 +366,36 @@ However, piping through any unary function **is** preferred when it continues an
 manifest.summarize().pipe(Some)
 ```
 
+### Documentation comments
+
+Outer doc comments (`///`) and inner doc comments (`//!`) are part of the public API surface: `rustdoc` renders them for readers who may never look at the source. Do not reference items more private than the item being documented — private modules, private functions, private types, private fields, or private constants from a `pub` item; private-or-`pub(crate)` items from a `pub` item; private items from a `pub(crate)` item; and so on. A reader who only sees the rendered docs cannot follow such a reference, and intra-doc links to inaccessible items become broken links in `cargo doc` output.
+
+If the explanation genuinely depends on the private detail, either widen the visibility of the referenced item (with a re-export if appropriate) or move the explanation into a regular `//` comment on the implementation, where readers of the source can see it. Reserve `///` and `//!` for things a downstream user of the item needs to know; use `//` for notes useful only to someone reading the source.
+
+```rust
+// Bad: public doc references a private helper
+/// Builds the lockfile by walking dependencies.
+///
+/// Internally calls [`walk_deps_inner`] to handle cycles.
+pub fn build_lockfile(/* ... */) { /* ... */ }
+
+fn walk_deps_inner(/* ... */) { /* ... */ }
+```
+
+```rust
+// Good: public doc describes observable behavior; implementation note
+// stays on the implementation
+/// Builds the lockfile by walking dependencies.
+///
+/// Cycles in the dependency graph are reported as
+/// [`LockfileError::CycleDetected`].
+pub fn build_lockfile(/* ... */) { /* ... */ }
+
+// Walks the dependency graph iteratively to avoid stack overflow on
+// pathological inputs.
+fn walk_deps_inner(/* ... */) { /* ... */ }
+```
+
 ### Error Handling
 
 - Use `derive_more` for error types. Only derive the traits that are actually used:
