@@ -5,11 +5,14 @@ use std::str::FromStr;
 /// Version or tag that is attachable to a registry URL.
 #[derive(Debug, Display, From, TryInto)]
 pub enum PackageTag {
-    /// Literally `latest``.
+    /// Literally `latest`.
     #[display("latest")]
     Latest,
     /// Pinned version.
     Version(Version),
+    /// Named distribution tag (for example `next` or `beta`).
+    #[display("{_0}")]
+    Tag(String),
 }
 
 impl FromStr for PackageTag {

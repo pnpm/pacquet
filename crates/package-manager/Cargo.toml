@@ -28,9 +28,11 @@ node-semver     = { workspace = true }
 pipe-trait      = { workspace = true }
 rayon           = { workspace = true }
 reflink-copy    = { workspace = true }
+serde_json      = { workspace = true }
 tokio           = { workspace = true }
 tracing         = { workspace = true }
 miette          = { workspace = true }
+walkdir         = { workspace = true }
 
 [dev-dependencies]
 pacquet-registry-mock = { workspace = true }
@@ -42,4 +44,3 @@ pretty_assertions = { workspace = true }
 serde-saphyr      = { workspace = true }
 ssri              = { workspace = true }
 tempfile          = { workspace = true }
-walkdir           = { workspace = true }
