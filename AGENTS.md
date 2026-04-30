@@ -102,6 +102,15 @@ Warnings are errors (`--deny warnings` in lint). Do not silence them with
 - When porting behavior from pnpm, port the relevant pnpm tests too (as Rust
   tests) whenever they translate. Matching test coverage is the easiest way
   to prove behavioral parity.
+- The active test-porting plan lives in
+  [`plans/TEST_PORTING.md`](./plans/TEST_PORTING.md). It enumerates the
+  upstream TypeScript tests scheduled to be ported (with file paths and line
+  numbers) and the conventions expected of the ports — `known_failures`
+  modules, `pacquet_testing_utils::allow_known_failure!` at the
+  not-yet-implemented boundary, and the practice of temporarily breaking the
+  subject under test to verify the ported test actually catches the
+  regression. Consult it before adding ported tests, and update its
+  checkboxes as items land.
 
 ### Running tests narrowly
 
@@ -140,6 +149,54 @@ or treating the red as acceptable.
   scalar `assert_eq!`.
 - Follow [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/naming.html)
   for naming.
+
+### Preserve existing method chains
+
+When editing existing code, do not break a method chain (including `pipe-trait`
+`.pipe(...)` chains) into intermediate `let` bindings unless you can justify
+the rewrite. Valid justifications include a chain that fails to compile after
+your edit, a borrow checker rejection, a meaningful performance win from
+splitting it up, or any other concrete reason the chain cannot stay as it is.
+Refactoring for style alone is not a justification when the task is something
+else. Keep the surrounding code shape intact and confine your edits to what
+the task asks for.
+
+When the change you need can fit inside the existing chain, keep it there.
+For example, swapping a `PathBuf::from` allocation for a `Path::new` borrow:
+
+```diff
+ output
+     .stdout
+     .pipe(String::from_utf8)
+     .expect("convert stdout to UTF-8")
+     .trim_end()
+-    .pipe(PathBuf::from)
++    .pipe(Path::new)
+     .parent()
+     .expect("parent of root manifest")
+     .to_path_buf()
+```
+
+Do not flatten the chain just because you happen to be editing nearby:
+
+```diff
+-output
+-    .stdout
+-    .pipe(String::from_utf8)
+-    .expect("convert stdout to UTF-8")
+-    .trim_end()
+-    .pipe(PathBuf::from)
+-    .parent()
+-    .expect("parent of root manifest")
+-    .to_path_buf()
++let stdout = String::from_utf8(output.stdout).expect("convert stdout to UTF-8");
++Path::new(stdout.trim_end()).parent().expect("parent of root manifest").to_path_buf()
+```
+
+If you do need to break a chain, state the justification in your reply, the
+commit message, or the PR description so a reviewer can confirm the rewrite
+was warranted. If the rewrite is purely stylistic, raise it with the user as
+its own change rather than including it in an unrelated edit.
 
 ## Code reuse and avoiding duplication
 
