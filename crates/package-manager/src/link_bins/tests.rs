@@ -147,6 +147,53 @@ fn link_virtual_store_bins_handles_scoped_slot_name() {
     assert!(shim.exists(), "scoped-slot bin linking must produce a shim at {shim:?}");
 }
 
+/// Peer-resolved slots have version segments that contain additional
+/// `@` characters (one per peer spec). `find_slot_own_package_dir`
+/// must parse the package-name boundary from the **left**, not the
+/// right, otherwise it splits inside a peer spec and silently fails
+/// to locate the own package — bins of children of the slot then
+/// never get linked.
+///
+/// Slot name shape verified against
+/// `pacquet_lockfile::pkg_name_ver_peer::tests::to_virtual_store_name`.
+/// Pins review finding #5.
+#[test]
+fn link_virtual_store_bins_handles_peer_resolved_slot_name() {
+    let tmp = tempdir().unwrap();
+    let virtual_dir = tmp.path().join(".pacquet");
+
+    // pnpm format: `ts-node@10.9.1(@types/node@18.7.19)(typescript@5.1.6)`.
+    // Pacquet's `to_virtual_store_name`: `_` joins peers, `(` and `)`
+    // are stripped, `/` becomes `+`.
+    let slot = virtual_dir.join("ts-node@10.9.1_@types+node@18.7.19_typescript@5.1.6");
+    let modules = slot.join("node_modules");
+    let pkg_dir = modules.join("ts-node");
+    let child_dir = modules.join("child");
+    fs::create_dir_all(&pkg_dir).unwrap();
+    fs::create_dir_all(&child_dir).unwrap();
+
+    fs::write(
+        pkg_dir.join("package.json"),
+        json!({"name": "ts-node", "version": "10.9.1"}).to_string(),
+    )
+    .unwrap();
+    fs::write(
+        child_dir.join("package.json"),
+        json!({"name": "child", "version": "1.0.0", "bin": "cli.js"}).to_string(),
+    )
+    .unwrap();
+    fs::write(child_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+
+    LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }.run().unwrap();
+
+    let shim = pkg_dir.join("node_modules/.bin/child");
+    assert!(
+        shim.exists(),
+        "peer-resolved slot's child bin must be linked under the own package's `node_modules/.bin`, \
+         not silently dropped because the slot-name parser split inside a peer spec",
+    );
+}
+
 /// A virtual-store slot whose `node_modules/` is missing must be skipped
 /// without error.
 #[test]

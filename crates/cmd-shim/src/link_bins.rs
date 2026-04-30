@@ -296,11 +296,19 @@ where
     // mode without rewriting CRLF shebangs (a feature pnpm inherits from
     // npm's `bin-links/lib/fix-bin.js`). Targets shipped by npm already
     // use LF in practice, so the simpler chmod-only path is enough for
-    // the install tests this PR ports. Errors here are swallowed —
-    // a missing target shouldn't fail the install (this is post-warm-skip
-    // territory) and pacquet has already verified `target_path` exists
-    // upstream of `write_shim`.
-    let _ = Api::ensure_executable_bits(target_path);
+    // the install tests this PR ports. `NotFound` is swallowed because
+    // the target may legitimately have been removed by an unrelated
+    // process between extraction and shim linking; everything else
+    // (`PermissionDenied`, `EROFS`, AppArmor deny, foreign uid)
+    // surfaces as `LinkBinsError::Chmod` so real failures don't
+    // disappear silently. Mirrors pnpm's `fixBin` ENOENT guard.
+    match Api::ensure_executable_bits(target_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(LinkBinsError::Chmod { path: target_path.to_path_buf(), error });
+        }
+    }
 
     Ok(())
 }

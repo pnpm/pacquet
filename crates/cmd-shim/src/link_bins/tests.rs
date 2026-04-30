@@ -449,6 +449,130 @@ fn link_bins_propagates_chmod_error_via_di() {
     assert!(matches!(err, LinkBinsError::Chmod { .. }));
 }
 
+/// `write_shim` propagates a non-`NotFound` IO error from
+/// `ensure_executable_bits` (chmod on the *target* binary, not the
+/// shim). `NotFound` is swallowed by design — the target may have
+/// been removed concurrently — but `PermissionDenied` and friends
+/// must surface as `LinkBinsError::Chmod`. Pins the
+/// guard added in this PR (review finding #4).
+#[test]
+fn link_bins_propagates_target_chmod_error_via_di() {
+    use std::io;
+    struct FailingTargetChmod;
+    impl FsReadDir for FailingTargetChmod {
+        fn read_dir(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+            Ok(vec![])
+        }
+    }
+    impl FsReadFile for FailingTargetChmod {
+        fn read_file(_: &Path) -> io::Result<Vec<u8>> {
+            unreachable!()
+        }
+    }
+    impl FsReadString for FailingTargetChmod {
+        fn read_to_string(_: &Path) -> io::Result<String> {
+            Err(io::Error::from(io::ErrorKind::NotFound))
+        }
+    }
+    impl FsReadHead for FailingTargetChmod {
+        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+            Ok(0)
+        }
+    }
+    impl FsCreateDirAll for FailingTargetChmod {
+        fn create_dir_all(_: &Path) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    impl FsWrite for FailingTargetChmod {
+        fn write(_: &Path, _: &[u8]) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    impl FsSetPermissions for FailingTargetChmod {
+        fn set_executable(_: &Path) -> io::Result<()> {
+            Ok(())
+        }
+        fn ensure_executable_bits(_: &Path) -> io::Result<()> {
+            // The target chmod returns a non-`NotFound` error; the
+            // implementation must surface it rather than silently
+            // dropping it.
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        }
+    }
+
+    let manifest = serde_json::json!({"name": "foo", "bin": "cli.js"});
+    let tmp = tempdir().unwrap();
+    let pkg = tmp.path().join("foo");
+    fs::create_dir_all(&pkg).unwrap();
+    fs::write(pkg.join("cli.js"), "").unwrap();
+    let err = link_bins_of_packages::<FailingTargetChmod>(
+        &[PackageBinSource { location: pkg, manifest }],
+        &tmp.path().join(".bin"),
+    )
+    .expect_err("non-NotFound target chmod error must propagate as Chmod");
+    assert!(matches!(err, LinkBinsError::Chmod { .. }));
+}
+
+/// `write_shim` swallows `NotFound` from `ensure_executable_bits`
+/// because the target may legitimately be missing (concurrent removal,
+/// race with another install). Pins this distinction so a future
+/// regression that propagates `NotFound` here would fail the test.
+#[test]
+fn link_bins_swallows_target_chmod_not_found_via_di() {
+    use std::io;
+    struct NotFoundTargetChmod;
+    impl FsReadDir for NotFoundTargetChmod {
+        fn read_dir(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+            Ok(vec![])
+        }
+    }
+    impl FsReadFile for NotFoundTargetChmod {
+        fn read_file(_: &Path) -> io::Result<Vec<u8>> {
+            unreachable!()
+        }
+    }
+    impl FsReadString for NotFoundTargetChmod {
+        fn read_to_string(_: &Path) -> io::Result<String> {
+            Err(io::Error::from(io::ErrorKind::NotFound))
+        }
+    }
+    impl FsReadHead for NotFoundTargetChmod {
+        fn read_head(_: &Path, _: &mut [u8]) -> io::Result<usize> {
+            Ok(0)
+        }
+    }
+    impl FsCreateDirAll for NotFoundTargetChmod {
+        fn create_dir_all(_: &Path) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    impl FsWrite for NotFoundTargetChmod {
+        fn write(_: &Path, _: &[u8]) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    impl FsSetPermissions for NotFoundTargetChmod {
+        fn set_executable(_: &Path) -> io::Result<()> {
+            Ok(())
+        }
+        fn ensure_executable_bits(_: &Path) -> io::Result<()> {
+            Err(io::Error::from(io::ErrorKind::NotFound))
+        }
+    }
+
+    let manifest = serde_json::json!({"name": "foo", "bin": "cli.js"});
+    let tmp = tempdir().unwrap();
+    let pkg = tmp.path().join("foo");
+    fs::create_dir_all(&pkg).unwrap();
+    fs::write(pkg.join("cli.js"), "").unwrap();
+    link_bins_of_packages::<NotFoundTargetChmod>(
+        &[PackageBinSource { location: pkg, manifest }],
+        &tmp.path().join(".bin"),
+    )
+    .expect("NotFound on target chmod must be swallowed silently");
+}
+
 /// `link_bins_of_packages` propagates a non-`NotFound` IO error from
 /// `search_script_runtime` (the `ProbeShimSource` variant). Forced via
 /// a fake `FsReadHead` that fails with permission-denied — the wider

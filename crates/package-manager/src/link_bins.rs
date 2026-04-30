@@ -152,17 +152,29 @@ impl<'a> LinkVirtualStoreBins<'a> {
 /// Locate the slot's own package directory inside `<slot>/node_modules`.
 ///
 /// The slot directory's name encodes the package name as
-/// `<scope>+<name>@<version>` (see [`pacquet_lockfile::PkgNameVerPeer::to_virtual_store_name`]).
-/// The own-package directory is the one whose location is a real directory
-/// (not a symlink) and whose path matches the slot name decoded back to
-/// `<scope>/<name>` form.
+/// `<scope>+<name>@<version>` for the simple case (see
+/// [`pacquet_lockfile::PkgNameVerPeer::to_virtual_store_name`]). For
+/// peer-resolved slots the version segment itself contains additional
+/// `@`-separated peer specs joined by `_`, e.g.
+/// `ts-node@10.9.1_@types+node@18.7.19_typescript@5.1.6` — the `@` after
+/// `typescript` is part of a peer's version, not the package-name
+/// boundary. Parsing from the right (`rfind('@')`) would split there
+/// and silently break peer-resolved slots; parse from the left
+/// instead, skipping a leading `@` that belongs to a scoped package.
 fn find_slot_own_package_dir(slot_dir: &Path, modules_dir: &Path) -> Option<PathBuf> {
     let slot_name = slot_dir.file_name()?.to_str()?;
-    // Strip the `@<version>` tail.
-    let at = slot_name.rfind('@')?;
+
+    // The package-name half is everything before the **first** `@`,
+    // ignoring a single leading `@` that belongs to a scoped name
+    // (`@scope+pkg@...` → start the `@` search at offset 1).
+    // After `to_virtual_store_name`, `/` in scoped names becomes `+`,
+    // so the package-name half can never contain `@` itself.
+    let search_start = if slot_name.starts_with('@') { 1 } else { 0 };
+    let at = search_start + slot_name[search_start..].find('@')?;
     let name_part = &slot_name[..at];
-    // `+` separates `<scope>+<name>` for scoped packages; non-scoped names
-    // contain no `+`.
+
+    // `+` separates `<scope>+<name>` for scoped packages; non-scoped
+    // names contain no `+`.
     let pkg_dir = match name_part.split_once('+') {
         Some((scope, name)) => modules_dir.join(scope).join(name),
         None => modules_dir.join(name_part),
