@@ -21,7 +21,30 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 unmaintained = "workspace"
 # yanked-crates check: "deny" | "warn" | "allow"
 yanked = "warn"
-ignore = []
+ignore = [
+  # hickory-proto 0.25.2 is pulled in transitively through reqwest 0.13.x ->
+  # hickory-resolver 0.25.x. The reqwest 0.13 line has not migrated to
+  # hickory-proto 0.26, so `cargo update` cannot resolve either advisory; the
+  # only paths forward are an upstream reqwest release on hickory 0.26 or
+  # dropping the `hickory-dns` reqwest feature, which would regress the macOS
+  # `mDNSResponder` / `EAI_NONAME` workaround landed in #302. Revisit when
+  # reqwest moves to hickory 0.26.
+  #
+  # NSEC3 closest-encloser proof unbounded loop in `DnssecDnsHandle`. The
+  # vulnerable path is only linked when hickory-proto is built with the
+  # `dnssec-ring` or `dnssec-aws-lc-rs` Cargo feature; reqwest's `hickory-dns`
+  # feature does not enable either, so the affected code is unreachable in
+  # pacquet. The advisory itself notes "No safe upgrade is available" for the
+  # 0.25 line.
+  { id = "RUSTSEC-2026-0118", reason = "DNSSEC validation path is not linked: reqwest's `hickory-dns` feature does not enable hickory-proto's `dnssec-ring`/`dnssec-aws-lc-rs` features, and no fix exists on the 0.25 line." },
+  # O(n²) name compression in `BinEncoder` during DNS message encoding. The
+  # encoder is only exercised against the registry hostnames pacquet resolves
+  # (npm registry / mirrors configured via `.npmrc`), which are not
+  # attacker-controlled, so the CPU-exhaustion vector is not reachable in
+  # practice. Fixed in hickory-proto 0.26.1, which reqwest 0.13.x does not yet
+  # consume.
+  { id = "RUSTSEC-2026-0119", reason = "DoS vector requires attacker-controlled DNS message encoding; pacquet only encodes trusted registry hostnames, and reqwest 0.13.x has no release on hickory-proto 0.26.1 yet." },
+]
 
 # --- Licenses ------------------------------------------------------------
 # https://embarkstudios.github.io/cargo-deny/checks/licenses/cfg.html
