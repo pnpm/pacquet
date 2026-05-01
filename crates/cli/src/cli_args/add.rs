@@ -3,6 +3,7 @@ use clap::Args;
 use miette::Context;
 use pacquet_package_manager::Add;
 use pacquet_package_manifest::DependencyGroup;
+use pacquet_reporter::Reporter;
 use std::path::PathBuf;
 
 #[derive(Debug, Args)]
@@ -82,7 +83,7 @@ pub struct AddArgs {
 
 impl AddArgs {
     /// Execute the subcommand.
-    pub async fn run(self, mut state: State) -> miette::Result<()> {
+    pub async fn run<R: Reporter>(self, mut state: State) -> miette::Result<()> {
         // TODO: if a package already exists in another dependency group, don't remove the existing entry.
 
         let State { tarball_mem_cache, http_client, config, manifest, lockfile, resolved_packages } =
@@ -99,7 +100,7 @@ impl AddArgs {
             save_exact: self.save_exact,
             resolved_packages,
         }
-        .run()
+        .run::<R>()
         .await
         .wrap_err("adding a new package")
     }
@@ -107,7 +108,7 @@ impl AddArgs {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::AddDependencyOptions;
     use pacquet_package_manifest::DependencyGroup;
     use pretty_assertions::assert_eq;
 

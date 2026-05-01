@@ -198,7 +198,7 @@ impl StoreDir {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::StoreDir;
     use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
     use std::path::Path;

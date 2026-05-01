@@ -11,7 +11,8 @@ pub type ParsePkgNameVerError = ParsePkgNameSuffixError<SemverError>;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{ParsePkgNameVerError, PkgNameVer};
+    use node_semver::Version;
     use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
 

@@ -82,7 +82,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::call_load_lockfile;
     use pretty_assertions::assert_eq;
 
     #[test]

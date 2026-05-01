@@ -75,6 +75,43 @@ use std::{path::PathBuf, sync::Arc};
 use std::os::unix::fs::PermissionsExt;
 ```
 
+### No star imports
+
+Avoid star (glob) imports inside the bodies of regular modules. Import items explicitly by name everywhere except the two cases noted below. The rule applies to production code, tests, integration tests, build scripts, and developer tooling under `tasks/`.
+
+The two exceptions are:
+
+1. **External-crate preludes**, such as `use rayon::prelude::*;` or `use assert_cmd::prelude::*;`. The upstream crate has already curated which items are intended to be glob-imported, so listing them out by hand creates a maintenance burden the moment the upstream prelude changes. Use the prelude in the form the crate documents.
+2. **Re-exports at the root of a module or crate**, such as `pub use submodule::*;` in `lib.rs`. These are part of the public surface that the crate intentionally exposes, and listing the items individually duplicates information that already lives in the submodule.
+
+Star imports inside a module body are the case worth banning. They make it hard to tell where a name comes from, they hide accidental shadowing, and `use super::*;` is especially harmful in tests. The form pulls every privately imported item from the outer module into scope, so an import the production code no longer uses can keep compiling indefinitely as long as some test still references it. Removing dead imports becomes guesswork.
+
+```rust
+// Bad
+#[cfg(test)]
+mod tests {
+    use super::*;
+}
+
+// Good
+#[cfg(test)]
+mod tests {
+    use super::{ParsedThing, parse_thing};
+}
+```
+
+```rust
+// Allowed (external-crate prelude)
+use rayon::prelude::*;
+use assert_cmd::prelude::*;
+```
+
+```rust
+// Allowed (root-of-module re-export)
+pub use comver::*;
+pub use load_lockfile::*;
+```
+
 ### Generic Parameter Naming
 
 Use **descriptive names** for type parameters, not single letters:
