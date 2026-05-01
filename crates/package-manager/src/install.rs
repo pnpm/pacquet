@@ -158,10 +158,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::{Install, InstallError};
+    use pacquet_lockfile::Lockfile;
     use pacquet_npmrc::Npmrc;
     use pacquet_package_manifest::{DependencyGroup, PackageManifest};
     use pacquet_registry_mock::AutoMockInstance;
-    use pacquet_reporter::SilentReporter;
+    use pacquet_reporter::{LogEvent, Reporter, SilentReporter, Stage, StageLog};
     use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
     use std::sync::Mutex;
     use tempfile::tempdir;
@@ -313,8 +314,6 @@ mod tests {
     /// integrity surfaces as `FrozenLockfile(...)`.
     #[tokio::test]
     async fn frozen_lockfile_flag_overrides_config_lockfile_false() {
-        use pacquet_lockfile::Lockfile;
-
         let dir = tempdir().unwrap();
         let store_dir = dir.path().join("pacquet-store");
         let project_root = dir.path().join("project");
