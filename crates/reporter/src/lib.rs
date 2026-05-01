@@ -40,6 +40,15 @@ pub enum LogEvent {
     /// Upstream: <https://github.com/pnpm/pnpm/blob/3b12eb27de/core/core-loggers/src/stageLogger.ts>.
     #[serde(rename = "pnpm:stage")]
     Stage(StageLog),
+
+    /// End-of-install marker (`pnpm:summary`). pnpm's reporter combines
+    /// this with the accumulated `pnpm:root` events to render the final
+    /// "+N -M" block.
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/core/core-loggers/src/summaryLogger.ts>.
+    /// Emit site: <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-installer/src/install/index.ts#L1663>.
+    #[serde(rename = "pnpm:summary")]
+    Summary(SummaryLog),
 }
 
 /// `pnpm:context` payload.
@@ -75,6 +84,18 @@ pub enum Stage {
     ResolutionDone,
     ImportingStarted,
     ImportingDone,
+}
+
+/// `pnpm:summary` payload. `prefix` identifies the importer; pnpm's
+/// reporter uses it to look up the matching `pnpm:root` history and
+/// render its "+N -M" diff. `level` is the [bunyan]-envelope severity,
+/// common to every channel.
+///
+/// [bunyan]: https://github.com/trentm/node-bunyan
+#[derive(Debug, Clone, Serialize)]
+pub struct SummaryLog {
+    pub level: LogLevel,
+    pub prefix: String,
 }
 
 /// Severity level on the [bunyan]-shaped envelope.

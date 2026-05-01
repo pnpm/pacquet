@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::{
     ContextLog, Envelope, GetHostName, LogEvent, LogLevel, RealApi, Reporter, SilentReporter,
-    Stage, StageLog,
+    Stage, StageLog, SummaryLog,
 };
 
 /// Context log serializes with the camelCase field names
@@ -62,6 +62,31 @@ fn stage_event_matches_pnpm_wire_shape() {
     assert_eq!(json["time"], 1_700_000_000_000_u64);
     assert_eq!(json["hostname"], "host");
     assert_eq!(json["pid"], 4242);
+}
+
+/// Summary log serializes with the channel name flattened into the
+/// envelope alongside `prefix` and the [bunyan]-envelope `level`.
+/// `prefix` is what pnpm's reporter uses to find the matching
+/// `pnpm:root` history and render its "+N -M" block.
+///
+/// [bunyan]: https://github.com/trentm/node-bunyan
+#[test]
+fn summary_event_matches_pnpm_wire_shape() {
+    let event = LogEvent::Summary(SummaryLog {
+        level: LogLevel::Debug,
+        prefix: "/some/project".to_string(),
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+
+    assert_eq!(json["name"], "pnpm:summary");
+    assert_eq!(json["level"], "debug");
+    assert_eq!(json["prefix"], "/some/project");
 }
 
 /// Phase markers serialize as the snake_case strings pnpm uses.
