@@ -1,6 +1,6 @@
 #![cfg(unix)] // running this on windows result in 'program not found'
 pub mod _utils;
-pub use _utils::index_file_contents;
+pub use _utils::*;
 
 use assert_cmd::prelude::*;
 use command_extra::CommandExtra;

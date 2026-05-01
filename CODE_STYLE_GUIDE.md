@@ -77,40 +77,27 @@ use std::os::unix::fs::PermissionsExt;
 
 ### No star imports
 
-**Never use star (glob) imports.** The ban applies to every file in the workspace — production code, tests, integration tests, build scripts, and developer tooling under `tasks/`. It covers:
+Avoid star (glob) imports inside the bodies of regular modules. Import items explicitly by name everywhere except the two cases noted below. The rule applies to production code, tests, integration tests, build scripts, and developer tooling under `tasks/`.
 
-- `use super::*;` in test modules.
-- `pub use module::*;` re-exports in `lib.rs` and other module roots.
-- `use crate::*;`, `use self::*;`, and any other `use ...::*;` whose target is a module you control.
+The two exceptions are:
 
-The one exception is **external-crate preludes** — `use rayon::prelude::*;`, `use assert_cmd::prelude::*;`, and similar. Those are part of the upstream crate's documented surface, intentionally curated by the crate author to be glob-imported, and replacing them with explicit lists creates a maintenance burden every time the upstream prelude changes. Use the prelude as the crate documents.
+1. **External-crate preludes**, such as `use rayon::prelude::*;` or `use assert_cmd::prelude::*;`. The upstream crate has already curated which items are intended to be glob-imported, so listing them out by hand creates a maintenance burden the moment the upstream prelude changes. Use the prelude in the form the crate documents.
+2. **Re-exports at the root of a module or crate**, such as `pub use submodule::*;` in `lib.rs`. These are part of the public surface that the crate intentionally exposes, and listing the items individually duplicates information that already lives in the submodule.
 
-Outside of that exception, always import items explicitly by name. Merge them with braces, as described in the previous section.
+Star imports inside a module body are the case worth banning. They make it hard to tell where a name comes from, they hide accidental shadowing, and `use super::*;` is especially harmful in tests. The form pulls every privately imported item from the outer module into scope, so an import the production code no longer uses can keep compiling indefinitely as long as some test still references it. Removing dead imports becomes guesswork.
 
 ```rust
 // Bad
 #[cfg(test)]
 mod tests {
     use super::*;
-    // ...
 }
 
 // Good
 #[cfg(test)]
 mod tests {
     use super::{ParsedThing, parse_thing};
-    // ...
 }
-```
-
-```rust
-// Bad
-pub use comver::*;
-pub use load_lockfile::*;
-
-// Good
-pub use comver::ComVer;
-pub use load_lockfile::{LoadLockfileError, load_lockfile};
 ```
 
 ```rust
@@ -119,7 +106,11 @@ use rayon::prelude::*;
 use assert_cmd::prelude::*;
 ```
 
-Star imports make it hard to tell where a name comes from, hide accidental shadowing, and make tooling (and humans) work harder during review. Listing items explicitly is a small, one-time cost that pays back every time someone reads the file. The prelude exception only applies because the upstream crate has already done that curation work for you.
+```rust
+// Allowed (root-of-module re-export)
+pub use comver::*;
+pub use load_lockfile::*;
+```
 
 ### Generic Parameter Naming
 

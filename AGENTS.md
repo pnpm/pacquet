@@ -149,12 +149,12 @@ or treating the red as acceptable.
   scalar `assert_eq!`.
 - Follow [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/naming.html)
   for naming.
-- **No star imports.** Never write `use super::*;`, `pub use module::*;`,
-  or any other `use ...::*;`. Import items explicitly by name, in every
-  file — tests included. The one exception is external-crate preludes
-  (`use rayon::prelude::*;`, `use assert_cmd::prelude::*;`, etc.), which
-  are part of the upstream crate's curated surface and stay glob-imported.
-  See the "No star imports" section in `CODE_STYLE_GUIDE.md`.
+- **No star imports inside module bodies.** Write `use super::{Foo, bar}`
+  instead of `use super::*;`, and the same for any other glob whose
+  target is a module you control. Two forms stay allowed: external-crate
+  preludes such as `use rayon::prelude::*;` and root-of-module
+  re-exports such as `pub use submodule::*;` in a `lib.rs`. See the
+  "No star imports" section in `CODE_STYLE_GUIDE.md`.
 
 ### Preserve existing method chains
 
