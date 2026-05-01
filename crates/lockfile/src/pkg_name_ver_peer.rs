@@ -36,7 +36,7 @@ impl PkgNameVerPeer {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::PkgNameVerPeer;
     use pretty_assertions::assert_eq;
 
     fn name_peer_ver(name: &str, peer_ver: &str) -> PkgNameVerPeer {
