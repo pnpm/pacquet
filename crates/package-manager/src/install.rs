@@ -68,13 +68,15 @@ where
             frozen_lockfile,
         } = self;
 
-        // Project root for the bunyan-envelope `prefix`. Upstream pnpm
-        // emits this as `lockfileDir` — the directory containing
-        // `pnpm-lock.yaml`, which equals the workspace root when one is
-        // present. Pacquet has no workspace support yet, so the manifest's
-        // parent directory is the correct value today; tracked as
-        // pnpm/pacquet#357 (resolve via a `findWorkspaceDir`-equivalent
-        // once workspaces land).
+        // Project root for the [bunyan]-envelope `prefix`. Upstream pnpm
+        // emits this as `lockfileDir`, the directory containing
+        // `pnpm-lock.yaml`. With workspace support that equals the
+        // workspace root. Pacquet has no workspace support yet, so the
+        // manifest's parent directory is the correct value today.
+        // pnpm/pacquet#357 tracks resolving this via a
+        // `findWorkspaceDir`-equivalent once workspaces land.
+        //
+        // [bunyan]: https://github.com/trentm/node-bunyan
         let prefix = manifest
             .path()
             .parent()
@@ -159,6 +161,7 @@ mod tests {
     use pacquet_npmrc::Npmrc;
     use pacquet_package_manifest::{DependencyGroup, PackageManifest};
     use pacquet_registry_mock::AutoMockInstance;
+    use pacquet_reporter::SilentReporter;
     use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
     use std::sync::Mutex;
     use tempfile::tempdir;
@@ -205,7 +208,7 @@ mod tests {
             frozen_lockfile: false,
             resolved_packages: &Default::default(),
         }
-        .run::<pacquet_reporter::SilentReporter>()
+        .run::<SilentReporter>()
         .await
         .expect("install should succeed");
 
@@ -253,7 +256,7 @@ mod tests {
             frozen_lockfile: true,
             resolved_packages: &Default::default(),
         }
-        .run::<pacquet_reporter::SilentReporter>()
+        .run::<SilentReporter>()
         .await;
 
         assert!(matches!(result, Err(InstallError::NoLockfile)));
@@ -288,7 +291,7 @@ mod tests {
             frozen_lockfile: false,
             resolved_packages: &Default::default(),
         }
-        .run::<pacquet_reporter::SilentReporter>()
+        .run::<SilentReporter>()
         .await;
 
         assert!(matches!(result, Err(InstallError::UnsupportedLockfileMode)));
@@ -354,7 +357,7 @@ mod tests {
             frozen_lockfile: true,
             resolved_packages: &Default::default(),
         }
-        .run::<pacquet_reporter::SilentReporter>()
+        .run::<SilentReporter>()
         .await
         .expect("--frozen-lockfile + empty lockfile should succeed via InstallFrozenLockfile");
 
@@ -411,7 +414,7 @@ mod tests {
             frozen_lockfile: false,
             resolved_packages: &Default::default(),
         }
-        .run::<pacquet_reporter::SilentReporter>()
+        .run::<SilentReporter>()
         .await
         .expect("npm-alias install should succeed");
 
@@ -485,7 +488,7 @@ mod tests {
             frozen_lockfile: false,
             resolved_packages: &Default::default(),
         }
-        .run::<pacquet_reporter::SilentReporter>()
+        .run::<SilentReporter>()
         .await
         .expect("unversioned npm-alias install should succeed (defaults to latest)");
 
@@ -544,20 +547,20 @@ mod tests {
             frozen_lockfile: true,
             resolved_packages: &Default::default(),
         }
-        .run::<pacquet_reporter::SilentReporter>()
+        .run::<SilentReporter>()
         .await;
 
         assert!(matches!(result, Err(InstallError::NoLockfile)));
         drop(dir);
     }
 
-    /// [`Install::run`] emits `pnpm:stage` events bracketing the install:
-    /// `importing_started` before any work, `importing_done` after the
-    /// install completes successfully. On the success path, both fire in
-    /// order; on an early-error path (e.g. [`InstallError::NoLockfile`]),
-    /// only `importing_started` fires. This matches pnpm's stage
-    /// semantics — the JS reporter relies on the started/done pairing to
-    /// drive its progress UI.
+    /// [`Install::run`] emits `pnpm:stage` events that bracket the install.
+    /// `importing_started` fires before any work, and `importing_done`
+    /// fires after the install completes successfully. On the success
+    /// path both events fire in order. On an early-error path such as
+    /// [`InstallError::NoLockfile`], only `importing_started` fires.
+    /// This matches pnpm's stage semantics. The JS reporter relies on
+    /// the started/done pairing to drive its progress UI.
     #[tokio::test]
     async fn install_emits_stage_events_bracketing_the_run() {
         static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
