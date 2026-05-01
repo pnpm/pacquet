@@ -86,8 +86,12 @@ pub enum Stage {
     ImportingDone,
 }
 
-/// `pnpm:summary` payload. pnpm carries only the importer prefix and
-/// uses the surrounding `pnpm:root` history to render the diff.
+/// `pnpm:summary` payload. `prefix` identifies the importer; pnpm's
+/// reporter uses it to look up the matching `pnpm:root` history and
+/// render its "+N -M" diff. `level` is the [bunyan]-envelope severity,
+/// common to every channel.
+///
+/// [bunyan]: https://github.com/trentm/node-bunyan
 #[derive(Debug, Clone, Serialize)]
 pub struct SummaryLog {
     pub level: LogLevel,

@@ -65,9 +65,11 @@ fn stage_event_matches_pnpm_wire_shape() {
 }
 
 /// Summary log serializes with the channel name flattened into the
-/// envelope; the payload is just `prefix`, since pnpm's reporter
-/// combines this event with the accumulated `pnpm:root` history to
-/// render its "+N -M" block.
+/// envelope alongside `prefix` and the [bunyan]-envelope `level`.
+/// `prefix` is what pnpm's reporter uses to find the matching
+/// `pnpm:root` history and render its "+N -M" block.
+///
+/// [bunyan]: https://github.com/trentm/node-bunyan
 #[test]
 fn summary_event_matches_pnpm_wire_shape() {
     let event = LogEvent::Summary(SummaryLog {
