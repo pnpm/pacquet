@@ -51,8 +51,13 @@ pub enum LogEvent {
     Summary(SummaryLog),
 
     /// The import method used to materialise files from the store
-    /// (`pnpm:package-import-method`). Fires once per install when the
-    /// importer is constructed.
+    /// (`pnpm:package-import-method`). Fires the first time each
+    /// resolved method (`clone` / `hardlink` / `copy`) actually
+    /// succeeds during an install — so for the `auto` and
+    /// `clone-or-copy` config values, the wire value reflects the
+    /// post-fallback method rather than the optimistic configured
+    /// one. Up to three events per install (one per resolved method)
+    /// gated by an install-scoped atomic in `pacquet-package-manager`.
     ///
     /// Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/core/core-loggers/src/packageImportMethodLogger.ts>.
     /// Emit site: <https://github.com/pnpm/pnpm/blob/086c5e91e8/fs/indexed-pkg-importer/src/index.ts#L32>.
@@ -117,10 +122,12 @@ pub struct PackageImportMethodLog {
 }
 
 /// Wire-format import method. pnpm only knows three values; pacquet's
-/// config enum has more (`Auto`, `CloneOrCopy`) which collapse to
-/// `clone` because that's the optimistic path both fall through to
-/// first. See `import_method_for_wire` in `pacquet-package-manager`
-/// for the mapping.
+/// config enum (`pacquet_npmrc::PackageImportMethod`) carries `Auto`
+/// and `CloneOrCopy` on top of those, but those are dispatched-on by
+/// the auto-importer's fallback chain, not emitted. The wire value is
+/// the resolved method `link_file` actually used — `Clone` /
+/// `Hardlink` / `Copy` — so an `auto` install that falls back to
+/// hardlink emits `hardlink`, not the optimistic `clone`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PackageImportMethod {

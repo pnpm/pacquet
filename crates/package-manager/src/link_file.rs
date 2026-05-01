@@ -175,10 +175,11 @@ pub fn link_file<R: Reporter>(
                 log_method_once::<R>(logged, LOG_FLAG_HARDLINK, WireImportMethod::Hardlink);
                 Ok(())
             }
-            Err(error) if is_cross_device(&error) => {
-                log_method_once::<R>(logged, LOG_FLAG_COPY, WireImportMethod::Copy);
-                fs::copy(source_file, target_link).map(drop)
-            }
+            Err(error) if is_cross_device(&error) => fs::copy(source_file, target_link)
+                .inspect(|_| {
+                    log_method_once::<R>(logged, LOG_FLAG_COPY, WireImportMethod::Copy);
+                })
+                .map(drop),
             Err(error) => Err(error),
         },
         PackageImportMethod::Clone => {
@@ -190,10 +191,11 @@ pub fn link_file<R: Reporter>(
             static CLONE_OR_COPY_STATE: AtomicU8 = AtomicU8::new(LINK_STATE_CLONE);
             clone_or_copy_link::<R>(logged, &CLONE_OR_COPY_STATE, source_file, target_link)
         }
-        PackageImportMethod::Copy => {
-            log_method_once::<R>(logged, LOG_FLAG_COPY, WireImportMethod::Copy);
-            fs::copy(source_file, target_link).map(drop)
-        }
+        PackageImportMethod::Copy => fs::copy(source_file, target_link)
+            .inspect(|_| {
+                log_method_once::<R>(logged, LOG_FLAG_COPY, WireImportMethod::Copy);
+            })
+            .map(drop),
     };
 
     match result {
@@ -301,8 +303,11 @@ fn auto_link<R: Reporter>(
                 }
             },
             _ => {
-                log_method_once::<R>(logged, LOG_FLAG_COPY, WireImportMethod::Copy);
-                return fs::copy(source, target).map(drop);
+                return fs::copy(source, target)
+                    .inspect(|_| {
+                        log_method_once::<R>(logged, LOG_FLAG_COPY, WireImportMethod::Copy);
+                    })
+                    .map(drop);
             }
         }
     }
@@ -333,8 +338,11 @@ fn clone_or_copy_link<R: Reporter>(
                 }
             },
             _ => {
-                log_method_once::<R>(logged, LOG_FLAG_COPY, WireImportMethod::Copy);
-                return fs::copy(source, target).map(drop);
+                return fs::copy(source, target)
+                    .inspect(|_| {
+                        log_method_once::<R>(logged, LOG_FLAG_COPY, WireImportMethod::Copy);
+                    })
+                    .map(drop);
             }
         }
     }
