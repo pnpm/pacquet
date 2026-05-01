@@ -122,6 +122,7 @@ jobs:
           filters: |
             src:
               - 'Cargo.lock'
+              - 'deny.toml'
 
       - name: Install cargo-deny
         if: steps.filter.outputs.src == 'true'
