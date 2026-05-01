@@ -162,6 +162,16 @@ pub enum LogLevel {
 ///
 /// [`Reporter::emit`] must not panic. A serialization or I/O failure is
 /// swallowed so a reporter problem can never crash an install.
+///
+/// **Thread safety.** `emit` may be invoked concurrently from
+/// arbitrary threads — pacquet's import path runs `link_file` from a
+/// rayon `par_iter`, and tarball download / store-index work runs
+/// across tokio workers, all of which can fire reporter events at
+/// once. Implementations must therefore guard any shared state they
+/// touch (`Mutex`, atomic, or write-once initialization). Both
+/// production sinks satisfy this: `SilentReporter` is a no-op, and
+/// `NdjsonReporter` serializes per-event then writes under
+/// `std::io::stderr().lock()`.
 pub trait Reporter {
     fn emit(event: &LogEvent);
 }

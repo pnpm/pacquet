@@ -83,9 +83,9 @@ const LINK_STATE_COPY: u8 = 2;
 // (`@pnpm/cli.default-reporter` and friends). `fetch_or` returns the
 // previous bitfield, so the first caller to set a given bit is the one
 // that emits.
-pub(crate) const LOG_FLAG_CLONE: u8 = 1 << 0;
-pub(crate) const LOG_FLAG_HARDLINK: u8 = 1 << 1;
-pub(crate) const LOG_FLAG_COPY: u8 = 1 << 2;
+const LOG_FLAG_CLONE: u8 = 1 << 0;
+const LOG_FLAG_HARDLINK: u8 = 1 << 1;
+const LOG_FLAG_COPY: u8 = 1 << 2;
 
 fn log_method_once<R: Reporter>(logged: &AtomicU8, flag: u8, method: WireImportMethod) {
     if logged.fetch_or(flag, Ordering::Relaxed) & flag == 0 {
