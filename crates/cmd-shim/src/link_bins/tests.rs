@@ -1,7 +1,13 @@
-use super::*;
-use crate::capabilities::RealApi;
-use serde_json::json;
-use std::fs;
+use super::{LinkBinsError, PackageBinSource, link_bins, link_bins_of_packages};
+use crate::{
+    capabilities::{
+        FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions, FsWrite,
+        RealApi,
+    },
+    shim::is_shim_pointing_at,
+};
+use serde_json::{Value, json};
+use std::{fs, path::Path};
 use tempfile::tempdir;
 
 /// All three shim flavors (`.sh` / no-extension, `.cmd`, `.ps1`) must

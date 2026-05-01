@@ -1,6 +1,6 @@
-use super::*;
+use super::{get_bins_from_package_manifest, pkg_owns_bin};
 use serde_json::json;
-use std::fs;
+use std::{fs, path::Path};
 use tempfile::tempdir;
 
 #[test]

@@ -1,5 +1,10 @@
-use super::*;
+use super::{
+    ScriptRuntime, extension_program, generate_cmd_shim, generate_pwsh_shim, generate_sh_shim,
+    is_shim_pointing_at, parse_shebang, parse_shebang_from_bytes, read_head_filled,
+    relative_target, search_script_runtime,
+};
 use crate::capabilities::{FsReadHead, RealApi};
+use std::{io, path::Path};
 
 #[test]
 fn parses_env_node_shebang() {

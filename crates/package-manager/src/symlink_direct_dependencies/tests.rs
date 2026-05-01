@@ -1,4 +1,5 @@
-use super::*;
+use super::symlink_direct_deps_into_node_modules;
+use pacquet_lockfile::{PkgName, PkgVerPeer};
 use pacquet_testing_utils::fs::is_symlink_or_junction;
 use std::{fs, str::FromStr};
 use tempfile::tempdir;

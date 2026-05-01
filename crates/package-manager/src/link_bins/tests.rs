@@ -1,6 +1,10 @@
-use super::*;
+use super::{LinkVirtualStoreBins, LinkVirtualStoreBinsError, link_direct_dep_bins};
 use pacquet_cmd_shim::is_shim_pointing_at;
 use serde_json::json;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 use tempfile::tempdir;
 
 /// End-to-end exercise of [`LinkVirtualStoreBins`] against a hand-built
