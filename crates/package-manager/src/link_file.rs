@@ -64,20 +64,28 @@ const LINK_STATE_COPY: u8 = 2;
 
 // One-shot "we picked this import method" log, matching pnpm's
 // `packageImportMethodLogger.debug({ method: 'clone' | 'hardlink' | 'copy' })`
-// in `fs/indexed-pkg-importer/src/index.ts`. Emits once per process per
+// in `fs/indexed-pkg-importer/src/index.ts`. Emits once per install per
 // method so a reader of the logs can tell which tier actually ran —
 // crucial for verifying hardlinks are kicking in on CI runners where
 // reflink isn't available.
 //
-// Each method gets two emits the first time it's used: a `tracing::info!`
-// for human / diagnostic logs, and a `pnpm:package-import-method` reporter
-// event for structured consumers (`@pnpm/cli.default-reporter` and
-// friends). `fetch_or` returns the previous bitfield, so the first caller
-// to set a given bit is the one that emits.
-const LOG_FLAG_CLONE: u8 = 1 << 0;
-const LOG_FLAG_HARDLINK: u8 = 1 << 1;
-const LOG_FLAG_COPY: u8 = 1 << 2;
-static LOGGED_METHODS: AtomicU8 = AtomicU8::new(0);
+// The bitfield atomic is install-scoped, threaded down from
+// `Install::run`, mirroring upstream's per-importer closure capture:
+// pnpm's `createIndexedPackageImporter` builds a fresh closure per
+// install, so a second install that wires up `pnpm:package-import-method`
+// emits afresh. A module-static here would suppress emits on every
+// install after the first in the same process — fine for the one-shot
+// CLI today but a footgun for tests and any future embedded use.
+//
+// Each method gets two emits the first time it's used in an install: a
+// `tracing::info!` for human / diagnostic logs, and a
+// `pnpm:package-import-method` reporter event for structured consumers
+// (`@pnpm/cli.default-reporter` and friends). `fetch_or` returns the
+// previous bitfield, so the first caller to set a given bit is the one
+// that emits.
+pub(crate) const LOG_FLAG_CLONE: u8 = 1 << 0;
+pub(crate) const LOG_FLAG_HARDLINK: u8 = 1 << 1;
+pub(crate) const LOG_FLAG_COPY: u8 = 1 << 2;
 
 fn log_method_once<R: Reporter>(logged: &AtomicU8, flag: u8, method: WireImportMethod) {
     if logged.fetch_or(flag, Ordering::Relaxed) & flag == 0 {
@@ -105,6 +113,7 @@ fn log_method_once<R: Reporter>(logged: &AtomicU8, flag: u8, method: WireImportM
 ///   per file. [`create_cas_files`](crate::create_cas_files) is the
 ///   production caller and handles that pre-pass.
 pub fn link_file<R: Reporter>(
+    logged: &AtomicU8,
     method: PackageImportMethod,
     source_file: &Path,
     target_link: &Path,
@@ -151,7 +160,7 @@ pub fn link_file<R: Reporter>(
     let result = match method {
         PackageImportMethod::Auto => {
             static AUTO_STATE: AtomicU8 = AtomicU8::new(LINK_STATE_CLONE);
-            auto_link::<R>(&AUTO_STATE, source_file, target_link)
+            auto_link::<R>(logged, &AUTO_STATE, source_file, target_link)
         }
         // pnpm's explicit `hardlink` method uses `hardlinkPkg(linkOrCopy)`
         // which falls back to copy on `EXDEV` (cross-device link not
@@ -163,30 +172,26 @@ pub fn link_file<R: Reporter>(
         // itself is already cheap; pnpm doesn't cache this path either.
         PackageImportMethod::Hardlink => match fs::hard_link(source_file, target_link) {
             Ok(()) => {
-                log_method_once::<R>(
-                    &LOGGED_METHODS,
-                    LOG_FLAG_HARDLINK,
-                    WireImportMethod::Hardlink,
-                );
+                log_method_once::<R>(logged, LOG_FLAG_HARDLINK, WireImportMethod::Hardlink);
                 Ok(())
             }
             Err(error) if is_cross_device(&error) => {
-                log_method_once::<R>(&LOGGED_METHODS, LOG_FLAG_COPY, WireImportMethod::Copy);
+                log_method_once::<R>(logged, LOG_FLAG_COPY, WireImportMethod::Copy);
                 fs::copy(source_file, target_link).map(drop)
             }
             Err(error) => Err(error),
         },
         PackageImportMethod::Clone => {
             reflink_copy::reflink(source_file, target_link).inspect(|_| {
-                log_method_once::<R>(&LOGGED_METHODS, LOG_FLAG_CLONE, WireImportMethod::Clone);
+                log_method_once::<R>(logged, LOG_FLAG_CLONE, WireImportMethod::Clone);
             })
         }
         PackageImportMethod::CloneOrCopy => {
             static CLONE_OR_COPY_STATE: AtomicU8 = AtomicU8::new(LINK_STATE_CLONE);
-            clone_or_copy_link::<R>(&CLONE_OR_COPY_STATE, source_file, target_link)
+            clone_or_copy_link::<R>(logged, &CLONE_OR_COPY_STATE, source_file, target_link)
         }
         PackageImportMethod::Copy => {
-            log_method_once::<R>(&LOGGED_METHODS, LOG_FLAG_COPY, WireImportMethod::Copy);
+            log_method_once::<R>(logged, LOG_FLAG_COPY, WireImportMethod::Copy);
             fs::copy(source_file, target_link).map(drop)
         }
     };
@@ -267,12 +272,17 @@ fn is_call_error(err: &io::Error) -> bool {
 /// downgrade the cached state; other errors propagate immediately so a
 /// one-off `NotFound` on a single file doesn't permanently disable a
 /// tier for the rest of the process.
-fn auto_link<R: Reporter>(state: &AtomicU8, source: &Path, target: &Path) -> io::Result<()> {
+fn auto_link<R: Reporter>(
+    logged: &AtomicU8,
+    state: &AtomicU8,
+    source: &Path,
+    target: &Path,
+) -> io::Result<()> {
     loop {
         match state.load(Ordering::Relaxed) {
             LINK_STATE_CLONE => match reflink_copy::reflink(source, target) {
                 Ok(()) => {
-                    log_method_once::<R>(&LOGGED_METHODS, LOG_FLAG_CLONE, WireImportMethod::Clone);
+                    log_method_once::<R>(logged, LOG_FLAG_CLONE, WireImportMethod::Clone);
                     return Ok(());
                 }
                 Err(err) if is_call_error(&err) => return Err(err),
@@ -282,11 +292,7 @@ fn auto_link<R: Reporter>(state: &AtomicU8, source: &Path, target: &Path) -> io:
             },
             LINK_STATE_HARDLINK => match fs::hard_link(source, target) {
                 Ok(()) => {
-                    log_method_once::<R>(
-                        &LOGGED_METHODS,
-                        LOG_FLAG_HARDLINK,
-                        WireImportMethod::Hardlink,
-                    );
+                    log_method_once::<R>(logged, LOG_FLAG_HARDLINK, WireImportMethod::Hardlink);
                     return Ok(());
                 }
                 Err(err) if is_call_error(&err) => return Err(err),
@@ -295,7 +301,7 @@ fn auto_link<R: Reporter>(state: &AtomicU8, source: &Path, target: &Path) -> io:
                 }
             },
             _ => {
-                log_method_once::<R>(&LOGGED_METHODS, LOG_FLAG_COPY, WireImportMethod::Copy);
+                log_method_once::<R>(logged, LOG_FLAG_COPY, WireImportMethod::Copy);
                 return fs::copy(source, target).map(drop);
             }
         }
@@ -309,6 +315,7 @@ fn auto_link<R: Reporter>(state: &AtomicU8, source: &Path, target: &Path) -> io:
 /// Same error-narrowing as `auto_link`: only capability failures
 /// downgrade; real errors propagate.
 fn clone_or_copy_link<R: Reporter>(
+    logged: &AtomicU8,
     state: &AtomicU8,
     source: &Path,
     target: &Path,
@@ -317,7 +324,7 @@ fn clone_or_copy_link<R: Reporter>(
         match state.load(Ordering::Relaxed) {
             LINK_STATE_CLONE => match reflink_copy::reflink(source, target) {
                 Ok(()) => {
-                    log_method_once::<R>(&LOGGED_METHODS, LOG_FLAG_CLONE, WireImportMethod::Clone);
+                    log_method_once::<R>(logged, LOG_FLAG_CLONE, WireImportMethod::Clone);
                     return Ok(());
                 }
                 Err(err) if is_call_error(&err) => return Err(err),
@@ -326,7 +333,7 @@ fn clone_or_copy_link<R: Reporter>(
                 }
             },
             _ => {
-                log_method_once::<R>(&LOGGED_METHODS, LOG_FLAG_COPY, WireImportMethod::Copy);
+                log_method_once::<R>(logged, LOG_FLAG_COPY, WireImportMethod::Copy);
                 return fs::copy(source, target).map(drop);
             }
         }
@@ -364,7 +371,7 @@ mod tests {
         let dst = tmp.path().join("nested/dst.txt");
         fs::create_dir_all(dst.parent().unwrap()).unwrap();
 
-        link_file::<SilentReporter>(PackageImportMethod::Copy, &src, &dst)
+        link_file::<SilentReporter>(&AtomicU8::new(0), PackageImportMethod::Copy, &src, &dst)
             .expect("link_file should succeed");
 
         assert_eq!(fs::read(&dst).unwrap(), b"hello");
@@ -390,7 +397,7 @@ mod tests {
         let dst = tmp.path().join("nested/dst.txt");
         fs::create_dir_all(dst.parent().unwrap()).unwrap();
 
-        link_file::<SilentReporter>(PackageImportMethod::Hardlink, &src, &dst)
+        link_file::<SilentReporter>(&AtomicU8::new(0), PackageImportMethod::Hardlink, &src, &dst)
             .expect("link_file should succeed");
 
         assert_eq!(fs::read(&dst).unwrap(), b"shared");
@@ -414,7 +421,7 @@ mod tests {
         let dst = tmp.path().join("nested/dst.txt");
         fs::create_dir_all(dst.parent().unwrap()).unwrap();
 
-        link_file::<SilentReporter>(PackageImportMethod::Auto, &src, &dst)
+        link_file::<SilentReporter>(&AtomicU8::new(0), PackageImportMethod::Auto, &src, &dst)
             .expect("Auto should always succeed");
         assert_eq!(fs::read(&dst).unwrap(), b"auto");
     }
@@ -436,7 +443,7 @@ mod tests {
             PackageImportMethod::Clone,
             PackageImportMethod::CloneOrCopy,
         ] {
-            link_file::<SilentReporter>(method, &src, &dst)
+            link_file::<SilentReporter>(&AtomicU8::new(0), method, &src, &dst)
                 .expect("existing target should short-circuit");
             assert_eq!(fs::read(&dst).unwrap(), b"old", "method {method:?} must not overwrite");
         }
@@ -454,8 +461,13 @@ mod tests {
         let src = tmp.path().join("does-not-exist");
         let dst = tmp.path().join("dst.txt");
 
-        let err = link_file::<SilentReporter>(PackageImportMethod::Hardlink, &src, &dst)
-            .expect_err("no source → error");
+        let err = link_file::<SilentReporter>(
+            &AtomicU8::new(0),
+            PackageImportMethod::Hardlink,
+            &src,
+            &dst,
+        )
+        .expect_err("no source → error");
         assert!(matches!(err, LinkFileError::Import { .. }), "got: {err:?}");
     }
 
@@ -472,8 +484,13 @@ mod tests {
         let dst = tmp.path().join("nested/dst.txt");
         fs::create_dir_all(dst.parent().unwrap()).unwrap();
 
-        link_file::<SilentReporter>(PackageImportMethod::CloneOrCopy, &src, &dst)
-            .expect("CloneOrCopy should always succeed");
+        link_file::<SilentReporter>(
+            &AtomicU8::new(0),
+            PackageImportMethod::CloneOrCopy,
+            &src,
+            &dst,
+        )
+        .expect("CloneOrCopy should always succeed");
         assert_eq!(fs::read(&dst).unwrap(), b"clone-or-copy");
     }
 
@@ -487,8 +504,9 @@ mod tests {
         let src = tmp.path().join("does-not-exist");
         let dst = tmp.path().join("dst.txt");
 
-        let err = link_file::<SilentReporter>(PackageImportMethod::Clone, &src, &dst)
-            .expect_err("no source → error");
+        let err =
+            link_file::<SilentReporter>(&AtomicU8::new(0), PackageImportMethod::Clone, &src, &dst)
+                .expect_err("no source → error");
         assert!(matches!(err, LinkFileError::Import { .. }), "got: {err:?}");
     }
 
@@ -506,7 +524,7 @@ mod tests {
         let dst = tmp.path().join("dst.txt");
         std::os::unix::fs::symlink(tmp.path().join("never-created"), &dst).unwrap();
 
-        link_file::<SilentReporter>(PackageImportMethod::Hardlink, &src, &dst)
+        link_file::<SilentReporter>(&AtomicU8::new(0), PackageImportMethod::Hardlink, &src, &dst)
             .expect("dangling symlink should be scrubbed, then hardlinked");
 
         let meta = fs::symlink_metadata(&dst).unwrap();
@@ -527,7 +545,7 @@ mod tests {
         let dst = tmp.path().join("dst.txt");
         std::os::unix::fs::symlink(&real_target, &dst).unwrap();
 
-        link_file::<SilentReporter>(PackageImportMethod::Hardlink, &src, &dst)
+        link_file::<SilentReporter>(&AtomicU8::new(0), PackageImportMethod::Hardlink, &src, &dst)
             .expect("live symlink should short-circuit");
 
         assert!(fs::symlink_metadata(&dst).unwrap().file_type().is_symlink());
@@ -559,7 +577,7 @@ mod tests {
         let dst = tmp.path().join("dst");
         fs::write(&dst, b"pre-existing").unwrap();
 
-        let err = auto_link::<SilentReporter>(&state, &src, &dst)
+        let err = auto_link::<SilentReporter>(&AtomicU8::new(0), &state, &src, &dst)
             .expect_err("target exists → AlreadyExists");
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(
@@ -580,8 +598,8 @@ mod tests {
         let src = tmp.path().join("does-not-exist");
         let dst = tmp.path().join("dst");
 
-        let err =
-            auto_link::<SilentReporter>(&state, &src, &dst).expect_err("missing source → NotFound");
+        let err = auto_link::<SilentReporter>(&AtomicU8::new(0), &state, &src, &dst)
+            .expect_err("missing source → NotFound");
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
         assert_eq!(
             state.load(Ordering::Relaxed),
@@ -604,7 +622,8 @@ mod tests {
         let src = write_source(tmp.path(), "src.txt", b"cached-copy");
         let dst = tmp.path().join("dst.txt");
 
-        auto_link::<SilentReporter>(&state, &src, &dst).expect("copy should succeed");
+        auto_link::<SilentReporter>(&AtomicU8::new(0), &state, &src, &dst)
+            .expect("copy should succeed");
 
         assert_eq!(fs::read(&dst).unwrap(), b"cached-copy");
         assert_ne!(
@@ -627,7 +646,7 @@ mod tests {
         let src = write_source(tmp.path(), "src.txt", b"cached-hardlink");
         let dst = tmp.path().join("dst.txt");
 
-        auto_link::<SilentReporter>(&state, &src, &dst)
+        auto_link::<SilentReporter>(&AtomicU8::new(0), &state, &src, &dst)
             .expect("hardlink should succeed on same-FS tempdir");
 
         assert_eq!(
@@ -652,7 +671,7 @@ mod tests {
         let dst = tmp.path().join("dst");
         fs::write(&dst, b"pre-existing").unwrap();
 
-        let err = clone_or_copy_link::<SilentReporter>(&state, &src, &dst)
+        let err = clone_or_copy_link::<SilentReporter>(&AtomicU8::new(0), &state, &src, &dst)
             .expect_err("target exists → AlreadyExists");
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(
@@ -743,7 +762,8 @@ mod tests {
         let src = write_source(tmp.path(), "src.txt", b"cached");
         let dst = tmp.path().join("dst.txt");
 
-        clone_or_copy_link::<SilentReporter>(&state, &src, &dst).expect("copy should succeed");
+        clone_or_copy_link::<SilentReporter>(&AtomicU8::new(0), &state, &src, &dst)
+            .expect("copy should succeed");
 
         assert_ne!(
             fs::metadata(&src).unwrap().ino(),
@@ -755,11 +775,11 @@ mod tests {
 
     /// `log_method_once` emits one `pnpm:package-import-method` event
     /// per resolved method per `logged` atomic. Repeated calls with the
-    /// same flag are suppressed, distinct flags fire independently. The
-    /// production [`link_file`] passes the module-level
-    /// `LOGGED_METHODS` static; this test passes a fresh atomic so it
+    /// same flag are suppressed, distinct flags fire independently.
+    /// Production threads an install-scoped atomic from `Install::run`
+    /// down to [`link_file`]; this test passes a per-test atomic so it
     /// observes the single-emit-per-method contract without racing
-    /// other tests that touch the global.
+    /// other tests.
     #[test]
     fn log_method_once_emits_first_call_per_method_only() {
         use pacquet_reporter::{LogEvent, PackageImportMethod as WireImportMethod, Reporter};

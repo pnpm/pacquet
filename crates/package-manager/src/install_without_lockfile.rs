@@ -15,6 +15,7 @@ use pacquet_reporter::Reporter;
 use pacquet_store_dir::{SharedVerifiedFilesCache, StoreIndex, StoreIndexWriter};
 use pacquet_tarball::MemCache;
 use pipe_trait::Pipe;
+use std::sync::atomic::AtomicU8;
 
 /// In-memory cache for packages that have started resolving dependencies.
 ///
@@ -39,6 +40,9 @@ pub struct InstallWithoutLockfile<'a, DependencyGroupList> {
     pub config: &'static Npmrc,
     pub manifest: &'a PackageManifest,
     pub dependency_groups: DependencyGroupList,
+    /// Install-scoped dedupe state for `pnpm:package-import-method`.
+    /// See `link_file::log_method_once`.
+    pub logged_methods: &'a AtomicU8,
 }
 
 /// Error type of [`InstallWithoutLockfile`].
@@ -61,6 +65,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
             manifest,
             dependency_groups,
             resolved_packages,
+            logged_methods,
         } = self;
 
         let store_dir: &'static _ = &config.store_dir;
@@ -122,6 +127,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                         store_index: store_index_ref,
                         store_index_writer: store_index_writer_ref,
                         verified_files_cache: &verified_files_cache,
+                        logged_methods,
                         node_modules_dir: &config.modules_dir,
                         name,
                         version_range,
@@ -137,6 +143,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                         manifest,
                         dependency_groups: (),
                         resolved_packages,
+                        logged_methods,
                     }
                     .install_dependencies_from_registry::<R>(
                         &dependency,
@@ -222,6 +229,7 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
                     store_index,
                     store_index_writer,
                     verified_files_cache,
+                    logged_methods: self.logged_methods,
                     node_modules_dir: node_modules_path_ref,
                     name,
                     version_range,

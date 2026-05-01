@@ -8,6 +8,7 @@ use std::{
     collections::HashMap,
     fs, io,
     path::{Path, PathBuf},
+    sync::atomic::AtomicU8,
 };
 
 /// This subroutine creates the virtual-store slot for one package and then
@@ -23,6 +24,10 @@ pub struct CreateVirtualDirBySnapshot<'a> {
     pub virtual_store_dir: &'a Path,
     pub cas_paths: &'a HashMap<String, PathBuf>,
     pub import_method: PackageImportMethod,
+    /// Install-scoped dedupe state for `pnpm:package-import-method`.
+    /// See the comment on `link_file::log_method_once` for why this
+    /// is install-scoped rather than module-static.
+    pub logged_methods: &'a AtomicU8,
     pub package_key: &'a PackageKey,
     pub snapshot: &'a SnapshotEntry,
 }
@@ -52,6 +57,7 @@ impl<'a> CreateVirtualDirBySnapshot<'a> {
             virtual_store_dir,
             cas_paths,
             import_method,
+            logged_methods,
             package_key,
             snapshot,
         } = self;
@@ -76,7 +82,7 @@ impl<'a> CreateVirtualDirBySnapshot<'a> {
         // current stack frame.
         let (cas_result, symlink_result) = rayon::join(
             || {
-                create_cas_files::<R>(import_method, &save_path, cas_paths)
+                create_cas_files::<R>(logged_methods, import_method, &save_path, cas_paths)
                     .map_err(CreateVirtualDirError::CreateCasFiles)
             },
             || match snapshot.dependencies.as_ref() {

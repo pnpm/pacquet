@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, sync::atomic::AtomicU8};
 
 use crate::{
     InstallFrozenLockfile, InstallFrozenLockfileError, InstallWithoutLockfile,
@@ -104,6 +104,12 @@ where
             stage: Stage::ImportingStarted,
         }));
 
+        // Install-scoped dedupe state for `pnpm:package-import-method`.
+        // Threaded down to `link_file::log_method_once` so each install
+        // emits the channel afresh — mirroring upstream pnpm's per-
+        // importer closure capture rather than a process-static.
+        let logged_methods = AtomicU8::new(0);
+
         tracing::info!(target: "pacquet::install", "Start all");
 
         // Dispatch priority, matching pnpm's CLI semantics:
@@ -136,6 +142,7 @@ where
                 packages: packages.as_ref(),
                 snapshots: snapshots.as_ref(),
                 dependency_groups,
+                logged_methods: &logged_methods,
             }
             .run::<R>()
             .await
@@ -150,6 +157,7 @@ where
                 config,
                 manifest,
                 dependency_groups,
+                logged_methods: &logged_methods,
             }
             .run::<R>()
             .await

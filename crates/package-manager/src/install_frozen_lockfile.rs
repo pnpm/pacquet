@@ -9,7 +9,7 @@ use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::DependencyGroup;
 use pacquet_reporter::Reporter;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::atomic::AtomicU8};
 
 /// This subroutine installs dependencies from a frozen lockfile.
 ///
@@ -31,6 +31,9 @@ where
     pub packages: Option<&'a HashMap<PackageKey, PackageMetadata>>,
     pub snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,
     pub dependency_groups: DependencyGroupList,
+    /// Install-scoped dedupe state for `pnpm:package-import-method`.
+    /// See `link_file::log_method_once`.
+    pub logged_methods: &'a AtomicU8,
 }
 
 /// Error type of [`InstallFrozenLockfile`].
@@ -56,11 +59,12 @@ where
             packages,
             snapshots,
             dependency_groups,
+            logged_methods,
         } = self;
 
         // TODO: check if the lockfile is out-of-date
 
-        CreateVirtualStore { http_client, config, packages, snapshots }
+        CreateVirtualStore { http_client, config, packages, snapshots, logged_methods }
             .run::<R>()
             .await
             .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;

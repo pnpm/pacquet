@@ -10,7 +10,10 @@ use pacquet_reporter::Reporter;
 use pacquet_store_dir::{SharedReadonlyStoreIndex, SharedVerifiedFilesCache, StoreIndexWriter};
 use pacquet_tarball::{DownloadTarballToStore, PrefetchedCasPaths, TarballError};
 use pipe_trait::Pipe;
-use std::{borrow::Cow, sync::Arc};
+use std::{
+    borrow::Cow,
+    sync::{Arc, atomic::AtomicU8},
+};
 
 /// This subroutine downloads a package tarball, extracts it, installs it to a
 /// virtual dir, then creates the symlink layout for the package. CAS file
@@ -29,6 +32,9 @@ pub struct InstallPackageBySnapshot<'a> {
     /// per-snapshot fetch. See `DownloadTarballToStore::verified_files_cache`
     /// for the rationale.
     pub verified_files_cache: &'a SharedVerifiedFilesCache,
+    /// Install-scoped dedupe state for `pnpm:package-import-method`.
+    /// See `link_file::log_method_once`.
+    pub logged_methods: &'a AtomicU8,
     pub package_key: &'a PackageKey,
     pub metadata: &'a PackageMetadata,
     pub snapshot: &'a SnapshotEntry,
@@ -66,6 +72,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             store_index_writer,
             prefetched_cas_paths,
             verified_files_cache,
+            logged_methods,
             package_key,
             metadata,
             snapshot,
@@ -127,6 +134,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             virtual_store_dir: &config.virtual_store_dir,
             cas_paths: &cas_paths,
             import_method: config.package_import_method,
+            logged_methods,
             package_key,
             snapshot,
         }

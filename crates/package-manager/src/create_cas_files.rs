@@ -8,6 +8,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
+    sync::atomic::AtomicU8,
 };
 
 /// Error type for [`create_cas_files`].
@@ -27,6 +28,7 @@ pub enum CreateCasFilesError {
 ///
 /// If `dir_path` already exists, do nothing.
 pub fn create_cas_files<R: Reporter>(
+    logged_methods: &AtomicU8,
     import_method: PackageImportMethod,
     dir_path: &Path,
     cas_paths: &HashMap<String, PathBuf>,
@@ -74,7 +76,7 @@ pub fn create_cas_files<R: Reporter>(
     cas_paths
         .par_iter()
         .try_for_each(|(cleaned_entry, store_path)| {
-            link_file::<R>(import_method, store_path, &dir_path.join(cleaned_entry))
+            link_file::<R>(logged_methods, import_method, store_path, &dir_path.join(cleaned_entry))
         })
         .map_err(CreateCasFilesError::LinkFile)
 }
