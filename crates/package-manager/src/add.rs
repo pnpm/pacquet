@@ -7,6 +7,7 @@ use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::PackageManifestError;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::{PackageTag, PackageVersion};
+use pacquet_reporter::Reporter;
 use pacquet_tarball::MemCache;
 
 /// This subroutine does everything `pacquet add` is supposed to do.
@@ -44,7 +45,7 @@ where
     ListDependencyGroups: Fn() -> DependencyGroupList,
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
-    pub async fn run(self) -> Result<(), AddError> {
+    pub async fn run<R: Reporter>(self) -> Result<(), AddError> {
         let Add {
             tarball_mem_cache,
             http_client,
@@ -83,7 +84,7 @@ where
             frozen_lockfile: false,
             resolved_packages,
         }
-        .run()
+        .run::<R>()
         .await
         .map_err(AddError::Install)?;
 
