@@ -1,7 +1,7 @@
 pub mod _utils;
 pub use _utils::index_file_contents;
 
-use assert_cmd::assert::OutputAssertExt;
+use assert_cmd::prelude::*;
 use command_extra::CommandExtra;
 use pacquet_testing_utils::{
     bin::{AddMockedRegistry, CommandTempCwd},

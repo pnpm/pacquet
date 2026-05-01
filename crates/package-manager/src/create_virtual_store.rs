@@ -231,7 +231,7 @@ impl<'a> CreateVirtualStore<'a> {
         let virtual_store_dir = &config.virtual_store_dir;
         let import_method = config.package_import_method;
         {
-            use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+            use rayon::prelude::*;
             // Driving the warm batch from inside an `async fn` means
             // the `par_iter` blocks the calling tokio worker for the
             // duration. On the production multi-thread runtime that's

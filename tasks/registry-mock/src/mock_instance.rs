@@ -3,7 +3,7 @@ use crate::{
     kill_verdaccio::kill_all_verdaccio_children, node_registry_mock, pick_port::pick_unused_port,
     port_to_url::port_to_url,
 };
-use assert_cmd::assert::OutputAssertExt;
+use assert_cmd::prelude::*;
 use pipe_trait::Pipe;
 use reqwest::Client;
 use std::{

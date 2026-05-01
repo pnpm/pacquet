@@ -150,9 +150,11 @@ or treating the red as acceptable.
 - Follow [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/naming.html)
   for naming.
 - **No star imports.** Never write `use super::*;`, `pub use module::*;`,
-  `use some_crate::prelude::*;`, or any other `use ...::*;`. Import items
-  explicitly by name, in every file — tests included. See the "No star
-  imports" section in `CODE_STYLE_GUIDE.md`.
+  or any other `use ...::*;`. Import items explicitly by name, in every
+  file — tests included. The one exception is external-crate preludes
+  (`use rayon::prelude::*;`, `use assert_cmd::prelude::*;`, etc.), which
+  are part of the upstream crate's curated surface and stay glob-imported.
+  See the "No star imports" section in `CODE_STYLE_GUIDE.md`.
 
 ### Preserve existing method chains
 

@@ -77,14 +77,15 @@ use std::os::unix::fs::PermissionsExt;
 
 ### No star imports
 
-**Never use star (glob) imports.** This rule has no exceptions and applies to every file in the workspace — production code, tests, integration tests, build scripts, and developer tooling under `tasks/`. The ban covers every form of star import:
+**Never use star (glob) imports.** The ban applies to every file in the workspace — production code, tests, integration tests, build scripts, and developer tooling under `tasks/`. It covers:
 
 - `use super::*;` in test modules.
 - `pub use module::*;` re-exports in `lib.rs` and other module roots.
-- External-crate preludes such as `use rayon::prelude::*;` or `use assert_cmd::prelude::*;`.
-- `use crate::*;`, `use self::*;`, and any other `use ...::*;`.
+- `use crate::*;`, `use self::*;`, and any other `use ...::*;` whose target is a module you control.
 
-Always import items explicitly by name. Merge them with braces, as described in the previous section.
+The one exception is **external-crate preludes** — `use rayon::prelude::*;`, `use assert_cmd::prelude::*;`, and similar. Those are part of the upstream crate's documented surface, intentionally curated by the crate author to be glob-imported, and replacing them with explicit lists creates a maintenance burden every time the upstream prelude changes. Use the prelude as the crate documents.
+
+Outside of that exception, always import items explicitly by name. Merge them with braces, as described in the previous section.
 
 ```rust
 // Bad
@@ -113,14 +114,12 @@ pub use load_lockfile::{LoadLockfileError, load_lockfile};
 ```
 
 ```rust
-// Bad
+// Allowed (external-crate prelude)
 use rayon::prelude::*;
-
-// Good
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use assert_cmd::prelude::*;
 ```
 
-Star imports make it hard to tell where a name comes from, hide accidental shadowing, and make tooling (and humans) work harder during review. Listing items explicitly is a small, one-time cost that pays back every time someone reads the file.
+Star imports make it hard to tell where a name comes from, hide accidental shadowing, and make tooling (and humans) work harder during review. Listing items explicitly is a small, one-time cost that pays back every time someone reads the file. The prelude exception only applies because the upstream crate has already done that curation work for you.
 
 ### Generic Parameter Naming
 
