@@ -930,8 +930,11 @@ fn write_bool(w: &mut Vec<u8>, b: bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{CafsFileInfo, PackageFilesIndex};
+    use super::{
+        DecodeError, EncodeError, EncodeState, FIRST_INNER_SLOT, PKG_FILES_INDEX_SLOT,
+        RECORD_DEF_EXT_TYPE, SLOT_HI, encode_package_files_index, transcode_to_plain_msgpack,
+    };
+    use crate::{CafsFileInfo, PackageFilesIndex, SideEffectsDiff};
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
 

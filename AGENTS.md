@@ -149,6 +149,12 @@ or treating the red as acceptable.
   scalar `assert_eq!`.
 - Follow [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/naming.html)
   for naming.
+- **No star imports inside module bodies.** Write `use super::{Foo, bar}`
+  instead of `use super::*;`, and the same for any other glob whose
+  target is a module you control. Two forms stay allowed: external-crate
+  preludes such as `use rayon::prelude::*;` and root-of-module
+  re-exports such as `pub use submodule::*;` in a `lib.rs`. See the
+  "No star imports" section in `CODE_STYLE_GUIDE.md`.
 
 ### Preserve existing method chains
 

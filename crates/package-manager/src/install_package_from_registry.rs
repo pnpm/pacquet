@@ -165,14 +165,14 @@ impl<'a> InstallPackageFromRegistry<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::InstallPackageFromRegistry;
     use node_semver::Version;
+    use pacquet_network::ThrottledClient;
     use pacquet_npmrc::Npmrc;
-    use pacquet_store_dir::StoreDir;
+    use pacquet_store_dir::{SharedVerifiedFilesCache, StoreDir};
     use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
-    use std::fs;
-    use std::path::Path;
+    use std::{fs, path::Path};
     use tempfile::tempdir;
 
     fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path) -> Npmrc {

@@ -34,7 +34,7 @@ impl<const MAJOR: u16> TryFrom<ComVer> for LockfileVersion<MAJOR> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{ComVer, LockfileVersion, LockfileVersionError};
     use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
 

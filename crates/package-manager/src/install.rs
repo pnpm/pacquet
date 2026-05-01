@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::{
     InstallFrozenLockfile, InstallFrozenLockfileError, InstallWithoutLockfile,
     InstallWithoutLockfileError, ResolvedPackages,
@@ -8,6 +10,7 @@ use pacquet_lockfile::Lockfile;
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
+use pacquet_reporter::{ContextLog, LogEvent, LogLevel, Reporter, Stage, StageLog};
 use pacquet_tarball::MemCache;
 
 /// This subroutine does everything `pacquet install` is supposed to do.
@@ -53,7 +56,7 @@ where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
     /// Execute the subroutine.
-    pub async fn run(self) -> Result<(), InstallError> {
+    pub async fn run<R: Reporter>(self) -> Result<(), InstallError> {
         let Install {
             tarball_mem_cache,
             resolved_packages,
@@ -64,6 +67,42 @@ where
             dependency_groups,
             frozen_lockfile,
         } = self;
+
+        // Project root for the [bunyan]-envelope `prefix`. Upstream pnpm
+        // emits this as `lockfileDir`, the directory containing
+        // `pnpm-lock.yaml`. With workspace support that equals the
+        // workspace root. Pacquet has no workspace support yet, so the
+        // manifest's parent directory is the correct value today.
+        // pnpm/pacquet#357 tracks resolving this via a
+        // `findWorkspaceDir`-equivalent once workspaces land.
+        //
+        // [bunyan]: https://github.com/trentm/node-bunyan
+        let prefix = manifest
+            .path()
+            .parent()
+            .map(Path::to_str)
+            .map(Option::<&str>::unwrap)
+            .unwrap()
+            .to_owned();
+
+        // `pnpm:context` carries the directories pnpm's reporter prints
+        // in the install header. `currentLockfileExists` reflects
+        // `node_modules/.pnpm/lock.yaml` upstream; pacquet doesn't yet
+        // read or write that file, so it's always `false` today.
+        // TODO: flip when the current-lockfile path lands.
+        // Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/context/src/index.ts#L196>.
+        R::emit(&LogEvent::Context(ContextLog {
+            level: LogLevel::Debug,
+            current_lockfile_exists: false,
+            store_dir: config.store_dir.display().to_string(),
+            virtual_store_dir: config.virtual_store_dir.to_string_lossy().into_owned(),
+        }));
+
+        R::emit(&LogEvent::Stage(StageLog {
+            level: LogLevel::Debug,
+            prefix: prefix.clone(),
+            stage: Stage::ImportingStarted,
+        }));
 
         tracing::info!(target: "pacquet::install", "Start all");
 
@@ -118,18 +157,29 @@ where
         }
 
         tracing::info!(target: "pacquet::install", "Complete all");
+
+        R::emit(&LogEvent::Stage(StageLog {
+            level: LogLevel::Debug,
+            prefix,
+            stage: Stage::ImportingDone,
+        }));
+
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Install, InstallError};
+    use pacquet_lockfile::Lockfile;
     use pacquet_npmrc::Npmrc;
     use pacquet_package_manifest::{DependencyGroup, PackageManifest};
     use pacquet_registry_mock::AutoMockInstance;
+    use pacquet_reporter::{ContextLog, LogEvent, Reporter, SilentReporter, Stage, StageLog};
     use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
+    use std::sync::Mutex;
     use tempfile::tempdir;
+    use text_block_macros::text_block;
 
     #[tokio::test]
     async fn should_install_dependencies() {
@@ -172,7 +222,7 @@ mod tests {
             frozen_lockfile: false,
             resolved_packages: &Default::default(),
         }
-        .run()
+        .run::<SilentReporter>()
         .await
         .expect("install should succeed");
 
@@ -220,7 +270,7 @@ mod tests {
             frozen_lockfile: true,
             resolved_packages: &Default::default(),
         }
-        .run()
+        .run::<SilentReporter>()
         .await;
 
         assert!(matches!(result, Err(InstallError::NoLockfile)));
@@ -255,7 +305,7 @@ mod tests {
             frozen_lockfile: false,
             resolved_packages: &Default::default(),
         }
-        .run()
+        .run::<SilentReporter>()
         .await;
 
         assert!(matches!(result, Err(InstallError::UnsupportedLockfileMode)));
@@ -277,8 +327,6 @@ mod tests {
     /// integrity surfaces as `FrozenLockfile(...)`.
     #[tokio::test]
     async fn frozen_lockfile_flag_overrides_config_lockfile_false() {
-        use pacquet_lockfile::Lockfile;
-
         let dir = tempdir().unwrap();
         let store_dir = dir.path().join("pacquet-store");
         let project_root = dir.path().join("project");
@@ -301,14 +349,14 @@ mod tests {
         // run through `CreateVirtualStore` with an empty snapshot set,
         // which is a successful no-op. That's enough to prove we took
         // the frozen branch.
-        let lockfile: Lockfile = serde_saphyr::from_str(concat!(
-            "lockfileVersion: '9.0'\n",
-            "importers:\n",
-            "  .:\n",
-            "    dependencies: {}\n",
-            "packages: {}\n",
-            "snapshots: {}\n",
-        ))
+        let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+            "lockfileVersion: '9.0'"
+            "importers:"
+            "  .:"
+            "    dependencies: {}"
+            "packages: {}"
+            "snapshots: {}"
+        })
         .expect("parse minimal v9 lockfile");
 
         Install {
@@ -321,7 +369,7 @@ mod tests {
             frozen_lockfile: true,
             resolved_packages: &Default::default(),
         }
-        .run()
+        .run::<SilentReporter>()
         .await
         .expect("--frozen-lockfile + empty lockfile should succeed via InstallFrozenLockfile");
 
@@ -378,7 +426,7 @@ mod tests {
             frozen_lockfile: false,
             resolved_packages: &Default::default(),
         }
-        .run()
+        .run::<SilentReporter>()
         .await
         .expect("npm-alias install should succeed");
 
@@ -452,7 +500,7 @@ mod tests {
             frozen_lockfile: false,
             resolved_packages: &Default::default(),
         }
-        .run()
+        .run::<SilentReporter>()
         .await
         .expect("unversioned npm-alias install should succeed (defaults to latest)");
 
@@ -511,10 +559,112 @@ mod tests {
             frozen_lockfile: true,
             resolved_packages: &Default::default(),
         }
-        .run()
+        .run::<SilentReporter>()
         .await;
 
         assert!(matches!(result, Err(InstallError::NoLockfile)));
+        drop(dir);
+    }
+
+    /// [`Install::run`] emits `pnpm:context` followed by the
+    /// `pnpm:stage` `importing_started` / `importing_done` pair that
+    /// brackets the install. On the success path all three fire in
+    /// order; on an early-error path such as
+    /// [`InstallError::NoLockfile`] only the leading events fire. This
+    /// matches pnpm: context is emitted once alongside the install
+    /// header, and the stage pairing drives the JS reporter's progress
+    /// UI.
+    ///
+    /// `pnpm:context` carries `currentLockfileExists`, `storeDir`,
+    /// `virtualStoreDir`. `currentLockfileExists` is hard-coded
+    /// `false` today (pacquet doesn't read or write
+    /// `node_modules/.pnpm/lock.yaml`), matching the TODO in
+    /// [`Install::run`].
+    #[tokio::test]
+    async fn install_emits_context_and_stage_events() {
+        static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+
+        struct RecordingReporter;
+        impl Reporter for RecordingReporter {
+            fn emit(event: &LogEvent) {
+                EVENTS.lock().unwrap().push(event.clone());
+            }
+        }
+
+        let dir = tempdir().unwrap();
+        let store_dir = dir.path().join("pacquet-store");
+        let project_root = dir.path().join("project");
+        let modules_dir = project_root.join("node_modules");
+        let virtual_store_dir = modules_dir.join(".pacquet");
+
+        let manifest_path = dir.path().join("package.json");
+        let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+        let mut config = Npmrc::new();
+        config.lockfile = false;
+        config.store_dir = store_dir.clone().into();
+        config.modules_dir = modules_dir.to_path_buf();
+        config.virtual_store_dir = virtual_store_dir.clone();
+        let config = config.leak();
+
+        // Empty v9 lockfile: `--frozen-lockfile` walks an empty snapshot
+        // set successfully, which is the cheapest "real" install path.
+        let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+            "lockfileVersion: '9.0'"
+            "importers:"
+            "  .:"
+            "    dependencies: {}"
+            "packages: {}"
+            "snapshots: {}"
+        })
+        .expect("parse minimal v9 lockfile");
+
+        Install {
+            tarball_mem_cache: &Default::default(),
+            http_client: &Default::default(),
+            config,
+            manifest: &manifest,
+            lockfile: Some(&lockfile),
+            dependency_groups: [DependencyGroup::Prod],
+            frozen_lockfile: true,
+            resolved_packages: &Default::default(),
+        }
+        .run::<RecordingReporter>()
+        .await
+        .expect("empty-lockfile frozen install should succeed");
+
+        let captured = EVENTS.lock().unwrap();
+
+        // Event ordering matches pnpm: context first, then the stage
+        // bracketing pair.
+        assert!(
+            matches!(
+                captured.as_slice(),
+                [
+                    LogEvent::Context(_),
+                    LogEvent::Stage(StageLog { stage: Stage::ImportingStarted, .. }),
+                    LogEvent::Stage(StageLog { stage: Stage::ImportingDone, .. }),
+                ]
+            ),
+            "unexpected event sequence: {captured:?}",
+        );
+
+        // Spot-check the context payload: pacquet's directories must
+        // round-trip through the wire shape, and `currentLockfileExists`
+        // is the hard-coded `false` documented in `Install::run`.
+        let LogEvent::Context(ContextLog {
+            current_lockfile_exists,
+            store_dir: emitted_store_dir,
+            virtual_store_dir: emitted_virtual_store_dir,
+            ..
+        }) = &captured[0]
+        else {
+            unreachable!("first event is context, asserted above");
+        };
+        assert!(!current_lockfile_exists);
+        assert_eq!(emitted_store_dir, &store_dir.display().to_string());
+        assert_eq!(emitted_virtual_store_dir, &virtual_store_dir.to_string_lossy().into_owned());
+
         drop(dir);
     }
 }

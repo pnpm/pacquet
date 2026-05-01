@@ -194,8 +194,11 @@ pub fn workspace_root_or(start: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::WorkspaceSettings;
+    use crate::{NodeLinker, Npmrc};
+    use pacquet_store_dir::StoreDir;
     use pretty_assertions::assert_eq;
+    use std::{fs, path::Path};
 
     #[test]
     fn parses_common_settings_from_yaml() {

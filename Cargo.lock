@@ -801,6 +801,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gethostname"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bd49230192a3797a9a4d6abe9b3eed6f7fa4c8a8a4947977c6f80025f92cbd8"
+dependencies = [
+ "rustix",
+ "windows-link",
+]
+
+[[package]]
 name = "getrandom"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1755,6 +1765,7 @@ dependencies = [
  "pacquet-package-manager",
  "pacquet-package-manifest",
  "pacquet-registry",
+ "pacquet-reporter",
  "pacquet-store-dir",
  "pacquet-tarball",
  "pacquet-testing-utils",
@@ -1903,6 +1914,7 @@ dependencies = [
  "pacquet-package-manifest",
  "pacquet-registry",
  "pacquet-registry-mock",
+ "pacquet-reporter",
  "pacquet-store-dir",
  "pacquet-tarball",
  "pacquet-testing-utils",
@@ -1913,6 +1925,7 @@ dependencies = [
  "serde-saphyr",
  "ssri",
  "tempfile",
+ "text-block-macros",
  "tokio",
  "tracing",
  "walkdir",
@@ -1966,6 +1979,18 @@ dependencies = [
  "sysinfo",
  "tokio",
  "which",
+]
+
+[[package]]
+name = "pacquet-reporter"
+version = "0.0.1"
+dependencies = [
+ "gethostname",
+ "insta",
+ "pipe-trait",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

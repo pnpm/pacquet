@@ -98,9 +98,13 @@ impl From<LockfileResolution> for ResolutionSerde {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        DirectoryResolution, GitResolution, LockfileResolution, RegistryResolution,
+        TarballResolution,
+    };
     use crate::serialize_yaml;
     use pretty_assertions::assert_eq;
+    use ssri::Integrity;
     use text_block_macros::text_block;
 
     fn integrity(integrity_str: &str) -> Integrity {
