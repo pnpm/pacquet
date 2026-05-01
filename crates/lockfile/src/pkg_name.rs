@@ -89,7 +89,8 @@ impl From<PkgName> for String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{ParsePkgNameError, PkgName};
+    use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
 
     #[test]

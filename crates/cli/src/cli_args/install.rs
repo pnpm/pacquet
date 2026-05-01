@@ -3,6 +3,7 @@ use clap::Args;
 use miette::Context;
 use pacquet_package_manager::Install;
 use pacquet_package_manifest::DependencyGroup;
+use pacquet_reporter::Reporter;
 
 #[derive(Debug, Args)]
 pub struct InstallDependencyOptions {
@@ -49,7 +50,7 @@ pub struct InstallArgs {
 }
 
 impl InstallArgs {
-    pub async fn run(self, state: State) -> miette::Result<()> {
+    pub async fn run<R: Reporter>(self, state: State) -> miette::Result<()> {
         let State { tarball_mem_cache, http_client, config, manifest, lockfile, resolved_packages } =
             &state;
         let InstallArgs { dependency_options, frozen_lockfile } = self;
@@ -64,7 +65,7 @@ impl InstallArgs {
             frozen_lockfile,
             resolved_packages,
         }
-        .run()
+        .run::<R>()
         .await
         .wrap_err("installing dependencies")?;
 
@@ -74,7 +75,7 @@ impl InstallArgs {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::InstallDependencyOptions;
     use pacquet_package_manifest::DependencyGroup;
     use pretty_assertions::assert_eq;
 

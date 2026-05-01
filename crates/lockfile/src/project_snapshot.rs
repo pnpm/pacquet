@@ -43,7 +43,8 @@ impl ProjectSnapshot {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{ProjectSnapshot, ResolvedDependencySpec};
+    use pacquet_package_manifest::DependencyGroup;
     use pretty_assertions::assert_eq;
     use text_block_macros::text_block;
 

@@ -81,7 +81,8 @@ impl From<PkgVerPeer> for String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{ParsePkgVerPeerError, PkgVerPeer};
+    use node_semver::Version;
     use pretty_assertions::assert_eq;
 
     fn assert_ver_peer<Ver, Peer>(received: PkgVerPeer, expected_version: Ver, expected_peer: Peer)

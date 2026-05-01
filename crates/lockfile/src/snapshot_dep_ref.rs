@@ -130,7 +130,8 @@ impl From<PkgVerPeer> for SnapshotDepRef {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{SnapshotDepRef, looks_like_alias};
+    use crate::{PkgName, PkgNameVerPeer, PkgVerPeer};
     use pretty_assertions::assert_eq;
 
     fn pkg_name(s: &str) -> PkgName {

@@ -334,9 +334,16 @@ fn verify_file_integrity(path: &Path, digest: &str, algo: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{VerifiedFilesCache, build_file_maps_from_index, check_pkg_files_integrity};
+    use crate::{CafsFileInfo, PackageFilesIndex, StoreDir};
     use pretty_assertions::assert_eq;
-    use std::{fs, io::Write, time::SystemTime};
+    use sha2::{Digest, Sha512};
+    use std::{
+        fs,
+        io::Write,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
     use tempfile::tempdir;
 
     /// Write `content` to the correct CAFS path under `store_dir` for

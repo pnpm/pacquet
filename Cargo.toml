@@ -27,6 +27,7 @@ pacquet-npmrc            = { path = "crates/npmrc" }
 pacquet-executor         = { path = "crates/executor" }
 pacquet-diagnostics      = { path = "crates/diagnostics" }
 pacquet-store-dir        = { path = "crates/store-dir" }
+pacquet-reporter         = { path = "crates/reporter" }
 
 # Tasks
 pacquet-registry-mock = { path = "tasks/registry-mock" }
@@ -44,6 +45,7 @@ httpdate = { version = "1.0.3" }
 insta = { version = "1.47.2", features = ["yaml", "glob", "walkdir"] }
 itertools = { version = "0.14.0" }
 futures-util = { version = "0.3.32" }
+gethostname = { version = "1" }
 miette = { version = "7.6.0", features = ["fancy"] }
 num_cpus = { version = "1.17.0" }
 os_display = { version = "0.1.4" }

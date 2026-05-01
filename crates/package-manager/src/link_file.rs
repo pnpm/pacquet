@@ -310,8 +310,17 @@ fn clone_or_copy_link(state: &AtomicU8, source: &Path, target: &Path) -> io::Res
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        LINK_STATE_CLONE, LINK_STATE_COPY, LINK_STATE_HARDLINK, LinkFileError, auto_link,
+        clone_or_copy_link, is_call_error, is_cross_device, link_file,
+    };
+    use pacquet_npmrc::PackageImportMethod;
     use pretty_assertions::assert_eq;
+    use std::{
+        fs, io,
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicU8, Ordering},
+    };
     use tempfile::tempdir;
 
     fn write_source(dir: &Path, name: &str, contents: &[u8]) -> PathBuf {
