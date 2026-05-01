@@ -136,7 +136,7 @@ fn find_placeholder_end(bytes: &[u8], start: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{EnvVar, env_replace};
     use pretty_assertions::assert_eq;
 
     /// Empty env: no variable is ever set. Used by tests that only

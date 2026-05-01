@@ -170,8 +170,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{Install, InstallError};
-    use pacquet_lockfile::Lockfile;
+    use super::{Install, InstallError, Lockfile};
     use pacquet_npmrc::Npmrc;
     use pacquet_package_manifest::{DependencyGroup, PackageManifest};
     use pacquet_registry_mock::AutoMockInstance;

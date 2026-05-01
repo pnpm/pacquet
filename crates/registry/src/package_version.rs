@@ -86,7 +86,7 @@ impl PackageVersion {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{AuthHeaders, PackageTag, PackageVersion, ThrottledClient};
 
     /// [`PackageVersion::fetch_from_registry`] must attach the
     /// registry-keyed `Authorization` header on every tag GET, just
