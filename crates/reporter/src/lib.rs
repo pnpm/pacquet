@@ -26,11 +26,34 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "name")]
 pub enum LogEvent {
+    /// Install context: store directory, virtual-store directory, and
+    /// whether a current lockfile (`node_modules/.pnpm/lock.yaml`) was
+    /// loaded (`pnpm:context`).
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/core/core-loggers/src/contextLogger.ts>.
+    /// Emit site: <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/context/src/index.ts#L196>.
+    #[serde(rename = "pnpm:context")]
+    Context(ContextLog),
+
     /// Coarse install-pipeline phase markers (`pnpm:stage`).
     ///
     /// Upstream: <https://github.com/pnpm/pnpm/blob/3b12eb27de/core/core-loggers/src/stageLogger.ts>.
     #[serde(rename = "pnpm:stage")]
     Stage(StageLog),
+}
+
+/// `pnpm:context` payload.
+///
+/// Emitted once per install when the install context has been
+/// constructed. Field names match pnpm's wire shape (camelCase) so
+/// `@pnpm/cli.default-reporter` accepts the record unchanged.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextLog {
+    pub level: LogLevel,
+    pub current_lockfile_exists: bool,
+    pub store_dir: String,
+    pub virtual_store_dir: String,
 }
 
 /// `pnpm:stage` payload.
