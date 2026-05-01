@@ -10,7 +10,7 @@ use pacquet_lockfile::Lockfile;
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
-use pacquet_reporter::{LogEvent, LogLevel, Reporter, Stage, StageLog};
+use pacquet_reporter::{ContextLog, LogEvent, LogLevel, Reporter, Stage, StageLog};
 use pacquet_tarball::MemCache;
 
 /// This subroutine does everything `pacquet install` is supposed to do.
@@ -84,6 +84,19 @@ where
             .map(Option::<&str>::unwrap)
             .unwrap()
             .to_owned();
+
+        // `pnpm:context` carries the directories pnpm's reporter prints
+        // in the install header. `currentLockfileExists` reflects
+        // `node_modules/.pnpm/lock.yaml` upstream; pacquet doesn't yet
+        // read or write that file, so it's always `false` today.
+        // TODO: flip when the current-lockfile path lands.
+        // Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/context/src/index.ts#L196>.
+        R::emit(&LogEvent::Context(ContextLog {
+            level: LogLevel::Debug,
+            current_lockfile_exists: false,
+            store_dir: config.store_dir.display().to_string(),
+            virtual_store_dir: config.virtual_store_dir.to_string_lossy().into_owned(),
+        }));
 
         R::emit(&LogEvent::Stage(StageLog {
             level: LogLevel::Debug,
@@ -162,7 +175,7 @@ mod tests {
     use pacquet_npmrc::Npmrc;
     use pacquet_package_manifest::{DependencyGroup, PackageManifest};
     use pacquet_registry_mock::AutoMockInstance;
-    use pacquet_reporter::{LogEvent, Reporter, SilentReporter, Stage, StageLog};
+    use pacquet_reporter::{ContextLog, LogEvent, Reporter, SilentReporter, Stage, StageLog};
     use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
     use std::sync::Mutex;
     use tempfile::tempdir;
@@ -553,15 +566,22 @@ mod tests {
         drop(dir);
     }
 
-    /// [`Install::run`] emits `pnpm:stage` events that bracket the install.
-    /// `importing_started` fires before any work, and `importing_done`
-    /// fires after the install completes successfully. On the success
-    /// path both events fire in order. On an early-error path such as
-    /// [`InstallError::NoLockfile`], only `importing_started` fires.
-    /// This matches pnpm's stage semantics. The JS reporter relies on
-    /// the started/done pairing to drive its progress UI.
+    /// [`Install::run`] emits `pnpm:context` followed by the
+    /// `pnpm:stage` `importing_started` / `importing_done` pair that
+    /// brackets the install. On the success path all three fire in
+    /// order; on an early-error path such as
+    /// [`InstallError::NoLockfile`] only the leading events fire. This
+    /// matches pnpm: context is emitted once alongside the install
+    /// header, and the stage pairing drives the JS reporter's progress
+    /// UI.
+    ///
+    /// `pnpm:context` carries `currentLockfileExists`, `storeDir`,
+    /// `virtualStoreDir`. `currentLockfileExists` is hard-coded
+    /// `false` today (pacquet doesn't read or write
+    /// `node_modules/.pnpm/lock.yaml`), matching the TODO in
+    /// [`Install::run`].
     #[tokio::test]
-    async fn install_emits_stage_events_bracketing_the_run() {
+    async fn install_emits_context_and_stage_events() {
         static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
 
         struct RecordingReporter;
@@ -582,9 +602,9 @@ mod tests {
 
         let mut config = Npmrc::new();
         config.lockfile = false;
-        config.store_dir = store_dir.into();
+        config.store_dir = store_dir.clone().into();
         config.modules_dir = modules_dir.to_path_buf();
-        config.virtual_store_dir = virtual_store_dir;
+        config.virtual_store_dir = virtual_store_dir.clone();
         let config = config.leak();
 
         // Empty v9 lockfile: `--frozen-lockfile` walks an empty snapshot
@@ -614,13 +634,36 @@ mod tests {
         .expect("empty-lockfile frozen install should succeed");
 
         let captured = EVENTS.lock().unwrap();
-        let stages: Vec<Stage> = captured
-            .iter()
-            .map(|e| match e {
-                LogEvent::Stage(StageLog { stage, .. }) => *stage,
-            })
-            .collect();
-        assert_eq!(stages, [Stage::ImportingStarted, Stage::ImportingDone]);
+
+        // Event ordering matches pnpm: context first, then the stage
+        // bracketing pair.
+        assert!(
+            matches!(
+                captured.as_slice(),
+                [
+                    LogEvent::Context(_),
+                    LogEvent::Stage(StageLog { stage: Stage::ImportingStarted, .. }),
+                    LogEvent::Stage(StageLog { stage: Stage::ImportingDone, .. }),
+                ]
+            ),
+            "unexpected event sequence: {captured:?}",
+        );
+
+        // Spot-check the context payload: pacquet's directories must
+        // round-trip through the wire shape, and `currentLockfileExists`
+        // is the hard-coded `false` documented in `Install::run`.
+        let LogEvent::Context(ContextLog {
+            current_lockfile_exists,
+            store_dir: emitted_store_dir,
+            virtual_store_dir: emitted_virtual_store_dir,
+            ..
+        }) = &captured[0]
+        else {
+            unreachable!("first event is context, asserted above");
+        };
+        assert!(!current_lockfile_exists);
+        assert_eq!(emitted_store_dir, &store_dir.display().to_string());
+        assert_eq!(emitted_virtual_store_dir, &virtual_store_dir.to_string_lossy().into_owned());
 
         drop(dir);
     }
