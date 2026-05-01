@@ -347,7 +347,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
 
-    use super::{NodeLinker, Npmrc, PackageImportMethod, fs};
+    use super::{EnvVar, NodeLinker, Npmrc, PackageImportMethod, fs};
     use crate::{custom_deserializer::default_store_dir, test_env_guard::EnvGuard};
     use pacquet_store_dir::StoreDir;
     use pipe_trait::Pipe;
