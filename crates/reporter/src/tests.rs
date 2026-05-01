@@ -90,9 +90,9 @@ fn summary_event_matches_pnpm_wire_shape() {
 }
 
 /// Package-import-method log carries the chosen method as one of
-/// pnpm's three lowercase strings; anything else (e.g. the camelCase
-/// `cloneOrCopy` from pacquet's config enum) would silently fail to
-/// render.
+/// pnpm's three lowercase strings; anything else (e.g. the
+/// kebab-case `clone-or-copy` that `pacquet_npmrc::PackageImportMethod`
+/// deserializes from) would silently fail to render.
 #[test]
 fn package_import_method_event_matches_pnpm_wire_shape() {
     let event = LogEvent::PackageImportMethod(PackageImportMethodLog {
@@ -117,7 +117,7 @@ fn package_import_method_event_matches_pnpm_wire_shape() {
         (PackageImportMethod::Copy, "copy"),
     ] {
         let json = serde_json::to_string(&method).expect("serialize method");
-        assert_eq!(json, format!("\"{expected}\""), "method {expected}");
+        assert_eq!(json, format!("\"{expected}\""));
     }
 }
 
