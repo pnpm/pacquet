@@ -5,8 +5,8 @@ use pretty_assertions::assert_eq;
 use serde_json::Value;
 
 use crate::{
-    ContextLog, Envelope, GetHostName, LogEvent, LogLevel, RealApi, Reporter, SilentReporter,
-    Stage, StageLog, SummaryLog,
+    ContextLog, Envelope, GetHostName, LogEvent, LogLevel, PackageImportMethod,
+    PackageImportMethodLog, RealApi, Reporter, SilentReporter, Stage, StageLog, SummaryLog,
 };
 
 /// Context log serializes with the camelCase field names
@@ -87,6 +87,38 @@ fn summary_event_matches_pnpm_wire_shape() {
     assert_eq!(json["name"], "pnpm:summary");
     assert_eq!(json["level"], "debug");
     assert_eq!(json["prefix"], "/some/project");
+}
+
+/// Package-import-method log carries the chosen method as one of
+/// pnpm's three lowercase strings; anything else (e.g. the camelCase
+/// `cloneOrCopy` from pacquet's config enum) would silently fail to
+/// render.
+#[test]
+fn package_import_method_event_matches_pnpm_wire_shape() {
+    let event = LogEvent::PackageImportMethod(PackageImportMethodLog {
+        level: LogLevel::Debug,
+        method: PackageImportMethod::Clone,
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+
+    assert_eq!(json["name"], "pnpm:package-import-method");
+    assert_eq!(json["level"], "debug");
+    assert_eq!(json["method"], "clone");
+
+    for (method, expected) in [
+        (PackageImportMethod::Clone, "clone"),
+        (PackageImportMethod::Hardlink, "hardlink"),
+        (PackageImportMethod::Copy, "copy"),
+    ] {
+        let json = serde_json::to_string(&method).expect("serialize method");
+        assert_eq!(json, format!("\"{expected}\""), "method {expected}");
+    }
 }
 
 /// Phase markers serialize as the snake_case strings pnpm uses.

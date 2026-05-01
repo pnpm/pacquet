@@ -49,6 +49,15 @@ pub enum LogEvent {
     /// Emit site: <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-installer/src/install/index.ts#L1663>.
     #[serde(rename = "pnpm:summary")]
     Summary(SummaryLog),
+
+    /// The import method used to materialise files from the store
+    /// (`pnpm:package-import-method`). Fires once per install when the
+    /// importer is constructed.
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/core/core-loggers/src/packageImportMethodLogger.ts>.
+    /// Emit site: <https://github.com/pnpm/pnpm/blob/086c5e91e8/fs/indexed-pkg-importer/src/index.ts#L32>.
+    #[serde(rename = "pnpm:package-import-method")]
+    PackageImportMethod(PackageImportMethodLog),
 }
 
 /// `pnpm:context` payload.
@@ -96,6 +105,28 @@ pub enum Stage {
 pub struct SummaryLog {
     pub level: LogLevel,
     pub prefix: String,
+}
+
+/// `pnpm:package-import-method` payload. The method names match pnpm's
+/// wire shape exactly — anything else would silently fail to render
+/// even though the JSON parses.
+#[derive(Debug, Clone, Serialize)]
+pub struct PackageImportMethodLog {
+    pub level: LogLevel,
+    pub method: PackageImportMethod,
+}
+
+/// Wire-format import method. pnpm only knows three values; pacquet's
+/// config enum has more (`Auto`, `CloneOrCopy`) which collapse to
+/// `clone` because that's the optimistic path both fall through to
+/// first. See `import_method_for_wire` in `pacquet-package-manager`
+/// for the mapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PackageImportMethod {
+    Clone,
+    Hardlink,
+    Copy,
 }
 
 /// Severity level on the [bunyan]-shaped envelope.
