@@ -5,8 +5,36 @@ use pretty_assertions::assert_eq;
 use serde_json::Value;
 
 use crate::{
-    Envelope, GetHostName, LogEvent, LogLevel, RealApi, Reporter, SilentReporter, Stage, StageLog,
+    ContextLog, Envelope, GetHostName, LogEvent, LogLevel, RealApi, Reporter, SilentReporter,
+    Stage, StageLog,
 };
+
+/// Context log serializes with the camelCase field names
+/// `@pnpm/cli.default-reporter` expects (`currentLockfileExists`,
+/// `storeDir`, `virtualStoreDir`); snake_case names would silently
+/// fail to render even though the JSON is structurally valid.
+#[test]
+fn context_event_matches_pnpm_wire_shape() {
+    let event = LogEvent::Context(ContextLog {
+        level: LogLevel::Debug,
+        current_lockfile_exists: false,
+        store_dir: "/store".to_string(),
+        virtual_store_dir: "/proj/node_modules/.pacquet".to_string(),
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+
+    assert_eq!(json["name"], "pnpm:context");
+    assert_eq!(json["level"], "debug");
+    assert_eq!(json["currentLockfileExists"], false);
+    assert_eq!(json["storeDir"], "/store");
+    assert_eq!(json["virtualStoreDir"], "/proj/node_modules/.pacquet");
+}
 
 /// Stage log serializes with the channel name flattened into the
 /// envelope alongside `time`, `hostname`, `pid`, and the payload
