@@ -12,7 +12,7 @@
 //! a regression in any of these means the crate became *less* tolerant of
 //! garbage, not that it broke a real pnpm flow.
 
-use super::*;
+use super::{derive_hoisted_dependencies, drop_empty_hoist_fields, is_empty_or_null, sort_skipped};
 use pretty_assertions::assert_eq;
 use serde_json::{Map, Value, json};
 
