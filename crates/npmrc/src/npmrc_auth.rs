@@ -254,7 +254,7 @@ fn apply_creds_field(creds: &mut RawCreds, field: &str, value: String) {
 
 #[cfg(test)]
 mod tests {
-    use super::NpmrcAuth;
+    use super::{EnvVar, NpmrcAuth, RawCreds, base64_decode, base64_encode};
     use crate::Npmrc;
     use pretty_assertions::assert_eq;
 

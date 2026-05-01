@@ -3,7 +3,7 @@ use super::{
     TarballError, VerifyChecksumError, allocate_tarball_buffer, extract_tarball_entries,
     fetch_and_extract_with_retry, is_transient_error, prefetch_cas_paths,
 };
-use pacquet_network::ThrottledClient;
+use pacquet_network::{AuthHeaders, ThrottledClient};
 use pacquet_store_dir::{
     CafsFileInfo, PackageFilesIndex, SharedVerifiedFilesCache, StoreDir, StoreIndex,
     store_index_key,

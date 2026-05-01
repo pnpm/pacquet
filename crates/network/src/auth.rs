@@ -267,7 +267,7 @@ pub fn base64_encode(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{AuthHeaders, base64_encode, nerf_dart};
     use pretty_assertions::assert_eq;
 
     fn build(entries: &[(&str, &str)]) -> AuthHeaders {
