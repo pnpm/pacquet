@@ -10,7 +10,7 @@ use pacquet_lockfile::Lockfile;
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
-use pacquet_reporter::{ContextLog, LogEvent, LogLevel, Reporter, Stage, StageLog};
+use pacquet_reporter::{ContextLog, LogEvent, LogLevel, Reporter, Stage, StageLog, SummaryLog};
 use pacquet_tarball::MemCache;
 
 /// This subroutine does everything `pacquet install` is supposed to do.
@@ -160,9 +160,15 @@ where
 
         R::emit(&LogEvent::Stage(StageLog {
             level: LogLevel::Debug,
-            prefix,
+            prefix: prefix.clone(),
             stage: Stage::ImportingDone,
         }));
+
+        // `pnpm:summary` closes the install and lets the reporter render
+        // the accumulated `pnpm:root` events as a "+N -M" block. Must
+        // come after `importing_done`, matching pnpm's ordering at
+        // <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-installer/src/install/index.ts#L1663>.
+        R::emit(&LogEvent::Summary(SummaryLog { level: LogLevel::Debug, prefix }));
 
         Ok(())
     }
@@ -175,7 +181,9 @@ mod tests {
     use pacquet_npmrc::Npmrc;
     use pacquet_package_manifest::{DependencyGroup, PackageManifest};
     use pacquet_registry_mock::AutoMockInstance;
-    use pacquet_reporter::{ContextLog, LogEvent, Reporter, SilentReporter, Stage, StageLog};
+    use pacquet_reporter::{
+        ContextLog, LogEvent, Reporter, SilentReporter, Stage, StageLog, SummaryLog,
+    };
     use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
     use std::sync::Mutex;
     use tempfile::tempdir;
@@ -566,14 +574,14 @@ mod tests {
         drop(dir);
     }
 
-    /// [`Install::run`] emits `pnpm:context` followed by the
-    /// `pnpm:stage` `importing_started` / `importing_done` pair that
-    /// brackets the install. On the success path all three fire in
-    /// order; on an early-error path such as
+    /// [`Install::run`] emits `pnpm:context`, then `pnpm:stage`
+    /// `importing_started`, then on the success path `importing_done`
+    /// followed by `pnpm:summary`. On an early-error path such as
     /// [`InstallError::NoLockfile`] only the leading events fire. This
     /// matches pnpm: context is emitted once alongside the install
-    /// header, and the stage pairing drives the JS reporter's progress
-    /// UI.
+    /// header, the stage pairing drives the JS reporter's progress
+    /// UI, and summary closes the run so the reporter can render its
+    /// "+N -M" block.
     ///
     /// `pnpm:context` carries `currentLockfileExists`, `storeDir`,
     /// `virtualStoreDir`. `currentLockfileExists` is hard-coded
@@ -581,7 +589,7 @@ mod tests {
     /// `node_modules/.pnpm/lock.yaml`), matching the TODO in
     /// [`Install::run`].
     #[tokio::test]
-    async fn install_emits_context_and_stage_events() {
+    async fn install_emits_pnpm_event_sequence() {
         static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
 
         struct RecordingReporter;
@@ -635,8 +643,8 @@ mod tests {
 
         let captured = EVENTS.lock().unwrap();
 
-        // Event ordering matches pnpm: context first, then the stage
-        // bracketing pair.
+        // Event ordering matches pnpm: context, then the stage
+        // bracketing pair, then summary closing the run.
         assert!(
             matches!(
                 captured.as_slice(),
@@ -644,6 +652,7 @@ mod tests {
                     LogEvent::Context(_),
                     LogEvent::Stage(StageLog { stage: Stage::ImportingStarted, .. }),
                     LogEvent::Stage(StageLog { stage: Stage::ImportingDone, .. }),
+                    LogEvent::Summary(_),
                 ]
             ),
             "unexpected event sequence: {captured:?}",
@@ -664,6 +673,17 @@ mod tests {
         assert!(!current_lockfile_exists);
         assert_eq!(emitted_store_dir, &store_dir.display().to_string());
         assert_eq!(emitted_virtual_store_dir, &virtual_store_dir.to_string_lossy().into_owned());
+
+        // Summary's `prefix` must equal the manifest-parent value
+        // `Install::run` derives, since pnpm's reporter keys its
+        // accumulated root-events by prefix to render the diff.
+        let LogEvent::Summary(SummaryLog { prefix: summary_prefix, .. }) = &captured[3] else {
+            unreachable!("fourth event is summary, asserted above");
+        };
+        assert_eq!(
+            summary_prefix,
+            &manifest.path().parent().unwrap().to_string_lossy().into_owned(),
+        );
 
         drop(dir);
     }
