@@ -9,12 +9,8 @@ use miette::Diagnostic;
 use pacquet_lockfile::Lockfile;
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
-use pacquet_npmrc::PackageImportMethod as ConfigImportMethod;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
-use pacquet_reporter::{
-    ContextLog, LogEvent, LogLevel, PackageImportMethod, PackageImportMethodLog, Reporter, Stage,
-    StageLog, SummaryLog,
-};
+use pacquet_reporter::{ContextLog, LogEvent, LogLevel, Reporter, Stage, StageLog, SummaryLog};
 use pacquet_tarball::MemCache;
 
 /// This subroutine does everything `pacquet install` is supposed to do.
@@ -53,21 +49,6 @@ pub enum InstallError {
 
     #[diagnostic(transparent)]
     FrozenLockfile(#[error(source)] InstallFrozenLockfileError),
-}
-
-/// Map pacquet's configured [`ConfigImportMethod`] to the three values
-/// pnpm's wire format accepts. `Auto` and `CloneOrCopy` collapse to
-/// `Clone` because that's the optimistic path both attempt first; if
-/// the import falls back to hardlink/copy the wire value is then a
-/// best-effort approximation. See the TODO at the emit site.
-fn import_method_for_wire(method: ConfigImportMethod) -> PackageImportMethod {
-    match method {
-        ConfigImportMethod::Auto | ConfigImportMethod::Clone | ConfigImportMethod::CloneOrCopy => {
-            PackageImportMethod::Clone
-        }
-        ConfigImportMethod::Hardlink => PackageImportMethod::Hardlink,
-        ConfigImportMethod::Copy => PackageImportMethod::Copy,
-    }
 }
 
 impl<'a, DependencyGroupList> Install<'a, DependencyGroupList>
@@ -117,22 +98,6 @@ where
             virtual_store_dir: config.virtual_store_dir.to_string_lossy().into_owned(),
         }));
 
-        // `pnpm:package-import-method` reports the strategy used to
-        // materialise files from the store (clone / hardlink / copy).
-        // Upstream emits the *resolved* method after fallback (e.g.
-        // `auto` may try clone, fall back to hardlink). Pacquet emits
-        // the configured method optimistically because the fallback
-        // signal isn't surfaced past the per-package import path yet.
-        // For the explicit settings (`Hardlink`, `Copy`, `Clone`) the
-        // optimistic value is also the actual one.
-        // TODO: emit after the first successful import so the value
-        // reflects the real fallback path for `Auto` and `CloneOrCopy`.
-        // Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/fs/indexed-pkg-importer/src/index.ts#L32>.
-        R::emit(&LogEvent::PackageImportMethod(PackageImportMethodLog {
-            level: LogLevel::Debug,
-            method: import_method_for_wire(config.package_import_method),
-        }));
-
         R::emit(&LogEvent::Stage(StageLog {
             level: LogLevel::Debug,
             prefix: prefix.clone(),
@@ -172,7 +137,7 @@ where
                 snapshots: snapshots.as_ref(),
                 dependency_groups,
             }
-            .run()
+            .run::<R>()
             .await
             .map_err(InstallError::FrozenLockfile)?;
         } else if config.lockfile {
@@ -186,7 +151,7 @@ where
                 manifest,
                 dependency_groups,
             }
-            .run()
+            .run::<R>()
             .await
             .map_err(InstallError::WithoutLockfile)?;
         }
@@ -217,8 +182,7 @@ mod tests {
     use pacquet_package_manifest::{DependencyGroup, PackageManifest};
     use pacquet_registry_mock::AutoMockInstance;
     use pacquet_reporter::{
-        ContextLog, LogEvent, PackageImportMethod, PackageImportMethodLog, Reporter,
-        SilentReporter, Stage, StageLog, SummaryLog,
+        ContextLog, LogEvent, Reporter, SilentReporter, Stage, StageLog, SummaryLog,
     };
     use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
     use std::sync::Mutex;
@@ -610,15 +574,20 @@ mod tests {
         drop(dir);
     }
 
-    /// [`Install::run`] emits `pnpm:context`,
-    /// `pnpm:package-import-method`, `pnpm:stage importing_started`,
-    /// then on the success path `pnpm:stage importing_done` followed
-    /// by `pnpm:summary`. On an early-error path such as
+    /// [`Install::run`] emits `pnpm:context`, then `pnpm:stage`
+    /// `importing_started`, then on the success path `importing_done`
+    /// followed by `pnpm:summary`. On an early-error path such as
     /// [`InstallError::NoLockfile`] only the leading events fire. This
-    /// matches pnpm: context and the chosen import strategy go in the
-    /// install header, the stage pairing drives the JS reporter's
-    /// progress UI, and summary closes the run so the reporter can
-    /// render its "+N -M" block.
+    /// matches pnpm: context is emitted once alongside the install
+    /// header, the stage pairing drives the JS reporter's progress
+    /// UI, and summary closes the run so the reporter can render its
+    /// "+N -M" block.
+    ///
+    /// `pnpm:package-import-method` is emitted lazily by `link_file`
+    /// the first time each method actually resolves (after `auto`'s
+    /// fallback chain finishes), so an empty-lockfile install like this
+    /// one has no link_file calls and no such event in the captured
+    /// sequence. See `link_file::tests` for that channel's coverage.
     ///
     /// `pnpm:context` carries `currentLockfileExists`, `storeDir`,
     /// `virtualStoreDir`. `currentLockfileExists` is hard-coded
@@ -680,15 +649,13 @@ mod tests {
 
         let captured = EVENTS.lock().unwrap();
 
-        // Event ordering matches pnpm: install-header events
-        // (context, package-import-method), then the stage bracketing
-        // pair, then summary closing the run.
+        // Event ordering matches pnpm: context, then the stage
+        // bracketing pair, then summary closing the run.
         assert!(
             matches!(
                 captured.as_slice(),
                 [
                     LogEvent::Context(_),
-                    LogEvent::PackageImportMethod(_),
                     LogEvent::Stage(StageLog { stage: Stage::ImportingStarted, .. }),
                     LogEvent::Stage(StageLog { stage: Stage::ImportingDone, .. }),
                     LogEvent::Summary(_),
@@ -713,19 +680,11 @@ mod tests {
         assert_eq!(emitted_store_dir, &store_dir.display().to_string());
         assert_eq!(emitted_virtual_store_dir, &virtual_store_dir.to_string_lossy().into_owned());
 
-        // Default `Npmrc` uses `Auto`, which collapses to `Clone` on
-        // the wire per `import_method_for_wire`.
-        let LogEvent::PackageImportMethod(PackageImportMethodLog { method, .. }) = &captured[1]
-        else {
-            unreachable!("second event is package-import-method, asserted above");
-        };
-        assert_eq!(*method, PackageImportMethod::Clone);
-
         // Summary's `prefix` must equal the manifest-parent value
         // `Install::run` derives, since pnpm's reporter keys its
         // accumulated root-events by prefix to render the diff.
-        let LogEvent::Summary(SummaryLog { prefix: summary_prefix, .. }) = &captured[4] else {
-            unreachable!("fifth event is summary, asserted above");
+        let LogEvent::Summary(SummaryLog { prefix: summary_prefix, .. }) = &captured[3] else {
+            unreachable!("fourth event is summary, asserted above");
         };
         assert_eq!(
             summary_prefix,

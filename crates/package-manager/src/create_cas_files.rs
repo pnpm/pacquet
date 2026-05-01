@@ -2,6 +2,7 @@ use crate::{LinkFileError, link_file};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_npmrc::PackageImportMethod;
+use pacquet_reporter::Reporter;
 use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
@@ -25,7 +26,7 @@ pub enum CreateCasFilesError {
 /// If `dir_path` doesn't exist, create and populate it with files from `cas_paths`.
 ///
 /// If `dir_path` already exists, do nothing.
-pub fn create_cas_files(
+pub fn create_cas_files<R: Reporter>(
     import_method: PackageImportMethod,
     dir_path: &Path,
     cas_paths: &HashMap<String, PathBuf>,
@@ -73,7 +74,7 @@ pub fn create_cas_files(
     cas_paths
         .par_iter()
         .try_for_each(|(cleaned_entry, store_path)| {
-            link_file(import_method, store_path, &dir_path.join(cleaned_entry))
+            link_file::<R>(import_method, store_path, &dir_path.join(cleaned_entry))
         })
         .map_err(CreateCasFilesError::LinkFile)
 }

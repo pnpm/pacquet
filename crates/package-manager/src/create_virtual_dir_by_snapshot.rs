@@ -3,6 +3,7 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::{PackageKey, SnapshotEntry};
 use pacquet_npmrc::PackageImportMethod;
+use pacquet_reporter::Reporter;
 use std::{
     collections::HashMap,
     fs, io,
@@ -46,7 +47,7 @@ pub enum CreateVirtualDirError {
 
 impl<'a> CreateVirtualDirBySnapshot<'a> {
     /// Execute the subroutine.
-    pub fn run(self) -> Result<(), CreateVirtualDirError> {
+    pub fn run<R: Reporter>(self) -> Result<(), CreateVirtualDirError> {
         let CreateVirtualDirBySnapshot {
             virtual_store_dir,
             cas_paths,
@@ -75,7 +76,7 @@ impl<'a> CreateVirtualDirBySnapshot<'a> {
         // current stack frame.
         let (cas_result, symlink_result) = rayon::join(
             || {
-                create_cas_files(import_method, &save_path, cas_paths)
+                create_cas_files::<R>(import_method, &save_path, cas_paths)
                     .map_err(CreateVirtualDirError::CreateCasFiles)
             },
             || match snapshot.dependencies.as_ref() {

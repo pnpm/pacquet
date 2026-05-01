@@ -7,6 +7,7 @@ use miette::Diagnostic;
 use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
+use pacquet_reporter::Reporter;
 use pacquet_store_dir::{SharedVerifiedFilesCache, StoreIndex, StoreIndexWriter, store_index_key};
 use pacquet_tarball::prefetch_cas_paths;
 use pipe_trait::Pipe;
@@ -42,7 +43,7 @@ pub enum CreateVirtualStoreError {
 
 impl<'a> CreateVirtualStore<'a> {
     /// Execute the subroutine.
-    pub async fn run(self) -> Result<(), CreateVirtualStoreError> {
+    pub async fn run<R: Reporter>(self) -> Result<(), CreateVirtualStoreError> {
         let CreateVirtualStore { http_client, config, packages, snapshots } = self;
 
         let Some(snapshots) = snapshots else {
@@ -254,7 +255,7 @@ impl<'a> CreateVirtualStore<'a> {
                         package_key: snapshot_key,
                         snapshot,
                     }
-                    .run()
+                    .run::<R>()
                     .map_err(|e| {
                         CreateVirtualStoreError::InstallPackageBySnapshot(
                             InstallPackageBySnapshotError::CreateVirtualDir(e),
@@ -296,7 +297,7 @@ impl<'a> CreateVirtualStore<'a> {
                         metadata,
                         snapshot,
                     }
-                    .run()
+                    .run::<R>()
                     .await
                     .map_err(CreateVirtualStoreError::InstallPackageBySnapshot)
                 })

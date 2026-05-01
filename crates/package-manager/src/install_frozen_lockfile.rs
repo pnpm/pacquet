@@ -8,6 +8,7 @@ use pacquet_lockfile::{PackageKey, PackageMetadata, ProjectSnapshot, SnapshotEnt
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::DependencyGroup;
+use pacquet_reporter::Reporter;
 use std::collections::HashMap;
 
 /// This subroutine installs dependencies from a frozen lockfile.
@@ -47,7 +48,7 @@ where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
     /// Execute the subroutine.
-    pub async fn run(self) -> Result<(), InstallFrozenLockfileError> {
+    pub async fn run<R: Reporter>(self) -> Result<(), InstallFrozenLockfileError> {
         let InstallFrozenLockfile {
             http_client,
             config,
@@ -60,7 +61,7 @@ where
         // TODO: check if the lockfile is out-of-date
 
         CreateVirtualStore { http_client, config, packages, snapshots }
-            .run()
+            .run::<R>()
             .await
             .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
 

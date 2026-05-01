@@ -6,6 +6,7 @@ use miette::Diagnostic;
 use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
+use pacquet_reporter::Reporter;
 use pacquet_store_dir::{SharedReadonlyStoreIndex, SharedVerifiedFilesCache, StoreIndexWriter};
 use pacquet_tarball::{DownloadTarballToStore, PrefetchedCasPaths, TarballError};
 use pipe_trait::Pipe;
@@ -57,7 +58,7 @@ pub enum InstallPackageBySnapshotError {
 
 impl<'a> InstallPackageBySnapshot<'a> {
     /// Execute the subroutine.
-    pub async fn run(self) -> Result<(), InstallPackageBySnapshotError> {
+    pub async fn run<R: Reporter>(self) -> Result<(), InstallPackageBySnapshotError> {
         let InstallPackageBySnapshot {
             http_client,
             config,
@@ -129,7 +130,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             package_key,
             snapshot,
         }
-        .run()
+        .run::<R>()
         .map_err(InstallPackageBySnapshotError::CreateVirtualDir)?;
 
         Ok(())

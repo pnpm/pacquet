@@ -11,6 +11,7 @@ use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::PackageVersion;
+use pacquet_reporter::Reporter;
 use pacquet_store_dir::{SharedVerifiedFilesCache, StoreIndex, StoreIndexWriter};
 use pacquet_tarball::MemCache;
 use pipe_trait::Pipe;
@@ -49,7 +50,7 @@ pub enum InstallWithoutLockfileError {
 
 impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
     /// Execute the subroutine.
-    pub async fn run(self) -> Result<(), InstallWithoutLockfileError>
+    pub async fn run<R: Reporter>(self) -> Result<(), InstallWithoutLockfileError>
     where
         DependencyGroupList: IntoIterator<Item = DependencyGroup>,
     {
@@ -125,7 +126,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                         name,
                         version_range,
                     }
-                    .run()
+                    .run::<R>()
                     .await
                     .map_err(InstallWithoutLockfileError::InstallPackageFromRegistry)?;
 
@@ -137,7 +138,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                         dependency_groups: (),
                         resolved_packages,
                     }
-                    .install_dependencies_from_registry(
+                    .install_dependencies_from_registry::<R>(
                         &dependency,
                         store_index_ref,
                         store_index_writer_ref,
@@ -176,7 +177,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
 impl<'a> InstallWithoutLockfile<'a, ()> {
     /// Install dependencies of a dependency.
     #[async_recursion]
-    async fn install_dependencies_from_registry(
+    async fn install_dependencies_from_registry<R>(
         &self,
         package: &PackageVersion,
         store_index: Option<&'async_recursion pacquet_store_dir::SharedReadonlyStoreIndex>,
@@ -184,7 +185,10 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
             &'async_recursion std::sync::Arc<pacquet_store_dir::StoreIndexWriter>,
         >,
         verified_files_cache: &'async_recursion SharedVerifiedFilesCache,
-    ) -> Result<(), InstallWithoutLockfileError> {
+    ) -> Result<(), InstallWithoutLockfileError>
+    where
+        R: Reporter,
+    {
         let InstallWithoutLockfile {
             tarball_mem_cache,
             http_client,
@@ -222,10 +226,10 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
                     name,
                     version_range,
                 }
-                .run()
+                .run::<R>()
                 .await
                 .map_err(InstallWithoutLockfileError::InstallPackageFromRegistry)?;
-                self.install_dependencies_from_registry(
+                self.install_dependencies_from_registry::<R>(
                     &dependency,
                     store_index,
                     store_index_writer,

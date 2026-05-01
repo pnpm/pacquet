@@ -8,6 +8,7 @@ use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::PackageManifest;
 use pacquet_registry::{Package, PackageTag, PackageVersion, RegistryError};
+use pacquet_reporter::Reporter;
 use pacquet_store_dir::{SharedReadonlyStoreIndex, SharedVerifiedFilesCache, StoreIndexWriter};
 use pacquet_tarball::{DownloadTarballToStore, MemCache, TarballError};
 use std::{path::Path, sync::Arc};
@@ -53,7 +54,7 @@ pub enum InstallPackageFromRegistryError {
 
 impl<'a> InstallPackageFromRegistry<'a> {
     /// Execute the subroutine.
-    pub async fn run(self) -> Result<PackageVersion, InstallPackageFromRegistryError> {
+    pub async fn run<R: Reporter>(self) -> Result<PackageVersion, InstallPackageFromRegistryError> {
         let &InstallPackageFromRegistry { http_client, config, name, version_range, .. } = &self;
 
         // Strip any `npm:<name>@<range>` alias prefix before talking to
@@ -77,7 +78,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
             )
             .await
             .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
-            self.install_package_version(&package_version).await?;
+            self.install_package_version::<R>(&package_version).await?;
             package_version
         } else {
             let package =
@@ -85,12 +86,12 @@ impl<'a> InstallPackageFromRegistry<'a> {
                     .await
                     .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
             let package_version = package.pinned_version(version_range).unwrap(); // TODO: propagate error for when no version satisfies range
-            self.install_package_version(package_version).await?;
+            self.install_package_version::<R>(package_version).await?;
             package_version.clone()
         })
     }
 
-    async fn install_package_version(
+    async fn install_package_version<R: Reporter>(
         self,
         package_version: &PackageVersion,
     ) -> Result<(), InstallPackageFromRegistryError> {
@@ -147,7 +148,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
 
         tracing::info!(target: "pacquet::import", ?save_path, ?symlink_path, "Import package");
 
-        create_cas_files(config.package_import_method, &save_path, &cas_paths)
+        create_cas_files::<R>(config.package_import_method, &save_path, &cas_paths)
             .map_err(InstallPackageFromRegistryError::CreateCasFiles)?;
 
         symlink_package(&save_path, &symlink_path)
@@ -163,6 +164,7 @@ mod tests {
     use node_semver::Version;
     use pacquet_network::ThrottledClient;
     use pacquet_npmrc::Npmrc;
+    use pacquet_reporter::SilentReporter;
     use pacquet_store_dir::{SharedVerifiedFilesCache, StoreDir};
     use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
@@ -220,7 +222,7 @@ mod tests {
             version_range: "1.0.0",
             node_modules_dir: modules_dir.path(),
         }
-        .run()
+        .run::<SilentReporter>()
         .await
         .unwrap();
 
