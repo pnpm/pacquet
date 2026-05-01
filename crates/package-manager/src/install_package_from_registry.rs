@@ -8,9 +8,13 @@ use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::PackageManifest;
 use pacquet_registry::{Package, PackageTag, PackageVersion, RegistryError};
+use pacquet_reporter::Reporter;
 use pacquet_store_dir::{SharedReadonlyStoreIndex, SharedVerifiedFilesCache, StoreIndexWriter};
 use pacquet_tarball::{DownloadTarballToStore, MemCache, TarballError};
-use std::{path::Path, sync::Arc};
+use std::{
+    path::Path,
+    sync::{Arc, atomic::AtomicU8},
+};
 
 /// This subroutine executes the following and returns the package
 /// * Retrieves the package from the registry
@@ -37,6 +41,9 @@ pub struct InstallPackageFromRegistry<'a> {
     /// per-package fetch. See `DownloadTarballToStore::verified_files_cache`
     /// for the rationale.
     pub verified_files_cache: &'a SharedVerifiedFilesCache,
+    /// Install-scoped dedupe state for `pnpm:package-import-method`.
+    /// See `link_file::log_method_once`.
+    pub logged_methods: &'a AtomicU8,
     pub node_modules_dir: &'a Path,
     pub name: &'a str,
     pub version_range: &'a str,
@@ -53,7 +60,7 @@ pub enum InstallPackageFromRegistryError {
 
 impl<'a> InstallPackageFromRegistry<'a> {
     /// Execute the subroutine.
-    pub async fn run(self) -> Result<PackageVersion, InstallPackageFromRegistryError> {
+    pub async fn run<R: Reporter>(self) -> Result<PackageVersion, InstallPackageFromRegistryError> {
         let &InstallPackageFromRegistry { http_client, config, name, version_range, .. } = &self;
 
         // Strip any `npm:<name>@<range>` alias prefix before talking to
@@ -77,7 +84,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
             )
             .await
             .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
-            self.install_package_version(&package_version).await?;
+            self.install_package_version::<R>(&package_version).await?;
             package_version
         } else {
             let package =
@@ -85,12 +92,12 @@ impl<'a> InstallPackageFromRegistry<'a> {
                     .await
                     .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
             let package_version = package.pinned_version(version_range).unwrap(); // TODO: propagate error for when no version satisfies range
-            self.install_package_version(package_version).await?;
+            self.install_package_version::<R>(package_version).await?;
             package_version.clone()
         })
     }
 
-    async fn install_package_version(
+    async fn install_package_version<R: Reporter>(
         self,
         package_version: &PackageVersion,
     ) -> Result<(), InstallPackageFromRegistryError> {
@@ -101,6 +108,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
             store_index,
             store_index_writer,
             verified_files_cache,
+            logged_methods,
             node_modules_dir,
             name,
             ..
@@ -147,7 +155,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
 
         tracing::info!(target: "pacquet::import", ?save_path, ?symlink_path, "Import package");
 
-        create_cas_files(config.package_import_method, &save_path, &cas_paths)
+        create_cas_files::<R>(logged_methods, config.package_import_method, &save_path, &cas_paths)
             .map_err(InstallPackageFromRegistryError::CreateCasFiles)?;
 
         symlink_package(&save_path, &symlink_path)
@@ -163,10 +171,11 @@ mod tests {
     use node_semver::Version;
     use pacquet_network::ThrottledClient;
     use pacquet_npmrc::Npmrc;
+    use pacquet_reporter::SilentReporter;
     use pacquet_store_dir::{SharedVerifiedFilesCache, StoreDir};
     use pipe_trait::Pipe;
     use pretty_assertions::assert_eq;
-    use std::{fs, path::Path};
+    use std::{fs, path::Path, sync::atomic::AtomicU8};
     use tempfile::tempdir;
 
     fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path) -> Npmrc {
@@ -209,6 +218,7 @@ mod tests {
                 .pipe(Box::leak);
         let http_client = ThrottledClient::new_for_installs();
         let verified_files_cache = SharedVerifiedFilesCache::default();
+        let logged_methods = AtomicU8::new(0);
         let package = InstallPackageFromRegistry {
             tarball_mem_cache: &Default::default(),
             config,
@@ -216,11 +226,12 @@ mod tests {
             store_index: None,
             store_index_writer: None,
             verified_files_cache: &verified_files_cache,
+            logged_methods: &logged_methods,
             name: "fast-querystring",
             version_range: "1.0.0",
             node_modules_dir: modules_dir.path(),
         }
-        .run()
+        .run::<SilentReporter>()
         .await
         .unwrap();
 

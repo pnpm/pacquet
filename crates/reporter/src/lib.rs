@@ -49,6 +49,20 @@ pub enum LogEvent {
     /// Emit site: <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-installer/src/install/index.ts#L1663>.
     #[serde(rename = "pnpm:summary")]
     Summary(SummaryLog),
+
+    /// The import method used to materialise files from the store
+    /// (`pnpm:package-import-method`). Fires the first time each
+    /// resolved method (`clone` / `hardlink` / `copy`) actually
+    /// succeeds during an install — so for the `auto` and
+    /// `clone-or-copy` config values, the wire value reflects the
+    /// post-fallback method rather than the optimistic configured
+    /// one. Up to three events per install (one per resolved method)
+    /// gated by an install-scoped atomic in `pacquet-package-manager`.
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/core/core-loggers/src/packageImportMethodLogger.ts>.
+    /// Emit site: <https://github.com/pnpm/pnpm/blob/086c5e91e8/fs/indexed-pkg-importer/src/index.ts#L32>.
+    #[serde(rename = "pnpm:package-import-method")]
+    PackageImportMethod(PackageImportMethodLog),
 }
 
 /// `pnpm:context` payload.
@@ -98,6 +112,30 @@ pub struct SummaryLog {
     pub prefix: String,
 }
 
+/// `pnpm:package-import-method` payload. The method names match pnpm's
+/// wire shape exactly — anything else would silently fail to render
+/// even though the JSON parses.
+#[derive(Debug, Clone, Serialize)]
+pub struct PackageImportMethodLog {
+    pub level: LogLevel,
+    pub method: PackageImportMethod,
+}
+
+/// Wire-format import method. pnpm only knows three values; pacquet's
+/// config enum (`pacquet_npmrc::PackageImportMethod`) carries `Auto`
+/// and `CloneOrCopy` on top of those, but those are dispatched-on by
+/// the auto-importer's fallback chain, not emitted. The wire value is
+/// the resolved method `link_file` actually used — `Clone` /
+/// `Hardlink` / `Copy` — so an `auto` install that falls back to
+/// hardlink emits `hardlink`, not the optimistic `clone`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PackageImportMethod {
+    Clone,
+    Hardlink,
+    Copy,
+}
+
 /// Severity level on the [bunyan]-shaped envelope.
 ///
 /// pnpm's logger uses the [bole] library, which writes one of these strings
@@ -124,6 +162,16 @@ pub enum LogLevel {
 ///
 /// [`Reporter::emit`] must not panic. A serialization or I/O failure is
 /// swallowed so a reporter problem can never crash an install.
+///
+/// **Thread safety.** `emit` may be invoked concurrently from
+/// arbitrary threads — pacquet's import path runs `link_file` from a
+/// rayon `par_iter`, and tarball download / store-index work runs
+/// across tokio workers, all of which can fire reporter events at
+/// once. Implementations must therefore guard any shared state they
+/// touch (`Mutex`, atomic, or write-once initialization). Both
+/// production sinks satisfy this: `SilentReporter` is a no-op, and
+/// `NdjsonReporter` serializes per-event then writes under
+/// `std::io::stderr().lock()`.
 pub trait Reporter {
     fn emit(event: &LogEvent);
 }

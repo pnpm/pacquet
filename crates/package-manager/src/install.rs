@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, sync::atomic::AtomicU8};
 
 use crate::{
     InstallFrozenLockfile, InstallFrozenLockfileError, InstallWithoutLockfile,
@@ -104,6 +104,12 @@ where
             stage: Stage::ImportingStarted,
         }));
 
+        // Install-scoped dedupe state for `pnpm:package-import-method`.
+        // Threaded down to `link_file::log_method_once` so each install
+        // emits the channel afresh — mirroring upstream pnpm's per-
+        // importer closure capture rather than a process-static.
+        let logged_methods = AtomicU8::new(0);
+
         tracing::info!(target: "pacquet::install", "Start all");
 
         // Dispatch priority, matching pnpm's CLI semantics:
@@ -136,8 +142,9 @@ where
                 packages: packages.as_ref(),
                 snapshots: snapshots.as_ref(),
                 dependency_groups,
+                logged_methods: &logged_methods,
             }
-            .run()
+            .run::<R>()
             .await
             .map_err(InstallError::FrozenLockfile)?;
         } else if config.lockfile {
@@ -150,8 +157,9 @@ where
                 config,
                 manifest,
                 dependency_groups,
+                logged_methods: &logged_methods,
             }
-            .run()
+            .run::<R>()
             .await
             .map_err(InstallError::WithoutLockfile)?;
         }
@@ -582,6 +590,12 @@ mod tests {
     /// header, the stage pairing drives the JS reporter's progress
     /// UI, and summary closes the run so the reporter can render its
     /// "+N -M" block.
+    ///
+    /// `pnpm:package-import-method` is emitted lazily by `link_file`
+    /// the first time each method actually resolves (after `auto`'s
+    /// fallback chain finishes), so an empty-lockfile install like this
+    /// one has no link_file calls and no such event in the captured
+    /// sequence. See `link_file::tests` for that channel's coverage.
     ///
     /// `pnpm:context` carries `currentLockfileExists`, `storeDir`,
     /// `virtualStoreDir`. `currentLockfileExists` is hard-coded

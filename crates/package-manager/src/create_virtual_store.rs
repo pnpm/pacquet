@@ -7,10 +7,11 @@ use miette::Diagnostic;
 use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
+use pacquet_reporter::Reporter;
 use pacquet_store_dir::{SharedVerifiedFilesCache, StoreIndex, StoreIndexWriter, store_index_key};
 use pacquet_tarball::prefetch_cas_paths;
 use pipe_trait::Pipe;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::atomic::AtomicU8};
 
 /// This subroutine generates filesystem layout for the virtual store at `node_modules/.pacquet`.
 #[must_use]
@@ -19,6 +20,9 @@ pub struct CreateVirtualStore<'a> {
     pub config: &'static Npmrc,
     pub packages: Option<&'a HashMap<PackageKey, PackageMetadata>>,
     pub snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,
+    /// Install-scoped dedupe state for `pnpm:package-import-method`.
+    /// See `link_file::log_method_once`.
+    pub logged_methods: &'a AtomicU8,
 }
 
 /// Error type of [`CreateVirtualStore`].
@@ -42,8 +46,8 @@ pub enum CreateVirtualStoreError {
 
 impl<'a> CreateVirtualStore<'a> {
     /// Execute the subroutine.
-    pub async fn run(self) -> Result<(), CreateVirtualStoreError> {
-        let CreateVirtualStore { http_client, config, packages, snapshots } = self;
+    pub async fn run<R: Reporter>(self) -> Result<(), CreateVirtualStoreError> {
+        let CreateVirtualStore { http_client, config, packages, snapshots, logged_methods } = self;
 
         let Some(snapshots) = snapshots else {
             // No snapshots to install. If the lockfile also has no project deps
@@ -251,10 +255,11 @@ impl<'a> CreateVirtualStore<'a> {
                         virtual_store_dir,
                         cas_paths: cas_paths.as_ref(),
                         import_method,
+                        logged_methods,
                         package_key: snapshot_key,
                         snapshot,
                     }
-                    .run()
+                    .run::<R>()
                     .map_err(|e| {
                         CreateVirtualStoreError::InstallPackageBySnapshot(
                             InstallPackageBySnapshotError::CreateVirtualDir(e),
@@ -292,11 +297,12 @@ impl<'a> CreateVirtualStore<'a> {
                         store_index_writer: store_index_writer_ref,
                         prefetched_cas_paths: prefetched_ref,
                         verified_files_cache: verified_files_cache_ref,
+                        logged_methods,
                         package_key: snapshot_key,
                         metadata,
                         snapshot,
                     }
-                    .run()
+                    .run::<R>()
                     .await
                     .map_err(CreateVirtualStoreError::InstallPackageBySnapshot)
                 })
