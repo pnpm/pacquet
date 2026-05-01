@@ -611,8 +611,10 @@ pub struct SideEffectsDiff {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{CafsFileInfo, GET_MANY_CHUNK, PackageFilesIndex, StoreIndex, store_index_key};
+    use crate::StoreDir;
     use pretty_assertions::assert_eq;
+    use std::collections::HashMap;
     use tempfile::tempdir;
 
     fn sample_index() -> PackageFilesIndex {

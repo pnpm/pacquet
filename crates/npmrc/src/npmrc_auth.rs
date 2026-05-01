@@ -254,7 +254,8 @@ fn apply_creds_field(creds: &mut RawCreds, field: &str, value: String) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::NpmrcAuth;
+    use crate::Npmrc;
     use pretty_assertions::assert_eq;
 
     /// Test fake: the process environment is empty. Per the DI

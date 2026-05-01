@@ -347,8 +347,10 @@ mod tests {
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
 
-    use super::*;
-    use crate::test_env_guard::EnvGuard;
+    use super::{NodeLinker, Npmrc, PackageImportMethod, fs};
+    use crate::{custom_deserializer::default_store_dir, test_env_guard::EnvGuard};
+    use pacquet_store_dir::StoreDir;
+    use pipe_trait::Pipe;
 
     fn display_store_dir(store_dir: &StoreDir) -> String {
         store_dir.display().to_string().replace('\\', "/")

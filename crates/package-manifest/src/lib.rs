@@ -245,8 +245,9 @@ mod tests {
     use pretty_assertions::assert_eq;
     use tempfile::{NamedTempFile, tempdir};
 
-    use super::*;
+    use super::{BundleDependencies, PackageManifest};
     use crate::DependencyGroup;
+    use std::io::Write;
 
     #[test]
     fn test_init_package_json_content() {
