@@ -8,7 +8,7 @@ use pacquet_reporter::{
     AddedRoot, DependencyType, LogEvent, LogLevel, Reporter, RootLog, RootMessage,
 };
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// This subroutine creates symbolic links in the `node_modules` directory for
 /// the direct dependencies. The targets of the link are the virtual directories.
@@ -69,6 +69,21 @@ where
         // the per-group → [`DependencyType`] match below stay
         // exhaustive without a misleading `Peer` arm that maps to
         // an "absent" type.
+        //
+        // Dedup with a `HashSet<PkgName>`, first-wins. A v9 lockfile
+        // pnpm itself wrote shouldn't list the same package across
+        // multiple importer sections — pnpm's resolver normalises
+        // (a package with `optional: true` lands in
+        // `optionalDependencies` only). But pacquet ingests
+        // user-supplied lockfiles, and a malformed one with the same
+        // key in two sections would race two `symlink_package` calls
+        // to the same `node_modules/<name>` and emit duplicate
+        // `pnpm:root added` events. First-wins picks up the highest-
+        // priority group from the caller-supplied
+        // `dependency_groups` order — the CLI today passes
+        // `[Prod, Dev, Optional]`, matching pnpm's
+        // dependencies-over-optional precedence.
+        let mut seen: HashSet<&PkgName> = HashSet::new();
         let entries: Vec<(&PkgName, &_, DependencyGroup)> = dependency_groups
             .into_iter()
             .filter(|group| !matches!(group, DependencyGroup::Peer))
@@ -79,6 +94,7 @@ where
                     .flatten()
                     .map(move |(name, spec)| (name, spec, group))
             })
+            .filter(|(name, _, _)| seen.insert(*name))
             .collect();
 
         entries.par_iter().for_each(|(name, spec, group)| {

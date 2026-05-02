@@ -126,6 +126,95 @@ fn emits_pnpm_root_added_per_direct_dependency() {
     drop(dir);
 }
 
+/// A malformed importer snapshot can list the same package name
+/// across multiple sections (e.g. both `dependencies` and
+/// `optionalDependencies`). The dedup pass must collapse that to
+/// one entry — first-wins per the caller-supplied
+/// `dependency_groups` order — so we don't race two
+/// `symlink_package` calls to the same `node_modules/<name>` and
+/// emit two `pnpm:root added` events for the same dep.
+#[test]
+fn duplicate_dep_across_groups_collapses_to_one_entry() {
+    static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+    EVENTS.lock().unwrap().clear();
+
+    struct RecordingReporter;
+    impl Reporter for RecordingReporter {
+        fn emit(event: &LogEvent) {
+            EVENTS.lock().unwrap().push(event.clone());
+        }
+    }
+
+    let dir = tempdir().unwrap();
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let mut config = Npmrc::new();
+    config.store_dir = dir.path().join("pacquet-store").into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    let config = config.leak();
+
+    // Same name in `dependencies` and `optionalDependencies`. The
+    // versions match here so the symlink target path is the same;
+    // a real malformed lockfile that mismatched versions would also
+    // collapse here, with first-wins picking the prod entry.
+    let target = virtual_store_dir.join("fastify@4.0.0").join("node_modules").join("fastify");
+    fs::create_dir_all(&target).expect("create symlink target");
+
+    let mut prod = ResolvedDependencyMap::new();
+    prod.insert(
+        "fastify".parse().expect("parse fastify pkg name"),
+        ResolvedDependencySpec {
+            specifier: "^4.0.0".to_string(),
+            version: "4.0.0".parse().expect("parse fastify version"),
+        },
+    );
+    let mut optional = ResolvedDependencyMap::new();
+    optional.insert(
+        "fastify".parse().expect("parse fastify pkg name"),
+        ResolvedDependencySpec {
+            specifier: "^4.0.0".to_string(),
+            version: "4.0.0".parse().expect("parse fastify version"),
+        },
+    );
+
+    let project_snapshot = ProjectSnapshot {
+        dependencies: Some(prod),
+        optional_dependencies: Some(optional),
+        ..ProjectSnapshot::default()
+    };
+    let mut importers = HashMap::new();
+    importers.insert(Lockfile::ROOT_IMPORTER_KEY.to_string(), project_snapshot);
+
+    SymlinkDirectDependencies {
+        config,
+        importers: &importers,
+        // Prod first → first-wins gives `dependencyType: prod`.
+        dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
+        requester: "/proj",
+    }
+    .run::<RecordingReporter>()
+    .expect("symlink should succeed");
+
+    let captured = EVENTS.lock().unwrap();
+    let added: Vec<&AddedRoot> = captured
+        .iter()
+        .filter_map(|e| match e {
+            LogEvent::Root(RootLog { message: RootMessage::Added { added, .. }, .. }) => {
+                Some(added)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(added.len(), 1, "duplicate dep across groups must collapse to one emit");
+    assert_eq!(added[0].name, "fastify");
+    assert_eq!(added[0].dependency_type, Some(DependencyType::Prod));
+
+    drop(dir);
+}
+
 /// Missing root importer in the lockfile is the only error the
 /// subroutine produces. Pin it so a future refactor that elides
 /// the lookup doesn't silently turn into a no-op install.
