@@ -162,6 +162,7 @@ mod tests {
     };
     use std::{
         collections::HashMap,
+        path::Path,
         sync::{Mutex, atomic::AtomicU8},
     };
     use tempfile::tempdir;
@@ -251,9 +252,11 @@ mod tests {
         // `to` is the per-package `node_modules/{name}` directory
         // inside the virtual store. The exact path depends on
         // `package_key.to_virtual_store_name()` and the temp dir
-        // root, so spot-check the suffix instead of the full path.
+        // root, so spot-check the suffix via `Path::ends_with`
+        // (component-based, so it works on Windows where `to` uses
+        // backslashes too) instead of the full path.
         assert!(
-            to.ends_with("/react@18.0.0/node_modules/react"),
+            Path::new(&to).ends_with("react@18.0.0/node_modules/react"),
             "imported.to suffix must mirror the virtual-store layout; got {to}",
         );
     }
