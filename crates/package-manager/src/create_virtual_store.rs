@@ -7,7 +7,9 @@ use miette::Diagnostic;
 use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
-use pacquet_reporter::{LogEvent, LogLevel, ProgressLog, ProgressMessage, Reporter};
+use pacquet_reporter::{
+    LogEvent, LogLevel, ProgressLog, ProgressMessage, Reporter, StatsLog, StatsMessage,
+};
 use pacquet_store_dir::{SharedVerifiedFilesCache, StoreIndex, StoreIndexWriter, store_index_key};
 use pacquet_tarball::prefetch_cas_paths;
 use pipe_trait::Pipe;
@@ -65,6 +67,36 @@ impl<'a> CreateVirtualStore<'a> {
             return Ok(());
         };
         let packages = packages.ok_or(CreateVirtualStoreError::MissingPackagesSection)?;
+
+        // `pnpm:stats added` mirrors pnpm's emit at
+        // <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-installer/src/install/link.ts#L363>:
+        // one event per project once the orchestrator has decided
+        // how many packages will land in the virtual store. Pnpm
+        // reports `newDepPathsSet.size` (the *delta* between current
+        // and wanted lockfile); pacquet has no current-lockfile
+        // tracking yet, so every install looks like a fresh install
+        // and `added` ends up as the total snapshot count. Once the
+        // current-lockfile path lands the count will narrow to the
+        // diff, matching pnpm exactly.
+        //
+        // `pnpm:stats removed: 0` mirrors the no-current-lockfile
+        // branch of
+        // <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-restorer/src/index.ts#L290>:
+        // pnpm emits a placeholder `0` when there's nothing to prune
+        // so consumers don't render a stale "removed" count from a
+        // previous install. Pacquet has no pruning pipeline yet, so
+        // the placeholder is the truthful value today.
+        R::emit(&LogEvent::Stats(StatsLog {
+            level: LogLevel::Debug,
+            message: StatsMessage::Added {
+                prefix: requester.to_owned(),
+                added: snapshots.len() as u64,
+            },
+        }));
+        R::emit(&LogEvent::Stats(StatsLog {
+            level: LogLevel::Debug,
+            message: StatsMessage::Removed { prefix: requester.to_owned(), removed: 0 },
+        }));
 
         // Open the read-only SQLite index once for the whole run instead of
         // per snapshot. Every `InstallPackageBySnapshot` performs a cache

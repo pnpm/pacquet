@@ -1838,3 +1838,93 @@ async fn found_in_store_event_fires_on_cache_hit() {
 
     drop(store_dir_keep);
 }
+
+/// `pnpm:request-retry` fires before each backoff sleep — once per
+/// failed-and-being-retried attempt — and never on the final
+/// successful or final failed attempt. With one transient 503
+/// followed by a 200, the retry loop emits exactly one event:
+/// `attempt: 1` (one-indexed, matching pnpm's wire shape) carrying
+/// the response status as `httpStatusCode`.
+#[tokio::test]
+async fn request_retry_event_fires_per_retried_attempt() {
+    use std::sync::Mutex;
+
+    use pacquet_reporter::{LogEvent, RequestRetryLog};
+
+    static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+
+    struct RecordingReporter;
+    impl pacquet_reporter::Reporter for RecordingReporter {
+        fn emit(event: &LogEvent) {
+            EVENTS.lock().unwrap().push(event.clone());
+        }
+    }
+
+    let (store_dir_keep, store_path) = tempdir_with_leaked_path();
+    let mut server = mockito::Server::new_async().await;
+    let fail = server.mock("GET", "/pkg.tgz").with_status(503).expect(1).create_async().await;
+    let ok = server
+        .mock("GET", "/pkg.tgz")
+        .with_status(200)
+        .with_body(FASTIFY_ERROR_TARBALL)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let url = format!("{}/pkg.tgz", server.url());
+    let client = ThrottledClient::default();
+    let pkg_integrity = integrity(FASTIFY_ERROR_INTEGRITY);
+
+    EVENTS.lock().unwrap().clear();
+
+    fetch_and_extract_with_retry::<RecordingReporter>(
+        &client,
+        &url,
+        &pkg_integrity,
+        None,
+        "test-pkg",
+        "",
+        store_path,
+        fast_retry_opts(),
+    )
+    .await
+    .expect("transient 503 should be followed by a successful retry");
+
+    fail.assert_async().await;
+    ok.assert_async().await;
+
+    let captured = EVENTS.lock().unwrap();
+    let retries: Vec<&RequestRetryLog> = captured
+        .iter()
+        .filter_map(|e| match e {
+            LogEvent::RequestRetry(log) => Some(log),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(retries.len(), 1, "exactly one retry emit expected; got {captured:?}");
+
+    let retry = retries[0];
+    // attempt is one-indexed (the failed attempt). With one transient
+    // 503 and the retry succeeding, the only retry-emit is for
+    // attempt 1.
+    assert_eq!(retry.attempt, 1, "attempt must be one-indexed");
+    assert_eq!(retry.max_retries, fast_retry_opts().retries);
+    assert_eq!(retry.method, "GET");
+    assert_eq!(retry.url, url);
+    // `fast_retry_opts` collapses the backoff to 1 ms, so `timeout`
+    // must reflect the actual retry-loop sleep (not pnpm's
+    // production 10 s default) — guard against an off-by-one that
+    // emits the wrong attempt's delay.
+    assert_eq!(retry.timeout, 1, "timeout must mirror RetryOpts::delay_for");
+    // The 503 surfaces as `TarballError::HttpStatus`, so the
+    // wire-shape carries `httpStatusCode: "503"` and the JS
+    // reporter's `??` chain dispatches on it before falling
+    // through to the placeholder `code`.
+    assert_eq!(retry.error.http_status_code.as_deref(), Some("503"));
+    assert!(
+        retry.error.code.is_none(),
+        "HTTP failures must skip the placeholder code so the JS reporter dispatches on httpStatusCode",
+    );
+
+    drop(store_dir_keep);
+}

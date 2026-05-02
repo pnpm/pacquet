@@ -7,7 +7,7 @@ use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::PackageManifestError;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::{PackageTag, PackageVersion};
-use pacquet_reporter::Reporter;
+use pacquet_reporter::{LogEvent, LogLevel, PackageManifestLog, PackageManifestMessage, Reporter};
 use pacquet_tarball::MemCache;
 
 /// This subroutine does everything `pacquet add` is supposed to do.
@@ -89,6 +89,25 @@ where
         .map_err(AddError::Install)?;
 
         manifest.save().map_err(AddError::SaveManifest)?;
+
+        // `pnpm:package-manifest updated` mirrors pnpm's emit at
+        // <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-resolver/src/index.ts#L238>:
+        // fires once after the manifest is rewritten so consumers
+        // (e.g. the audit pipeline that diffs initial vs updated)
+        // see the post-add shape. `prefix` is the manifest's parent
+        // directory, matching what `Install::run` derived for the
+        // matching `initial` event.
+        let prefix = manifest
+            .path()
+            .parent()
+            .map(std::path::Path::to_str)
+            .map(Option::<&str>::unwrap)
+            .unwrap()
+            .to_owned();
+        R::emit(&LogEvent::PackageManifest(PackageManifestLog {
+            level: LogLevel::Debug,
+            message: PackageManifestMessage::Updated { prefix, updated: manifest.value().clone() },
+        }));
 
         Ok(())
     }
