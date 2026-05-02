@@ -235,8 +235,7 @@ fn lone_per_registry_password_produces_no_header() {
 fn per_registry_username_password_apply_through_build_auth_headers() {
     let raw_password = "hunter2";
     let password_b64 = base64_encode(raw_password);
-    let ini =
-        format!("//reg.example/:username=alice\n//reg.example/:_password={password_b64}\n",);
+    let ini = format!("//reg.example/:username=alice\n//reg.example/:_password={password_b64}\n",);
     let mut npmrc = Npmrc::new();
     NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to(&mut npmrc);
     assert_eq!(
@@ -299,10 +298,7 @@ fn invalid_base64_password_falls_back_to_raw_value() {
 #[test]
 fn base64_decode_covers_every_alphabet_branch() {
     // Standard alphanumeric round-trip.
-    assert_eq!(
-        base64_decode(&base64_encode("alice:hunter2")).as_deref(),
-        Some("alice:hunter2")
-    );
+    assert_eq!(base64_decode(&base64_encode("alice:hunter2")).as_deref(), Some("alice:hunter2"));
     // `/` arm: `"???"` (three 0x3f bytes) encodes to `"Pz8/"`.
     assert_eq!(base64_decode("Pz8/").as_deref(), Some("???"));
     // `+` arm: `"~~~"` (three 0x7e bytes) encodes to `"fn5+"`.
