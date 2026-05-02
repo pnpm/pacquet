@@ -63,6 +63,29 @@ pub enum LogEvent {
     /// Emit site: <https://github.com/pnpm/pnpm/blob/086c5e91e8/fs/indexed-pkg-importer/src/index.ts#L32>.
     #[serde(rename = "pnpm:package-import-method")]
     PackageImportMethod(PackageImportMethodLog),
+
+    /// Per-package status transitions (`pnpm:progress`). One of four
+    /// `status` values per record: `resolved`, `fetched`,
+    /// `found_in_store`, or `imported`. The first three carry
+    /// `{ packageId, requester }`; `imported` carries
+    /// `{ method, requester, to }`. Together they drive the
+    /// "X/Y resolved, X/Y fetched, X/Y imported" counters in the
+    /// default reporter.
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/core/core-loggers/src/progressLogger.ts>.
+    #[serde(rename = "pnpm:progress")]
+    Progress(ProgressLog),
+
+    /// Per-tarball download progress (`pnpm:fetching-progress`). Two
+    /// `status` values: `started` (one-shot per fetch attempt with
+    /// `attempt`, `packageId`, and `size` from the response's
+    /// `Content-Length`) and `in_progress` (throttled to ~200ms while
+    /// the body streams, with `downloaded` and `packageId`).
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/core/core-loggers/src/fetchingProgressLogger.ts>.
+    /// Emit site: <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/package-requester/src/packageRequester.ts#L560>.
+    #[serde(rename = "pnpm:fetching-progress")]
+    FetchingProgress(FetchingProgressLog),
 }
 
 /// `pnpm:context` payload.
@@ -134,6 +157,79 @@ pub enum PackageImportMethod {
     Clone,
     Hardlink,
     Copy,
+}
+
+/// `pnpm:progress` payload. The bunyan-envelope `level` is a fixed
+/// outer field; the rest of the record is a status-tagged union via
+/// `#[serde(flatten)]` so the wire shape stays flat (matching pnpm's
+/// `ProgressMessage` discriminator on `status`).
+#[derive(Debug, Clone, Serialize)]
+pub struct ProgressLog {
+    pub level: LogLevel,
+    #[serde(flatten)]
+    pub message: ProgressMessage,
+}
+
+/// `pnpm:progress` discriminated payload. `Resolved` / `Fetched` /
+/// `FoundInStore` share `{ packageId, requester }`; `Imported` differs
+/// (`{ method, requester, to }` — no `packageId`).
+///
+/// `requester` is the install root — same value as the
+/// [`StageLog::prefix`] threaded through `Install::run`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ProgressMessage {
+    Resolved {
+        #[serde(rename = "packageId")]
+        package_id: String,
+        requester: String,
+    },
+    Fetched {
+        #[serde(rename = "packageId")]
+        package_id: String,
+        requester: String,
+    },
+    FoundInStore {
+        #[serde(rename = "packageId")]
+        package_id: String,
+        requester: String,
+    },
+    Imported {
+        method: PackageImportMethod,
+        requester: String,
+        to: String,
+    },
+}
+
+/// `pnpm:fetching-progress` payload. Same flatten-on-status pattern as
+/// [`ProgressLog`].
+#[derive(Debug, Clone, Serialize)]
+pub struct FetchingProgressLog {
+    pub level: LogLevel,
+    #[serde(flatten)]
+    pub message: FetchingProgressMessage,
+}
+
+/// `pnpm:fetching-progress` discriminated payload. `Started` carries
+/// the retry-attempt index and the `Content-Length`-derived size
+/// (`null` when chunked / unknown — preserved as JSON `null`).
+/// `InProgress` carries the running byte count; pacquet throttles
+/// these to ~200ms per package, mirroring pnpm's reporter coalescing
+/// window.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum FetchingProgressMessage {
+    Started {
+        attempt: u32,
+        #[serde(rename = "packageId")]
+        package_id: String,
+        size: Option<u64>,
+    },
+    InProgress {
+        downloaded: u64,
+        #[serde(rename = "packageId")]
+        package_id: String,
+    },
 }
 
 /// Severity level on the [bunyan]-shaped envelope.

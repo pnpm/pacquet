@@ -34,6 +34,8 @@ where
     /// Install-scoped dedupe state for `pnpm:package-import-method`.
     /// See `link_file::log_method_once`.
     pub logged_methods: &'a AtomicU8,
+    /// Install root, threaded into reporter `requester` fields.
+    pub requester: &'a str,
 }
 
 /// Error type of [`InstallFrozenLockfile`].
@@ -60,11 +62,12 @@ where
             snapshots,
             dependency_groups,
             logged_methods,
+            requester,
         } = self;
 
         // TODO: check if the lockfile is out-of-date
 
-        CreateVirtualStore { http_client, config, packages, snapshots, logged_methods }
+        CreateVirtualStore { http_client, config, packages, snapshots, logged_methods, requester }
             .run::<R>()
             .await
             .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;

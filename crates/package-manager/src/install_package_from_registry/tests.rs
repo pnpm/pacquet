@@ -58,6 +58,7 @@ pub async fn should_find_package_version_from_registry() {
         store_index_writer: None,
         verified_files_cache: &verified_files_cache,
         logged_methods: &logged_methods,
+        requester: "",
         name: "fast-querystring",
         version_range: "1.0.0",
         node_modules_dir: modules_dir.path(),

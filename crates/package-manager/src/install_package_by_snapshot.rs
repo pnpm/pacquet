@@ -6,7 +6,7 @@ use miette::Diagnostic;
 use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
-use pacquet_reporter::Reporter;
+use pacquet_reporter::{LogEvent, LogLevel, ProgressLog, ProgressMessage, Reporter};
 use pacquet_store_dir::{SharedReadonlyStoreIndex, SharedVerifiedFilesCache, StoreIndexWriter};
 use pacquet_tarball::{DownloadTarballToStore, PrefetchedCasPaths, TarballError};
 use pipe_trait::Pipe;
@@ -35,6 +35,10 @@ pub struct InstallPackageBySnapshot<'a> {
     /// Install-scoped dedupe state for `pnpm:package-import-method`.
     /// See `link_file::log_method_once`.
     pub logged_methods: &'a AtomicU8,
+    /// Install root, threaded into reporter events (`pnpm:progress`'s
+    /// `requester`). Same value as the `prefix` in
+    /// [`pacquet_reporter::StageLog`].
+    pub requester: &'a str,
     pub package_key: &'a PackageKey,
     pub metadata: &'a PackageMetadata,
     pub snapshot: &'a SnapshotEntry,
@@ -73,6 +77,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             prefetched_cas_paths,
             verified_files_cache,
             logged_methods,
+            requester,
             package_key,
             metadata,
             snapshot,
@@ -112,6 +117,22 @@ impl<'a> InstallPackageBySnapshot<'a> {
 
         // TODO: skip when already exists in store?
         let package_id = package_key.without_peer().to_string();
+
+        // `pnpm:progress resolved` mirrors pnpm's emit at
+        // <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-resolver/src/resolveDependencies.ts#L1586>:
+        // one event per (resolved) package, fired before the fetch
+        // attempt. In the frozen-lockfile path the lockfile *is* the
+        // resolution, so each snapshot is "already resolved" by the
+        // time we reach here — emit on entry to mirror the upstream
+        // counter.
+        R::emit(&LogEvent::Progress(ProgressLog {
+            level: LogLevel::Debug,
+            message: ProgressMessage::Resolved {
+                package_id: package_id.clone(),
+                requester: requester.to_owned(),
+            },
+        }));
+
         let cas_paths = DownloadTarballToStore {
             http_client,
             store_dir: &config.store_dir,
@@ -123,10 +144,11 @@ impl<'a> InstallPackageBySnapshot<'a> {
             package_unpacked_size: None,
             package_url: &tarball_url,
             package_id: &package_id,
+            requester,
             prefetched_cas_paths,
             retry_opts: retry_opts_from_config(config),
         }
-        .run_without_mem_cache()
+        .run_without_mem_cache::<R>()
         .await
         .map_err(InstallPackageBySnapshotError::DownloadTarball)?;
 
@@ -135,6 +157,8 @@ impl<'a> InstallPackageBySnapshot<'a> {
             cas_paths: &cas_paths,
             import_method: config.package_import_method,
             logged_methods,
+            requester,
+            package_id: &package_id,
             package_key,
             snapshot,
         }
