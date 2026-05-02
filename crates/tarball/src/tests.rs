@@ -1329,6 +1329,122 @@ async fn zero_retries_makes_a_single_attempt() {
     drop(store_dir_keep);
 }
 
+/// `run_with_mem_cache`'s in-process dedup must still fire
+/// `pnpm:progress found_in_store` for the *second* requester of a
+/// shared tarball URL. Without it, the per-package counters in
+/// pnpm's reporter would only advance for the first package sharing
+/// a URL — every later package would resolve and import successfully
+/// but never tick the "fetched" gauge.
+///
+/// Drives two `run_with_mem_cache` calls for the same URL but
+/// different `package_id`s. The first goes through
+/// `run_without_mem_cache` (network fetch + `fetched`); the second
+/// hits the immediate-`Available` branch and must emit
+/// `found_in_store` for *its* package_id.
+#[tokio::test]
+async fn mem_cache_hit_emits_found_in_store_for_second_requester() {
+    use std::sync::Mutex;
+
+    use pacquet_reporter::{LogEvent, ProgressMessage};
+
+    static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+
+    struct RecordingReporter;
+    impl pacquet_reporter::Reporter for RecordingReporter {
+        fn emit(event: &LogEvent) {
+            EVENTS.lock().unwrap().push(event.clone());
+        }
+    }
+
+    let (store_dir_keep, store_path) = tempdir_with_leaked_path();
+    let mut server = mockito::Server::new_async().await;
+    let _mock = server
+        .mock("GET", "/pkg.tgz")
+        .with_status(200)
+        .with_body(FASTIFY_ERROR_TARBALL)
+        // exactly one network hit — the second requester must reuse
+        // the in-memory cache without going to the network.
+        .expect(1)
+        .create_async()
+        .await;
+
+    let url = format!("{}/pkg.tgz", server.url());
+    let client = ThrottledClient::default();
+    let pkg_integrity = integrity(FASTIFY_ERROR_INTEGRITY);
+    let mem_cache = MemCache::default();
+    let verified_files_cache = SharedVerifiedFilesCache::default();
+
+    // First requester: `package_id = "first@1.0.0"`. Drives the
+    // network fetch.
+    EVENTS.lock().unwrap().clear();
+    DownloadTarballToStore {
+        http_client: &client,
+        store_dir: store_path,
+        store_index: None,
+        store_index_writer: None,
+        verify_store_integrity: true,
+        verified_files_cache: SharedVerifiedFilesCache::clone(&verified_files_cache),
+        package_integrity: &pkg_integrity,
+        package_unpacked_size: None,
+        package_url: &url,
+        package_id: "first@1.0.0",
+        requester: "/proj",
+        prefetched_cas_paths: None,
+        retry_opts: test_retry_opts(),
+    }
+    .run_with_mem_cache::<RecordingReporter>(&mem_cache)
+    .await
+    .expect("first call should populate the mem cache");
+
+    // First call's emits: `started` (per attempt) + `fetched` once.
+    // Drain so the next call's emits are isolated.
+    EVENTS.lock().unwrap().clear();
+
+    // Second requester: same URL, different `package_id`. Hits the
+    // immediate-`Available` branch in `run_with_mem_cache`.
+    DownloadTarballToStore {
+        http_client: &client,
+        store_dir: store_path,
+        store_index: None,
+        store_index_writer: None,
+        verify_store_integrity: true,
+        verified_files_cache: SharedVerifiedFilesCache::clone(&verified_files_cache),
+        package_integrity: &pkg_integrity,
+        package_unpacked_size: None,
+        package_url: &url,
+        package_id: "second@2.0.0",
+        requester: "/proj",
+        prefetched_cas_paths: None,
+        retry_opts: test_retry_opts(),
+    }
+    .run_with_mem_cache::<RecordingReporter>(&mem_cache)
+    .await
+    .expect("second call should reuse the mem cache");
+
+    let captured = EVENTS.lock().unwrap();
+    assert!(
+        captured.iter().any(|e| matches!(
+            e,
+            LogEvent::Progress(log)
+                if matches!(
+                    &log.message,
+                    ProgressMessage::FoundInStore { package_id, requester }
+                        if package_id == "second@2.0.0" && requester == "/proj"
+                )
+        )),
+        "found_in_store must fire for the second requester's package_id; got {captured:?}",
+    );
+    assert!(
+        !captured.iter().any(|e| matches!(
+            e,
+            LogEvent::Progress(log) if matches!(&log.message, ProgressMessage::Fetched { .. })
+        )),
+        "fetched must NOT fire on a mem-cache hit; got {captured:?}",
+    );
+
+    drop(store_dir_keep);
+}
+
 /// `pnpm:fetching-progress` and `pnpm:progress` fire from inside the
 /// tarball pipeline:
 ///
@@ -1422,6 +1538,69 @@ async fn fetching_progress_and_fetched_events_fire_during_download() {
         })
         .count();
     assert_eq!(fetched_count, 1, "fetched must fire exactly once on success");
+
+    drop(store_dir_keep);
+}
+
+/// `pnpm:fetching-progress started` must fire *before* `send().await`,
+/// not after. Connection-level failures (DNS / connect / timeout)
+/// surface from `send().await` — emitting `started` after that point
+/// would silently skip those attempts even though the retry loop
+/// still iterates over them. Drives the failure path with an
+/// unreachable URL and asserts `started` fired anyway.
+#[tokio::test]
+async fn started_fires_for_connection_level_failures() {
+    use std::sync::Mutex;
+
+    use pacquet_reporter::{FetchingProgressMessage, LogEvent};
+
+    static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+
+    struct RecordingReporter;
+    impl pacquet_reporter::Reporter for RecordingReporter {
+        fn emit(event: &LogEvent) {
+            EVENTS.lock().unwrap().push(event.clone());
+        }
+    }
+
+    // Reserved-for-documentation TLD per RFC 6761; resolves nowhere
+    // and reqwest's connect step bails before any response. The
+    // tarball pipeline surfaces this as `TarballError::FetchTarball`
+    // — a transient error that the retry loop *would* keep retrying
+    // if we let it, so cap with `retries: 0` for determinism.
+    let (store_dir_keep, store_path) = tempdir_with_leaked_path();
+    let client = ThrottledClient::default();
+    let pkg_integrity = integrity(FASTIFY_ERROR_INTEGRITY);
+
+    EVENTS.lock().unwrap().clear();
+    let _ = fetch_and_extract_with_retry::<RecordingReporter>(
+        &client,
+        "http://127.0.0.1:1/pkg.tgz", // port 1 is reserved → connect-refused
+        &pkg_integrity,
+        None,
+        "test-pkg",
+        "/proj",
+        store_path,
+        RetryOpts { retries: 0, ..fast_retry_opts() },
+    )
+    .await
+    .expect_err("connect-refused must surface as a TarballError");
+
+    let captured = EVENTS.lock().unwrap();
+    let started_count = captured
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                LogEvent::FetchingProgress(log)
+                    if matches!(&log.message, FetchingProgressMessage::Started { .. })
+            )
+        })
+        .count();
+    assert_eq!(
+        started_count, 1,
+        "started must fire for the attempt even when send() fails before headers; got {captured:?}",
+    );
 
     drop(store_dir_keep);
 }

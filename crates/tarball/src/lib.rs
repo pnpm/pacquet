@@ -749,26 +749,29 @@ async fn fetch_and_extract_once<R: Reporter>(
     // batch of futures `connect()` while previous bodies are still
     // draining, breaking the bound on concurrent open sockets.
     let client = http_client.acquire().await;
-    let response_head = client.get(package_url).send().await.map_err(network_error)?;
 
     // `pnpm:fetching-progress started` mirrors pnpm's per-attempt
     // emit at
     // <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/package-requester/src/packageRequester.ts#L560>.
-    // Fires once per HTTP attempt — including attempts that come back
-    // with a non-2xx status — so a 5xx-then-retry pattern emits
-    // `started` twice (`attempt = 0`, `attempt = 1`). `size` comes
-    // from the response's `Content-Length` and serializes as JSON
-    // `null` (i.e. `None`) for chunked / unknown-length responses;
-    // pnpm's reporter checks `size != null` before rendering a
-    // percent gauge.
+    // Fires once per HTTP attempt *before* `send().await`, so
+    // pre-response failures (DNS / connect / timeout) that retry are
+    // still visible in the reporter — every attempt gets exactly
+    // one `started`, regardless of how it terminates. `size` is
+    // `None` here (the wire shape allows JSON `null`) because the
+    // response head hasn't arrived yet; pnpm's spec requires
+    // `size != null` only when the consumer wants to render a
+    // percent gauge, and this channel is the right place to admit
+    // we don't know yet.
     R::emit(&LogEvent::FetchingProgress(FetchingProgressLog {
         level: LogLevel::Debug,
         message: FetchingProgressMessage::Started {
             attempt,
             package_id: package_id.to_owned(),
-            size: response_head.content_length(),
+            size: None,
         },
     }));
+
+    let response_head = client.get(package_url).send().await.map_err(network_error)?;
 
     let status = response_head.status();
     if !status.is_success() {
@@ -988,7 +991,7 @@ impl<'a> DownloadTarballToStore<'a> {
         self,
         mem_cache: &'a MemCache,
     ) -> Result<Arc<HashMap<String, PathBuf>>, TarballError> {
-        let &DownloadTarballToStore { package_url, .. } = &self;
+        let &DownloadTarballToStore { package_url, package_id, requester, .. } = &self;
 
         // QUESTION: I see no copying from existing store_dir, is there such mechanism?
         // TODO: If it's not implemented yet, implement it
@@ -1003,6 +1006,16 @@ impl<'a> DownloadTarballToStore<'a> {
         if let Some(cache_lock) = existing {
             let notify = match &*cache_lock.write().await {
                 CacheValue::Available(cas_paths) => {
+                    // The mem cache deduplicates concurrent fetches of the
+                    // same tarball URL. The first requester goes through
+                    // `run_without_mem_cache` and emits `fetched` /
+                    // `found_in_store` for *its* package_id; later
+                    // requesters share the bytes here without reaching
+                    // those emit sites. From this requester's
+                    // perspective the package is already in the store, so
+                    // emit `found_in_store` so the per-package counters
+                    // in pnpm's reporter increment correctly.
+                    emit_progress_found_in_store::<R>(package_id, requester);
                     return Ok(Arc::clone(cas_paths));
                 }
                 CacheValue::InProgress(notify) => Arc::clone(notify),
@@ -1011,6 +1024,11 @@ impl<'a> DownloadTarballToStore<'a> {
             tracing::info!(target: "pacquet::download", ?package_url, "Wait for cache");
             notify.notified().await;
             if let CacheValue::Available(cas_paths) = &*cache_lock.read().await {
+                // Same rationale as the immediate-`Available` branch
+                // above: this requester didn't drive the fetch, but
+                // its package_id still needs `found_in_store` for the
+                // counter to advance.
+                emit_progress_found_in_store::<R>(package_id, requester);
                 return Ok(Arc::clone(cas_paths));
             }
             unreachable!("Failed to get or compute tarball data for {package_url:?}");
