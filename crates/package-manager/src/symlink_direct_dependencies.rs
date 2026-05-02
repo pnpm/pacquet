@@ -131,13 +131,19 @@ where
                 // `entries` builder above.
                 DependencyGroup::Peer => unreachable!("peers are filtered out before this point"),
             };
+            // Pacquet's lockfile snapshot doesn't track the
+            // npm-alias key separately from the resolved package
+            // name at this layer, so `name` and `real_name` carry
+            // the same value — clone the already-built string
+            // instead of formatting `name` a second time.
+            let real_name = name_str.clone();
             R::emit(&LogEvent::Root(RootLog {
                 level: LogLevel::Debug,
                 message: RootMessage::Added {
                     prefix: requester.to_owned(),
                     added: AddedRoot {
                         name: name_str,
-                        real_name: name.to_string(),
+                        real_name,
                         version: Some(spec.version.version().to_string()),
                         dependency_type: Some(dependency_type),
                         id: None,

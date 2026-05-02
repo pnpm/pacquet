@@ -92,8 +92,12 @@ fn emits_pnpm_root_added_per_direct_dependency() {
     // Both symlinks must land under `node_modules/` for the wire-
     // shape assertion below to be meaningful — an emit without the
     // matching FS effect would mask a real regression.
-    assert!(is_symlink_or_junction(&modules_dir.join("fastify")).unwrap());
-    assert!(is_symlink_or_junction(&modules_dir.join("@pnpm.e2e/dev-dep")).unwrap());
+    let fastify_link = modules_dir.join("fastify");
+    let dev_dep_link = modules_dir.join("@pnpm.e2e/dev-dep");
+    eprintln!("fastify_link = {fastify_link:?}");
+    assert!(is_symlink_or_junction(&fastify_link).unwrap());
+    eprintln!("dev_dep_link = {dev_dep_link:?}");
+    assert!(is_symlink_or_junction(&dev_dep_link).unwrap());
 
     let captured = EVENTS.lock().unwrap();
     let added: Vec<&AddedRoot> = captured
@@ -236,6 +240,7 @@ fn missing_root_importer_surfaces_as_error() {
     }
     .run::<SilentReporter>();
 
+    dbg!(&result);
     assert!(matches!(result, Err(SymlinkDirectDependenciesError::MissingRootImporter { .. })));
     drop(dir);
 }

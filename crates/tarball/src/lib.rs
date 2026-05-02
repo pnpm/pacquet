@@ -719,11 +719,14 @@ pub struct DownloadTarballToStore<'a> {
 /// reason; absent fields skip rather than emit `null` so the `??`
 /// chain doesn't short-circuit on a present-but-`null` field.
 ///
-/// Today pacquet only populates `http_status_code` (for
-/// `HttpStatus`) and a string `code` derived from the variant name
-/// for everything else. `errno` and `status` are skipped because
-/// pacquet's error layer doesn't carry them; pnpm's emit fills
-/// them when the underlying network error did.
+/// Today pacquet populates `http_status_code` for the
+/// [`TarballError::HttpStatus`] variant and a curated
+/// `ERR_PACQUET_*` constant in `code` for every other variant —
+/// the mapping is hand-maintained per match arm rather than
+/// reflectively derived, so renaming a [`TarballError`] variant
+/// won't silently change the emitted `code`. `errno` and `status`
+/// are skipped because pacquet's error layer doesn't carry them;
+/// pnpm's emit fills them when the underlying network error did.
 fn tarball_error_to_request_retry(err: &TarballError) -> RequestRetryError {
     let mut out = RequestRetryError {
         message: err.to_string(),
