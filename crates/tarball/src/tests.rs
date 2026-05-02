@@ -1445,6 +1445,105 @@ async fn mem_cache_hit_emits_found_in_store_for_second_requester() {
     drop(store_dir_keep);
 }
 
+/// `run_with_mem_cache` must not deadlock when the *owning* fetch
+/// errors. Before the `CacheValue::Failed` fix, the failing task
+/// returned without flipping the cache slot to `Available` or
+/// notifying waiters, so the second requester would park on
+/// `Notify::notified` forever. Now the owner sets `Failed`, removes
+/// the entry from `mem_cache`, and notifies waiters; both requesters
+/// surface a `TarballError`.
+///
+/// Two concurrent `run_with_mem_cache` calls for the same URL,
+/// pointing at a 404 endpoint with `retries: 0` so the failure is
+/// fast. With a 30 s wall-clock cap, the test asserts the deadlock
+/// regression by demanding both calls complete (rather than hanging
+/// the whole runtime).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn run_with_mem_cache_recovers_from_owning_fetch_error() {
+    use pacquet_reporter::SilentReporter;
+
+    let (store_dir_keep, store_path) = tempdir_with_leaked_path();
+    let mut server = mockito::Server::new_async().await;
+    let _mock = server
+        .mock("GET", "/pkg.tgz")
+        // 404 makes `is_transient_error` return false, so the retry
+        // loop fails fast — perfect for forcing the owner-error
+        // branch deterministically.
+        .with_status(404)
+        // Both concurrent requesters dedup on the URL, so only one
+        // network call should land. `expect_at_least(1)` covers
+        // either: `mem_cache` dedup (1 hit) or a no-op race (still
+        // 1 hit since the 404 is fast).
+        .expect_at_least(1)
+        .create_async()
+        .await;
+
+    let url = format!("{}/pkg.tgz", server.url());
+    // Leak the inputs so concurrent tasks can each construct a
+    // borrow-style `DownloadTarballToStore` without lifetime
+    // gymnastics on the spawned futures. The test scope is short and
+    // the leak is negligible.
+    let client: &'static ThrottledClient = Box::leak(Box::new(ThrottledClient::default()));
+    let pkg_integrity: &'static Integrity = Box::leak(Box::new(integrity(FASTIFY_ERROR_INTEGRITY)));
+    let url: &'static str = Box::leak(url.into_boxed_str());
+    let mem_cache: &'static MemCache = Box::leak(Box::new(MemCache::default()));
+
+    let make_dts = || DownloadTarballToStore {
+        http_client: client,
+        store_dir: store_path,
+        store_index: None,
+        store_index_writer: None,
+        verify_store_integrity: true,
+        verified_files_cache: SharedVerifiedFilesCache::default(),
+        package_integrity: pkg_integrity,
+        package_unpacked_size: None,
+        package_url: url,
+        package_id: "deadlock@1.0.0",
+        requester: "/proj",
+        prefetched_cas_paths: None,
+        retry_opts: test_retry_opts(),
+    };
+
+    // Drive both calls concurrently. Pre-fix: the first to hit the
+    // `else` branch goes through the network, fails, returns
+    // without notifying — the second parks on `Notify` forever.
+    // Post-fix: the owner notifies after setting `Failed`; the
+    // waiter wakes up, observes `Failed`, and surfaces
+    // `SiblingFetchFailed` (or its own attempt's error).
+    let task_a =
+        tokio::spawn(
+            async move { make_dts().run_with_mem_cache::<SilentReporter>(mem_cache).await },
+        );
+    let task_b =
+        tokio::spawn(
+            async move { make_dts().run_with_mem_cache::<SilentReporter>(mem_cache).await },
+        );
+
+    // 30s is a paranoid cap; the actual runtime should be a few
+    // hundred ms (one mockito 404 + the retry-loop's no-retry
+    // path). If `notify_waiters` regresses, this would otherwise
+    // hang until nextest's per-test timeout.
+    let join = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        futures_util::future::join(task_a, task_b),
+    )
+    .await
+    .expect("run_with_mem_cache deadlocked on owner-error path");
+
+    let (a_result, b_result) = join;
+    let a = a_result.expect("task_a join");
+    let b = b_result.expect("task_b join");
+
+    // Both must surface an error — exact variant depends on which
+    // task drove the network fetch (gets HttpStatus 404) and which
+    // parked on Notify (gets SiblingFetchFailed). Pin only the
+    // "both errored, neither hung" invariant.
+    assert!(a.is_err(), "task_a must surface the 404 (or sibling failure)");
+    assert!(b.is_err(), "task_b must surface the 404 (or sibling failure)");
+
+    drop(store_dir_keep);
+}
+
 /// `pnpm:fetching-progress` and `pnpm:progress` fire from inside the
 /// tarball pipeline:
 ///
