@@ -3,7 +3,7 @@ use std::{
     io::{Cursor, Read},
     path::{Component, PathBuf},
     sync::{Arc, OnceLock},
-    time::{Duration, UNIX_EPOCH},
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 
 use dashmap::DashMap;
@@ -11,6 +11,10 @@ use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use pacquet_fs::file_mode;
 use pacquet_network::ThrottledClient;
+use pacquet_reporter::{
+    FetchingProgressLog, FetchingProgressMessage, LogEvent, LogLevel, ProgressLog, ProgressMessage,
+    Reporter,
+};
 use pacquet_store_dir::{
     CafsFileInfo, PackageFilesIndex, SharedReadonlyStoreIndex, SharedVerifiedFilesCache, StoreDir,
     StoreIndexError, StoreIndexWriter, WriteCasFileError, store_index_key,
@@ -203,6 +207,19 @@ pub enum TarballError {
     )]
     #[diagnostic(code(pacquet_tarball::tarball_too_large))]
     TarballTooLarge { url: String, advertised_size: u64 },
+
+    /// A concurrent request for the same tarball URL went through
+    /// `run_with_mem_cache`, drove the network fetch, and failed.
+    /// This task was parked on the shared `Notify` waiting for the
+    /// download; on wake it sees [`CacheValue::Failed`] and surfaces
+    /// this variant. The owner's original error stays with the
+    /// owner (it can't be cloned past `reqwest::Error`).
+    #[from(ignore)]
+    #[display(
+        "A concurrent fetch for {url} failed; this request waited on the shared mem cache and inherits the failure"
+    )]
+    #[diagnostic(code(pacquet_tarball::sibling_fetch_failed))]
+    SiblingFetchFailed { url: String },
 }
 
 /// Value of the cache.
@@ -212,6 +229,14 @@ pub enum CacheValue {
     InProgress(Arc<Notify>),
     /// The package is saved.
     Available(Arc<HashMap<String, PathBuf>>),
+    /// The owning fetch failed; concurrent waiters wake up to this
+    /// instead of `Available` and surface a sibling-fetch-failed
+    /// error rather than blocking on the `Notify` forever. The
+    /// originating `TarballError` cannot be cloned past the owner
+    /// (it's wrapped in `reqwest::Error` / IO chains that aren't
+    /// `Clone`), so waiters return their own variant — see
+    /// [`TarballError::SiblingFetchFailed`].
+    Failed,
 }
 
 /// Internal in-memory cache of tarballs.
@@ -668,6 +693,12 @@ pub struct DownloadTarballToStore<'a> {
     /// with `package_integrity` to form the SQLite index key per pnpm v11's
     /// `storeIndexKey`.
     pub package_id: &'a str,
+    /// Install root the fetch belongs to. Threaded into the
+    /// `pnpm:progress` `requester` field on `fetched` /
+    /// `found_in_store` events. Same value as the
+    /// [`pacquet_reporter::StageLog::prefix`] computed in
+    /// `Install::run`.
+    pub requester: &'a str,
     /// Pre-fetched cache lookups built once at install start
     /// ([`prefetch_cas_paths`]). When `Some`, this is consulted first;
     /// the per-snapshot SQLite + integrity-check round-trip is skipped
@@ -722,11 +753,13 @@ fn is_transient_error(err: &TarballError) -> bool {
 /// pQueue and #281's EMFILE fix), then dropped before the
 /// `post_download_semaphore` permit gates the CPU-bound checksum +
 /// decode + extract step.
-async fn fetch_and_extract_once(
+async fn fetch_and_extract_once<R: Reporter>(
     http_client: &ThrottledClient,
     package_url: &str,
     package_integrity: &Integrity,
     package_unpacked_size: Option<usize>,
+    package_id: &str,
+    attempt: u32,
     store_dir: &'static StoreDir,
 ) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
     let network_error =
@@ -737,7 +770,31 @@ async fn fetch_and_extract_once(
     // batch of futures `connect()` while previous bodies are still
     // draining, breaking the bound on concurrent open sockets.
     let client = http_client.acquire().await;
-    let response_head = client.get(package_url).send().await.map_err(network_error)?;
+
+    // `pnpm:fetching-progress started` mirrors pnpm's per-attempt
+    // emit at
+    // <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/package-requester/src/packageRequester.ts#L560>.
+    // Fires exactly once per HTTP attempt — including attempts that
+    // fail before the response head arrives (DNS / connect /
+    // timeout) so retried attempts stay visible in the reporter.
+    // `size` is the response's `Content-Length` when we have a
+    // response head, and JSON `null` (i.e. `None`) when we don't:
+    // either because the response is chunked / unknown-length, or
+    // because the request errored out before headers. pnpm's
+    // reporter checks `size != null` before rendering a percent
+    // gauge, so this admits "we don't know yet" only when we truly
+    // don't know.
+    let send_result = client.get(package_url).send().await;
+    let size = send_result.as_ref().ok().and_then(|r| r.content_length());
+    R::emit(&LogEvent::FetchingProgress(FetchingProgressLog {
+        level: LogLevel::Debug,
+        message: FetchingProgressMessage::Started {
+            attempt,
+            package_id: package_id.to_owned(),
+            size,
+        },
+    }));
+    let response_head = send_result.map_err(network_error)?;
 
     let status = response_head.status();
     if !status.is_success() {
@@ -765,9 +822,66 @@ async fn fetch_and_extract_once(
         use futures_util::StreamExt;
         let mut buf = allocate_tarball_buffer(expected_size, package_url)?;
         let mut stream = response_head.bytes_stream();
+
+        // `in_progress` is gated and throttled to match pnpm exactly
+        // (see [`remoteTarballFetcher.ts`](https://github.com/pnpm/pnpm/blob/086c5e91e8/fetching/tarball-fetcher/src/remoteTarballFetcher.ts#L143)):
+        //
+        // 1. Only emit when the tarball size is *known* (i.e. the
+        //    response carried a `Content-Length`). Chunked / unknown-
+        //    length responses skip the channel entirely; pnpm's
+        //    default reporter needs `size` to render a percent gauge,
+        //    and emitting `downloaded` without a denominator is
+        //    noise.
+        // 2. Only emit when the tarball is "big" — at least 5 MB.
+        //    Most npm packages are well under this; the pnpm authors
+        //    found per-byte progress for tiny tarballs floods the
+        //    JS side with values that would render as 100% before any
+        //    UI tick can show them.
+        // 3. Throttle emits to 500ms with leading + trailing edges,
+        //    matching `lodash.throttle(opts.onProgress, 500)`. Leading
+        //    is the first chunk we see; trailing is a final emit
+        //    after the body finishes so the consumer sees the actual
+        //    end-of-download byte count, not whatever value happened
+        //    to be cached at the last 500ms tick.
+        const BIG_TARBALL_SIZE: u64 = 5 * 1024 * 1024;
+        const IN_PROGRESS_THROTTLE: Duration = Duration::from_millis(500);
+        let emit_progress = expected_size.is_some_and(|n| n >= BIG_TARBALL_SIZE);
+        // `None` means the leading-edge emit hasn't happened yet, so
+        // the first chunk always fires. Subsequent chunks fire only
+        // when the previous emit was at least 500ms ago.
+        let mut last_emit: Option<Instant> = None;
+        let mut last_emitted_downloaded: u64 = 0;
+        let mut downloaded: u64 = 0;
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(network_error)?;
             buf.extend_from_slice(&chunk);
+            downloaded = downloaded.saturating_add(chunk.len() as u64);
+            let throttle_ready = last_emit.is_none_or(|t| t.elapsed() >= IN_PROGRESS_THROTTLE);
+            if emit_progress && throttle_ready {
+                R::emit(&LogEvent::FetchingProgress(FetchingProgressLog {
+                    level: LogLevel::Debug,
+                    message: FetchingProgressMessage::InProgress {
+                        downloaded,
+                        package_id: package_id.to_owned(),
+                    },
+                }));
+                last_emit = Some(Instant::now());
+                last_emitted_downloaded = downloaded;
+            }
+        }
+        // Trailing emit: matches `lodash.throttle`'s default
+        // `{leading: true, trailing: true}`. Without it the last
+        // partial window is dropped — a download that ends 200ms
+        // after the previous tick would leave consumers stuck at a
+        // stale `downloaded` value below the real total.
+        if emit_progress && downloaded != last_emitted_downloaded {
+            R::emit(&LogEvent::FetchingProgress(FetchingProgressLog {
+                level: LogLevel::Debug,
+                message: FetchingProgressMessage::InProgress {
+                    downloaded,
+                    package_id: package_id.to_owned(),
+                },
+            }));
         }
         buf
     };
@@ -848,26 +962,62 @@ async fn fetch_and_extract_once(
 /// part-way through extraction stay on disk. That's safe: the CAFS is
 /// content-addressed, so re-extracting the same bytes produces
 /// identical paths and `write_cas_file` is idempotent.
-async fn fetch_and_extract_with_retry(
+/// Emit `pnpm:progress found_in_store` for a (package_id, requester)
+/// pair the cache resolved without a download. Mirrors pnpm's emit at
+/// <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/package-requester/src/packageRequester.ts#L435>.
+fn emit_progress_found_in_store<R: Reporter>(package_id: &str, requester: &str) {
+    R::emit(&LogEvent::Progress(ProgressLog {
+        level: LogLevel::Debug,
+        message: ProgressMessage::FoundInStore {
+            package_id: package_id.to_owned(),
+            requester: requester.to_owned(),
+        },
+    }));
+}
+
+// 8 arguments — over the default clippy threshold but each is
+// distinct: client + URL + integrity describe the request, ID +
+// requester are the reporter dimensions, unpacked-size is allocation
+// hinting, store_dir + retry_opts are install-scoped. Bundling into
+// a struct would just push the same fields into a wrapper.
+#[allow(clippy::too_many_arguments)]
+async fn fetch_and_extract_with_retry<R: Reporter>(
     http_client: &ThrottledClient,
     package_url: &str,
     package_integrity: &Integrity,
     package_unpacked_size: Option<usize>,
+    package_id: &str,
+    requester: &str,
     store_dir: &'static StoreDir,
     retry_opts: RetryOpts,
 ) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
     let mut attempt: u32 = 0;
     loop {
-        let result = fetch_and_extract_once(
+        let result = fetch_and_extract_once::<R>(
             http_client,
             package_url,
             package_integrity,
             package_unpacked_size,
+            package_id,
+            attempt,
             store_dir,
         )
         .await;
         match result {
-            Ok(value) => return Ok(value),
+            Ok(value) => {
+                // `pnpm:progress fetched` mirrors pnpm's emit at
+                // <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/package-requester/src/packageRequester.ts#L435>:
+                // one event per (resolved) package once the tarball
+                // has been pulled from the network and extracted.
+                R::emit(&LogEvent::Progress(ProgressLog {
+                    level: LogLevel::Debug,
+                    message: ProgressMessage::Fetched {
+                        package_id: package_id.to_owned(),
+                        requester: requester.to_owned(),
+                    },
+                }));
+                return Ok(value);
+            }
             Err(err) if !is_transient_error(&err) => return Err(err),
             Err(err) if attempt >= retry_opts.retries => {
                 tracing::warn!(
@@ -899,11 +1049,11 @@ async fn fetch_and_extract_with_retry(
 
 impl<'a> DownloadTarballToStore<'a> {
     /// Execute the subroutine with an in-memory cache.
-    pub async fn run_with_mem_cache(
+    pub async fn run_with_mem_cache<R: Reporter>(
         self,
         mem_cache: &'a MemCache,
     ) -> Result<Arc<HashMap<String, PathBuf>>, TarballError> {
-        let &DownloadTarballToStore { package_url, .. } = &self;
+        let &DownloadTarballToStore { package_url, package_id, requester, .. } = &self;
 
         // QUESTION: I see no copying from existing store_dir, is there such mechanism?
         // TODO: If it's not implemented yet, implement it
@@ -918,17 +1068,47 @@ impl<'a> DownloadTarballToStore<'a> {
         if let Some(cache_lock) = existing {
             let notify = match &*cache_lock.write().await {
                 CacheValue::Available(cas_paths) => {
+                    // The mem cache deduplicates concurrent fetches of the
+                    // same tarball URL. The first requester goes through
+                    // `run_without_mem_cache` and emits `fetched` /
+                    // `found_in_store` for *its* package_id; later
+                    // requesters share the bytes here without reaching
+                    // those emit sites. From this requester's
+                    // perspective the package is already in the store, so
+                    // emit `found_in_store` so the per-package counters
+                    // in pnpm's reporter increment correctly.
+                    emit_progress_found_in_store::<R>(package_id, requester);
                     return Ok(Arc::clone(cas_paths));
                 }
                 CacheValue::InProgress(notify) => Arc::clone(notify),
+                CacheValue::Failed => {
+                    // The owner already finished and failed; surface
+                    // immediately rather than parking on the Notify.
+                    return Err(TarballError::SiblingFetchFailed { url: package_url.to_string() });
+                }
             };
 
             tracing::info!(target: "pacquet::download", ?package_url, "Wait for cache");
             notify.notified().await;
-            if let CacheValue::Available(cas_paths) = &*cache_lock.read().await {
-                return Ok(Arc::clone(cas_paths));
+            match &*cache_lock.read().await {
+                CacheValue::Available(cas_paths) => {
+                    // Same rationale as the immediate-`Available`
+                    // branch above: this requester didn't drive the
+                    // fetch, but its package_id still needs
+                    // `found_in_store` for the counter to advance.
+                    emit_progress_found_in_store::<R>(package_id, requester);
+                    Ok(Arc::clone(cas_paths))
+                }
+                CacheValue::Failed => {
+                    Err(TarballError::SiblingFetchFailed { url: package_url.to_string() })
+                }
+                // The owner only flips us to `Available` or `Failed`
+                // before notifying. Hitting this is a programmer
+                // error in the owner branch below.
+                CacheValue::InProgress(_) => unreachable!(
+                    "owner notified waiters but left the cache in InProgress for {package_url:?}",
+                ),
             }
-            unreachable!("Failed to get or compute tarball data for {package_url:?}");
         } else {
             let notify = Arc::new(Notify::new());
             let cache_lock = notify
@@ -939,16 +1119,42 @@ impl<'a> DownloadTarballToStore<'a> {
             if mem_cache.insert(package_url.to_string(), Arc::clone(&cache_lock)).is_some() {
                 tracing::warn!(target: "pacquet::download", ?package_url, "Race condition detected when writing to cache");
             }
-            let cas_paths = self.run_without_mem_cache().await?.pipe(Arc::new);
-            let mut cache_write = cache_lock.write().await;
-            *cache_write = CacheValue::Available(Arc::clone(&cas_paths));
-            notify.notify_waiters();
-            Ok(cas_paths)
+
+            // Run the actual fetch and cleanup in either branch. On
+            // error the cache slot must transition to `Failed` and
+            // we must `notify_waiters` so concurrent requesters
+            // wake up and surface a sibling-fetch error instead of
+            // parking on the Notify forever (the original deadlock).
+            // Removing the `mem_cache` entry afterwards lets a
+            // freshly-started fetch (e.g., via `pacquet add` after
+            // a transient network failure) retry without inheriting
+            // the failed slot.
+            let result = self.run_without_mem_cache::<R>().await;
+            match result {
+                Ok(cas_paths) => {
+                    let cas_paths = Arc::new(cas_paths);
+                    let mut cache_write = cache_lock.write().await;
+                    *cache_write = CacheValue::Available(Arc::clone(&cas_paths));
+                    drop(cache_write);
+                    notify.notify_waiters();
+                    Ok(cas_paths)
+                }
+                Err(err) => {
+                    let mut cache_write = cache_lock.write().await;
+                    *cache_write = CacheValue::Failed;
+                    drop(cache_write);
+                    mem_cache.remove(package_url);
+                    notify.notify_waiters();
+                    Err(err)
+                }
+            }
         }
     }
 
     /// Execute the subroutine without an in-memory cache.
-    pub async fn run_without_mem_cache(&self) -> Result<HashMap<String, PathBuf>, TarballError> {
+    pub async fn run_without_mem_cache<R: Reporter>(
+        &self,
+    ) -> Result<HashMap<String, PathBuf>, TarballError> {
         let &DownloadTarballToStore {
             http_client,
             store_dir,
@@ -956,6 +1162,7 @@ impl<'a> DownloadTarballToStore<'a> {
             package_unpacked_size,
             package_url,
             package_id,
+            requester,
             verify_store_integrity,
             prefetched_cas_paths,
             retry_opts,
@@ -1004,6 +1211,7 @@ impl<'a> DownloadTarballToStore<'a> {
                 ?package_id,
                 "Reusing prefetched CAFS entry — skipping download",
             );
+            emit_progress_found_in_store::<R>(package_id, requester);
             return Ok((**cas_paths).clone());
         }
         if let Some(cas_paths) = load_cached_cas_paths(
@@ -1016,6 +1224,7 @@ impl<'a> DownloadTarballToStore<'a> {
         .await
         {
             tracing::info!(target: "pacquet::download", ?package_url, ?package_id, "Reusing cached CAFS entry — skipping download");
+            emit_progress_found_in_store::<R>(package_id, requester);
             return Ok(cas_paths);
         }
 
@@ -1030,11 +1239,13 @@ impl<'a> DownloadTarballToStore<'a> {
         // parsing recovers via re-fetch instead of aborting the install
         // (#259). Only HTTP 401 / 403 / 404 fail fast — see
         // [`is_transient_error`].
-        let (cas_paths, pkg_files_idx) = fetch_and_extract_with_retry(
+        let (cas_paths, pkg_files_idx) = fetch_and_extract_with_retry::<R>(
             http_client,
             package_url,
             package_integrity,
             package_unpacked_size,
+            package_id,
+            requester,
             store_dir,
             retry_opts,
         )

@@ -12,9 +12,11 @@ use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::PackageVersion;
+use pacquet_reporter::Reporter;
 use pacquet_store_dir::{SharedVerifiedFilesCache, StoreIndex, StoreIndexWriter};
 use pacquet_tarball::MemCache;
 use pipe_trait::Pipe;
+use std::sync::atomic::AtomicU8;
 
 /// In-memory cache for packages that have started resolving dependencies.
 ///
@@ -39,6 +41,11 @@ pub struct InstallWithoutLockfile<'a, DependencyGroupList> {
     pub config: &'static Npmrc,
     pub manifest: &'a PackageManifest,
     pub dependency_groups: DependencyGroupList,
+    /// Install-scoped dedupe state for `pnpm:package-import-method`.
+    /// See `link_file::log_method_once`.
+    pub logged_methods: &'a AtomicU8,
+    /// Install root, threaded into reporter `requester` fields.
+    pub requester: &'a str,
 }
 
 /// Error type of [`InstallWithoutLockfile`].
@@ -56,7 +63,7 @@ pub enum InstallWithoutLockfileError {
 
 impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
     /// Execute the subroutine.
-    pub async fn run(self) -> Result<(), InstallWithoutLockfileError>
+    pub async fn run<R: Reporter>(self) -> Result<(), InstallWithoutLockfileError>
     where
         DependencyGroupList: IntoIterator<Item = DependencyGroup>,
     {
@@ -67,6 +74,8 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
             manifest,
             dependency_groups,
             resolved_packages,
+            logged_methods,
+            requester,
         } = self;
 
         let store_dir: &'static _ = &config.store_dir;
@@ -128,11 +137,13 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                         store_index: store_index_ref,
                         store_index_writer: store_index_writer_ref,
                         verified_files_cache: &verified_files_cache,
+                        logged_methods,
+                        requester,
                         node_modules_dir: &config.modules_dir,
                         name,
                         version_range,
                     }
-                    .run()
+                    .run::<R>()
                     .await
                     .map_err(InstallWithoutLockfileError::InstallPackageFromRegistry)?;
 
@@ -143,8 +154,10 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                         manifest,
                         dependency_groups: (),
                         resolved_packages,
+                        logged_methods,
+                        requester,
                     }
-                    .install_dependencies_from_registry(
+                    .install_dependencies_from_registry::<R>(
                         &dependency,
                         store_index_ref,
                         store_index_writer_ref,
@@ -198,7 +211,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
 impl<'a> InstallWithoutLockfile<'a, ()> {
     /// Install dependencies of a dependency.
     #[async_recursion]
-    async fn install_dependencies_from_registry(
+    async fn install_dependencies_from_registry<R>(
         &self,
         package: &PackageVersion,
         store_index: Option<&'async_recursion pacquet_store_dir::SharedReadonlyStoreIndex>,
@@ -206,7 +219,10 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
             &'async_recursion std::sync::Arc<pacquet_store_dir::StoreIndexWriter>,
         >,
         verified_files_cache: &'async_recursion SharedVerifiedFilesCache,
-    ) -> Result<(), InstallWithoutLockfileError> {
+    ) -> Result<(), InstallWithoutLockfileError>
+    where
+        R: Reporter,
+    {
         let InstallWithoutLockfile {
             tarball_mem_cache,
             http_client,
@@ -240,14 +256,16 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
                     store_index,
                     store_index_writer,
                     verified_files_cache,
+                    logged_methods: self.logged_methods,
+                    requester: self.requester,
                     node_modules_dir: node_modules_path_ref,
                     name,
                     version_range,
                 }
-                .run()
+                .run::<R>()
                 .await
                 .map_err(InstallWithoutLockfileError::InstallPackageFromRegistry)?;
-                self.install_dependencies_from_registry(
+                self.install_dependencies_from_registry::<R>(
                     &dependency,
                     store_index,
                     store_index_writer,

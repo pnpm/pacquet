@@ -14,6 +14,7 @@ repository.workspace  = true
 pacquet-diagnostics = { workspace = true }
 pacquet-fs          = { workspace = true }
 pacquet-network     = { workspace = true }
+pacquet-reporter    = { workspace = true }
 pacquet-store-dir   = { workspace = true }
 
 dashmap       = { workspace = true }
