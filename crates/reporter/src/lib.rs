@@ -86,6 +86,48 @@ pub enum LogEvent {
     /// Emit site: <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/package-requester/src/packageRequester.ts#L560>.
     #[serde(rename = "pnpm:fetching-progress")]
     FetchingProgress(FetchingProgressLog),
+
+    /// Project manifest snapshots (`pnpm:package-manifest`). Two
+    /// presence-tagged shapes per pnpm's union: `initial` (emitted
+    /// once at install start with the on-disk manifest) and
+    /// `updated` (emitted after the manifest is rewritten — e.g.
+    /// `pacquet add` saves a new dependency entry).
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/core/core-loggers/src/packageManifestLogger.ts>.
+    #[serde(rename = "pnpm:package-manifest")]
+    PackageManifest(PackageManifestLog),
+
+    /// Per-direct-dependency add / remove events (`pnpm:root`). pnpm's
+    /// reporter accumulates these and renders the "+N -M" block at
+    /// `pnpm:summary` time.
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/core/core-loggers/src/rootLogger.ts>.
+    /// Emit site: <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/linking/direct-dep-linker/src/linkDirectDeps.ts#L131>.
+    #[serde(rename = "pnpm:root")]
+    Root(RootLog),
+
+    /// Aggregate add / remove counts emitted once per project after
+    /// the link phase (`pnpm:stats`). Pnpm emits `added` and
+    /// `removed` from separate sites; pacquet currently emits both
+    /// together because pruning hasn't landed yet — see
+    /// [`StatsMessage::Removed`].
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/core/core-loggers/src/statsLogger.ts>.
+    /// Emit site: <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-installer/src/install/link.ts#L363>.
+    #[serde(rename = "pnpm:stats")]
+    Stats(StatsLog),
+
+    /// One per failed-and-being-retried HTTP request
+    /// (`pnpm:request-retry`). Pnpm's default reporter surfaces these
+    /// as `Will retry in <ms>. <N> retries left.` warnings; the
+    /// `error` payload is what the JS reporter dispatches on
+    /// (`httpStatusCode` / `status` / `errno` / `code`) to render the
+    /// reason.
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/core/core-loggers/src/requestRetryLogger.ts>.
+    /// Emit site: <https://github.com/pnpm/pnpm/blob/086c5e91e8/fetching/tarball-fetcher/src/remoteTarballFetcher.ts#L91>.
+    #[serde(rename = "pnpm:request-retry")]
+    RequestRetry(RequestRetryLog),
 }
 
 /// `pnpm:context` payload.
@@ -230,6 +272,156 @@ pub enum FetchingProgressMessage {
         #[serde(rename = "packageId")]
         package_id: String,
     },
+}
+
+/// `pnpm:package-manifest` payload. The bunyan-envelope `level` is a
+/// fixed outer field; the rest is a presence-tagged union — pnpm
+/// keys on whether `initial` or `updated` is present rather than
+/// using a `status` discriminator. `#[serde(untagged)]` matches
+/// that shape; `#[serde(flatten)]` keeps `prefix` adjacent to
+/// `initial` / `updated` at the top level.
+#[derive(Debug, Clone, Serialize)]
+pub struct PackageManifestLog {
+    pub level: LogLevel,
+    #[serde(flatten)]
+    pub message: PackageManifestMessage,
+}
+
+/// `pnpm:package-manifest` discriminated payload. The `Value` carries
+/// the entire on-disk `package.json` body — pnpm's reporter doesn't
+/// pick fields out, it threads the manifest through to consumers
+/// like the audit pipeline that need the full thing.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum PackageManifestMessage {
+    Initial { prefix: String, initial: serde_json::Value },
+    Updated { prefix: String, updated: serde_json::Value },
+}
+
+/// `pnpm:root` payload. Same flatten-on-presence pattern as
+/// [`PackageManifestLog`].
+#[derive(Debug, Clone, Serialize)]
+pub struct RootLog {
+    pub level: LogLevel,
+    #[serde(flatten)]
+    pub message: RootMessage,
+}
+
+/// `pnpm:root` discriminated payload. pnpm's reporter dispatches on
+/// whether `added` or `removed` is present; tag-on-presence matches
+/// that. Pacquet only emits `added` today (no pruning pipeline yet)
+/// — `Removed` is here to pin the wire shape so the channel is
+/// usable when pruning lands.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum RootMessage {
+    Added { prefix: String, added: AddedRoot },
+    Removed { prefix: String, removed: RemovedRoot },
+}
+
+/// `added` payload on a [`RootMessage::Added`] event. `name` is the
+/// directory name under `node_modules/` (the manifest alias for
+/// npm-aliased entries; the package name otherwise). `real_name`
+/// is the registry name. The other fields are optional in pnpm's
+/// shape; pacquet populates what it has from the lockfile snapshot
+/// today.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddedRoot {
+    pub name: String,
+    pub real_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dependency_type: Option<DependencyType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub linked_from: Option<String>,
+}
+
+/// `removed` payload on a [`RootMessage::Removed`] event. Optional
+/// fields match pnpm's shape and are skipped when absent.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemovedRoot {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dependency_type: Option<DependencyType>,
+}
+
+/// Direct-dependency category. Mirrors pnpm's three-value union;
+/// peer dependencies are not a separate emit and don't appear here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DependencyType {
+    Prod,
+    Dev,
+    Optional,
+}
+
+/// `pnpm:stats` payload. Same flatten-on-presence pattern as
+/// [`PackageManifestLog`] / [`RootLog`].
+#[derive(Debug, Clone, Serialize)]
+pub struct StatsLog {
+    pub level: LogLevel,
+    #[serde(flatten)]
+    pub message: StatsMessage,
+}
+
+/// `pnpm:stats` discriminated payload. pnpm's reporter dispatches on
+/// presence: an event carries either `added` *or* `removed`, never
+/// both, because pnpm emits them from two separate sites.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum StatsMessage {
+    Added { prefix: String, added: u64 },
+    Removed { prefix: String, removed: u64 },
+}
+
+/// `pnpm:request-retry` payload. `attempt` is one-indexed (the failed
+/// attempt that triggered the retry) and `timeout` is the
+/// milliseconds the retry loop will sleep before the next attempt;
+/// pnpm's default reporter renders both directly.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestRetryLog {
+    pub level: LogLevel,
+    pub attempt: u32,
+    pub error: RequestRetryError,
+    pub max_retries: u32,
+    pub method: String,
+    pub timeout: u64,
+    pub url: String,
+}
+
+/// JS-shaped error object the default-reporter dispatches on:
+/// `error.httpStatusCode ?? error.status ?? error.errno ?? error.code`
+/// is what gets rendered as the reason. pacquet populates whichever
+/// field its `pacquet_tarball::TarballError` variant maps to (HTTP
+/// status → `http_status_code`, decode / IO failures → `code`) and
+/// always carries the rendered `message` so consumers that read
+/// `err.message` directly still work.
+///
+/// Plain backticks (not an intra-doc link) because `pacquet-reporter`
+/// cannot depend on `pacquet-tarball` — the dependency runs the
+/// other way.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestRetryError {
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http_status_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub errno: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 
 /// Severity level on the [bunyan]-shaped envelope.

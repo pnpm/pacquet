@@ -5,9 +5,11 @@ use pretty_assertions::assert_eq;
 use serde_json::Value;
 
 use crate::{
-    ContextLog, Envelope, FetchingProgressLog, FetchingProgressMessage, GetHostName, LogEvent,
-    LogLevel, PackageImportMethod, PackageImportMethodLog, ProgressLog, ProgressMessage, RealApi,
-    Reporter, SilentReporter, Stage, StageLog, SummaryLog,
+    AddedRoot, ContextLog, DependencyType, Envelope, FetchingProgressLog, FetchingProgressMessage,
+    GetHostName, LogEvent, LogLevel, PackageImportMethod, PackageImportMethodLog,
+    PackageManifestLog, PackageManifestMessage, ProgressLog, ProgressMessage, RealApi, RemovedRoot,
+    Reporter, RequestRetryError, RequestRetryLog, RootLog, RootMessage, SilentReporter, Stage,
+    StageLog, StatsLog, StatsMessage, SummaryLog,
 };
 
 /// Context log serializes with the camelCase field names
@@ -259,6 +261,207 @@ fn fetching_progress_event_matches_pnpm_wire_shape() {
     assert_eq!(json["status"], "in_progress");
     assert_eq!(json["downloaded"], 65_536);
     assert_eq!(json["packageId"], "react@18.0.0");
+}
+
+/// `pnpm:package-manifest` is presence-tagged on `initial` /
+/// `updated`. The JS reporter checks `'initial' in log` to dispatch,
+/// so the wire shape must carry exactly one of the two keys (never
+/// both, never neither). The payload value is the entire
+/// `package.json` body — pnpm threads it through unchanged.
+#[test]
+fn package_manifest_event_matches_pnpm_wire_shape() {
+    let manifest = serde_json::json!({
+        "name": "demo",
+        "version": "1.0.0",
+        "dependencies": { "fastify": "1.0.0" },
+    });
+
+    let event = LogEvent::PackageManifest(PackageManifestLog {
+        level: LogLevel::Debug,
+        message: PackageManifestMessage::Initial {
+            prefix: "/proj".to_string(),
+            initial: manifest.clone(),
+        },
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+    assert_eq!(json["name"], "pnpm:package-manifest");
+    assert_eq!(json["level"], "debug");
+    assert_eq!(json["prefix"], "/proj");
+    assert_eq!(json["initial"], manifest);
+    assert!(json.get("updated").is_none(), "initial event must not carry updated");
+
+    let event = LogEvent::PackageManifest(PackageManifestLog {
+        level: LogLevel::Debug,
+        message: PackageManifestMessage::Updated {
+            prefix: "/proj".to_string(),
+            updated: manifest.clone(),
+        },
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+    assert_eq!(json["updated"], manifest);
+    assert!(json.get("initial").is_none(), "updated event must not carry initial");
+}
+
+/// `pnpm:root` is presence-tagged on `added` / `removed`. The JS
+/// reporter accumulates `added` events and renders them in the
+/// `pnpm:summary` "+N -M" block. Optional fields skip when absent
+/// — emitting them as JSON `null` would put `null` in the rendered
+/// version string.
+#[test]
+fn root_event_matches_pnpm_wire_shape() {
+    let event = LogEvent::Root(RootLog {
+        level: LogLevel::Debug,
+        message: RootMessage::Added {
+            prefix: "/proj".to_string(),
+            added: AddedRoot {
+                name: "fastify".to_string(),
+                real_name: "fastify".to_string(),
+                version: Some("4.0.0".to_string()),
+                dependency_type: Some(DependencyType::Prod),
+                id: None,
+                latest: None,
+                linked_from: None,
+            },
+        },
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+    assert_eq!(json["name"], "pnpm:root");
+    assert_eq!(json["level"], "debug");
+    assert_eq!(json["prefix"], "/proj");
+    assert_eq!(json["added"]["name"], "fastify");
+    assert_eq!(json["added"]["realName"], "fastify");
+    assert_eq!(json["added"]["version"], "4.0.0");
+    assert_eq!(json["added"]["dependencyType"], "prod");
+    // Optional fields skip when None so the JS reporter doesn't see
+    // `id: null` etc. — pnpm's emit also omits them when absent.
+    for k in ["id", "latest", "linkedFrom"] {
+        assert!(json["added"].get(k).is_none(), "added.{k} should be absent, got {json:?}");
+    }
+    assert!(json.get("removed").is_none(), "added event must not carry removed");
+
+    let event = LogEvent::Root(RootLog {
+        level: LogLevel::Debug,
+        message: RootMessage::Removed {
+            prefix: "/proj".to_string(),
+            removed: RemovedRoot {
+                name: "fastify".to_string(),
+                version: None,
+                dependency_type: None,
+            },
+        },
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+    assert_eq!(json["removed"]["name"], "fastify");
+    assert!(json.get("added").is_none(), "removed event must not carry added");
+
+    for (ty, expected) in [
+        (DependencyType::Prod, "prod"),
+        (DependencyType::Dev, "dev"),
+        (DependencyType::Optional, "optional"),
+    ] {
+        let json = serde_json::to_string(&ty).expect("serialize dependency type");
+        assert_eq!(json, format!("\"{expected}\""));
+    }
+}
+
+/// `pnpm:stats` is presence-tagged on `added` / `removed`. pnpm
+/// emits each from a separate site, so an event carries one or the
+/// other — never both. Pacquet currently emits both back-to-back
+/// (added from `CreateVirtualStore`, removed from a placeholder)
+/// to keep the wire shape consumable until pruning lands.
+#[test]
+fn stats_event_matches_pnpm_wire_shape() {
+    let event = LogEvent::Stats(StatsLog {
+        level: LogLevel::Debug,
+        message: StatsMessage::Added { prefix: "/proj".to_string(), added: 42 },
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+    assert_eq!(json["name"], "pnpm:stats");
+    assert_eq!(json["level"], "debug");
+    assert_eq!(json["prefix"], "/proj");
+    assert_eq!(json["added"], 42);
+    assert!(json.get("removed").is_none(), "added event must not carry removed");
+
+    let event = LogEvent::Stats(StatsLog {
+        level: LogLevel::Debug,
+        message: StatsMessage::Removed { prefix: "/proj".to_string(), removed: 0 },
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+    assert_eq!(json["removed"], 0);
+    assert!(json.get("added").is_none(), "removed event must not carry added");
+}
+
+/// `pnpm:request-retry` carries the retry loop's bookkeeping
+/// (attempt, maxRetries, timeout-ms-until-next-attempt) and a JS-
+/// shaped error object. The default-reporter dispatches on the
+/// chain `httpStatusCode ?? status ?? errno ?? code`; absent
+/// fields must skip rather than render as JSON `null`, since the
+/// `??` chain treats `null` as a present value.
+#[test]
+fn request_retry_event_matches_pnpm_wire_shape() {
+    let event = LogEvent::RequestRetry(RequestRetryLog {
+        level: LogLevel::Debug,
+        attempt: 1,
+        error: RequestRetryError {
+            message: "503 Service Unavailable".to_string(),
+            http_status_code: Some("503".to_string()),
+            status: None,
+            errno: None,
+            code: None,
+        },
+        max_retries: 2,
+        method: "GET".to_string(),
+        timeout: 10_000,
+        url: "https://registry.npmjs.org/x/-/x-1.0.0.tgz".to_string(),
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+    assert_eq!(json["name"], "pnpm:request-retry");
+    assert_eq!(json["level"], "debug");
+    assert_eq!(json["attempt"], 1);
+    assert_eq!(json["maxRetries"], 2);
+    assert_eq!(json["method"], "GET");
+    assert_eq!(json["timeout"], 10_000);
+    assert_eq!(json["url"], "https://registry.npmjs.org/x/-/x-1.0.0.tgz");
+    assert_eq!(json["error"]["message"], "503 Service Unavailable");
+    assert_eq!(json["error"]["httpStatusCode"], "503");
+    for k in ["status", "errno", "code"] {
+        assert!(json["error"].get(k).is_none(), "error.{k} should be absent, got {json:?}");
+    }
 }
 
 /// Phase markers serialize as the snake_case strings pnpm uses.

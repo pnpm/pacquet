@@ -13,7 +13,7 @@ use pacquet_fs::file_mode;
 use pacquet_network::ThrottledClient;
 use pacquet_reporter::{
     FetchingProgressLog, FetchingProgressMessage, LogEvent, LogLevel, ProgressLog, ProgressMessage,
-    Reporter,
+    Reporter, RequestRetryError, RequestRetryLog,
 };
 use pacquet_store_dir::{
     CafsFileInfo, PackageFilesIndex, SharedReadonlyStoreIndex, SharedVerifiedFilesCache, StoreDir,
@@ -713,6 +713,60 @@ pub struct DownloadTarballToStore<'a> {
     pub retry_opts: RetryOpts,
 }
 
+/// Project [`TarballError`] onto pnpm's `requestRetryLogger`'s
+/// JS-shaped error object. The JS default-reporter dispatches on
+/// `httpStatusCode ?? status ?? errno ?? code` to render the retry
+/// reason; absent fields skip rather than emit `null` so the `??`
+/// chain doesn't short-circuit on a present-but-`null` field.
+///
+/// Today pacquet populates `http_status_code` for the
+/// [`TarballError::HttpStatus`] variant and a curated
+/// `ERR_PACQUET_*` constant in `code` for every other variant —
+/// the mapping is hand-maintained per match arm rather than
+/// reflectively derived, so renaming a [`TarballError`] variant
+/// won't silently change the emitted `code`. `errno` and `status`
+/// are skipped because pacquet's error layer doesn't carry them;
+/// pnpm's emit fills them when the underlying network error did.
+fn tarball_error_to_request_retry(err: &TarballError) -> RequestRetryError {
+    let mut out = RequestRetryError {
+        message: err.to_string(),
+        http_status_code: None,
+        status: None,
+        errno: None,
+        code: None,
+    };
+    match err {
+        TarballError::HttpStatus(http) => {
+            out.http_status_code = Some(http.status.to_string());
+        }
+        TarballError::FetchTarball(_) => {
+            out.code = Some("ERR_PACQUET_FETCH".to_string());
+        }
+        TarballError::Checksum(_) => {
+            out.code = Some("ERR_PACQUET_TARBALL_INTEGRITY".to_string());
+        }
+        TarballError::DecodeGzip(_) => {
+            out.code = Some("ERR_PACQUET_TARBALL_GZIP".to_string());
+        }
+        TarballError::ReadTarballEntries(_) => {
+            out.code = Some("ERR_PACQUET_TARBALL_TAR".to_string());
+        }
+        TarballError::WriteCasFile(_) | TarballError::WriteStoreIndex(_) => {
+            out.code = Some("ERR_PACQUET_TARBALL_STORE".to_string());
+        }
+        TarballError::TaskJoin(_) => {
+            out.code = Some("ERR_PACQUET_TASK_JOIN".to_string());
+        }
+        TarballError::TarballTooLarge { .. } => {
+            out.code = Some("ERR_PACQUET_TARBALL_TOO_LARGE".to_string());
+        }
+        TarballError::SiblingFetchFailed { .. } => {
+            out.code = Some("ERR_PACQUET_SIBLING_FETCH".to_string());
+        }
+    }
+    out
+}
+
 /// Whether a [`TarballError`] from one tarball-fetch attempt should be
 /// retried. Matches pnpm's
 /// [`remoteTarballFetcher.ts`](https://github.com/pnpm/pnpm/blob/1819226b51/fetching/tarball-fetcher/src/remoteTarballFetcher.ts#L76-L84)
@@ -1040,6 +1094,24 @@ async fn fetch_and_extract_with_retry<R: Reporter>(
                     ?err,
                     "Tarball fetch failed; retrying after backoff",
                 );
+                // `pnpm:request-retry` mirrors pnpm's emit at
+                // <https://github.com/pnpm/pnpm/blob/086c5e91e8/fetching/tarball-fetcher/src/remoteTarballFetcher.ts#L91>:
+                // one event per failed-and-being-retried HTTP
+                // attempt, before the backoff sleep, so the JS
+                // reporter renders "Will retry in <ms>. <N> retries
+                // left." while pacquet is still waiting. `attempt`
+                // is one-indexed (the failed attempt) to match
+                // pnpm's wire shape; pacquet's loop counter is
+                // zero-indexed.
+                R::emit(&LogEvent::RequestRetry(RequestRetryLog {
+                    level: LogLevel::Debug,
+                    attempt: attempt + 1,
+                    error: tarball_error_to_request_retry(&err),
+                    max_retries: retry_opts.retries,
+                    method: "GET".to_string(),
+                    timeout: u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+                    url: package_url.to_string(),
+                }));
                 tokio::time::sleep(delay).await;
                 attempt += 1;
             }

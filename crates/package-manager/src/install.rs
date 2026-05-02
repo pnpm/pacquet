@@ -10,7 +10,10 @@ use pacquet_lockfile::Lockfile;
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
-use pacquet_reporter::{ContextLog, LogEvent, LogLevel, Reporter, Stage, StageLog, SummaryLog};
+use pacquet_reporter::{
+    ContextLog, LogEvent, LogLevel, PackageManifestLog, PackageManifestMessage, Reporter, Stage,
+    StageLog, SummaryLog,
+};
 use pacquet_tarball::MemCache;
 
 /// This subroutine does everything `pacquet install` is supposed to do.
@@ -84,6 +87,20 @@ where
             .map(Option::<&str>::unwrap)
             .unwrap()
             .to_owned();
+
+        // `pnpm:package-manifest initial` carries the on-disk
+        // `package.json` body. Mirrors pnpm's per-project emit at
+        // <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/context/src/index.ts#L133>:
+        // fires before `pnpm:context` so consumers that key off
+        // manifest contents have it ready when the install header
+        // renders.
+        R::emit(&LogEvent::PackageManifest(PackageManifestLog {
+            level: LogLevel::Debug,
+            message: PackageManifestMessage::Initial {
+                prefix: prefix.clone(),
+                initial: manifest.value().clone(),
+            },
+        }));
 
         // `pnpm:context` carries the directories pnpm's reporter prints
         // in the install header. `currentLockfileExists` reflects
