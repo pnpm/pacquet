@@ -624,7 +624,7 @@ Adding a new channel (the work tracked under #347) means extending the enum with
 
 #### Threading the reporter
 
-A function that emits is generic over `R: Reporter`. Inside, it calls `R::emit(&LogEvent::<Variant>(...))`.
+A function that emits is generic over `R: Reporter`. Inside, it calls `R::emit(...)` with a `LogEvent` whose variant matches the channel — `R::emit(&LogEvent::Stage(...))`, `R::emit(&LogEvent::Context(...))`, etc.
 
 ```rust
 fn install_step<R: Reporter>(prefix: String) {
@@ -705,7 +705,7 @@ Verify the test catches a regression: temporarily comment out the emit, run the 
 
 - **Don't reformat upstream messages.** Field names and string values are part of the wire contract — change them and `@pnpm/cli.default-reporter` silently drops the record.
 - **Don't invent new channels.** If pnpm doesn't have it, pacquet doesn't either. Channels expand only when upstream adds them.
-- **Don't emit at higher granularity than pnpm.** Throttling and size gates exist for a reason — see `pacquet-tarball::run_without_mem_cache`'s `pnpm:fetching-progress in_progress` gate (`Content-Length` known, `>= 5 MB`, 500ms with leading + trailing edges), which mirrors `lodash.throttle(opts.onProgress, 500)` exactly.
+- **Don't emit at higher granularity than pnpm.** Throttling and size gates exist for a reason — see `pacquet-tarball`'s `fetch_and_extract_once`, which gates `pnpm:fetching-progress in_progress` on a known `Content-Length` *and* `>= 5 MB` (`BIG_TARBALL_SIZE`), then throttles to 500ms with leading + trailing edges. That mirrors `lodash.throttle(opts.onProgress, 500)` in upstream's `remoteTarballFetcher.ts` exactly.
 - **Don't emit at lower granularity, either.** Skipping events the consumer expects (`fetched` after a download succeeds, `imported` after `create_cas_files` Ok) breaks pnpm's reporter counters.
 
 #### Worked example: `pnpm:summary` in `Install::run`
