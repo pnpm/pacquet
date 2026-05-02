@@ -532,15 +532,9 @@ If the assertion fails, the value of `received` will appear alongside the error 
 
 ### Unit test file layout
 
-A unit-test module may either sit inline as `mod tests { ... }` in its parent or live in a dedicated external `tests` submodule. Use the inline form for short test modules. Once the block becomes long enough to obscure the surrounding module, move the tests into an external file.
+Always place unit tests in a dedicated external `tests` submodule rather than inline in the parent file. This keeps production code and test code in separate files, makes each file easier to scan, and avoids churning git blame when tests are added or removed.
 
-#### When the inline form is acceptable
-
-The inline form `mod tests { ... }` is acceptable on its own. Reserve it for modules whose entire test suite fits in a small number of lines, so the block does not noticeably extend the parent. Use the number of lines as the deciding factor.
-
-#### Where the external file sits
-
-When the tests live externally, the parent declares them at the end of the file with the standard declaration:
+The parent declares the test module at the end of the file with the standard declaration:
 
 ```rust
 #[cfg(test)]
