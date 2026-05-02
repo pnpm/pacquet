@@ -604,7 +604,7 @@ The above code is still valid code, and the Rust compiler doesn't error, but it 
 
 ### Reporter / log events
 
-Pacquet's user-facing output mirrors pnpm's: every channel pnpm fires must fire from the corresponding pacquet site, with the same payload shape and the same firing cadence. The reporter crate, the threading convention, and the event types come from #345; this section is the convention for porting emissions into ported functions.
+Pacquet's user-facing output mirrors pnpm's: every channel pnpm fires must fire from the corresponding pacquet site, with the same payload shape and the same firing cadence. The reporter lives in `crates/reporter` (the `Reporter` capability trait, the `LogEvent` enum, the `NdjsonReporter` and `SilentReporter` sinks); this section is the convention for porting emissions into ported functions.
 
 #### Finding the upstream emit
 
@@ -620,7 +620,7 @@ When porting a function, grep for those patterns *in the upstream files you're p
 
 The canonical list of channels lives in `crates/reporter/src/lib.rs`'s `LogEvent` enum. Each variant pins `#[serde(rename = "pnpm:<channel>")]` so the wire string matches upstream byte-for-byte. Every channel landed today is documented at the variant — read the doc comment for the upstream type permalink and the emit site.
 
-Adding a new channel (the work tracked under #347) means extending the enum with a `#[serde(rename = "pnpm:<channel>")]` variant whose payload mirrors the upstream TS shape field-for-field — camelCase via `#[serde(rename_all = "camelCase")]` where applicable, preserving status-tagged-union shapes (see `ProgressMessage` for the pattern). Add a wire-shape unit test to `crates/reporter/src/tests.rs` that asserts the JSON renders exactly what pnpm's TS emitter would.
+To add a new channel: extend the enum with a `#[serde(rename = "pnpm:<channel>")]` variant whose payload mirrors the upstream TS shape field-for-field — camelCase via `#[serde(rename_all = "camelCase")]` where applicable, preserving status-tagged-union shapes (see `ProgressMessage` for the pattern). Add a wire-shape unit test to `crates/reporter/src/tests.rs` that asserts the JSON renders exactly what pnpm's TS emitter would.
 
 #### Threading the reporter
 
@@ -667,7 +667,7 @@ R::emit(&LogEvent::Context(ContextLog {
 
 #### Testing the emit
 
-Use the recording-fake DI pattern from #339: a unit-struct reporter declared inside the `#[test]` body, recording into a `static Mutex<Vec<LogEvent>>` declared in the same body. Assert the captured sequence.
+Use a recording-fake reporter: a unit-struct declared inside the `#[test]` body, recording into a `static Mutex<Vec<LogEvent>>` declared in the same body. Assert the captured sequence. The unit struct keeps the fake's reach narrow (one test fn) and the static mutex makes the recorded events available to the assertion without threading a handle through the fn under test.
 
 ```rust
 #[tokio::test]
@@ -712,7 +712,7 @@ Verify the test catches a regression: temporarily comment out the emit, run the 
 
 The `Install::run` function brackets the install with `pnpm:stage` events and emits `pnpm:summary` after import completes. Upstream emits `summaryLogger.debug({ prefix })` after each importer's link phase finishes, at [`installing/deps-installer/src/install/index.ts:1663`](https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-installer/src/install/index.ts#L1663).
 
-In pacquet, the same emit lives at the bottom of `Install::run` (added in #355):
+In pacquet, the same emit lives at the bottom of `Install::run`:
 
 ```rust
 R::emit(&LogEvent::Stage(StageLog {
