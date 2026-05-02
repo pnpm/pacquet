@@ -601,3 +601,131 @@ fn my_function(value: &Vec<u8>) {
 The above code is still valid code, and the Rust compiler doesn't error, but it has a different performance characteristic now.
 
 **Readability:** The generic `.clone()` or `Clone::clone` often implies an expensive operation (for example: cloning a `Vec`), but `Arc` and `Rc` are not as expensive as the generic `.clone()`. Explicitly marking the cloned type aids future refactoring.
+
+### Reporter / log events
+
+Pacquet's user-facing output mirrors pnpm's: every channel pnpm fires must fire from the corresponding pacquet site, with the same payload shape and the same firing cadence. The reporter lives in `crates/reporter` (the `Reporter` capability trait, the `LogEvent` enum, the `NdjsonReporter` and `SilentReporter` sinks); this section is the convention for porting emissions into ported functions.
+
+#### Finding the upstream emit
+
+In `pnpm/pnpm`, log events come from one of three call shapes:
+
+- `globalLogger.<channel>.<level>(...)` — the ergonomic helpers in `core/core-loggers/src/<channel>Logger.ts`.
+- `logger.<level>({ name: 'pnpm:<channel>', ... })` — the raw logger with a name discriminant.
+- Direct `streamParser.write(...)` calls — only in pnpm's reporter internals; when porting, you wouldn't write through this.
+
+When porting a function, grep for those patterns *in the upstream files you're porting from* (not workspace-wide). The emit usually sits immediately before or after the side effect the event describes — e.g., `progressLogger.debug({ status: 'fetched' })` after the tarball finishes downloading, before the import step starts.
+
+#### Channel mapping
+
+The channels pacquet currently emits live in `crates/reporter/src/lib.rs`'s `LogEvent` enum. Each variant pins `#[serde(rename = "pnpm:<channel>")]` so the wire string matches upstream byte-for-byte. The enum is *not* an exhaustive list of pnpm's channels — variants are added as pacquet starts emitting them. When porting a function whose upstream emits a channel `LogEvent` doesn't yet have, add the variant first (see "To add a new channel" below). Read the doc comment on each existing variant for the upstream type permalink; channels that fire from a single canonical emit site link that too, while multi-site channels (`Stage` and `Progress`, which span the install lifecycle) only pin the type and let the porter grep the upstream file for the per-status emits.
+
+To add a new channel: extend the enum with a `#[serde(rename = "pnpm:<channel>")]` variant whose payload mirrors the upstream TS shape field-for-field — camelCase via `#[serde(rename_all = "camelCase")]` where applicable, preserving status-tagged-union shapes (see `ProgressMessage` for the pattern). Add a wire-shape unit test to `crates/reporter/src/tests.rs` that asserts the JSON renders exactly what pnpm's TS emitter would.
+
+#### Threading the reporter
+
+A function that emits is generic over `R: Reporter`. Inside, it calls `R::emit(...)` with a `LogEvent` whose variant matches the channel — `R::emit(&LogEvent::Stage(...))`, `R::emit(&LogEvent::Context(...))`, etc.
+
+```rust
+fn install_step<R: Reporter>(prefix: String) {
+    R::emit(&LogEvent::Stage(StageLog {
+        level: LogLevel::Debug,
+        prefix,
+        stage: Stage::ImportingStarted,
+    }));
+    // ...
+}
+```
+
+Production callers turbofish at the entry point:
+
+```rust
+Install { /* ... */ }.run::<NdjsonReporter>().await
+```
+
+Tests use the no-op `SilentReporter` when they don't care about emits, or a recording fake when they do (see [Testing](#testing-the-emit) below).
+
+The generic monomorphises away — there's no runtime cost. The ergonomic cost is one `<R: Reporter>` per intermediate fn and one turbofish at the production entry point. When threading reaches into a struct, add `<R: Reporter>` to the impl method or carry an install-scoped state field that the relevant emit depends on (see `link_file::log_method_once`'s `&AtomicU8` parameter for an example of the latter — the function dedupes per-install rather than per-process).
+
+#### Where to put the emit
+
+Match the upstream call site's position relative to side effects. pnpm's reporter expects events in a specific order (`resolved` before `fetched`, `importing_started` before any per-package events, etc.). Emitting in the wrong order makes the JS reporter render the "X/Y resolved" counter incorrectly or skip animations entirely.
+
+Cite the upstream permalink (pinned SHA per the cardinal rule in [`AGENTS.md`](./AGENTS.md)) in the code comment next to the emit:
+
+```rust
+// `pnpm:context` carries the directories pnpm's reporter prints
+// in the install header. Mirrors the upstream emit at
+// <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/context/src/index.ts#L196>.
+R::emit(&LogEvent::Context(ContextLog {
+    level: LogLevel::Debug,
+    current_lockfile_exists: false,
+    store_dir: config.store_dir.display().to_string(),
+    virtual_store_dir: config.virtual_store_dir.to_string_lossy().into_owned(),
+}));
+```
+
+#### Testing the emit
+
+Use a recording-fake reporter: a unit-struct declared inside the `#[test]` body, recording into a `static Mutex<Vec<LogEvent>>` declared in the same body. Assert the captured sequence. The unit struct keeps the fake's reach narrow (one test fn) and the static mutex makes the recorded events available to the assertion without threading a handle through the fn under test.
+
+```rust
+#[tokio::test]
+async fn install_emits_pnpm_event_sequence() {
+    static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+    EVENTS.lock().unwrap().clear();
+
+    struct RecordingReporter;
+    impl Reporter for RecordingReporter {
+        fn emit(event: &LogEvent) {
+            EVENTS.lock().unwrap().push(event.clone());
+        }
+    }
+
+    // ... drive the function under test with `::<RecordingReporter>()` ...
+
+    let captured = EVENTS.lock().unwrap();
+    assert!(matches!(
+        captured.as_slice(),
+        [
+            LogEvent::Context(_),
+            LogEvent::Stage(StageLog { stage: Stage::ImportingStarted, .. }),
+            LogEvent::Stage(StageLog { stage: Stage::ImportingDone, .. }),
+            LogEvent::Summary(_),
+        ]
+    ), "unexpected event sequence: {captured:?}");
+}
+```
+
+The static lives in the test function's own scope, so other tests have independent buffers and never race on it. Reset it at the start of the test anyway, in case the same test is re-run within the same process (nextest does this on retry).
+
+Verify the test catches a regression: temporarily comment out the emit, run the test, observe the sequence assertion fail, then restore the emit. Same discipline `plans/TEST_PORTING.md` calls for.
+
+#### What not to do
+
+- **Don't reformat upstream messages.** Field names and string values are part of the wire contract — change them and `@pnpm/cli.default-reporter` silently drops the record.
+- **Don't invent new channels.** If pnpm doesn't have it, pacquet doesn't either. Channels expand only when upstream adds them.
+- **Don't emit at higher granularity than pnpm.** Throttling and size gates exist for a reason — see `pacquet-tarball`'s `fetch_and_extract_once`, which gates `pnpm:fetching-progress in_progress` on a known `Content-Length` *and* `>= 5 MB` (`BIG_TARBALL_SIZE`), then throttles to 500ms with leading + trailing edges. That mirrors `lodash.throttle(opts.onProgress, 500)` in upstream's [`remoteTarballFetcher.ts:143-144`](https://github.com/pnpm/pnpm/blob/086c5e91e8/fetching/tarball-fetcher/src/remoteTarballFetcher.ts#L143-L144) exactly.
+- **Don't emit at lower granularity, either.** Skipping events the consumer expects (`fetched` after a download succeeds, `imported` after `create_cas_files` Ok) breaks pnpm's reporter counters.
+
+#### Worked example: `pnpm:summary` in `Install::run`
+
+The `Install::run` function brackets the install with `pnpm:stage` events and emits `pnpm:summary` after import completes. Upstream emits `summaryLogger.debug({ prefix })` after each importer's link phase finishes, at [`installing/deps-installer/src/install/index.ts:1663`](https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-installer/src/install/index.ts#L1663).
+
+In pacquet, the same emit lives at the bottom of `Install::run`:
+
+```rust
+R::emit(&LogEvent::Stage(StageLog {
+    level: LogLevel::Debug,
+    prefix: prefix.clone(),
+    stage: Stage::ImportingDone,
+}));
+
+// `pnpm:summary` closes the install and lets the reporter render
+// the accumulated `pnpm:root` events as a "+N -M" block. Must
+// come after `importing_done`, matching pnpm's ordering at
+// <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-installer/src/install/index.ts#L1663>.
+R::emit(&LogEvent::Summary(SummaryLog { level: LogLevel::Debug, prefix }));
+```
+
+The recording-fake test that pins the sequence lives in `crates/package-manager/src/install/tests.rs::install_emits_pnpm_event_sequence`. The same pattern carries over to every other channel — only the variant name and payload shape change.
