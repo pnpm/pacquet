@@ -55,7 +55,7 @@ registry: https://reg.example
 
     settings.apply_to(&mut npmrc, Path::new("/irrelevant-for-absolute-paths"));
 
-    assert_eq!(npmrc.store_dir.display().to_string(), "/absolute/store");
+    assert_eq!(npmrc.store_dir, StoreDir::from(Path::new("/absolute/store").to_path_buf()));
     assert!(!npmrc.lockfile);
     assert_eq!(npmrc.registry, "https://reg.example/");
     assert_ne!(before_registry, npmrc.registry);

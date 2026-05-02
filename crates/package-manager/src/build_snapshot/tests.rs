@@ -49,7 +49,9 @@ fn builds_metadata_with_registry_resolution_and_no_deps() {
     let built = build_package_snapshot(&pkg, &HashMap::new()).unwrap();
 
     assert_eq!(built.package_key.to_string(), "lodash@4.17.21");
+    dbg!(&built.metadata.resolution);
     assert!(matches!(built.metadata.resolution, LockfileResolution::Registry(_)));
+    dbg!(&built.snapshot.dependencies);
     assert!(built.snapshot.dependencies.is_none());
 }
 
@@ -74,5 +76,6 @@ fn returns_error_when_integrity_is_missing() {
 
     let err =
         build_package_snapshot(&pkg, &HashMap::new()).expect_err("should fail without integrity");
+    eprintln!("err={err:?}");
     assert!(matches!(err, BuildSnapshotError::MissingIntegrity { .. }));
 }

@@ -27,6 +27,7 @@ fn init_should_create_package_json_if_not_exist() {
     let dir = tempdir().unwrap();
     let tmp = dir.path().join("package.json");
     PackageManifest::init(&tmp).unwrap();
+    eprintln!("tmp={tmp:?} exists={} is_file={}", tmp.exists(), tmp.is_file());
     assert!(tmp.exists());
     assert!(tmp.is_file());
     assert_eq!(PackageManifest::from_path(tmp.clone()).unwrap().path, tmp);
@@ -40,10 +41,13 @@ fn should_add_dependency() {
     manifest.add_dependency("fastify", "1.0.0", DependencyGroup::Prod).unwrap();
 
     let dependencies: HashMap<_, _> = manifest.dependencies([DependencyGroup::Prod]).collect();
+    dbg!(&dependencies);
     assert!(dependencies.contains_key("fastify"));
     assert_eq!(dependencies.get("fastify").unwrap(), &"1.0.0");
     manifest.save().unwrap();
-    assert!(read_to_string(tmp).unwrap().contains("fastify"));
+    let saved = read_to_string(tmp).unwrap();
+    eprintln!("SAVED:\n{saved}");
+    assert!(saved.contains("fastify"));
 }
 
 #[test]
@@ -66,9 +70,9 @@ fn should_execute_a_command() {
     let tmp = NamedTempFile::new().unwrap();
     write!(tmp.as_file(), "{}", data).unwrap();
     let manifest = PackageManifest::create_if_needed(tmp.path().to_path_buf()).unwrap();
-    manifest.script("test", false).unwrap();
+    assert_eq!(manifest.script("test", false).unwrap(), Some("echo"));
     manifest.script("invalid", false).expect_err("invalid command should not exist");
-    manifest.script("invalid", true).unwrap();
+    assert_eq!(manifest.script("invalid", true).unwrap(), None);
 }
 
 #[test]
@@ -87,8 +91,12 @@ fn get_dependencies_should_return_peers() {
     write!(tmp.as_file(), "{}", data).unwrap();
     let manifest = PackageManifest::create_if_needed(tmp.path().to_path_buf()).unwrap();
     let dependencies = |groups| manifest.dependencies(groups).collect::<HashMap<_, _>>();
-    assert!(dependencies([DependencyGroup::Peer]).contains_key("fast-querystring"));
-    assert!(dependencies([DependencyGroup::Prod]).contains_key("fastify"));
+    let peer = dependencies([DependencyGroup::Peer]);
+    dbg!(&peer);
+    assert!(peer.contains_key("fast-querystring"));
+    let prod = dependencies([DependencyGroup::Prod]);
+    dbg!(&prod);
+    assert!(prod.contains_key("fastify"));
 }
 
 #[test]

@@ -90,7 +90,11 @@ fn save_fails_with_wrapped_io_error_when_path_is_invalid() {
         serde_saphyr::from_str("lockfileVersion: '9.0'\n").expect("parse minimal lockfile");
 
     // Attempt to write under a non-existent directory; fs::write returns NotFound.
-    let bad_path = std::path::Path::new("/nonexistent-pacquet-dir/pnpm-lock.yaml");
-    let err = empty_lockfile.save_to_path(bad_path).expect_err("should fail");
-    assert!(matches!(err, SaveLockfileError::WriteFile(_)));
+    let tmp = tempdir().expect("create tempdir");
+    let bad_path = tmp.path().join("missing-dir").join("pnpm-lock.yaml");
+    let err = empty_lockfile.save_to_path(&bad_path).expect_err("should fail");
+    assert!(
+        matches!(err, SaveLockfileError::WriteFile(_)),
+        "expected SaveLockfileError::WriteFile(_), got: {err:?}",
+    );
 }

@@ -63,6 +63,7 @@ fn hardlink_shares_contents_with_source() {
         let src_meta = fs::metadata(&src).unwrap();
         let dst_meta = fs::metadata(&dst).unwrap();
         assert_eq!(src_meta.ino(), dst_meta.ino(), "hardlinked files share an inode");
+        eprintln!("src nlink={}, dst nlink={}", src_meta.nlink(), dst_meta.nlink());
         assert!(src_meta.nlink() >= 2, "hardlink should bump nlink");
     }
 }
@@ -175,6 +176,7 @@ fn dangling_symlink_is_replaced() {
         .expect("dangling symlink should be scrubbed, then hardlinked");
 
     let meta = fs::symlink_metadata(&dst).unwrap();
+    eprintln!("dst file_type={:?}", meta.file_type());
     assert!(!meta.file_type().is_symlink(), "dangling link must be replaced with a real file");
     assert_eq!(fs::read(&dst).unwrap(), b"fresh");
 }
@@ -195,7 +197,9 @@ fn live_symlink_short_circuits() {
     link_file::<SilentReporter>(&AtomicU8::new(0), PackageImportMethod::Hardlink, &src, &dst)
         .expect("live symlink should short-circuit");
 
-    assert!(fs::symlink_metadata(&dst).unwrap().file_type().is_symlink());
+    let dst_meta = fs::symlink_metadata(&dst).unwrap();
+    eprintln!("dst file_type={:?}", dst_meta.file_type());
+    assert!(dst_meta.file_type().is_symlink());
     assert_eq!(fs::read(&real_target).unwrap(), b"old", "target must not be overwritten");
 }
 
@@ -433,6 +437,8 @@ fn log_method_once_emits_first_call_per_method_only() {
     use std::sync::Mutex;
 
     static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+    // Reset in case nextest reuses the process for a retry of this test.
+    EVENTS.lock().unwrap().clear();
 
     struct RecordingReporter;
     impl Reporter for RecordingReporter {

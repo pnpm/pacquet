@@ -54,13 +54,17 @@ async fn should_install_dependencies() {
 
     // Make sure the package is installed
     let path = project_root.join("node_modules/@pnpm.e2e/hello-world-js-bin");
+    eprintln!("path={path:?} symlink_or_junction={:?}", is_symlink_or_junction(&path));
     assert!(is_symlink_or_junction(&path).unwrap());
     let path = project_root.join("node_modules/.pacquet/@pnpm.e2e+hello-world-js-bin@1.0.0");
+    eprintln!("path={path:?} exists={}", path.exists());
     assert!(path.exists());
     // Make sure we install dev-dependencies as well
     let path = project_root.join("node_modules/@pnpm/xyz");
+    eprintln!("path={path:?} symlink_or_junction={:?}", is_symlink_or_junction(&path));
     assert!(is_symlink_or_junction(&path).unwrap());
     let path = project_root.join("node_modules/.pacquet/@pnpm+xyz@1.0.0");
+    eprintln!("path={path:?} is_dir={}", path.is_dir());
     assert!(path.is_dir());
 
     insta::assert_debug_snapshot!(get_all_folders(&project_root));
@@ -415,6 +419,8 @@ async fn frozen_lockfile_flag_with_no_lockfile_errors() {
 #[tokio::test]
 async fn install_emits_pnpm_event_sequence() {
     static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+    // Reset in case nextest reuses the process for a retry of this test.
+    EVENTS.lock().unwrap().clear();
 
     struct RecordingReporter;
     impl Reporter for RecordingReporter {

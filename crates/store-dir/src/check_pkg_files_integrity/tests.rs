@@ -55,8 +55,10 @@ fn fast_path_skips_filesystem_checks() {
     let digest = sha512_hex(b"dummy");
     let entry = index_with("sha512", vec![("index.js", info(&digest, 5, 0o644, None))]);
     let result = build_file_maps_from_index(&store_dir, entry);
+    dbg!(&result);
     assert!(result.passed, "fast path passes for a valid digest without touching the disk");
     let path = result.files_map.get("index.js").expect("path inserted");
+    eprintln!("path={path:?} exists={}", path.exists());
     assert!(!path.exists(), "no file was planted — fast path didn't care");
 }
 
@@ -80,6 +82,7 @@ fn careful_path_trusts_file_when_mtime_is_within_slack() {
         vec![("index.js", info(&digest, content.len() as u64, 0o644, Some(future)))],
     );
     let result = check_pkg_files_integrity(&store_dir, entry, &VerifiedFilesCache::new());
+    dbg!(&result);
     assert!(result.passed);
     assert_eq!(result.files_map.len(), 1);
 }
@@ -93,6 +96,7 @@ fn careful_path_fails_on_missing_cafs_file() {
     let digest = sha512_hex(b"nope");
     let entry = index_with("sha512", vec![("README", info(&digest, 4, 0o644, None))]);
     let result = check_pkg_files_integrity(&store_dir, entry, &VerifiedFilesCache::new());
+    dbg!(&result);
     assert!(!result.passed, "missing file → fail");
     assert_eq!(result.files_map.len(), 1);
 }
@@ -114,7 +118,9 @@ fn careful_path_removes_file_whose_content_hash_mismatches() {
         vec![("whatever", info(&fake_digest, actual.len() as u64, 0o644, Some(0)))],
     );
     let result = check_pkg_files_integrity(&store_dir, entry, &VerifiedFilesCache::new());
+    dbg!(&result);
     assert!(!result.passed, "bad hash → fail");
+    eprintln!("path={path:?} exists={}", path.exists());
     assert!(!path.exists(), "mismatched file is removed so the next call re-fetches");
 }
 
@@ -131,7 +137,9 @@ fn careful_path_removes_file_whose_size_mismatches_after_touch() {
     let path = plant_cafs_file(&store_dir, &digest, 0o644, content);
     let entry = index_with("sha512", vec![("mismatch", info(&digest, 999, 0o644, Some(0)))]);
     let result = check_pkg_files_integrity(&store_dir, entry, &VerifiedFilesCache::new());
+    dbg!(&result);
     assert!(!result.passed);
+    eprintln!("path={path:?} exists={}", path.exists());
     assert!(!path.exists(), "size mismatch removes the file so a re-fetch starts clean");
 }
 
@@ -151,6 +159,7 @@ fn careful_path_dedups_by_digest_within_a_single_entry() {
         vec![("a.txt", info_shared.clone_for_test()), ("b.txt", info_shared.clone_for_test())],
     );
     let result = check_pkg_files_integrity(&store_dir, entry, &VerifiedFilesCache::new());
+    dbg!(&result);
     assert!(result.passed);
     assert_eq!(result.files_map.len(), 2);
 }
@@ -181,7 +190,9 @@ fn careful_path_dedups_across_calls_via_shared_cache() {
 
     let entry_a = index_with("sha512", vec![("a-pkg/index.js", info_shared.clone_for_test())]);
     let result_a = check_pkg_files_integrity(&store_dir, entry_a, &cache);
+    dbg!(&result_a);
     assert!(result_a.passed, "first call verifies the live file");
+    eprintln!("cache.contains(&path)={}", cache.contains(&path));
     assert!(cache.contains(&path), "successful verify populates the shared cache");
 
     // Pull the rug out from under the second call. Without the
@@ -190,6 +201,7 @@ fn careful_path_dedups_across_calls_via_shared_cache() {
     std::fs::remove_file(&path).unwrap();
     let entry_b = index_with("sha512", vec![("b-pkg/index.js", info_shared.clone_for_test())]);
     let result_b = check_pkg_files_integrity(&store_dir, entry_b, &cache);
+    dbg!(&result_b);
     assert!(
         result_b.passed,
         "second call should short-circuit via the shared cache and skip the now-missing file",
@@ -211,6 +223,10 @@ fn careful_path_dedups_per_resolved_path_not_per_digest() {
     // Plant the non-exec variant only; leave the exec path missing.
     let non_exec_path = plant_cafs_file(&store_dir, &digest, 0o644, content);
     let exec_path = store_dir.cas_file_path_by_mode(&digest, 0o755).unwrap();
+    eprintln!(
+        "non_exec_path={non_exec_path:?} exec_path={exec_path:?} exec_exists={}",
+        exec_path.exists()
+    );
     assert!(!exec_path.exists());
     assert_ne!(non_exec_path, exec_path);
 
@@ -223,6 +239,7 @@ fn careful_path_dedups_per_resolved_path_not_per_digest() {
         ],
     );
     let result = check_pkg_files_integrity(&store_dir, entry, &VerifiedFilesCache::new());
+    dbg!(&result);
     assert!(
         !result.passed,
         "same digest + different mode = different CAFS path; missing exec blob must fail",
@@ -243,7 +260,9 @@ fn careful_path_fails_unknown_algo_as_verification_failure() {
     let entry =
         index_with("sha256", vec![("x", info(&digest, content.len() as u64, 0o644, Some(0)))]);
     let result = check_pkg_files_integrity(&store_dir, entry, &VerifiedFilesCache::new());
+    dbg!(&result);
     assert!(!result.passed);
+    eprintln!("path={path:?} exists={}", path.exists());
     assert!(!path.exists(), "unknown algo → treated as corrupt → removed");
 }
 
@@ -265,7 +284,9 @@ fn careful_path_removes_directory_at_cafs_path() {
     // mismatches the row, we hit the `remove_stale_cafs_entry` path.
     let entry = index_with("sha512", vec![("impostor", info(&digest, 1_000_000, 0o644, Some(0)))]);
     let result = check_pkg_files_integrity(&store_dir, entry, &VerifiedFilesCache::new());
+    dbg!(&result);
     assert!(!result.passed);
+    eprintln!("cafs_path={cafs_path:?} exists={}", cafs_path.exists());
     assert!(
         !cafs_path.exists(),
         "a directory at the CAFS path must be scrubbed like a file so the next install re-fetches",
@@ -282,6 +303,7 @@ fn fast_path_fails_when_digest_is_malformed() {
     let store_dir = StoreDir::new(tmp.path());
     let entry = index_with("sha512", vec![("bad-digest", info("not-hex", 10, 0o644, None))]);
     let result = build_file_maps_from_index(&store_dir, entry);
+    dbg!(&result);
     assert!(!result.passed, "malformed digest → whole entry fails so caller re-fetches");
     assert_eq!(result.files_map.len(), 0);
 }

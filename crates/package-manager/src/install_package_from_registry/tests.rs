@@ -77,6 +77,11 @@ pub async fn should_find_package_version_from_registry() {
         .join(package.to_virtual_store_name())
         .join("node_modules")
         .join(&package.name);
+    eprintln!(
+        "virtual_store_path={virtual_store_path:?} exists={} is_dir={}",
+        virtual_store_path.exists(),
+        virtual_store_path.is_dir(),
+    );
     assert!(virtual_store_path.is_dir());
 
     // Make sure the symlink is resolving to the correct path

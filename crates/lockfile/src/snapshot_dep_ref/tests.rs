@@ -86,12 +86,17 @@ fn deserialize_ok() {
 
 #[test]
 fn looks_like_alias_rules() {
-    assert!(!looks_like_alias("5.1.2"));
-    assert!(!looks_like_alias("17.0.2(react@17.0.2)"));
-    assert!(looks_like_alias("string-width@4.2.3"));
-    assert!(looks_like_alias("@types/react@17.0.49"));
-    assert!(looks_like_alias("react-dom@17.0.2(react@17.0.2)"));
-    // protocol-like refs are not aliases
-    assert!(!looks_like_alias("link:../foo"));
-    assert!(!looks_like_alias("workspace:*"));
+    for (input, expected) in [
+        ("5.1.2", false),
+        ("17.0.2(react@17.0.2)", false),
+        ("string-width@4.2.3", true),
+        ("@types/react@17.0.49", true),
+        ("react-dom@17.0.2(react@17.0.2)", true),
+        // protocol-like refs are not aliases
+        ("link:../foo", false),
+        ("workspace:*", false),
+    ] {
+        eprintln!("CASE: {input:?}");
+        assert_eq!(looks_like_alias(input), expected);
+    }
 }
