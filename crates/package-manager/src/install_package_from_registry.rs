@@ -8,9 +8,13 @@ use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::PackageManifest;
 use pacquet_registry::{Package, PackageTag, PackageVersion, RegistryError};
+use pacquet_reporter::{LogEvent, LogLevel, ProgressLog, ProgressMessage, Reporter};
 use pacquet_store_dir::{SharedReadonlyStoreIndex, SharedVerifiedFilesCache, StoreIndexWriter};
 use pacquet_tarball::{DownloadTarballToStore, MemCache, TarballError};
-use std::{path::Path, sync::Arc};
+use std::{
+    path::Path,
+    sync::{Arc, atomic::AtomicU8},
+};
 
 /// This subroutine executes the following and returns the package
 /// * Retrieves the package from the registry
@@ -37,6 +41,13 @@ pub struct InstallPackageFromRegistry<'a> {
     /// per-package fetch. See `DownloadTarballToStore::verified_files_cache`
     /// for the rationale.
     pub verified_files_cache: &'a SharedVerifiedFilesCache,
+    /// Install-scoped dedupe state for `pnpm:package-import-method`.
+    /// See `link_file::log_method_once`.
+    pub logged_methods: &'a AtomicU8,
+    /// Install root, threaded into reporter events (`pnpm:progress`'s
+    /// `requester`). Same value as the `prefix` in
+    /// [`pacquet_reporter::StageLog`].
+    pub requester: &'a str,
     pub node_modules_dir: &'a Path,
     pub name: &'a str,
     pub version_range: &'a str,
@@ -53,7 +64,7 @@ pub enum InstallPackageFromRegistryError {
 
 impl<'a> InstallPackageFromRegistry<'a> {
     /// Execute the subroutine.
-    pub async fn run(self) -> Result<PackageVersion, InstallPackageFromRegistryError> {
+    pub async fn run<R: Reporter>(self) -> Result<PackageVersion, InstallPackageFromRegistryError> {
         let &InstallPackageFromRegistry { http_client, config, name, version_range, .. } = &self;
 
         // Strip any `npm:<name>@<range>` alias prefix before talking to
@@ -77,7 +88,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
             )
             .await
             .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
-            self.install_package_version(&package_version).await?;
+            self.install_package_version::<R>(&package_version).await?;
             package_version
         } else {
             let package =
@@ -85,12 +96,12 @@ impl<'a> InstallPackageFromRegistry<'a> {
                     .await
                     .map_err(InstallPackageFromRegistryError::FetchFromRegistry)?;
             let package_version = package.pinned_version(version_range).unwrap(); // TODO: propagate error for when no version satisfies range
-            self.install_package_version(package_version).await?;
+            self.install_package_version::<R>(package_version).await?;
             package_version.clone()
         })
     }
 
-    async fn install_package_version(
+    async fn install_package_version<R: Reporter>(
         self,
         package_version: &PackageVersion,
     ) -> Result<(), InstallPackageFromRegistryError> {
@@ -101,6 +112,8 @@ impl<'a> InstallPackageFromRegistry<'a> {
             store_index,
             store_index_writer,
             verified_files_cache,
+            logged_methods,
+            requester,
             node_modules_dir,
             name,
             ..
@@ -108,6 +121,21 @@ impl<'a> InstallPackageFromRegistry<'a> {
 
         let store_folder_name = package_version.to_virtual_store_name();
         let package_id = format!("{0}@{1}", package_version.name, package_version.version);
+
+        // `pnpm:progress resolved` mirrors pnpm's emit at
+        // <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-resolver/src/resolveDependencies.ts#L1586>:
+        // one event per package once the resolver has picked a
+        // version. In pacquet's no-lockfile path that's the
+        // registry-fetched `package_version`; emit before the
+        // tarball download so consumers see resolved → fetched/
+        // found_in_store → imported in order.
+        R::emit(&LogEvent::Progress(ProgressLog {
+            level: LogLevel::Debug,
+            message: ProgressMessage::Resolved {
+                package_id: package_id.clone(),
+                requester: requester.to_owned(),
+            },
+        }));
 
         // TODO: skip when it already exists in store?
         let cas_paths = DownloadTarballToStore {
@@ -125,10 +153,11 @@ impl<'a> InstallPackageFromRegistry<'a> {
             package_unpacked_size: package_version.dist.unpacked_size,
             package_url: package_version.as_tarball_url(),
             package_id: &package_id,
+            requester,
             prefetched_cas_paths: None,
             retry_opts: retry_opts_from_config(config),
         }
-        .run_with_mem_cache(tarball_mem_cache)
+        .run_with_mem_cache::<R>(tarball_mem_cache)
         .await
         .map_err(InstallPackageFromRegistryError::DownloadTarballToStore)?;
 
@@ -147,100 +176,29 @@ impl<'a> InstallPackageFromRegistry<'a> {
 
         tracing::info!(target: "pacquet::import", ?save_path, ?symlink_path, "Import package");
 
-        create_cas_files(config.package_import_method, &save_path, &cas_paths)
+        create_cas_files::<R>(logged_methods, config.package_import_method, &save_path, &cas_paths)
             .map_err(InstallPackageFromRegistryError::CreateCasFiles)?;
 
         symlink_package(&save_path, &symlink_path)
             .map_err(InstallPackageFromRegistryError::SymlinkPackage)?;
+
+        // `pnpm:progress imported` — see the matching emit in
+        // `create_virtual_dir_by_snapshot::run` for the rationale on
+        // the optimistic `method` value. `to` is the per-package
+        // virtual-store directory the symlink under
+        // `node_modules/{name}` resolves to.
+        R::emit(&LogEvent::Progress(ProgressLog {
+            level: LogLevel::Debug,
+            message: ProgressMessage::Imported {
+                method: crate::optimistic_wire_method(config.package_import_method),
+                requester: requester.to_owned(),
+                to: save_path.to_string_lossy().into_owned(),
+            },
+        }));
 
         Ok(())
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::InstallPackageFromRegistry;
-    use node_semver::Version;
-    use pacquet_network::ThrottledClient;
-    use pacquet_npmrc::Npmrc;
-    use pacquet_store_dir::{SharedVerifiedFilesCache, StoreDir};
-    use pipe_trait::Pipe;
-    use pretty_assertions::assert_eq;
-    use std::{fs, path::Path};
-    use tempfile::tempdir;
-
-    fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path) -> Npmrc {
-        Npmrc {
-            hoist: false,
-            hoist_pattern: vec![],
-            public_hoist_pattern: vec![],
-            shamefully_hoist: false,
-            store_dir: StoreDir::new(store_dir),
-            modules_dir: modules_dir.to_path_buf(),
-            node_linker: Default::default(),
-            symlink: false,
-            virtual_store_dir: virtual_store_dir.to_path_buf(),
-            package_import_method: Default::default(),
-            modules_cache_max_age: 0,
-            lockfile: false,
-            prefer_frozen_lockfile: false,
-            lockfile_include_tarball_url: false,
-            registry: "https://registry.npmjs.com/".to_string(),
-            auto_install_peers: false,
-            dedupe_peer_dependents: false,
-            strict_peer_dependencies: false,
-            resolve_peers_from_workspace_root: false,
-            verify_store_integrity: true,
-            fetch_retries: 2,
-            fetch_retry_factor: 10,
-            fetch_retry_mintimeout: 10_000,
-            fetch_retry_maxtimeout: 60_000,
-        }
-    }
-
-    #[tokio::test]
-    pub async fn should_find_package_version_from_registry() {
-        let store_dir = tempdir().unwrap();
-        let modules_dir = tempdir().unwrap();
-        let virtual_store_dir = tempdir().unwrap();
-        let config: &'static Npmrc =
-            create_config(store_dir.path(), modules_dir.path(), virtual_store_dir.path())
-                .pipe(Box::new)
-                .pipe(Box::leak);
-        let http_client = ThrottledClient::new_for_installs();
-        let verified_files_cache = SharedVerifiedFilesCache::default();
-        let package = InstallPackageFromRegistry {
-            tarball_mem_cache: &Default::default(),
-            config,
-            http_client: &http_client,
-            store_index: None,
-            store_index_writer: None,
-            verified_files_cache: &verified_files_cache,
-            name: "fast-querystring",
-            version_range: "1.0.0",
-            node_modules_dir: modules_dir.path(),
-        }
-        .run()
-        .await
-        .unwrap();
-
-        assert_eq!(package.name, "fast-querystring");
-        assert_eq!(
-            package.version,
-            Version { major: 1, minor: 0, patch: 0, build: vec![], pre_release: vec![] }
-        );
-
-        let virtual_store_path = virtual_store_dir
-            .path()
-            .join(package.to_virtual_store_name())
-            .join("node_modules")
-            .join(&package.name);
-        assert!(virtual_store_path.is_dir());
-
-        // Make sure the symlink is resolving to the correct path
-        assert_eq!(
-            fs::read_link(modules_dir.path().join(&package.name)).unwrap(),
-            virtual_store_path
-        );
-    }
-}
+mod tests;
