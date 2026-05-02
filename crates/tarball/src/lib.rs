@@ -753,25 +753,27 @@ async fn fetch_and_extract_once<R: Reporter>(
     // `pnpm:fetching-progress started` mirrors pnpm's per-attempt
     // emit at
     // <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/package-requester/src/packageRequester.ts#L560>.
-    // Fires once per HTTP attempt *before* `send().await`, so
-    // pre-response failures (DNS / connect / timeout) that retry are
-    // still visible in the reporter — every attempt gets exactly
-    // one `started`, regardless of how it terminates. `size` is
-    // `None` here (the wire shape allows JSON `null`) because the
-    // response head hasn't arrived yet; pnpm's spec requires
-    // `size != null` only when the consumer wants to render a
-    // percent gauge, and this channel is the right place to admit
-    // we don't know yet.
+    // Fires exactly once per HTTP attempt — including attempts that
+    // fail before the response head arrives (DNS / connect /
+    // timeout) so retried attempts stay visible in the reporter.
+    // `size` is the response's `Content-Length` when we have a
+    // response head, and JSON `null` (i.e. `None`) when we don't:
+    // either because the response is chunked / unknown-length, or
+    // because the request errored out before headers. pnpm's
+    // reporter checks `size != null` before rendering a percent
+    // gauge, so this admits "we don't know yet" only when we truly
+    // don't know.
+    let send_result = client.get(package_url).send().await;
+    let size = send_result.as_ref().ok().and_then(|r| r.content_length());
     R::emit(&LogEvent::FetchingProgress(FetchingProgressLog {
         level: LogLevel::Debug,
         message: FetchingProgressMessage::Started {
             attempt,
             package_id: package_id.to_owned(),
-            size: None,
+            size,
         },
     }));
-
-    let response_head = client.get(package_url).send().await.map_err(network_error)?;
+    let response_head = send_result.map_err(network_error)?;
 
     let status = response_head.status();
     if !status.is_success() {

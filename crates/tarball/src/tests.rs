@@ -1508,24 +1508,30 @@ async fn fetching_progress_and_fetched_events_fire_during_download() {
     ok.assert_async().await;
 
     let captured = EVENTS.lock().unwrap();
-    let started_attempts: Vec<u32> = captured
+    let started: Vec<(u32, Option<u64>)> = captured
         .iter()
         .filter_map(|e| match e {
             LogEvent::FetchingProgress(log) => match &log.message {
-                FetchingProgressMessage::Started { attempt, package_id, .. } => {
+                FetchingProgressMessage::Started { attempt, package_id, size } => {
                     assert_eq!(package_id, "@fastify/error@3.3.0");
-                    Some(*attempt)
+                    Some((*attempt, *size))
                 }
                 FetchingProgressMessage::InProgress { .. } => None,
             },
             _ => None,
         })
         .collect();
-    assert_eq!(
-        started_attempts,
-        vec![0, 1],
-        "started must fire once per attempt; got {captured:?}",
-    );
+    let attempts: Vec<u32> = started.iter().map(|(a, _)| *a).collect();
+    assert_eq!(attempts, vec![0, 1], "started must fire once per attempt; got {captured:?}");
+    // Both attempts have a response head (mockito sends Content-Length
+    // for `with_body(...)` and `with_status(503)` likewise), so both
+    // `started` events must carry a populated `size`. Pinning this
+    // here so the previous regression — emit-before-send leaving
+    // `size` always-`null` — can't sneak back in (Copilot review on
+    // #372).
+    for (attempt, size) in &started {
+        assert!(size.is_some(), "attempt {attempt} should expose Content-Length, got null");
+    }
 
     let fetched_count = captured
         .iter()
@@ -1587,19 +1593,29 @@ async fn started_fires_for_connection_level_failures() {
     .expect_err("connect-refused must surface as a TarballError");
 
     let captured = EVENTS.lock().unwrap();
-    let started_count = captured
+    let started: Vec<Option<u64>> = captured
         .iter()
-        .filter(|e| {
-            matches!(
-                e,
-                LogEvent::FetchingProgress(log)
-                    if matches!(&log.message, FetchingProgressMessage::Started { .. })
-            )
+        .filter_map(|e| match e {
+            LogEvent::FetchingProgress(log) => match &log.message {
+                FetchingProgressMessage::Started { size, .. } => Some(*size),
+                FetchingProgressMessage::InProgress { .. } => None,
+            },
+            _ => None,
         })
-        .count();
+        .collect();
     assert_eq!(
-        started_count, 1,
+        started.len(),
+        1,
         "started must fire for the attempt even when send() fails before headers; got {captured:?}",
+    );
+    // No response head ever arrived, so `size` is the truthful
+    // "we don't know" — JSON `null` per pnpm's `size: number | null`.
+    // Pinning this here so a future refactor that synthesizes a
+    // bogus `size` for the error path can't sneak past review.
+    assert_eq!(
+        started[0], None,
+        "size must be None when send() fails before headers; got {:?}",
+        started[0],
     );
 
     drop(store_dir_keep);
