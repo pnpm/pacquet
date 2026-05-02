@@ -697,7 +697,7 @@ async fn install_emits_pnpm_event_sequence() {
 }
 ```
 
-The mutex is per-test, so concurrent tests in the same binary don't race on it. Reset it at the top of the test in case nextest reuses the process for a retry.
+The static lives in the test function's own scope, so other tests have independent buffers and never race on it. Reset it at the start of the test anyway, in case the same test is re-run within the same process (nextest does this on retry).
 
 Verify the test catches a regression: temporarily comment out the emit, run the test, observe the sequence assertion fail, then restore the emit. Same discipline `plans/TEST_PORTING.md` calls for.
 
@@ -705,7 +705,7 @@ Verify the test catches a regression: temporarily comment out the emit, run the 
 
 - **Don't reformat upstream messages.** Field names and string values are part of the wire contract — change them and `@pnpm/cli.default-reporter` silently drops the record.
 - **Don't invent new channels.** If pnpm doesn't have it, pacquet doesn't either. Channels expand only when upstream adds them.
-- **Don't emit at higher granularity than pnpm.** Throttling and size gates exist for a reason — see `pacquet-tarball`'s `fetch_and_extract_once`, which gates `pnpm:fetching-progress in_progress` on a known `Content-Length` *and* `>= 5 MB` (`BIG_TARBALL_SIZE`), then throttles to 500ms with leading + trailing edges. That mirrors `lodash.throttle(opts.onProgress, 500)` in upstream's `remoteTarballFetcher.ts` exactly.
+- **Don't emit at higher granularity than pnpm.** Throttling and size gates exist for a reason — see `pacquet-tarball`'s `fetch_and_extract_once`, which gates `pnpm:fetching-progress in_progress` on a known `Content-Length` *and* `>= 5 MB` (`BIG_TARBALL_SIZE`), then throttles to 500ms with leading + trailing edges. That mirrors `lodash.throttle(opts.onProgress, 500)` in upstream's [`remoteTarballFetcher.ts:143-144`](https://github.com/pnpm/pnpm/blob/086c5e91e8/fetching/tarball-fetcher/src/remoteTarballFetcher.ts#L143-L144) exactly.
 - **Don't emit at lower granularity, either.** Skipping events the consumer expects (`fetched` after a download succeeds, `imported` after `create_cas_files` Ok) breaks pnpm's reporter counters.
 
 #### Worked example: `pnpm:summary` in `Install::run`
