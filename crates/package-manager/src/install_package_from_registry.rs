@@ -8,7 +8,7 @@ use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::PackageManifest;
 use pacquet_registry::{Package, PackageTag, PackageVersion, RegistryError};
-use pacquet_reporter::Reporter;
+use pacquet_reporter::{LogEvent, LogLevel, ProgressLog, ProgressMessage, Reporter};
 use pacquet_store_dir::{SharedReadonlyStoreIndex, SharedVerifiedFilesCache, StoreIndexWriter};
 use pacquet_tarball::{DownloadTarballToStore, MemCache, TarballError};
 use std::{
@@ -44,6 +44,10 @@ pub struct InstallPackageFromRegistry<'a> {
     /// Install-scoped dedupe state for `pnpm:package-import-method`.
     /// See `link_file::log_method_once`.
     pub logged_methods: &'a AtomicU8,
+    /// Install root, threaded into reporter events (`pnpm:progress`'s
+    /// `requester`). Same value as the `prefix` in
+    /// [`pacquet_reporter::StageLog`].
+    pub requester: &'a str,
     pub node_modules_dir: &'a Path,
     pub name: &'a str,
     pub version_range: &'a str,
@@ -109,6 +113,7 @@ impl<'a> InstallPackageFromRegistry<'a> {
             store_index_writer,
             verified_files_cache,
             logged_methods,
+            requester,
             node_modules_dir,
             name,
             ..
@@ -116,6 +121,21 @@ impl<'a> InstallPackageFromRegistry<'a> {
 
         let store_folder_name = package_version.to_virtual_store_name();
         let package_id = format!("{0}@{1}", package_version.name, package_version.version);
+
+        // `pnpm:progress resolved` mirrors pnpm's emit at
+        // <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-resolver/src/resolveDependencies.ts#L1586>:
+        // one event per package once the resolver has picked a
+        // version. In pacquet's no-lockfile path that's the
+        // registry-fetched `package_version`; emit before the
+        // tarball download so consumers see resolved → fetched/
+        // found_in_store → imported in order.
+        R::emit(&LogEvent::Progress(ProgressLog {
+            level: LogLevel::Debug,
+            message: ProgressMessage::Resolved {
+                package_id: package_id.clone(),
+                requester: requester.to_owned(),
+            },
+        }));
 
         // TODO: skip when it already exists in store?
         let cas_paths = DownloadTarballToStore {
@@ -133,10 +153,11 @@ impl<'a> InstallPackageFromRegistry<'a> {
             package_unpacked_size: package_version.dist.unpacked_size,
             package_url: package_version.as_tarball_url(),
             package_id: &package_id,
+            requester,
             prefetched_cas_paths: None,
             retry_opts: retry_opts_from_config(config),
         }
-        .run_with_mem_cache(tarball_mem_cache)
+        .run_with_mem_cache::<R>(tarball_mem_cache)
         .await
         .map_err(InstallPackageFromRegistryError::DownloadTarballToStore)?;
 
@@ -160,6 +181,20 @@ impl<'a> InstallPackageFromRegistry<'a> {
 
         symlink_package(&save_path, &symlink_path)
             .map_err(InstallPackageFromRegistryError::SymlinkPackage)?;
+
+        // `pnpm:progress imported` — see the matching emit in
+        // `create_virtual_dir_by_snapshot::run` for the rationale on
+        // the optimistic `method` value. `to` is the per-package
+        // virtual-store directory the symlink under
+        // `node_modules/{name}` resolves to.
+        R::emit(&LogEvent::Progress(ProgressLog {
+            level: LogLevel::Debug,
+            message: ProgressMessage::Imported {
+                method: crate::optimistic_wire_method(config.package_import_method),
+                requester: requester.to_owned(),
+                to: save_path.to_string_lossy().into_owned(),
+            },
+        }));
 
         Ok(())
     }

@@ -143,6 +143,7 @@ where
                 snapshots: snapshots.as_ref(),
                 dependency_groups,
                 logged_methods: &logged_methods,
+                requester: &prefix,
             }
             .run::<R>()
             .await
@@ -158,6 +159,7 @@ where
                 manifest,
                 dependency_groups,
                 logged_methods: &logged_methods,
+                requester: &prefix,
             }
             .run::<R>()
             .await

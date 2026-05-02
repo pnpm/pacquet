@@ -43,6 +43,8 @@ pub struct InstallWithoutLockfile<'a, DependencyGroupList> {
     /// Install-scoped dedupe state for `pnpm:package-import-method`.
     /// See `link_file::log_method_once`.
     pub logged_methods: &'a AtomicU8,
+    /// Install root, threaded into reporter `requester` fields.
+    pub requester: &'a str,
 }
 
 /// Error type of [`InstallWithoutLockfile`].
@@ -66,6 +68,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
             dependency_groups,
             resolved_packages,
             logged_methods,
+            requester,
         } = self;
 
         let store_dir: &'static _ = &config.store_dir;
@@ -128,6 +131,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                         store_index_writer: store_index_writer_ref,
                         verified_files_cache: &verified_files_cache,
                         logged_methods,
+                        requester,
                         node_modules_dir: &config.modules_dir,
                         name,
                         version_range,
@@ -144,6 +148,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                         dependency_groups: (),
                         resolved_packages,
                         logged_methods,
+                        requester,
                     }
                     .install_dependencies_from_registry::<R>(
                         &dependency,
@@ -230,6 +235,7 @@ impl<'a> InstallWithoutLockfile<'a, ()> {
                     store_index_writer,
                     verified_files_cache,
                     logged_methods: self.logged_methods,
+                    requester: self.requester,
                     node_modules_dir: node_modules_path_ref,
                     name,
                     version_range,
