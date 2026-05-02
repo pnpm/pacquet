@@ -97,13 +97,19 @@ where
         // see the post-add shape. `prefix` is the manifest's parent
         // directory, matching what `Install::run` derived for the
         // matching `initial` event.
+        //
+        // `parent()` only returns `None` when the path has no parent
+        // (a root or empty); fall back to the manifest path itself
+        // so a degenerate `package.json` placed directly at `/`
+        // doesn't crash the post-save emit. `to_string_lossy`
+        // coerces non-UTF-8 path bytes to U+FFFD instead of
+        // panicking.
         let prefix = manifest
             .path()
             .parent()
-            .map(std::path::Path::to_str)
-            .map(Option::<&str>::unwrap)
-            .unwrap()
-            .to_owned();
+            .unwrap_or_else(|| manifest.path())
+            .to_string_lossy()
+            .into_owned();
         R::emit(&LogEvent::PackageManifest(PackageManifestLog {
             level: LogLevel::Debug,
             message: PackageManifestMessage::Updated { prefix, updated: manifest.value().clone() },

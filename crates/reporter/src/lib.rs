@@ -402,10 +402,14 @@ pub struct RequestRetryLog {
 /// JS-shaped error object the default-reporter dispatches on:
 /// `error.httpStatusCode ?? error.status ?? error.errno ?? error.code`
 /// is what gets rendered as the reason. pacquet populates whichever
-/// field its [`pacquet_tarball::TarballError`] variant maps to (HTTP
+/// field its `pacquet_tarball::TarballError` variant maps to (HTTP
 /// status → `http_status_code`, decode / IO failures → `code`) and
 /// always carries the rendered `message` so consumers that read
 /// `err.message` directly still work.
+///
+/// Plain backticks (not an intra-doc link) because `pacquet-reporter`
+/// cannot depend on `pacquet-tarball` — the dependency runs the
+/// other way.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RequestRetryError {

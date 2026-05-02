@@ -6,7 +6,7 @@ use pacquet_reporter::{
     AddedRoot, DependencyType, LogEvent, Reporter, RootLog, RootMessage, SilentReporter,
 };
 use pacquet_testing_utils::fs::is_symlink_or_junction;
-use std::{collections::HashMap, sync::Mutex};
+use std::{collections::HashMap, fs, sync::Mutex};
 use tempfile::tempdir;
 
 /// `pnpm:root added` fires once per direct dependency, after the
@@ -37,8 +37,20 @@ fn emits_pnpm_root_added_per_direct_dependency() {
     let mut config = Npmrc::new();
     config.store_dir = dir.path().join("pacquet-store").into();
     config.modules_dir = modules_dir.clone();
-    config.virtual_store_dir = virtual_store_dir;
+    config.virtual_store_dir = virtual_store_dir.clone();
     let config = config.leak();
+
+    // The symlink targets must exist for the test to work on
+    // Windows: pacquet's `symlink_dir` falls back to junctions
+    // there, and `junction::create` requires the target directory
+    // to exist. On Unix `symlink` doesn't care, but creating the
+    // dirs here keeps the test platform-uniform.
+    for (store_name, real_name) in
+        [("fastify@4.0.0", "fastify"), ("@pnpm.e2e+dev-dep@1.2.3", "@pnpm.e2e/dev-dep")]
+    {
+        let target = virtual_store_dir.join(store_name).join("node_modules").join(real_name);
+        fs::create_dir_all(&target).expect("create symlink target");
+    }
 
     // One prod and one dev dep so we can assert that `dependencyType`
     // tracks the originating group across the iteration order.
@@ -84,7 +96,6 @@ fn emits_pnpm_root_added_per_direct_dependency() {
     assert!(is_symlink_or_junction(&modules_dir.join("@pnpm.e2e/dev-dep")).unwrap());
 
     let captured = EVENTS.lock().unwrap();
-    eprintln!("captured = {captured:?}");
     let added: Vec<&AddedRoot> = captured
         .iter()
         .filter_map(|e| match e {

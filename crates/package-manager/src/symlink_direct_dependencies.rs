@@ -60,8 +60,18 @@ where
         // [`ProjectSnapshot::dependencies_by_groups`] flattens the
         // groups together, which is convenient for the symlink loop
         // but loses the per-group identity we need for the emit.
+        //
+        // Peers are filtered upfront: pnpm doesn't emit `pnpm:root`
+        // for peer dependencies (they're materialised through their
+        // host package, not directly under `node_modules/`), and
+        // [`ProjectSnapshot::get_map_by_group`] also returns `None`
+        // for `Peer` so this filter is belt-and-braces — it lets
+        // the per-group → [`DependencyType`] match below stay
+        // exhaustive without a misleading `Peer` arm that maps to
+        // an "absent" type.
         let entries: Vec<(&PkgName, &_, DependencyGroup)> = dependency_groups
             .into_iter()
+            .filter(|group| !matches!(group, DependencyGroup::Peer))
             .flat_map(|group| {
                 project_snapshot
                     .get_map_by_group(group)
@@ -98,10 +108,12 @@ where
             // and skip from the wire shape rather than serializing as
             // JSON `null`.
             let dependency_type = match group {
-                DependencyGroup::Prod => Some(DependencyType::Prod),
-                DependencyGroup::Dev => Some(DependencyType::Dev),
-                DependencyGroup::Optional => Some(DependencyType::Optional),
-                DependencyGroup::Peer => None,
+                DependencyGroup::Prod => DependencyType::Prod,
+                DependencyGroup::Dev => DependencyType::Dev,
+                DependencyGroup::Optional => DependencyType::Optional,
+                // Filtered upfront — see the comment on the
+                // `entries` builder above.
+                DependencyGroup::Peer => unreachable!("peers are filtered out before this point"),
             };
             R::emit(&LogEvent::Root(RootLog {
                 level: LogLevel::Debug,
@@ -111,7 +123,7 @@ where
                         name: name_str,
                         real_name: name.to_string(),
                         version: Some(spec.version.version().to_string()),
-                        dependency_type,
+                        dependency_type: Some(dependency_type),
                         id: None,
                         latest: None,
                         linked_from: None,
