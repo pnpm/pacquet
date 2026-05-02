@@ -117,21 +117,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
 
         // TODO: skip when already exists in store?
         let package_id = package_key.without_peer().to_string();
-
-        // `pnpm:progress resolved` mirrors pnpm's emit at
-        // <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-resolver/src/resolveDependencies.ts#L1586>:
-        // one event per (resolved) package, fired before the fetch
-        // attempt. In the frozen-lockfile path the lockfile *is* the
-        // resolution, so each snapshot is "already resolved" by the
-        // time we reach here — emit on entry to mirror the upstream
-        // counter.
-        R::emit(&LogEvent::Progress(ProgressLog {
-            level: LogLevel::Debug,
-            message: ProgressMessage::Resolved {
-                package_id: package_id.clone(),
-                requester: requester.to_owned(),
-            },
-        }));
+        emit_progress_resolved::<R>(&package_id, requester);
 
         let cas_paths = DownloadTarballToStore {
             http_client,
@@ -166,5 +152,66 @@ impl<'a> InstallPackageBySnapshot<'a> {
         .map_err(InstallPackageBySnapshotError::CreateVirtualDir)?;
 
         Ok(())
+    }
+}
+
+/// `pnpm:progress` `resolved` for a frozen-lockfile snapshot the
+/// cold-batch path is about to fetch. Mirrors pnpm's emit at
+/// <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-resolver/src/resolveDependencies.ts#L1586>:
+/// one event per (resolved) package, fired before the fetch
+/// attempt. In pacquet's frozen-lockfile path the lockfile *is* the
+/// resolution, so each snapshot is "already resolved" by the time
+/// we reach this site.
+///
+/// Pulled out of [`InstallPackageBySnapshot::run`] so the
+/// event-construction code is unit-testable; the call site itself
+/// only fires when a non-empty cold-batch lockfile install runs,
+/// which the existing test suite doesn't cover.
+fn emit_progress_resolved<R: Reporter>(package_id: &str, requester: &str) {
+    R::emit(&LogEvent::Progress(ProgressLog {
+        level: LogLevel::Debug,
+        message: ProgressMessage::Resolved {
+            package_id: package_id.to_owned(),
+            requester: requester.to_owned(),
+        },
+    }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::emit_progress_resolved;
+    use pacquet_reporter::{LogEvent, ProgressMessage, Reporter};
+    use std::sync::Mutex;
+
+    /// `emit_progress_resolved` fires exactly one `pnpm:progress`
+    /// `resolved` event with the supplied (`package_id`,
+    /// `requester`). The pair pins pnpm's per-package counter to the
+    /// right row.
+    #[test]
+    fn emits_resolved_with_supplied_identifiers() {
+        static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+
+        struct RecordingReporter;
+        impl Reporter for RecordingReporter {
+            fn emit(event: &LogEvent) {
+                EVENTS.lock().unwrap().push(event.clone());
+            }
+        }
+
+        EVENTS.lock().unwrap().clear();
+        emit_progress_resolved::<RecordingReporter>("react@18.0.0", "/proj");
+
+        let captured = EVENTS.lock().unwrap();
+        assert!(
+            matches!(
+                captured.as_slice(),
+                [LogEvent::Progress(log)] if matches!(
+                    &log.message,
+                    ProgressMessage::Resolved { package_id, requester }
+                        if package_id == "react@18.0.0" && requester == "/proj"
+                )
+            ),
+            "expected a single Resolved event with matching identifiers; got {captured:?}",
+        );
     }
 }

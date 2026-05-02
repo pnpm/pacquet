@@ -151,3 +151,110 @@ pub(crate) fn optimistic_wire_method(method: PackageImportMethod) -> WireImportM
         PackageImportMethod::Copy => WireImportMethod::Copy,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{CreateVirtualDirBySnapshot, optimistic_wire_method};
+    use pacquet_lockfile::{PackageKey, SnapshotEntry};
+    use pacquet_npmrc::PackageImportMethod;
+    use pacquet_reporter::{
+        LogEvent, PackageImportMethod as WireImportMethod, ProgressMessage, Reporter,
+    };
+    use std::{
+        collections::HashMap,
+        sync::{Mutex, atomic::AtomicU8},
+    };
+    use tempfile::tempdir;
+
+    /// `optimistic_wire_method` is the source of truth for the
+    /// configured-method → wire-method mapping the `imported` event
+    /// reports. `Auto` and `CloneOrCopy` collapse to `Clone` (the
+    /// optimistic first attempt); the explicit settings pass through.
+    /// A future change to pacquet's `PackageImportMethod` set must
+    /// either extend this match or fail this test.
+    #[test]
+    fn optimistic_wire_method_collapses_auto_and_clone_or_copy_to_clone() {
+        assert_eq!(optimistic_wire_method(PackageImportMethod::Auto), WireImportMethod::Clone);
+        assert_eq!(
+            optimistic_wire_method(PackageImportMethod::CloneOrCopy),
+            WireImportMethod::Clone,
+        );
+        assert_eq!(optimistic_wire_method(PackageImportMethod::Clone), WireImportMethod::Clone);
+        assert_eq!(
+            optimistic_wire_method(PackageImportMethod::Hardlink),
+            WireImportMethod::Hardlink,
+        );
+        assert_eq!(optimistic_wire_method(PackageImportMethod::Copy), WireImportMethod::Copy);
+    }
+
+    /// `CreateVirtualDirBySnapshot::run` emits `pnpm:progress
+    /// imported` after `create_cas_files` succeeds. Driving with an
+    /// empty `cas_paths` map exercises the success path without
+    /// hitting the network: `create_cas_files` mkdirs the empty
+    /// directory and returns Ok, then the imported emit fires.
+    /// Asserts the wire fields (`method`, `requester`, `to`) match
+    /// what the install layer threaded down.
+    #[tokio::test]
+    async fn run_emits_imported_event_after_create_cas_files() {
+        static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+
+        struct RecordingReporter;
+        impl Reporter for RecordingReporter {
+            fn emit(event: &LogEvent) {
+                EVENTS.lock().unwrap().push(event.clone());
+            }
+        }
+
+        let dir = tempdir().expect("tempdir");
+        let virtual_store_dir = dir.path().to_path_buf();
+        let cas_paths: HashMap<String, std::path::PathBuf> = HashMap::new();
+        let logged_methods = AtomicU8::new(0);
+        let snapshot = SnapshotEntry::default();
+        let package_key: PackageKey = "react@18.0.0".parse().expect("valid v9 snapshot key");
+
+        EVENTS.lock().unwrap().clear();
+
+        // `tokio::task::block_in_place` matches how the production
+        // call-site (the `warm_work` closure in `CreateVirtualStore`)
+        // drives this from inside a multi-thread runtime; a
+        // `current_thread` runtime would panic on `block_in_place`,
+        // but `#[tokio::test]` defaults to single-thread, so we run
+        // `.run()` directly here. The function itself is sync — only
+        // the caller's runtime flavor matters.
+        CreateVirtualDirBySnapshot {
+            virtual_store_dir: &virtual_store_dir,
+            cas_paths: &cas_paths,
+            import_method: PackageImportMethod::Hardlink,
+            logged_methods: &logged_methods,
+            requester: "/proj",
+            package_id: "react@18.0.0",
+            package_key: &package_key,
+            snapshot: &snapshot,
+        }
+        .run::<RecordingReporter>()
+        .expect("empty-cas-paths run should succeed");
+
+        let captured = EVENTS.lock().unwrap();
+        let imported = captured.iter().find_map(|e| match e {
+            LogEvent::Progress(log) => match &log.message {
+                ProgressMessage::Imported { method, requester, to } => {
+                    Some((*method, requester.clone(), to.clone()))
+                }
+                _ => None,
+            },
+            _ => None,
+        });
+        let (method, requester, to) =
+            imported.unwrap_or_else(|| panic!("imported must fire; got {captured:?}"));
+        assert_eq!(method, WireImportMethod::Hardlink);
+        assert_eq!(requester, "/proj");
+        // `to` is the per-package `node_modules/{name}` directory
+        // inside the virtual store. The exact path depends on
+        // `package_key.to_virtual_store_name()` and the temp dir
+        // root, so spot-check the suffix instead of the full path.
+        assert!(
+            to.ends_with("/react@18.0.0/node_modules/react"),
+            "imported.to suffix must mirror the virtual-store layout; got {to}",
+        );
+    }
+}

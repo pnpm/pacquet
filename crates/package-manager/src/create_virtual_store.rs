@@ -261,30 +261,7 @@ impl<'a> CreateVirtualStore<'a> {
             let warm_work = move || {
                 warm.par_iter().try_for_each(|(snapshot_key, snapshot, cas_paths)| {
                     let package_id = snapshot_key.without_peer().to_string();
-
-                    // Frozen-lockfile snapshots are "already resolved" by
-                    // virtue of being in the lockfile; emit `resolved` per
-                    // snapshot to mirror pnpm's per-package counters. A
-                    // warm snapshot's `pnpm:progress found_in_store` event
-                    // would normally come from `DownloadTarballToStore`;
-                    // since the prefetch already settled the bytes for
-                    // these, emit it here too so the consumer sees the
-                    // full resolved → found_in_store → imported sequence
-                    // even when the cold path is skipped.
-                    R::emit(&LogEvent::Progress(ProgressLog {
-                        level: LogLevel::Debug,
-                        message: ProgressMessage::Resolved {
-                            package_id: package_id.clone(),
-                            requester: requester.to_owned(),
-                        },
-                    }));
-                    R::emit(&LogEvent::Progress(ProgressLog {
-                        level: LogLevel::Debug,
-                        message: ProgressMessage::FoundInStore {
-                            package_id: package_id.clone(),
-                            requester: requester.to_owned(),
-                        },
-                    }));
+                    emit_warm_snapshot_progress::<R>(&package_id, requester);
 
                     crate::CreateVirtualDirBySnapshot {
                         virtual_store_dir,
@@ -438,4 +415,81 @@ fn snapshot_cache_key(
     };
     let pkg_id = metadata_key.to_string();
     Ok(Some(store_index_key(&integrity, &pkg_id)))
+}
+
+/// `pnpm:progress` `resolved` + `found_in_store` for a frozen-lockfile
+/// snapshot the install-scoped prefetch already settled. Frozen-
+/// lockfile snapshots are "already resolved" by virtue of being in
+/// the lockfile, and "found in store" by virtue of the prefetch
+/// covering them — emit both so the consumer sees the full resolved
+/// → found_in_store → imported sequence even when the cold path is
+/// skipped.
+///
+/// Pulled out of the warm-batch closure in
+/// [`CreateVirtualStore::run`] so the event-construction code is
+/// unit-testable; the call site stays in the warm-batch hot path
+/// where setting up a non-empty prefetched-cas test would require a
+/// full lockfile + populated CAFS.
+fn emit_warm_snapshot_progress<R: Reporter>(package_id: &str, requester: &str) {
+    R::emit(&LogEvent::Progress(ProgressLog {
+        level: LogLevel::Debug,
+        message: ProgressMessage::Resolved {
+            package_id: package_id.to_owned(),
+            requester: requester.to_owned(),
+        },
+    }));
+    R::emit(&LogEvent::Progress(ProgressLog {
+        level: LogLevel::Debug,
+        message: ProgressMessage::FoundInStore {
+            package_id: package_id.to_owned(),
+            requester: requester.to_owned(),
+        },
+    }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::emit_warm_snapshot_progress;
+    use pacquet_reporter::{LogEvent, ProgressMessage, Reporter};
+    use std::sync::Mutex;
+
+    /// `emit_warm_snapshot_progress` fires `resolved` then
+    /// `found_in_store` in that order for one (package_id, requester)
+    /// pair. Both events carry the same identifiers — pnpm's
+    /// per-package counter relies on the pair to pin the tick to the
+    /// right package row.
+    #[test]
+    fn emits_resolved_then_found_in_store_with_matching_identifiers() {
+        static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+
+        struct RecordingReporter;
+        impl Reporter for RecordingReporter {
+            fn emit(event: &LogEvent) {
+                EVENTS.lock().unwrap().push(event.clone());
+            }
+        }
+
+        EVENTS.lock().unwrap().clear();
+        emit_warm_snapshot_progress::<RecordingReporter>("react@18.0.0", "/proj");
+
+        let captured = EVENTS.lock().unwrap();
+        assert!(
+            matches!(
+                captured.as_slice(),
+                [
+                    LogEvent::Progress(r),
+                    LogEvent::Progress(f),
+                ] if matches!(
+                    &r.message,
+                    ProgressMessage::Resolved { package_id, requester }
+                        if package_id == "react@18.0.0" && requester == "/proj"
+                ) && matches!(
+                    &f.message,
+                    ProgressMessage::FoundInStore { package_id, requester }
+                        if package_id == "react@18.0.0" && requester == "/proj"
+                )
+            ),
+            "warm-snapshot pair must be (Resolved, FoundInStore) with matching identifiers; got {captured:?}",
+        );
+    }
 }
