@@ -618,7 +618,7 @@ When porting a function, grep for those patterns *in the upstream files you're p
 
 #### Channel mapping
 
-The canonical list of channels lives in `crates/reporter/src/lib.rs`'s `LogEvent` enum. Each variant pins `#[serde(rename = "pnpm:<channel>")]` so the wire string matches upstream byte-for-byte. Every channel landed today is documented at the variant — read the doc comment for the upstream type permalink and the emit site.
+The canonical list of channels lives in `crates/reporter/src/lib.rs`'s `LogEvent` enum. Each variant pins `#[serde(rename = "pnpm:<channel>")]` so the wire string matches upstream byte-for-byte. Read the doc comment on each variant for the upstream type permalink; channels that fire from a single canonical emit site link that too, while multi-site channels (`Stage` and `Progress`, which span the install lifecycle) only pin the type and let the porter grep the upstream file for the per-status emits.
 
 To add a new channel: extend the enum with a `#[serde(rename = "pnpm:<channel>")]` variant whose payload mirrors the upstream TS shape field-for-field — camelCase via `#[serde(rename_all = "camelCase")]` where applicable, preserving status-tagged-union shapes (see `ProgressMessage` for the pattern). Add a wire-shape unit test to `crates/reporter/src/tests.rs` that asserts the JSON renders exactly what pnpm's TS emitter would.
 
