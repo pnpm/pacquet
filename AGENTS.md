@@ -28,6 +28,14 @@ Before writing code for a feature, bug fix, or behavior change:
    unless the same fix has landed upstream.
 5. If pnpm's `main` and this repo disagree, pnpm's `main` is the source of
    truth — reconcile toward upstream, not away from it.
+6. **Log emissions are part of "match pnpm".** When porting a function
+   that fires `pnpm:<channel>` events through `globalLogger` /
+   `logger.debug(...)` / `streamParser.write(...)`, mirror the call
+   site, payload, and ordering so `@pnpm/cli.default-reporter` parses
+   pacquet's NDJSON the same way it parses pnpm's. See
+   [Reporter / log events](./CODE_STYLE_GUIDE.md#reporter--log-events)
+   in the style guide for the convention (channel mapping, threading
+   `R: Reporter`, emit-site placement, recording-fake tests).
 
 If the upstream behavior is unclear or looks wrong, stop and ask the user
 rather than guessing.

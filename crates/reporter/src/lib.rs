@@ -40,6 +40,52 @@ pub enum LogEvent {
     /// Upstream: <https://github.com/pnpm/pnpm/blob/3b12eb27de/core/core-loggers/src/stageLogger.ts>.
     #[serde(rename = "pnpm:stage")]
     Stage(StageLog),
+
+    /// End-of-install marker (`pnpm:summary`). pnpm's reporter combines
+    /// this with the accumulated `pnpm:root` events to render the final
+    /// "+N -M" block.
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/core/core-loggers/src/summaryLogger.ts>.
+    /// Emit site: <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-installer/src/install/index.ts#L1663>.
+    #[serde(rename = "pnpm:summary")]
+    Summary(SummaryLog),
+
+    /// The import method used to materialise files from the store
+    /// (`pnpm:package-import-method`). Fires the first time each
+    /// resolved method (`clone` / `hardlink` / `copy`) actually
+    /// succeeds during an install — so for the `auto` and
+    /// `clone-or-copy` config values, the wire value reflects the
+    /// post-fallback method rather than the optimistic configured
+    /// one. Up to three events per install (one per resolved method)
+    /// gated by an install-scoped atomic in `pacquet-package-manager`.
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/core/core-loggers/src/packageImportMethodLogger.ts>.
+    /// Emit site: <https://github.com/pnpm/pnpm/blob/086c5e91e8/fs/indexed-pkg-importer/src/index.ts#L32>.
+    #[serde(rename = "pnpm:package-import-method")]
+    PackageImportMethod(PackageImportMethodLog),
+
+    /// Per-package status transitions (`pnpm:progress`). One of four
+    /// `status` values per record: `resolved`, `fetched`,
+    /// `found_in_store`, or `imported`. The first three carry
+    /// `{ packageId, requester }`; `imported` carries
+    /// `{ method, requester, to }`. Together they drive the
+    /// "X/Y resolved, X/Y fetched, X/Y imported" counters in the
+    /// default reporter.
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/core/core-loggers/src/progressLogger.ts>.
+    #[serde(rename = "pnpm:progress")]
+    Progress(ProgressLog),
+
+    /// Per-tarball download progress (`pnpm:fetching-progress`). Two
+    /// `status` values: `started` (one-shot per fetch attempt with
+    /// `attempt`, `packageId`, and `size` from the response's
+    /// `Content-Length`) and `in_progress` (throttled to ~200ms while
+    /// the body streams, with `downloaded` and `packageId`).
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/core/core-loggers/src/fetchingProgressLogger.ts>.
+    /// Emit site: <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/package-requester/src/packageRequester.ts#L560>.
+    #[serde(rename = "pnpm:fetching-progress")]
+    FetchingProgress(FetchingProgressLog),
 }
 
 /// `pnpm:context` payload.
@@ -77,6 +123,115 @@ pub enum Stage {
     ImportingDone,
 }
 
+/// `pnpm:summary` payload. `prefix` identifies the importer; pnpm's
+/// reporter uses it to look up the matching `pnpm:root` history and
+/// render its "+N -M" diff. `level` is the [bunyan]-envelope severity,
+/// common to every channel.
+///
+/// [bunyan]: https://github.com/trentm/node-bunyan
+#[derive(Debug, Clone, Serialize)]
+pub struct SummaryLog {
+    pub level: LogLevel,
+    pub prefix: String,
+}
+
+/// `pnpm:package-import-method` payload. The method names match pnpm's
+/// wire shape exactly — anything else would silently fail to render
+/// even though the JSON parses.
+#[derive(Debug, Clone, Serialize)]
+pub struct PackageImportMethodLog {
+    pub level: LogLevel,
+    pub method: PackageImportMethod,
+}
+
+/// Wire-format import method. pnpm only knows three values; pacquet's
+/// config enum (`pacquet_npmrc::PackageImportMethod`) carries `Auto`
+/// and `CloneOrCopy` on top of those, but those are dispatched-on by
+/// the auto-importer's fallback chain, not emitted. The wire value is
+/// the resolved method `link_file` actually used — `Clone` /
+/// `Hardlink` / `Copy` — so an `auto` install that falls back to
+/// hardlink emits `hardlink`, not the optimistic `clone`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PackageImportMethod {
+    Clone,
+    Hardlink,
+    Copy,
+}
+
+/// `pnpm:progress` payload. The bunyan-envelope `level` is a fixed
+/// outer field; the rest of the record is a status-tagged union via
+/// `#[serde(flatten)]` so the wire shape stays flat (matching pnpm's
+/// `ProgressMessage` discriminator on `status`).
+#[derive(Debug, Clone, Serialize)]
+pub struct ProgressLog {
+    pub level: LogLevel,
+    #[serde(flatten)]
+    pub message: ProgressMessage,
+}
+
+/// `pnpm:progress` discriminated payload. `Resolved` / `Fetched` /
+/// `FoundInStore` share `{ packageId, requester }`; `Imported` differs
+/// (`{ method, requester, to }` — no `packageId`).
+///
+/// `requester` is the install root — same value as the
+/// [`StageLog::prefix`] threaded through `Install::run`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ProgressMessage {
+    Resolved {
+        #[serde(rename = "packageId")]
+        package_id: String,
+        requester: String,
+    },
+    Fetched {
+        #[serde(rename = "packageId")]
+        package_id: String,
+        requester: String,
+    },
+    FoundInStore {
+        #[serde(rename = "packageId")]
+        package_id: String,
+        requester: String,
+    },
+    Imported {
+        method: PackageImportMethod,
+        requester: String,
+        to: String,
+    },
+}
+
+/// `pnpm:fetching-progress` payload. Same flatten-on-status pattern as
+/// [`ProgressLog`].
+#[derive(Debug, Clone, Serialize)]
+pub struct FetchingProgressLog {
+    pub level: LogLevel,
+    #[serde(flatten)]
+    pub message: FetchingProgressMessage,
+}
+
+/// `pnpm:fetching-progress` discriminated payload. `Started` carries
+/// the retry-attempt index and the `Content-Length`-derived size
+/// (`null` when chunked / unknown — preserved as JSON `null`).
+/// `InProgress` carries the running byte count; pacquet throttles
+/// these to ~200ms per package, mirroring pnpm's reporter coalescing
+/// window.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum FetchingProgressMessage {
+    Started {
+        attempt: u32,
+        #[serde(rename = "packageId")]
+        package_id: String,
+        size: Option<u64>,
+    },
+    InProgress {
+        downloaded: u64,
+        #[serde(rename = "packageId")]
+        package_id: String,
+    },
+}
+
 /// Severity level on the [bunyan]-shaped envelope.
 ///
 /// pnpm's logger uses the [bole] library, which writes one of these strings
@@ -103,6 +258,16 @@ pub enum LogLevel {
 ///
 /// [`Reporter::emit`] must not panic. A serialization or I/O failure is
 /// swallowed so a reporter problem can never crash an install.
+///
+/// **Thread safety.** `emit` may be invoked concurrently from
+/// arbitrary threads — pacquet's import path runs `link_file` from a
+/// rayon `par_iter`, and tarball download / store-index work runs
+/// across tokio workers, all of which can fire reporter events at
+/// once. Implementations must therefore guard any shared state they
+/// touch (`Mutex`, atomic, or write-once initialization). Both
+/// production sinks satisfy this: `SilentReporter` is a no-op, and
+/// `NdjsonReporter` serializes per-event then writes under
+/// `std::io::stderr().lock()`.
 pub trait Reporter {
     fn emit(event: &LogEvent);
 }

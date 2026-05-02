@@ -47,11 +47,12 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
                 package_unpacked_size: Some(16697),
                 package_url: url,
                 package_id: "fast-querystring@1.0.0",
+                requester: "",
                 prefetched_cas_paths: None,
                 retry_opts: RetryOpts::default(),
                 auth_headers: &AuthHeaders::default(),
             }
-            .run_without_mem_cache()
+            .run_without_mem_cache::<pacquet_reporter::SilentReporter>()
             .await
             .unwrap();
             cas_map.len()
