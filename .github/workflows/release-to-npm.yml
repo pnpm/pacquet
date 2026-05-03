@@ -40,6 +40,10 @@ jobs:
   build:
     needs: check
     if: needs.check.outputs.version_changed == 'true'
+    permissions:
+      contents: read
+      id-token: write # needed for actions/attest-build-provenance
+      attestations: write
     env:
       version: ${{ needs.check.outputs.version }}
     outputs:
@@ -106,6 +110,12 @@ jobs:
           BIN_NAME=pacquet-${{ matrix.code-target }}
           mv target/${{ matrix.target }}/release/pacquet $BIN_NAME
           tar czf $BIN_NAME.tar.gz $BIN_NAME
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            pacquet-${{ matrix.code-target }}*
 
       - name: Upload Binary
         uses: actions/upload-artifact@v4
