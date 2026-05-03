@@ -98,7 +98,12 @@ jobs:
         # --no-deps skips rendering HTML for every transitive crate. Only
         # workspace crates are documented; broken intra-doc links and bad
         # rustdoc markup in pacquet's own code are still caught.
-        run: cargo doc --no-deps --workspace
+        # --document-private-items extends those checks to private items
+        # too. The `rustdoc::private_intra_doc_links` lint (warn-by-default,
+        # promoted to error by `-D warnings`) still flags public items
+        # that link to private items, so a single pass covers both
+        # directions without doubling the build time.
+        run: cargo doc --no-deps --workspace --document-private-items
 
   typos:
     name: Spell Check
