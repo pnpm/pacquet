@@ -329,7 +329,7 @@ where
 /// would *replace* the existing extension, which is wrong for our case.
 /// The bin name `tsc` keeps its own `tsc` and gains a sibling `tsc.cmd`,
 /// rather than turning into `tsc.cmd` and losing the original `.sh` flavor.
-fn with_extension_appended(path: &Path, ext: &str) -> std::path::PathBuf {
+fn with_extension_appended(path: &Path, ext: &str) -> PathBuf {
     let mut result = path.as_os_str().to_owned();
     result.push(".");
     result.push(ext);
