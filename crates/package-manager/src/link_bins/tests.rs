@@ -1,10 +1,7 @@
 use super::{LinkVirtualStoreBins, LinkVirtualStoreBinsError, link_direct_dep_bins};
 use pacquet_cmd_shim::is_shim_pointing_at;
 use serde_json::json;
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 use tempfile::tempdir;
 
 /// End-to-end exercise of [`LinkVirtualStoreBins`] against a hand-built
@@ -297,8 +294,10 @@ fn link_virtual_store_bins_propagates_read_error_via_di() {
     use std::io;
     struct DenyVirtualStore;
     impl FsReadDir for DenyVirtualStore {
-        fn read_dir(_: &Path) -> io::Result<Vec<PathBuf>> {
-            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+            Err::<std::iter::Empty<std::path::PathBuf>, _>(io::Error::from(
+                io::ErrorKind::PermissionDenied,
+            ))
         }
     }
     impl FsReadFile for DenyVirtualStore {
@@ -335,8 +334,10 @@ fn link_virtual_store_bins_propagates_read_error_via_di() {
         }
     }
     impl FsWalkFiles for DenyVirtualStore {
-        fn walk_files(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-            unreachable!("directories.bin not exercised by this test")
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+            unreachable!("directories.bin not exercised by this test");
+            #[expect(unreachable_code)]
+            Ok(std::iter::empty())
         }
     }
 

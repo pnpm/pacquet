@@ -286,8 +286,8 @@ fn link_bins_propagates_create_bin_dir_error_via_di() {
     use std::io;
     struct FailingCreateDir;
     impl FsReadDir for FailingCreateDir {
-        fn read_dir(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-            Ok(vec![])
+        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+            Ok(std::iter::empty())
         }
     }
     impl FsReadFile for FailingCreateDir {
@@ -324,8 +324,10 @@ fn link_bins_propagates_create_bin_dir_error_via_di() {
         }
     }
     impl FsWalkFiles for FailingCreateDir {
-        fn walk_files(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-            unreachable!("directories.bin not exercised by this test")
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+            unreachable!("directories.bin not exercised by this test");
+            #[expect(unreachable_code)]
+            Ok(std::iter::empty())
         }
     }
 
@@ -350,8 +352,8 @@ fn link_bins_propagates_write_shim_error_via_di() {
     use std::io;
     struct FailingWrite;
     impl FsReadDir for FailingWrite {
-        fn read_dir(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-            Ok(vec![])
+        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+            Ok(std::iter::empty())
         }
     }
     impl FsReadFile for FailingWrite {
@@ -390,8 +392,10 @@ fn link_bins_propagates_write_shim_error_via_di() {
         }
     }
     impl FsWalkFiles for FailingWrite {
-        fn walk_files(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-            unreachable!("directories.bin not exercised by this test")
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+            unreachable!("directories.bin not exercised by this test");
+            #[expect(unreachable_code)]
+            Ok(std::iter::empty())
         }
     }
 
@@ -414,8 +418,8 @@ fn link_bins_propagates_chmod_error_via_di() {
     use std::io;
     struct FailingChmod;
     impl FsReadDir for FailingChmod {
-        fn read_dir(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-            Ok(vec![])
+        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+            Ok(std::iter::empty())
         }
     }
     impl FsReadFile for FailingChmod {
@@ -452,8 +456,10 @@ fn link_bins_propagates_chmod_error_via_di() {
         }
     }
     impl FsWalkFiles for FailingChmod {
-        fn walk_files(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-            unreachable!("directories.bin not exercised by this test")
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+            unreachable!("directories.bin not exercised by this test");
+            #[expect(unreachable_code)]
+            Ok(std::iter::empty())
         }
     }
 
@@ -481,8 +487,8 @@ fn link_bins_propagates_target_chmod_error_via_di() {
     use std::io;
     struct FailingTargetChmod;
     impl FsReadDir for FailingTargetChmod {
-        fn read_dir(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-            Ok(vec![])
+        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+            Ok(std::iter::empty())
         }
     }
     impl FsReadFile for FailingTargetChmod {
@@ -522,8 +528,10 @@ fn link_bins_propagates_target_chmod_error_via_di() {
         }
     }
     impl FsWalkFiles for FailingTargetChmod {
-        fn walk_files(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-            unreachable!("directories.bin not exercised by this test")
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+            unreachable!("directories.bin not exercised by this test");
+            #[expect(unreachable_code)]
+            Ok(std::iter::empty())
         }
     }
 
@@ -550,8 +558,8 @@ fn link_bins_swallows_target_chmod_not_found_via_di() {
     use std::io;
     struct NotFoundTargetChmod;
     impl FsReadDir for NotFoundTargetChmod {
-        fn read_dir(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-            Ok(vec![])
+        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+            Ok(std::iter::empty())
         }
     }
     impl FsReadFile for NotFoundTargetChmod {
@@ -588,8 +596,10 @@ fn link_bins_swallows_target_chmod_not_found_via_di() {
         }
     }
     impl FsWalkFiles for NotFoundTargetChmod {
-        fn walk_files(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-            unreachable!("directories.bin not exercised by this test")
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+            unreachable!("directories.bin not exercised by this test");
+            #[expect(unreachable_code)]
+            Ok(std::iter::empty())
         }
     }
 
@@ -615,8 +625,8 @@ fn link_bins_propagates_probe_shim_source_error_via_di() {
     use std::io;
     struct FailingProbe;
     impl FsReadDir for FailingProbe {
-        fn read_dir(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-            Ok(vec![])
+        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+            Ok(std::iter::empty())
         }
     }
     impl FsReadFile for FailingProbe {
@@ -653,8 +663,10 @@ fn link_bins_propagates_probe_shim_source_error_via_di() {
         }
     }
     impl FsWalkFiles for FailingProbe {
-        fn walk_files(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-            unreachable!("directories.bin not exercised by this test")
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+            unreachable!("directories.bin not exercised by this test");
+            #[expect(unreachable_code)]
+            Ok(std::iter::empty())
         }
     }
 
@@ -679,8 +691,8 @@ fn link_bins_propagates_read_manifest_error_via_di() {
     use std::io;
     struct DenyManifestRead;
     impl FsReadDir for DenyManifestRead {
-        fn read_dir(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-            Ok(vec!["foo".into()])
+        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+            Ok(vec!["foo".into()].into_iter())
         }
     }
     impl FsReadFile for DenyManifestRead {
@@ -717,8 +729,10 @@ fn link_bins_propagates_read_manifest_error_via_di() {
         }
     }
     impl FsWalkFiles for DenyManifestRead {
-        fn walk_files(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-            unreachable!("directories.bin not exercised by this test")
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+            unreachable!("directories.bin not exercised by this test");
+            #[expect(unreachable_code)]
+            Ok(std::iter::empty())
         }
     }
 
@@ -782,8 +796,10 @@ fn link_bins_propagates_modules_dir_read_error_via_di() {
     use std::io;
     struct FailingModulesRead;
     impl FsReadDir for FailingModulesRead {
-        fn read_dir(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+            Err::<std::iter::Empty<std::path::PathBuf>, _>(io::Error::from(
+                io::ErrorKind::PermissionDenied,
+            ))
         }
     }
     impl FsReadFile for FailingModulesRead {
@@ -820,8 +836,10 @@ fn link_bins_propagates_modules_dir_read_error_via_di() {
         }
     }
     impl FsWalkFiles for FailingModulesRead {
-        fn walk_files(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-            unreachable!("directories.bin not exercised by this test")
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+            unreachable!("directories.bin not exercised by this test");
+            #[expect(unreachable_code)]
+            Ok(std::iter::empty())
         }
     }
 

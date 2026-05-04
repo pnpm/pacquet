@@ -40,24 +40,36 @@ pub trait FsReadString {
     fn read_to_string(path: &Path) -> io::Result<String>;
 }
 
-/// List the entries of a directory. We collect into a `Vec<PathBuf>`
-/// rather than expose `fs::ReadDir` so test fakes don't need to fabricate
-/// platform-specific iterator types. Eager collection is fine — the
-/// only call sites are `<modules_dir>/` and per-slot `node_modules/`,
-/// both of which are small.
+/// List the entries of a directory.
+///
+/// Returns an `impl Iterator<Item = PathBuf>` rather than a
+/// `Vec<PathBuf>` so the production impl can stream entries straight
+/// out of `fs::ReadDir` without materialising the whole list, and so
+/// fakes don't have to declare an associated `Iter` type per impl —
+/// they just return whatever concrete iterator they want.
+///
+/// We deliberately don't expose `fs::ReadDir` directly: its iterator
+/// type is platform-specific and yields `io::Result<DirEntry>`,
+/// which would force every fake to fabricate a `DirEntry` (and tie
+/// the trait to libstd's filesystem types). Yielding plain
+/// `PathBuf` keeps fakes trivial.
 pub trait FsReadDir {
-    fn read_dir(path: &Path) -> io::Result<Vec<std::path::PathBuf>>;
+    fn read_dir(path: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>>;
 }
 
-/// Recursively walk `path` and return every regular file found beneath
+/// Recursively walk `path` and yield every regular file found beneath
 /// it (depth-first, no symlink follow). Used by
 /// [`crate::get_bins_from_package_manifest`] to enumerate
 /// `directories.bin` entries.
 ///
-/// Eager `Vec<PathBuf>` matches the [`FsReadDir`] convention — fakes
-/// can hand back any list they want, including paths that exercise the
-/// `file_name() == None` and `to_str() == None` skip branches the real
-/// fs almost never reaches.
+/// Returns an `impl Iterator<Item = PathBuf>` rather than a
+/// `Vec<PathBuf>` so the production walker streams entries straight
+/// out of `walkdir` instead of materialising the whole list up front.
+/// `directories.bin` trees are usually tiny, but the abstraction
+/// shouldn't bake in an allocation the real implementation doesn't
+/// need. Fakes return whatever concrete iterator they want — typically
+/// [`std::iter::empty`] for the unreachable-walk case or
+/// [`Vec::into_iter`] when feeding a fixed list of paths.
 ///
 /// `walkdir`'s builder exposes many knobs (`follow_links`, `min_depth`,
 /// `max_depth`, `sort_by`, …); pacquet uses just one (`follow_links =
@@ -67,7 +79,7 @@ pub trait FsReadDir {
 /// caller needs different walk options, add a new capability rather
 /// than parameterise this one.
 pub trait FsWalkFiles {
-    fn walk_files(path: &Path) -> io::Result<Vec<std::path::PathBuf>>;
+    fn walk_files(path: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>>;
 }
 
 /// Create a directory and any missing ancestors. Used to prepare
@@ -129,27 +141,27 @@ impl FsReadString for RealApi {
 }
 
 impl FsReadDir for RealApi {
-    fn read_dir(path: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-        Ok(std::fs::read_dir(path)?.flatten().map(|entry| entry.path()).collect())
+    fn read_dir(path: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+        // `flatten()` silently drops per-entry errors (matches the
+        // prior collect-then-flatten shape and the `tinyglobby`-style
+        // ENOENT-on-subtree behaviour pacquet's callers expect).
+        Ok(std::fs::read_dir(path)?.flatten().map(|entry| entry.path()))
     }
 }
 
 impl FsWalkFiles for RealApi {
-    fn walk_files(path: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-        // `.flatten()` swallows per-entry errors the way pnpm's
-        // `tinyglobby` does — missing or unreadable subtrees just
-        // contribute nothing, rather than failing the whole walk.
-        // The top-level `WalkDir::new(missing).into_iter().next()`
-        // yields a single `Err` which `flatten` also drops, so a
-        // missing `bin_dir` returns an empty `Vec` (matches pnpm's
-        // ENOENT short-circuit).
+    fn walk_files(path: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+        // `flatten()` silently drops per-entry errors (matches pnpm's
+        // tinyglobby ENOENT-on-subtree behaviour); the top-level
+        // missing-dir case also flows through here as a single
+        // dropped `Err`, so a missing `bin_dir` produces an empty
+        // stream rather than an error.
         Ok(walkdir::WalkDir::new(path)
             .follow_links(false)
             .into_iter()
             .flatten()
             .filter(|entry| entry.file_type().is_file())
-            .map(|entry| entry.path().to_path_buf())
-            .collect())
+            .map(|entry| entry.path().to_path_buf()))
     }
 }
 

@@ -97,12 +97,12 @@ fn commands_from_directories_bin<Api: FsWalkFiles>(
     }
     // Treat a top-level walk error as "no bins" — same shape as
     // pnpm's tinyglobby ENOENT short-circuit. The trait's production
-    // impl already drops per-entry errors via `flatten`, so an `Err`
-    // here only fires when the walker can't even open `bin_dir`.
+    // impl already drops per-entry errors inside its iterator, so an
+    // `Err` here only fires when the walker can't even open `bin_dir`.
     let Ok(paths) = Api::walk_files(&bin_dir) else {
         return Vec::new();
     };
-    let mut commands = Vec::with_capacity(paths.len());
+    let mut commands = Vec::new();
     for path in paths {
         let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
             continue;

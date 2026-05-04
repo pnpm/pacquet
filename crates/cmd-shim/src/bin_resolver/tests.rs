@@ -411,7 +411,7 @@ fn directories_bin_skips_path_without_usable_file_name() {
 
     struct EvilWalker;
     impl FsWalkFiles for EvilWalker {
-        fn walk_files(_: &Path) -> io::Result<Vec<PathBuf>> {
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
             Ok(vec![
                 // `file_name()` returns None for a path ending in `..`,
                 // hitting the `let-else continue` branch.
@@ -419,7 +419,8 @@ fn directories_bin_skips_path_without_usable_file_name() {
                 // Well-formed sibling so we can assert the loop's
                 // happy path still runs after the skip.
                 PathBuf::from("/pkg/bin/cli"),
-            ])
+            ]
+            .into_iter())
         }
     }
 

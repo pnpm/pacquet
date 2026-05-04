@@ -122,7 +122,10 @@ impl<'a> LinkVirtualStoreBins<'a> {
         // own children. With ~1300 slots in a real lockfile (the integrated
         // benchmark fixture), the serial loop was the dominant chunk of
         // the bin-linking pass — driving it on rayon brings that cost down
-        // to roughly `total_work / num_cpus`.
+        // to roughly `total_work / num_cpus`. `Api::read_dir` is now a
+        // streaming iterator; rayon needs a slice to split work, so we
+        // collect just here, at the call site that actually needs it.
+        let slots: Vec<PathBuf> = slots.collect();
         slots.par_iter().try_for_each(|slot_dir| {
             let modules_dir = slot_dir.join("node_modules");
             if !modules_dir.is_dir() {
