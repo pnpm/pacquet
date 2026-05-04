@@ -73,13 +73,28 @@ jobs:
       - name: Cache Rust builds
         uses: actions/cache@v5
         with:
-          key: integrated-benchmark-builds-${{ matrix.os }}
+          # The exact key includes the workspace's `Cargo.lock` hash and
+          # the commit SHA so each run writes a fresh cache. The
+          # `restore-keys` fall back to the latest cache that matches
+          # the same `Cargo.lock`, then to any cache for this OS.
+          # `actions/cache` skips the save when the exact key already
+          # has a hit, so without a SHA-bearing key the cache would
+          # freeze at whatever the first run that populated it left
+          # behind and never refresh.
+          key: integrated-benchmark-builds-${{ matrix.os }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            integrated-benchmark-builds-${{ matrix.os }}-${{ hashFiles('Cargo.lock') }}-
+            integrated-benchmark-builds-${{ matrix.os }}-
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-            bench-work-env/*/pacquet/target
-        timeout-minutes: 1
+            bench-work-env/.shared-target
+        # Restore can take longer than the previous 1-minute cap once
+        # the cache contains a few revisions' worth of artifacts. Five
+        # minutes covers normal restores; `continue-on-error` still
+        # lets the job fall through to a cold build if restore stalls.
+        timeout-minutes: 5
         continue-on-error: true
 
       - name: Install Rust Toolchain
