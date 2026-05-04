@@ -118,7 +118,7 @@ jobs:
             pacquet-${{ matrix.code-target }}*
 
       - name: Upload Binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           if-no-files-found: error
           name: binaries-${{ matrix.code-target }}
