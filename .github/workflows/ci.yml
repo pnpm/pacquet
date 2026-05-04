@@ -28,7 +28,7 @@ jobs:
           - os: macos-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust Toolchain
         uses: ./.github/actions/rustup
@@ -85,7 +85,7 @@ jobs:
     name: Doc
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust Toolchain
         uses: ./.github/actions/rustup
@@ -95,16 +95,13 @@ jobs:
       - name: Doc
         env:
           RUSTDOCFLAGS: '-D warnings'
-        # --no-deps skips rendering HTML for every transitive crate. Only
-        # workspace crates are documented; broken intra-doc links and bad
-        # rustdoc markup in pacquet's own code are still caught.
-        run: cargo doc --no-deps --workspace
+        run: cargo doc --no-deps --workspace --document-private-items
 
   typos:
     name: Spell Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: crate-ci/typos@v1.16.22
         with:
@@ -114,9 +111,9 @@ jobs:
     name: Cargo Deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: dorny/paths-filter@v2
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -135,7 +132,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: ./.github/actions/rustup

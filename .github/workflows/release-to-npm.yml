@@ -21,7 +21,7 @@ jobs:
       version: ${{ env.version }}
       version_changed: ${{ steps.version.outputs.changed }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Check version changes
         uses: EndBug/version-check@v2
@@ -40,6 +40,10 @@ jobs:
   build:
     needs: check
     if: needs.check.outputs.version_changed == 'true'
+    permissions:
+      contents: read
+      id-token: write # needed for actions/attest-build-provenance
+      attestations: write
     env:
       version: ${{ needs.check.outputs.version }}
     outputs:
@@ -74,7 +78,7 @@ jobs:
     name: Package ${{ matrix.code-target }}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install cross
         uses: taiki-e/install-action@cross
@@ -107,8 +111,14 @@ jobs:
           mv target/${{ matrix.target }}/release/pacquet $BIN_NAME
           tar czf $BIN_NAME.tar.gz $BIN_NAME
 
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            pacquet-${{ matrix.code-target }}*
+
       - name: Upload Binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           if-no-files-found: error
           name: binaries-${{ matrix.code-target }}
@@ -127,7 +137,7 @@ jobs:
     needs:
       - build
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install pnpm
         uses: pnpm/action-setup@v6
