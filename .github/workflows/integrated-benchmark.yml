@@ -64,7 +64,10 @@ jobs:
       - name: Cache verdaccio
         uses: actions/cache@v5
         with:
-          key: integrated-benchmark-verdaccio
+          # actions/cache skips saving on an exact-key hit, so a static key would freeze the cache after the first run.
+          key: integrated-benchmark-verdaccio-${{ hashFiles('tasks/integrated-benchmark/src/fixtures/pnpm-lock.yaml') }}
+          restore-keys: |
+            integrated-benchmark-verdaccio-
           path: |
             ~/.local/share/verdaccio/storage
         timeout-minutes: 1
@@ -73,7 +76,11 @@ jobs:
       - name: Cache Rust builds
         uses: actions/cache@v5
         with:
-          key: integrated-benchmark-builds-${{ matrix.os }}
+          # github.sha forces a save every run so the incrementally-built target dirs keep accumulating; restore-keys widen progressively from exact-deps to any-prior-cache.
+          key: integrated-benchmark-builds-${{ matrix.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}-${{ github.sha }}
+          restore-keys: |
+            integrated-benchmark-builds-${{ matrix.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}-
+            integrated-benchmark-builds-${{ matrix.os }}-
           path: |
             ~/.cargo/registry
             ~/.cargo/git
@@ -101,7 +108,10 @@ jobs:
       - name: Cache pnpm
         uses: actions/cache@v5
         with:
-          key: integrated-benchmark-pnpm-v11
+          # Store contents follow tasks/registry-mock/pnpm-lock.yaml, which `just install` consumes via --frozen-lockfile.
+          key: integrated-benchmark-pnpm-v11-${{ hashFiles('tasks/registry-mock/pnpm-lock.yaml') }}
+          restore-keys: |
+            integrated-benchmark-pnpm-v11-
           path: |
             ${{ env.PNPM_HOME }}/store/v11
         timeout-minutes: 1
