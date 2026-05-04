@@ -32,13 +32,26 @@ See [`CODE_STYLE_GUIDE.md`](./CODE_STYLE_GUIDE.md). Formatting and lint-level ru
 
 ## Setup
 
-Install the Rust toolchain pinned in [`rust-toolchain.toml`](./rust-toolchain.toml). Then install the project's task tools and the git pre-push hook:
+### Prerequisites
+
+Install these manually before running any of the commands below:
+
+- **Rust toolchain** — managed by [`rustup`](https://rustup.rs). The version is pinned in [`rust-toolchain.toml`](./rust-toolchain.toml); `rustup` reads it automatically when you run `cargo` inside the repo.
+- **[`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall)** — required by `just init` to fetch prebuilt binaries for the cargo-based tools listed below. Install with `cargo install cargo-binstall` or download a release binary from the project page.
+- **[`just`](https://just.systems)** — the task runner used throughout this guide. Install with `cargo install just`, `cargo binstall just`, or your system package manager.
+- **Node.js** — required by the mocked registry (`tasks/registry-mock/`), which runs `verdaccio` from npm. Any Node.js release supported by the pinned pnpm works.
+- **[`pnpm`](https://pnpm.io)** — used by `just install` to populate `tasks/registry-mock/node_modules/`. The version is pinned in [`package.json`](./package.json) (`devEngines.packageManager`); install via [Corepack](https://nodejs.org/api/corepack.html) or `npm install -g pnpm@<pinned-version>`.
+- **`git`** — the repo ships pre-push hooks under [`.githooks/`](./.githooks/) that `just install-hooks` activates.
+
+### Install
+
+Install the project's task tools and the git pre-push hook:
 
 ```sh
 just init
 ```
 
-`just init` requires [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall). It installs `cargo-nextest`, `cargo-watch`, `cargo-insta`, `typos-cli`, `taplo-cli`, `wasm-pack`, and `cargo-llvm-cov`, then points `git` at the tracked `.githooks/` directory so the pre-push format check runs on `git push`.
+`just init` invokes `cargo-binstall` to install `cargo-nextest`, `cargo-watch`, `cargo-insta`, `typos-cli`, `taplo-cli`, `wasm-pack`, and `cargo-llvm-cov`, then points `git` at the tracked `.githooks/` directory so the pre-push format check runs on `git push`.
 
 Install the test dependencies:
 
