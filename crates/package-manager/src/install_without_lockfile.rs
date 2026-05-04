@@ -1,12 +1,13 @@
 use crate::{
-    InstallPackageFromRegistry, InstallPackageFromRegistryError,
-    store_init::init_store_dir_best_effort,
+    InstallPackageFromRegistry, InstallPackageFromRegistryError, LinkVirtualStoreBins,
+    LinkVirtualStoreBinsError, store_init::init_store_dir_best_effort,
 };
 use async_recursion::async_recursion;
 use dashmap::DashSet;
 use derive_more::{Display, Error};
 use futures_util::future;
 use miette::Diagnostic;
+use pacquet_cmd_shim::{LinkBinsError, RealApi, link_bins};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
@@ -52,6 +53,12 @@ pub struct InstallWithoutLockfile<'a, DependencyGroupList> {
 pub enum InstallWithoutLockfileError {
     #[diagnostic(transparent)]
     InstallPackageFromRegistry(#[error(source)] InstallPackageFromRegistryError),
+
+    #[diagnostic(transparent)]
+    LinkBins(#[error(source)] LinkBinsError),
+
+    #[diagnostic(transparent)]
+    LinkVirtualStoreBins(#[error(source)] LinkVirtualStoreBinsError),
 }
 
 impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
@@ -181,6 +188,21 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                 "store-index writer task panicked; some rows may not be persisted",
             ),
         }
+
+        // Link bins. Direct dependencies first (root project's
+        // `node_modules/.bin`) and then per-slot children inside the
+        // virtual store. Mirrors the same two-call shape as
+        // `install_frozen_lockfile.rs`. We re-walk `<modules_dir>` instead
+        // of replaying the manifest because the `dependency_groups`
+        // iterator was already consumed by the install loop above; pnpm's
+        // own `linkBins(modulesDir, binsDir)` overload uses the same
+        // strategy.
+        link_bins::<RealApi>(&config.modules_dir, &config.modules_dir.join(".bin"))
+            .map_err(InstallWithoutLockfileError::LinkBins)?;
+
+        LinkVirtualStoreBins { virtual_store_dir: &config.virtual_store_dir }
+            .run()
+            .map_err(InstallWithoutLockfileError::LinkVirtualStoreBins)?;
 
         Ok(())
     }

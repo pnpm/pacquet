@@ -5,6 +5,7 @@ expression: get_all_folders(&project_root)
 ---
 [
     "node_modules",
+    "node_modules/.bin",
     "node_modules/.pacquet",
     "node_modules/.pacquet/@pnpm+x@1.0.0",
     "node_modules/.pacquet/@pnpm+x@1.0.0/node_modules",
