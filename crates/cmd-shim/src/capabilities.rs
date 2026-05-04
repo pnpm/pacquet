@@ -49,6 +49,27 @@ pub trait FsReadDir {
     fn read_dir(path: &Path) -> io::Result<Vec<std::path::PathBuf>>;
 }
 
+/// Recursively walk `path` and return every regular file found beneath
+/// it (depth-first, no symlink follow). Used by
+/// [`crate::get_bins_from_package_manifest`] to enumerate
+/// `directories.bin` entries.
+///
+/// Eager `Vec<PathBuf>` matches the [`FsReadDir`] convention — fakes
+/// can hand back any list they want, including paths that exercise the
+/// `file_name() == None` and `to_str() == None` skip branches the real
+/// fs almost never reaches.
+///
+/// `walkdir`'s builder exposes many knobs (`follow_links`, `min_depth`,
+/// `max_depth`, `sort_by`, …); pacquet uses just one (`follow_links =
+/// false`). Mirroring the full builder through the trait would be
+/// over-engineering for the single call site, so the trait keeps its
+/// surface dead-simple and the impl bakes the option in. If a future
+/// caller needs different walk options, add a new capability rather
+/// than parameterise this one.
+pub trait FsWalkFiles {
+    fn walk_files(path: &Path) -> io::Result<Vec<std::path::PathBuf>>;
+}
+
 /// Create a directory and any missing ancestors. Used to prepare
 /// `<modules_dir>/.bin` and per-slot `node_modules/.bin` directories.
 pub trait FsCreateDirAll {
@@ -110,6 +131,25 @@ impl FsReadString for RealApi {
 impl FsReadDir for RealApi {
     fn read_dir(path: &Path) -> io::Result<Vec<std::path::PathBuf>> {
         Ok(std::fs::read_dir(path)?.flatten().map(|entry| entry.path()).collect())
+    }
+}
+
+impl FsWalkFiles for RealApi {
+    fn walk_files(path: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+        // `.flatten()` swallows per-entry errors the way pnpm's
+        // `tinyglobby` does — missing or unreadable subtrees just
+        // contribute nothing, rather than failing the whole walk.
+        // The top-level `WalkDir::new(missing).into_iter().next()`
+        // yields a single `Err` which `flatten` also drops, so a
+        // missing `bin_dir` returns an empty `Vec` (matches pnpm's
+        // ENOENT short-circuit).
+        Ok(walkdir::WalkDir::new(path)
+            .follow_links(false)
+            .into_iter()
+            .flatten()
+            .filter(|entry| entry.file_type().is_file())
+            .map(|entry| entry.path().to_path_buf())
+            .collect())
     }
 }
 

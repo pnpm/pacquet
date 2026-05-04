@@ -1,3 +1,4 @@
+use crate::capabilities::FsWalkFiles;
 use serde_json::Value;
 use std::path::{Component, Path, PathBuf};
 
@@ -62,7 +63,10 @@ pub fn pkg_owns_bin(bin_name: &str, pkg_name: &str) -> bool {
 ///   single-character `$`. This is the path-traversal guard.
 /// - Bin path must resolve under `pkg_path`. Prevents a malicious manifest
 ///   from writing shims that exec a sibling package.
-pub fn get_bins_from_package_manifest(manifest: &Value, pkg_path: &Path) -> Vec<Command> {
+pub fn get_bins_from_package_manifest<Api: FsWalkFiles>(
+    manifest: &Value,
+    pkg_path: &Path,
+) -> Vec<Command> {
     let pkg_name = manifest.get("name").and_then(Value::as_str);
     if let Some(bin) = manifest.get("bin") {
         return commands_from_bin(bin, pkg_name, pkg_path);
@@ -70,7 +74,7 @@ pub fn get_bins_from_package_manifest(manifest: &Value, pkg_path: &Path) -> Vec<
     if let Some(bin_dir_rel) =
         manifest.get("directories").and_then(|d| d.get("bin")).and_then(Value::as_str)
     {
-        return commands_from_directories_bin(bin_dir_rel, pkg_path);
+        return commands_from_directories_bin::<Api>(bin_dir_rel, pkg_path);
     }
     Vec::new()
 }
@@ -83,27 +87,31 @@ pub fn get_bins_from_package_manifest(manifest: &Value, pkg_path: &Path) -> Vec<
 /// Symlinks are not followed — pnpm uses `tinyglobby` with
 /// `followSymbolicLinks: false`. Missing directory degrades to an empty
 /// list (pnpm's `ENOENT` short-circuit).
-fn commands_from_directories_bin(bin_dir_rel: &str, pkg_path: &Path) -> Vec<Command> {
+fn commands_from_directories_bin<Api: FsWalkFiles>(
+    bin_dir_rel: &str,
+    pkg_path: &Path,
+) -> Vec<Command> {
     let bin_dir = pkg_path.join(bin_dir_rel);
     if !is_subdir(pkg_path, &bin_dir) {
         return Vec::new();
     }
-    if !bin_dir.exists() {
+    // Treat a top-level walk error as "no bins" — same shape as
+    // pnpm's tinyglobby ENOENT short-circuit. The trait's production
+    // impl already drops per-entry errors via `flatten`, so an `Err`
+    // here only fires when the walker can't even open `bin_dir`.
+    let Ok(paths) = Api::walk_files(&bin_dir) else {
         return Vec::new();
-    }
-    let mut commands = Vec::new();
-    for entry in walkdir::WalkDir::new(&bin_dir).follow_links(false).into_iter().flatten() {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let Some(name) = entry.path().file_name().and_then(|s| s.to_str()) else {
+    };
+    let mut commands = Vec::with_capacity(paths.len());
+    for path in paths {
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
             continue;
         };
         // Same URL-safe-name guard as the keyed-bin path.
         if !is_safe_bin_name(name) {
             continue;
         }
-        commands.push(Command { name: name.to_string(), path: entry.path().to_path_buf() });
+        commands.push(Command { name: name.to_string(), path });
     }
     commands
 }

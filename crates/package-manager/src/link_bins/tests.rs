@@ -291,7 +291,8 @@ fn link_direct_dep_bins_skips_dep_with_missing_manifest() {
 #[test]
 fn link_virtual_store_bins_propagates_read_error_via_di() {
     use pacquet_cmd_shim::{
-        FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions, FsWrite,
+        FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions,
+        FsWalkFiles, FsWrite,
     };
     use std::io;
     struct DenyVirtualStore;
@@ -331,6 +332,11 @@ fn link_virtual_store_bins_propagates_read_error_via_di() {
         }
         fn ensure_executable_bits(_: &Path) -> io::Result<()> {
             unreachable!()
+        }
+    }
+    impl FsWalkFiles for DenyVirtualStore {
+        fn walk_files(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+            unreachable!("directories.bin not exercised by this test")
         }
     }
 

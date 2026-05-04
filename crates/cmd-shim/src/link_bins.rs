@@ -1,7 +1,8 @@
 use crate::{
     bin_resolver::{Command, get_bins_from_package_manifest, pkg_owns_bin},
     capabilities::{
-        FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions, FsWrite,
+        FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions,
+        FsWalkFiles, FsWrite,
     },
     shim::{
         generate_cmd_shim, generate_pwsh_shim, generate_sh_shim, is_shim_pointing_at,
@@ -99,6 +100,7 @@ where
         + FsReadString
         + FsReadHead
         + FsCreateDirAll
+        + FsWalkFiles
         + FsWrite
         + FsSetPermissions,
 {
@@ -187,13 +189,13 @@ pub fn link_bins_of_packages<Api>(
     bins_dir: &Path,
 ) -> Result<(), LinkBinsError>
 where
-    Api: FsReadString + FsReadHead + FsCreateDirAll + FsWrite + FsSetPermissions,
+    Api: FsReadString + FsReadHead + FsCreateDirAll + FsWalkFiles + FsWrite + FsSetPermissions,
 {
     let mut chosen: HashMap<String, (Command, &PackageBinSource)> = HashMap::new();
 
     for pkg in packages {
         let pkg_name = pkg.manifest.get("name").and_then(Value::as_str).unwrap_or("");
-        let commands = get_bins_from_package_manifest(&pkg.manifest, &pkg.location);
+        let commands = get_bins_from_package_manifest::<Api>(&pkg.manifest, &pkg.location);
         for command in commands {
             match chosen.get(&command.name) {
                 None => {

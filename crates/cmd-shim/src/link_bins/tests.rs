@@ -1,8 +1,8 @@
 use super::{LinkBinsError, PackageBinSource, link_bins, link_bins_of_packages};
 use crate::{
     capabilities::{
-        FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions, FsWrite,
-        RealApi,
+        FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions,
+        FsWalkFiles, FsWrite, RealApi,
     },
     shim::is_shim_pointing_at,
 };
@@ -323,6 +323,11 @@ fn link_bins_propagates_create_bin_dir_error_via_di() {
             unreachable!()
         }
     }
+    impl FsWalkFiles for FailingCreateDir {
+        fn walk_files(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+            unreachable!("directories.bin not exercised by this test")
+        }
+    }
 
     // A package with a bin so `chosen` is non-empty.
     let manifest = serde_json::json!({"name": "foo", "bin": "cli.js"});
@@ -384,6 +389,11 @@ fn link_bins_propagates_write_shim_error_via_di() {
             unreachable!()
         }
     }
+    impl FsWalkFiles for FailingWrite {
+        fn walk_files(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+            unreachable!("directories.bin not exercised by this test")
+        }
+    }
 
     let manifest = serde_json::json!({"name": "foo", "bin": "cli.js"});
     let tmp = tempdir().unwrap();
@@ -439,6 +449,11 @@ fn link_bins_propagates_chmod_error_via_di() {
         }
         fn ensure_executable_bits(_: &Path) -> io::Result<()> {
             unreachable!()
+        }
+    }
+    impl FsWalkFiles for FailingChmod {
+        fn walk_files(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+            unreachable!("directories.bin not exercised by this test")
         }
     }
 
@@ -506,6 +521,11 @@ fn link_bins_propagates_target_chmod_error_via_di() {
             Err(io::Error::from(io::ErrorKind::PermissionDenied))
         }
     }
+    impl FsWalkFiles for FailingTargetChmod {
+        fn walk_files(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+            unreachable!("directories.bin not exercised by this test")
+        }
+    }
 
     let manifest = serde_json::json!({"name": "foo", "bin": "cli.js"});
     let tmp = tempdir().unwrap();
@@ -565,6 +585,11 @@ fn link_bins_swallows_target_chmod_not_found_via_di() {
         }
         fn ensure_executable_bits(_: &Path) -> io::Result<()> {
             Err(io::Error::from(io::ErrorKind::NotFound))
+        }
+    }
+    impl FsWalkFiles for NotFoundTargetChmod {
+        fn walk_files(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+            unreachable!("directories.bin not exercised by this test")
         }
     }
 
@@ -627,6 +652,11 @@ fn link_bins_propagates_probe_shim_source_error_via_di() {
             unreachable!()
         }
     }
+    impl FsWalkFiles for FailingProbe {
+        fn walk_files(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+            unreachable!("directories.bin not exercised by this test")
+        }
+    }
 
     let manifest = serde_json::json!({"name": "foo", "bin": "cli.js"});
     let tmp = tempdir().unwrap();
@@ -684,6 +714,11 @@ fn link_bins_propagates_read_manifest_error_via_di() {
         }
         fn ensure_executable_bits(_: &Path) -> io::Result<()> {
             unreachable!()
+        }
+    }
+    impl FsWalkFiles for DenyManifestRead {
+        fn walk_files(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+            unreachable!("directories.bin not exercised by this test")
         }
     }
 
@@ -782,6 +817,11 @@ fn link_bins_propagates_modules_dir_read_error_via_di() {
         }
         fn ensure_executable_bits(_: &Path) -> io::Result<()> {
             unreachable!()
+        }
+    }
+    impl FsWalkFiles for FailingModulesRead {
+        fn walk_files(_: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+            unreachable!("directories.bin not exercised by this test")
         }
     }
 

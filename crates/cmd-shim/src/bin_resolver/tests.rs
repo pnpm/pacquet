@@ -1,12 +1,16 @@
-use super::{get_bins_from_package_manifest, pkg_owns_bin};
+use super::{get_bins_from_package_manifest, lexical_normalize, pkg_owns_bin};
+use crate::capabilities::RealApi;
 use serde_json::json;
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 use tempfile::tempdir;
 
 #[test]
 fn bin_as_string_uses_package_name() {
     let manifest = json!({"name": "foo", "bin": "cli.js"});
-    let commands = get_bins_from_package_manifest(&manifest, Path::new("/pkg/foo"));
+    let commands = get_bins_from_package_manifest::<RealApi>(&manifest, Path::new("/pkg/foo"));
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].name, "foo");
     assert_eq!(commands[0].path, Path::new("/pkg/foo/cli.js"));
@@ -15,7 +19,7 @@ fn bin_as_string_uses_package_name() {
 #[test]
 fn bin_as_string_strips_scope() {
     let manifest = json!({"name": "@scope/foo", "bin": "cli.js"});
-    let commands = get_bins_from_package_manifest(&manifest, Path::new("/pkg/foo"));
+    let commands = get_bins_from_package_manifest::<RealApi>(&manifest, Path::new("/pkg/foo"));
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].name, "foo");
 }
@@ -29,7 +33,7 @@ fn bin_as_object_keeps_keys_and_strips_scope() {
             "@scope/extra": "bin/extra.js",
         },
     });
-    let mut commands = get_bins_from_package_manifest(&manifest, Path::new("/p"));
+    let mut commands = get_bins_from_package_manifest::<RealApi>(&manifest, Path::new("/p"));
     commands.sort_by(|a, b| a.name.cmp(&b.name));
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].name, "extra");
@@ -47,7 +51,7 @@ fn rejects_unsafe_bin_names() {
             "$": "dollar.js",
         },
     });
-    let mut names: Vec<_> = get_bins_from_package_manifest(&manifest, Path::new("/p"))
+    let mut names: Vec<_> = get_bins_from_package_manifest::<RealApi>(&manifest, Path::new("/p"))
         .into_iter()
         .map(|c| c.name)
         .collect();
@@ -61,14 +65,14 @@ fn rejects_path_traversal_outside_package_root() {
         "name": "x",
         "bin": {"x": "../../../etc/passwd"},
     });
-    let commands = get_bins_from_package_manifest(&manifest, Path::new("/pkg/x"));
+    let commands = get_bins_from_package_manifest::<RealApi>(&manifest, Path::new("/pkg/x"));
     assert!(commands.is_empty(), "must reject `..`-escapes from pkg root");
 }
 
 #[test]
 fn no_bin_field_returns_empty() {
     let manifest = json!({"name": "x"});
-    assert!(get_bins_from_package_manifest(&manifest, Path::new("/p")).is_empty());
+    assert!(get_bins_from_package_manifest::<RealApi>(&manifest, Path::new("/p")).is_empty());
 }
 
 #[test]
@@ -96,7 +100,7 @@ fn dollar_is_allowed_as_command_name() {
         "version": "1.0.0",
         "bin": {"$": "./undollar.js"},
     });
-    let commands = get_bins_from_package_manifest(&manifest, Path::new("/p"));
+    let commands = get_bins_from_package_manifest::<RealApi>(&manifest, Path::new("/p"));
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].name, "$");
 }
@@ -117,7 +121,7 @@ fn skip_dangerous_bin_names() {
             "~/bad": "./bad",
         },
     });
-    let commands = get_bins_from_package_manifest(&manifest, Path::new("/p"));
+    let commands = get_bins_from_package_manifest::<RealApi>(&manifest, Path::new("/p"));
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].name, "good");
 }
@@ -135,7 +139,7 @@ fn skip_dangerous_bin_locations() {
             "good": "./good",
         },
     });
-    let commands = get_bins_from_package_manifest(&manifest, Path::new("/pkg/foo"));
+    let commands = get_bins_from_package_manifest::<RealApi>(&manifest, Path::new("/pkg/foo"));
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].name, "good");
 }
@@ -150,7 +154,7 @@ fn scoped_bin_name_strips_scope_prefix() {
         "version": "1.0.0",
         "bin": {"@foo/a": "./a"},
     });
-    let commands = get_bins_from_package_manifest(&manifest, Path::new("/p"));
+    let commands = get_bins_from_package_manifest::<RealApi>(&manifest, Path::new("/p"));
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].name, "a");
 }
@@ -171,7 +175,7 @@ fn skip_scoped_bin_names_with_path_traversal() {
             "@scope/legit": "./good.js",
         },
     });
-    let commands = get_bins_from_package_manifest(&manifest, Path::new("/p"));
+    let commands = get_bins_from_package_manifest::<RealApi>(&manifest, Path::new("/p"));
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].name, "legit");
 }
@@ -184,7 +188,7 @@ fn malformed_bin_type_returns_empty() {
     for shape in [json!(42), json!(["a", "b"]), json!(null), json!(true)] {
         let manifest = json!({"name": "x", "version": "1.0.0", "bin": shape});
         assert!(
-            get_bins_from_package_manifest(&manifest, Path::new("/p")).is_empty(),
+            get_bins_from_package_manifest::<RealApi>(&manifest, Path::new("/p")).is_empty(),
             "malformed bin shape must be tolerated",
         );
     }
@@ -197,7 +201,7 @@ fn malformed_bin_type_returns_empty() {
 #[test]
 fn bin_string_with_missing_package_name_returns_empty() {
     let manifest = json!({"bin": "cli.js"});
-    assert!(get_bins_from_package_manifest(&manifest, Path::new("/p")).is_empty());
+    assert!(get_bins_from_package_manifest::<RealApi>(&manifest, Path::new("/p")).is_empty());
 }
 
 /// Object-form bin entries whose values aren't strings (number, null, etc.)
@@ -214,7 +218,7 @@ fn bin_object_with_non_string_value_is_skipped() {
             "bad-null": null,
         },
     });
-    let commands = get_bins_from_package_manifest(&manifest, Path::new("/p"));
+    let commands = get_bins_from_package_manifest::<RealApi>(&manifest, Path::new("/p"));
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].name, "good");
 }
@@ -237,7 +241,7 @@ fn directories_bin_walks_files_recursively() {
         "version": "1.0.0",
         "directories": {"bin": "bin-dir"},
     });
-    let mut commands = get_bins_from_package_manifest(&manifest, &pkg);
+    let mut commands = get_bins_from_package_manifest::<RealApi>(&manifest, &pkg);
     commands.sort_by(|a, b| a.name.cmp(&b.name));
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].name, "rootBin.js");
@@ -272,7 +276,7 @@ fn directories_bin_rejects_path_traversal() {
         "directories": {"bin": "../siblings"},
     });
     assert!(
-        get_bins_from_package_manifest(&manifest, &pkg).is_empty(),
+        get_bins_from_package_manifest::<RealApi>(&manifest, &pkg).is_empty(),
         "is_subdir guard must reject `..`-escapes from the pkg root, even \
          when the resolved directory exists and has files",
     );
@@ -301,7 +305,7 @@ fn directories_bin_rejects_real_path_traversal() {
         "version": "1.0.0",
         "directories": {"bin": "../secret"},
     });
-    assert!(get_bins_from_package_manifest(&manifest, &pkg).is_empty());
+    assert!(get_bins_from_package_manifest::<RealApi>(&manifest, &pkg).is_empty());
 }
 
 /// `directories.bin` pointing at a non-existent subdirectory must
@@ -316,7 +320,7 @@ fn directories_bin_missing_directory_returns_empty() {
         "version": "1.0.0",
         "directories": {"bin": "missing-dir"},
     });
-    assert!(get_bins_from_package_manifest(&manifest, &pkg).is_empty());
+    assert!(get_bins_from_package_manifest::<RealApi>(&manifest, &pkg).is_empty());
 }
 
 /// `directories.bin` filters out files whose basename fails the
@@ -337,7 +341,7 @@ fn directories_bin_filters_unsafe_file_names() {
         "version": "1.0.0",
         "directories": {"bin": "bin"},
     });
-    let mut commands = get_bins_from_package_manifest(&manifest, &pkg);
+    let mut commands = get_bins_from_package_manifest::<RealApi>(&manifest, &pkg);
     commands.sort_by(|a, b| a.name.cmp(&b.name));
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].name, "good");
@@ -352,12 +356,25 @@ fn empty_bin_key_is_rejected() {
         "version": "1.0.0",
         "bin": {"": "ok.js", "good": "ok.js"},
     });
-    let commands = get_bins_from_package_manifest(&manifest, Path::new("/p"));
+    let commands = get_bins_from_package_manifest::<RealApi>(&manifest, Path::new("/p"));
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].name, "good");
 }
 
-/// [`super::lexical_normalize`] `CurDir` branch — drops `.` segments.
+/// [`lexical_normalize`] drops `.` (CurDir) segments — direct test on
+/// the helper. The integration-style test below covers the same arm
+/// via `directories.bin`, but a direct assertion makes the CurDir
+/// branch visible to coverage tooling that can't see through inlined
+/// call chains.
+#[test]
+fn lexical_normalize_drops_curdir_segments_directly() {
+    assert_eq!(lexical_normalize(Path::new("a/./b")), PathBuf::from("a/b"));
+    assert_eq!(lexical_normalize(Path::new("./a/b")), PathBuf::from("a/b"));
+    assert_eq!(lexical_normalize(Path::new("a/b/.")), PathBuf::from("a/b"));
+    assert_eq!(lexical_normalize(Path::new("./.")), PathBuf::new());
+}
+
+/// [`lexical_normalize`] `CurDir` branch — drops `.` segments.
 /// Visible via [`super::is_subdir`] accepting a target with embedded `./`
 /// that resolves inside the package root.
 #[test]
@@ -373,8 +390,46 @@ fn directories_bin_handles_curdir_in_relative_path() {
         "version": "1.0.0",
         "directories": {"bin": "./bin-dir"},
     });
-    let commands = get_bins_from_package_manifest(&manifest, &pkg);
+    let commands = get_bins_from_package_manifest::<RealApi>(&manifest, &pkg);
     assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].name, "cli");
+}
+
+/// `commands_from_directories_bin` skips entries whose path doesn't
+/// yield a usable file name — the `path.file_name() == None` and
+/// `to_str() == None` branches, both of which the real fs hardly ever
+/// reaches (file_name() returns None only for paths ending in `..`,
+/// and to_str() fails only on non-UTF-8 bytes which are rare on Unix
+/// and impossible on Windows). A fake [`FsWalkFiles`] hands back one
+/// such path so the `continue` arm gets exercised directly. The
+/// regular `cli` entry alongside it confirms that the well-formed
+/// path still flows through and emits a [`Command`](super::Command).
+#[test]
+fn directories_bin_skips_path_without_usable_file_name() {
+    use crate::capabilities::FsWalkFiles;
+    use std::io;
+
+    struct EvilWalker;
+    impl FsWalkFiles for EvilWalker {
+        fn walk_files(_: &Path) -> io::Result<Vec<PathBuf>> {
+            Ok(vec![
+                // `file_name()` returns None for a path ending in `..`,
+                // hitting the `let-else continue` branch.
+                PathBuf::from("/pkg/bin/.."),
+                // Well-formed sibling so we can assert the loop's
+                // happy path still runs after the skip.
+                PathBuf::from("/pkg/bin/cli"),
+            ])
+        }
+    }
+
+    let manifest = json!({
+        "name": "tool",
+        "version": "1.0.0",
+        "directories": {"bin": "bin"},
+    });
+    let commands = get_bins_from_package_manifest::<EvilWalker>(&manifest, Path::new("/pkg"));
+    assert_eq!(commands.len(), 1, "the `..` entry must be skipped, not crashed on");
     assert_eq!(commands[0].name, "cli");
 }
 
@@ -396,7 +451,7 @@ fn bin_field_takes_precedence_over_directories_bin() {
         "bin": "primary.js",
         "directories": {"bin": "legacy-bin"},
     });
-    let commands = get_bins_from_package_manifest(&manifest, &pkg);
+    let commands = get_bins_from_package_manifest::<RealApi>(&manifest, &pkg);
     assert_eq!(commands.len(), 1, "bin field wins, directories.bin is ignored");
     assert_eq!(commands[0].name, "tool");
 }
