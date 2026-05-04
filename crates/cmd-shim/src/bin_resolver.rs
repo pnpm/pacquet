@@ -52,7 +52,7 @@ pub fn pkg_owns_bin(bin_name: &str, pkg_name: &str) -> bool {
 ///    parity with pnpm's `INVALID_PACKAGE_NAME` guard.
 /// 2. `bin` as an object. Each `(commandName, relativePath)` becomes a
 ///    command, with `@scope/` stripped from the key.
-/// 3. Fallback: `directories.bin` — every regular file under the directory
+/// 3. Fallback: `directories.bin`. Every regular file under the directory
 ///    becomes a command, with the file basename as the bin name. The
 ///    directory itself must resolve under `pkg_path`; a `directories.bin`
 ///    that escapes via `..` returns an empty list.
@@ -84,7 +84,7 @@ pub fn get_bins_from_package_manifest<Api: FsWalkFiles>(
 /// branch in `getBinsFromPackageManifest`:
 /// <https://github.com/pnpm/pnpm/blob/4750fd370c/bins/resolver/src/index.ts>.
 ///
-/// Symlinks are not followed — pnpm uses `tinyglobby` with
+/// Symlinks are not followed; pnpm uses `tinyglobby` with
 /// `followSymbolicLinks: false`. Missing directory degrades to an empty
 /// list (pnpm's `ENOENT` short-circuit).
 fn commands_from_directories_bin<Api: FsWalkFiles>(
@@ -95,10 +95,10 @@ fn commands_from_directories_bin<Api: FsWalkFiles>(
     if !is_subdir(pkg_path, &bin_dir) {
         return Vec::new();
     }
-    // Treat a top-level walk error as "no bins" — same shape as
-    // pnpm's tinyglobby ENOENT short-circuit. The trait's production
-    // impl already drops per-entry errors inside its iterator, so an
-    // `Err` here only fires when the walker can't even open `bin_dir`.
+    // Treat a top-level walk error as "no bins". This matches pnpm's
+    // tinyglobby ENOENT short-circuit. The trait's production impl
+    // already drops per-entry errors inside its iterator, so an `Err`
+    // here only fires when the walker can't even open `bin_dir`.
     let Ok(paths) = Api::walk_files(&bin_dir) else {
         return Vec::new();
     };
@@ -185,9 +185,9 @@ fn is_safe_bin_name(name: &str) -> bool {
 
 /// Whether `child` resolves to a path under `parent`, after lexically
 /// normalising `..` segments. Mirrors `isSubdir(pkgPath, binPath)` from pnpm's
-/// `is-subdir`. We deliberately do not canonicalize via the filesystem — the
-/// guard runs before the bin file exists at its final location, and pnpm's
-/// implementation is purely lexical too.
+/// `is-subdir`. We deliberately do not canonicalize via the filesystem.
+/// The guard runs before the bin file exists at its final location, and
+/// pnpm's implementation is purely lexical too.
 fn is_subdir(parent: &Path, child: &Path) -> bool {
     let parent_norm = lexical_normalize(parent);
     let child_norm = lexical_normalize(child);
