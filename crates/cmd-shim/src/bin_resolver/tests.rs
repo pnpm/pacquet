@@ -1,5 +1,6 @@
 use super::{get_bins_from_package_manifest, lexical_normalize, pkg_owns_bin};
 use crate::capabilities::RealApi;
+use pipe_trait::Pipe;
 use serde_json::json;
 use std::{
     fs,
@@ -162,7 +163,7 @@ fn scoped_bin_name_strips_scope_prefix() {
 /// Mirrors pnpm's "skip scoped bin names with path traversal" test
 /// (<https://github.com/pnpm/pnpm/blob/4750fd370c/bins/resolver/test/index.ts#L132-L148>).
 /// After the scope strip, the resulting bare name still has to pass the
-/// URL-safe guard — a `@scope/../etc/passwd` collapses to `../etc/passwd`
+/// URL-safe guard. A `@scope/../etc/passwd` collapses to `../etc/passwd`
 /// which must be rejected.
 #[test]
 fn skip_scoped_bin_names_with_path_traversal() {
@@ -255,15 +256,15 @@ fn directories_bin_walks_files_recursively() {
 /// `directories.bin: '../sibling'` must be rejected by the `is_subdir`
 /// guard. The sibling directory is populated with a real file so a
 /// regression that disables `is_subdir` would observably emit that file
-/// as a command — without the file the test would pass for the wrong
-/// reason (empty dir → empty commands).
+/// as a command. Without the file the test would pass for the wrong
+/// reason (empty dir, hence empty commands).
 #[test]
 fn directories_bin_rejects_path_traversal() {
     let tmp = tempdir().unwrap();
     let pkg = tmp.path().join("pkg");
     fs::create_dir_all(&pkg).unwrap();
 
-    // Sibling dir reachable via `../siblings` from the package root —
+    // Sibling dir reachable via `../siblings` from the package root,
     // populated with a "smoking gun" file the resolver would emit if
     // it failed to reject the traversal.
     let siblings = tmp.path().join("siblings");
@@ -324,7 +325,7 @@ fn directories_bin_missing_directory_returns_empty() {
 }
 
 /// `directories.bin` filters out files whose basename fails the
-/// URL-safe-name guard. Pin via a `..` filename — once the
+/// URL-safe-name guard. Pin via a `..` filename: once the
 /// path-traversal guard already passed (the dir was a real subdir),
 /// a *file* inside it with an unsafe name still gets dropped.
 #[test]
@@ -347,7 +348,7 @@ fn directories_bin_filters_unsafe_file_names() {
     assert_eq!(commands[0].name, "good");
 }
 
-/// Empty bin name returns false — the `is_empty` guard inside
+/// Empty bin name returns false via the `is_empty` guard inside
 /// `is_safe_bin_name`. Exercised via a `bin` object with an empty key.
 #[test]
 fn empty_bin_key_is_rejected() {
@@ -361,9 +362,9 @@ fn empty_bin_key_is_rejected() {
     assert_eq!(commands[0].name, "good");
 }
 
-/// [`lexical_normalize`] drops `.` (CurDir) segments — direct test on
-/// the helper. The integration-style test below covers the same arm
-/// via `directories.bin`, but a direct assertion makes the CurDir
+/// [`lexical_normalize`] drops `.` (CurDir) segments. This is a direct
+/// test on the helper. The integration-style test below covers the same
+/// arm via `directories.bin`, but a direct assertion makes the CurDir
 /// branch visible to coverage tooling that can't see through inlined
 /// call chains.
 #[test]
@@ -374,8 +375,8 @@ fn lexical_normalize_drops_curdir_segments_directly() {
     assert_eq!(lexical_normalize(Path::new("./.")), PathBuf::new());
 }
 
-/// [`lexical_normalize`] `CurDir` branch — drops `.` segments.
-/// Visible via [`super::is_subdir`] accepting a target with embedded `./`
+/// [`lexical_normalize`] `CurDir` branch drops `.` segments. Visible
+/// via [`super::is_subdir`] accepting a target with embedded `./`
 /// that resolves inside the package root.
 #[test]
 fn directories_bin_handles_curdir_in_relative_path() {
@@ -396,11 +397,11 @@ fn directories_bin_handles_curdir_in_relative_path() {
 }
 
 /// `commands_from_directories_bin` skips entries whose path doesn't
-/// yield a usable file name — the `path.file_name() == None` and
-/// `to_str() == None` branches, both of which the real fs hardly ever
-/// reaches (file_name() returns None only for paths ending in `..`,
-/// and to_str() fails only on non-UTF-8 bytes which are rare on Unix
-/// and impossible on Windows). A fake [`FsWalkFiles`] hands back one
+/// yield a usable file name. That covers the `path.file_name() == None`
+/// and `to_str() == None` branches, both of which the real fs hardly
+/// ever reaches (file_name() returns None only for paths ending in
+/// `..`, and to_str() fails only on non-UTF-8 bytes which are rare on
+/// Unix and impossible on Windows). A fake [`FsWalkFiles`] hands back one
 /// such path so the `continue` arm gets exercised directly. The
 /// regular `cli` entry alongside it confirms that the well-formed
 /// path still flows through and emits a [`Command`](super::Command).
@@ -412,7 +413,7 @@ fn directories_bin_skips_path_without_usable_file_name() {
     struct EvilWalker;
     impl FsWalkFiles for EvilWalker {
         fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
-            Ok(vec![
+            [
                 // `file_name()` returns None for a path ending in `..`,
                 // hitting the `let-else continue` branch.
                 PathBuf::from("/pkg/bin/.."),
@@ -420,7 +421,8 @@ fn directories_bin_skips_path_without_usable_file_name() {
                 // happy path still runs after the skip.
                 PathBuf::from("/pkg/bin/cli"),
             ]
-            .into_iter())
+            .into_iter()
+            .pipe(Ok)
         }
     }
 
