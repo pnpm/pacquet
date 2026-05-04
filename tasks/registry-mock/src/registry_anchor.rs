@@ -74,11 +74,23 @@ impl RegistryAnchor {
 
     pub fn load_or_init(init_options: MockInstanceOptions<'_>) -> Self {
         if let Some(guard) = GuardFile::try_lock() {
-            let mock_instance = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("build tokio runtime")
-                .block_on(init_options.spawn());
+            // Run the spawn on a fresh OS thread so the freshly built tokio
+            // runtime is not nested inside a caller's runtime. `#[tokio::test]`
+            // runs the test on a current-thread runtime, and tokio panics with
+            // `Cannot start a runtime from within a runtime` if `block_on` is
+            // invoked from a thread that is already inside one.
+            let mock_instance = std::thread::scope(|scope| {
+                scope
+                    .spawn(|| {
+                        tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .expect("build tokio runtime")
+                            .block_on(init_options.spawn())
+                    })
+                    .join()
+                    .expect("registry spawn thread panicked")
+            });
             let port = init_options.port;
             let pid = mock_instance.process.id();
             let info = RegistryInfo { port, pid };
