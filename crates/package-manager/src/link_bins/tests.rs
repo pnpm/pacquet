@@ -205,6 +205,27 @@ fn link_virtual_store_bins_skips_slot_without_node_modules() {
     LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }.run().unwrap();
 }
 
+/// A slot whose `node_modules/` exists but lacks the expected own-package
+/// subdirectory must be skipped without error. The outer `is_dir()`
+/// check on `<slot>/node_modules` passes, so the slot is processed,
+/// but [`super::find_slot_own_package_dir`] returns `None` once
+/// `<slot>/node_modules/<own>` turns out to not be a directory. That
+/// drives the `let-else return Ok(())` at the call site, the
+/// uncovered branch real-fs tests with a well-formed slot can never
+/// reach.
+#[test]
+fn link_virtual_store_bins_skips_slot_without_own_package_dir() {
+    let tmp = tempdir().unwrap();
+    let virtual_dir = tmp.path().join(".pacquet");
+    // Slot directory and its `node_modules/` exist, but the expected
+    // `<slot>/node_modules/foo` (matching the slot name `foo@1.0.0`)
+    // is missing, so `find_slot_own_package_dir` returns `None`.
+    fs::create_dir_all(virtual_dir.join("foo@1.0.0/node_modules")).unwrap();
+    LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }
+        .run()
+        .expect("missing own-package dir is skipped silently");
+}
+
 /// [`link_direct_dep_bins`] walks the project's `node_modules/<dep>`
 /// symlinks and writes a shim per declared bin. End-to-end exercise of
 /// the path that runs after [`crate::SymlinkDirectDependencies`].
