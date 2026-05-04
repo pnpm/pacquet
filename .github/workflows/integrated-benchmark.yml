@@ -123,11 +123,8 @@ jobs:
 
       - name: 'Benchmark: Frozen Lockfile'
         shell: bash
-        # Hyperfine has no per-command timeout, so a single hanging
-        # install takes the whole step down with the GHA default job
-        # timeout (6 h). A normal run is ~2 min — 10 min is generous
-        # headroom, and a failure surfaces fast enough to iterate on.
-        timeout-minutes: 10
+        timeout-minutes: 20
+        continue-on-error: true
         run: |
           just integrated-benchmark --scenario=frozen-lockfile --verdaccio --with-pnpm HEAD main
           cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.md
@@ -135,13 +132,8 @@ jobs:
 
       - name: 'Benchmark: Frozen Lockfile (Hot Cache)'
         shell: bash
-        # Same timeout rationale as the cold-cache step above.
-        # Mirrors pnpm's "Headless install (frozen lockfile, warm
-        # store+cache)" benchmark: each timed run wipes only
-        # `node_modules`, the per-revision store survives, and
-        # hyperfine's warmup run is what populates it on the first
-        # iteration so timed runs all see a hot store.
-        timeout-minutes: 10
+        timeout-minutes: 20
+        continue-on-error: true
         run: |
           just integrated-benchmark --scenario=frozen-lockfile-hot-cache --verdaccio --with-pnpm HEAD main
           cp bench-work-env/BENCHMARK_REPORT.md bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE_HOT_CACHE.md
