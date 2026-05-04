@@ -40,6 +40,11 @@ pub enum PackageManifestError {
     #[display("Missing script: {_0:?}")]
     #[diagnostic(code(pacquet_package_manifest::no_script_error))]
     NoScript(#[error(not(source))] String),
+
+    #[from(ignore)] // TODO: remove this after derive(From) has been removed
+    #[display("Missing script start or file server.js")]
+    #[diagnostic(code(pacquet_package_manifest::no_script_or_server))]
+    NoStartScriptOrServerJs,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, IntoStaticStr)]
@@ -233,6 +238,18 @@ impl PackageManifest {
         }
 
         if if_present { Ok(None) } else { Err(PackageManifestError::NoScript(command.to_string())) }
+    }
+
+    pub fn start_script(&self) -> Result<&str, PackageManifestError> {
+        return self.script("start", true).and_then(|x| match x {
+            Some(x) => Ok(x),
+            None => {
+                if Path::new("server.js").exists() {
+                    return Ok("node server.js");
+                }
+                return Err(PackageManifestError::NoStartScriptOrServerJs);
+            }
+        });
     }
 }
 
