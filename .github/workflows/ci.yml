@@ -95,10 +95,7 @@ jobs:
       - name: Doc
         env:
           RUSTDOCFLAGS: '-D warnings'
-        # --no-deps skips rendering HTML for every transitive crate. Only
-        # workspace crates are documented; broken intra-doc links and bad
-        # rustdoc markup in pacquet's own code are still caught.
-        run: cargo doc --no-deps --workspace
+        run: cargo doc --no-deps --workspace --document-private-items
 
   typos:
     name: Spell Check
