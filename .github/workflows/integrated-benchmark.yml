@@ -64,7 +64,9 @@ jobs:
       - name: Cache verdaccio
         uses: actions/cache@v5
         with:
-          key: integrated-benchmark-verdaccio
+          key: integrated-benchmark-verdaccio-${{ hashFiles('tasks/integrated-benchmark/src/fixtures/pnpm-lock.yaml') }}
+          restore-keys: |
+            integrated-benchmark-verdaccio-
           path: |
             ~/.local/share/verdaccio/storage
         timeout-minutes: 1
@@ -73,7 +75,10 @@ jobs:
       - name: Cache Rust builds
         uses: actions/cache@v5
         with:
-          key: integrated-benchmark-builds-${{ matrix.os }}
+          key: integrated-benchmark-builds-${{ matrix.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}-${{ github.run_id }}
+          restore-keys: |
+            integrated-benchmark-builds-${{ matrix.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}-
+            integrated-benchmark-builds-${{ matrix.os }}-
           path: |
             ~/.cargo/registry
             ~/.cargo/git
@@ -101,7 +106,9 @@ jobs:
       - name: Cache pnpm
         uses: actions/cache@v5
         with:
-          key: integrated-benchmark-pnpm-v11
+          key: integrated-benchmark-pnpm-v11-${{ hashFiles('tasks/registry-mock/pnpm-lock.yaml') }}
+          restore-keys: |
+            integrated-benchmark-pnpm-v11-
           path: |
             ${{ env.PNPM_HOME }}/store/v11
         timeout-minutes: 1
