@@ -72,12 +72,12 @@ where
 /// Create the per-direct-dependency `<modules_dir>/<name> ->
 /// <virtual_store_dir>/<name>@<version>/node_modules/<name>` symlinks.
 ///
-/// Pure filesystem operation — extracted from
-/// [`SymlinkDirectDependencies::run`] so it's unit-testable with a real
-/// `tempdir` instead of needing a full lockfile + npmrc + project-snapshot
-/// scaffold. The caller has already filtered the dependency list (e.g.
-/// applied `dependency_groups`); this function just executes the link
-/// step.
+/// Pure filesystem operation extracted from
+/// [`SymlinkDirectDependencies::run`] so it is unit-testable with a real
+/// `tempdir` instead of needing a full lockfile, npmrc, and
+/// project-snapshot scaffold. The caller has already filtered the
+/// dependency list (e.g. applied `dependency_groups`); this function
+/// just executes the link step.
 ///
 /// Driven on rayon because each link is independent. Mirrors the same
 /// shape as [`crate::link_direct_dep_bins`].
