@@ -34,14 +34,14 @@ See [`CODE_STYLE_GUIDE.md`](./CODE_STYLE_GUIDE.md). Formatting and lint-level ru
 
 ### Prerequisites
 
-Install these manually before running any of the commands below:
+Install these first:
 
-- **Rust toolchain.** Use [`rustup`](https://rustup.rs) to install it. The channel is pinned in [`rust-toolchain.toml`](./rust-toolchain.toml), and `rustup` reads that file automatically when you run `cargo` inside the repo.
-- **[`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall).** `just init` calls it to fetch prebuilt binaries for the cargo-based tools listed below. Install with `cargo install cargo-binstall` or download a release binary from the project page.
-- **[`just`](https://just.systems).** The task runner used throughout this guide. Install with `cargo install just`, `cargo binstall just`, or your system package manager.
-- **Node.js.** The mocked registry under `tasks/registry-mock/` runs `verdaccio` from npm and therefore needs a Node.js installation. Any release supported by the pinned `pnpm` works.
-- **[`pnpm`](https://pnpm.io).** `just install` uses it to populate `tasks/registry-mock/node_modules/`. The version is pinned in [`package.json`](./package.json) under `devEngines.packageManager`. Install it via [Corepack](https://nodejs.org/api/corepack.html) or `npm install -g pnpm@<pinned-version>`.
-- **`git`.** The repo ships pre-push hooks under [`.githooks/`](./.githooks/), and `just install-hooks` points `git` at that directory.
+- [`rustup`](https://rustup.rs)
+- [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall)
+- [`just`](https://just.systems)
+- Node.js
+- [`pnpm`](https://pnpm.io)
+- `git`
 
 ### Install
 
