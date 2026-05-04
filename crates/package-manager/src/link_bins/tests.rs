@@ -1,7 +1,11 @@
 use super::{LinkVirtualStoreBins, LinkVirtualStoreBinsError, link_direct_dep_bins};
 use pacquet_cmd_shim::is_shim_pointing_at;
 use serde_json::json;
-use std::{fs, path::Path};
+use std::{
+    fs::{create_dir_all, read_to_string, write as write_file},
+    iter::{Empty, empty},
+    path::{Path, PathBuf},
+};
 use tempfile::tempdir;
 
 /// End-to-end exercise of [`LinkVirtualStoreBins`] against a hand-built
@@ -20,26 +24,26 @@ fn writes_child_bins_into_slot_own_package_node_modules() {
     let modules = slot.join("node_modules");
     let parent_dir = modules.join("parent");
     let child_dir = modules.join("child");
-    fs::create_dir_all(&parent_dir).unwrap();
-    fs::create_dir_all(&child_dir).unwrap();
+    create_dir_all(&parent_dir).unwrap();
+    create_dir_all(&child_dir).unwrap();
 
-    fs::write(
+    write_file(
         parent_dir.join("package.json"),
         json!({"name": "parent", "version": "1.0.0"}).to_string(),
     )
     .unwrap();
-    fs::write(
+    write_file(
         child_dir.join("package.json"),
         json!({"name": "child", "version": "1.0.0", "bin": "cli.js"}).to_string(),
     )
     .unwrap();
-    fs::write(child_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+    write_file(child_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
 
     LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }.run().unwrap();
 
     let shim_path = parent_dir.join("node_modules/.bin/child");
     assert!(shim_path.exists(), "expected shim at {shim_path:?}");
-    let body = fs::read_to_string(&shim_path).unwrap();
+    let body = read_to_string(&shim_path).unwrap();
     // Layout, with shim at A and target at B, relative path `A → B`:
     //
     //   <slot>/node_modules/parent/node_modules/.bin/child   (shim, A)
@@ -78,22 +82,22 @@ fn skips_slot_own_package_when_walking_children() {
     let modules = slot.join("node_modules");
     let pkg_dir = modules.join("tsc");
     let other_dir = modules.join("other");
-    fs::create_dir_all(&pkg_dir).unwrap();
-    fs::create_dir_all(&other_dir).unwrap();
+    create_dir_all(&pkg_dir).unwrap();
+    create_dir_all(&other_dir).unwrap();
 
-    fs::write(
+    write_file(
         pkg_dir.join("package.json"),
         json!({"name": "tsc", "version": "5.0.0", "bin": "tsc.js"}).to_string(),
     )
     .unwrap();
-    fs::write(pkg_dir.join("tsc.js"), "#!/usr/bin/env node\n").unwrap();
+    write_file(pkg_dir.join("tsc.js"), "#!/usr/bin/env node\n").unwrap();
 
-    fs::write(
+    write_file(
         other_dir.join("package.json"),
         json!({"name": "other", "version": "1.0.0", "bin": "other.js"}).to_string(),
     )
     .unwrap();
-    fs::write(other_dir.join("other.js"), "#!/usr/bin/env node\n").unwrap();
+    write_file(other_dir.join("other.js"), "#!/usr/bin/env node\n").unwrap();
 
     LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }.run().unwrap();
 
@@ -127,20 +131,20 @@ fn link_virtual_store_bins_handles_scoped_slot_name() {
     let modules = slot.join("node_modules");
     let parent_dir = modules.join("@scope/parent");
     let child_dir = modules.join("child");
-    fs::create_dir_all(&parent_dir).unwrap();
-    fs::create_dir_all(&child_dir).unwrap();
+    create_dir_all(&parent_dir).unwrap();
+    create_dir_all(&child_dir).unwrap();
 
-    fs::write(
+    write_file(
         parent_dir.join("package.json"),
         json!({"name": "@scope/parent", "version": "1.0.0"}).to_string(),
     )
     .unwrap();
-    fs::write(
+    write_file(
         child_dir.join("package.json"),
         json!({"name": "child", "version": "1.0.0", "bin": "cli.js"}).to_string(),
     )
     .unwrap();
-    fs::write(child_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+    write_file(child_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
 
     LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }.run().unwrap();
 
@@ -170,20 +174,20 @@ fn link_virtual_store_bins_handles_peer_resolved_slot_name() {
     let modules = slot.join("node_modules");
     let pkg_dir = modules.join("ts-node");
     let child_dir = modules.join("child");
-    fs::create_dir_all(&pkg_dir).unwrap();
-    fs::create_dir_all(&child_dir).unwrap();
+    create_dir_all(&pkg_dir).unwrap();
+    create_dir_all(&child_dir).unwrap();
 
-    fs::write(
+    write_file(
         pkg_dir.join("package.json"),
         json!({"name": "ts-node", "version": "10.9.1"}).to_string(),
     )
     .unwrap();
-    fs::write(
+    write_file(
         child_dir.join("package.json"),
         json!({"name": "child", "version": "1.0.0", "bin": "cli.js"}).to_string(),
     )
     .unwrap();
-    fs::write(child_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+    write_file(child_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
 
     LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }.run().unwrap();
 
@@ -201,7 +205,7 @@ fn link_virtual_store_bins_handles_peer_resolved_slot_name() {
 fn link_virtual_store_bins_skips_slot_without_node_modules() {
     let tmp = tempdir().unwrap();
     let virtual_dir = tmp.path().join(".pacquet");
-    fs::create_dir_all(virtual_dir.join("incomplete@1.0.0")).unwrap();
+    create_dir_all(virtual_dir.join("incomplete@1.0.0")).unwrap();
     LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }.run().unwrap();
 }
 
@@ -220,7 +224,7 @@ fn link_virtual_store_bins_skips_slot_without_own_package_dir() {
     // Slot directory and its `node_modules/` exist, but the expected
     // `<slot>/node_modules/foo` (matching the slot name `foo@1.0.0`)
     // is missing, so `find_slot_own_package_dir` returns `None`.
-    fs::create_dir_all(virtual_dir.join("foo@1.0.0/node_modules")).unwrap();
+    create_dir_all(virtual_dir.join("foo@1.0.0/node_modules")).unwrap();
     LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }
         .run()
         .expect("missing own-package dir is skipped silently");
@@ -234,16 +238,16 @@ fn link_direct_dep_bins_writes_shims_for_each_dep() {
     let tmp = tempdir().unwrap();
     let modules = tmp.path().join("node_modules");
     let foo_dir = modules.join("foo");
-    fs::create_dir_all(&foo_dir).unwrap();
-    fs::write(foo_dir.join("package.json"), json!({"name": "foo", "bin": "cli.js"}).to_string())
+    create_dir_all(&foo_dir).unwrap();
+    write_file(foo_dir.join("package.json"), json!({"name": "foo", "bin": "cli.js"}).to_string())
         .unwrap();
-    fs::write(foo_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+    write_file(foo_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
 
     link_direct_dep_bins(&modules, &["foo".to_string()]).unwrap();
 
     let shim = modules.join(".bin/foo");
     assert!(shim.exists(), "shim should be created at {shim:?}");
-    let body = fs::read_to_string(&shim).unwrap();
+    let body = read_to_string(&shim).unwrap();
     assert!(is_shim_pointing_at(&body, &foo_dir.join("cli.js")));
 }
 
@@ -254,7 +258,7 @@ fn link_direct_dep_bins_writes_shims_for_each_dep() {
 fn link_direct_dep_bins_no_op_for_empty_dep_list() {
     let tmp = tempdir().unwrap();
     let modules = tmp.path().join("node_modules");
-    fs::create_dir_all(&modules).unwrap();
+    create_dir_all(&modules).unwrap();
     link_direct_dep_bins(&modules, &[]).unwrap();
     assert!(!modules.join(".bin").exists());
 }
@@ -266,15 +270,15 @@ fn link_direct_dep_bins_no_op_for_empty_dep_list() {
 fn link_direct_dep_bins_follows_symlink_to_real_package() {
     let tmp = tempdir().unwrap();
     let modules = tmp.path().join("node_modules");
-    fs::create_dir_all(&modules).unwrap();
+    create_dir_all(&modules).unwrap();
 
     // The "real" package contents live elsewhere (mimics pacquet's
     // virtual-store layout).
     let real_pkg = tmp.path().join("virtual/foo@1.0.0/node_modules/foo");
-    fs::create_dir_all(&real_pkg).unwrap();
-    fs::write(real_pkg.join("package.json"), json!({"name": "foo", "bin": "cli.js"}).to_string())
+    create_dir_all(&real_pkg).unwrap();
+    write_file(real_pkg.join("package.json"), json!({"name": "foo", "bin": "cli.js"}).to_string())
         .unwrap();
-    fs::write(real_pkg.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+    write_file(real_pkg.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
 
     // Use the same approach pacquet uses in production: symlink on
     // Unix, junction on Windows. Plain `std::os::windows::fs::symlink_dir`
@@ -296,7 +300,7 @@ fn link_direct_dep_bins_follows_symlink_to_real_package() {
 fn link_direct_dep_bins_skips_dep_with_missing_manifest() {
     let tmp = tempdir().unwrap();
     let modules = tmp.path().join("node_modules");
-    fs::create_dir_all(&modules).unwrap();
+    create_dir_all(&modules).unwrap();
     // No `<modules>/foo` directory at all.
     link_direct_dep_bins(&modules, &["foo".to_string()]).unwrap();
     assert!(!modules.join(".bin").exists());
@@ -316,10 +320,8 @@ fn link_virtual_store_bins_propagates_read_error_via_di() {
 
     struct DenyVirtualStore;
     impl FsReadDir for DenyVirtualStore {
-        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
-            Err::<std::iter::Empty<std::path::PathBuf>, _>(io::Error::from(
-                io::ErrorKind::PermissionDenied,
-            ))
+        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
+            Err::<Empty<PathBuf>, _>(io::Error::from(io::ErrorKind::PermissionDenied))
         }
     }
     impl FsReadFile for DenyVirtualStore {
@@ -358,10 +360,10 @@ fn link_virtual_store_bins_propagates_read_error_via_di() {
         }
     }
     impl FsWalkFiles for DenyVirtualStore {
-        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
             unreachable!("directories.bin not exercised by this test");
             #[expect(unreachable_code)]
-            Ok(std::iter::empty())
+            Ok(empty())
         }
     }
 

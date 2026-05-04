@@ -3,7 +3,7 @@ use crate::capabilities::RealApi;
 use pipe_trait::Pipe;
 use serde_json::json;
 use std::{
-    fs,
+    fs::{create_dir_all, write as write_file},
     path::{Path, PathBuf},
 };
 use tempfile::tempdir;
@@ -233,9 +233,9 @@ fn directories_bin_walks_files_recursively() {
     let tmp = tempdir().unwrap();
     let pkg = tmp.path().join("pkg");
     let bin_dir = pkg.join("bin-dir");
-    fs::create_dir_all(bin_dir.join("subdir")).unwrap();
-    fs::write(bin_dir.join("rootBin.js"), "").unwrap();
-    fs::write(bin_dir.join("subdir/subBin.js"), "").unwrap();
+    create_dir_all(bin_dir.join("subdir")).unwrap();
+    write_file(bin_dir.join("rootBin.js"), "").unwrap();
+    write_file(bin_dir.join("subdir/subBin.js"), "").unwrap();
 
     let manifest = json!({
         "name": "bin-dir",
@@ -262,14 +262,14 @@ fn directories_bin_walks_files_recursively() {
 fn directories_bin_rejects_path_traversal() {
     let tmp = tempdir().unwrap();
     let pkg = tmp.path().join("pkg");
-    fs::create_dir_all(&pkg).unwrap();
+    create_dir_all(&pkg).unwrap();
 
     // Sibling dir reachable via `../siblings` from the package root,
     // populated with a "smoking gun" file the resolver would emit if
     // it failed to reject the traversal.
     let siblings = tmp.path().join("siblings");
-    fs::create_dir_all(&siblings).unwrap();
-    fs::write(siblings.join("smoking-gun"), "").unwrap();
+    create_dir_all(&siblings).unwrap();
+    write_file(siblings.join("smoking-gun"), "").unwrap();
 
     let manifest = json!({
         "name": "malicious",
@@ -292,11 +292,11 @@ fn directories_bin_rejects_path_traversal() {
 fn directories_bin_rejects_real_path_traversal() {
     let tmp = tempdir().unwrap();
     let secret_dir = tmp.path().join("secret");
-    fs::create_dir_all(&secret_dir).unwrap();
-    fs::write(secret_dir.join("secret.sh"), "echo secret").unwrap();
+    create_dir_all(&secret_dir).unwrap();
+    write_file(secret_dir.join("secret.sh"), "echo secret").unwrap();
 
     let pkg = tmp.path().join("pkg");
-    fs::create_dir_all(&pkg).unwrap();
+    create_dir_all(&pkg).unwrap();
 
     // From `<tmp>/pkg`, `../secret` reaches `<tmp>/secret`. The
     // `is_subdir` guard must reject this even though the resolved path
@@ -315,7 +315,7 @@ fn directories_bin_rejects_real_path_traversal() {
 fn directories_bin_missing_directory_returns_empty() {
     let tmp = tempdir().unwrap();
     let pkg = tmp.path().join("pkg");
-    fs::create_dir_all(&pkg).unwrap();
+    create_dir_all(&pkg).unwrap();
     let manifest = json!({
         "name": "x",
         "version": "1.0.0",
@@ -333,9 +333,9 @@ fn directories_bin_filters_unsafe_file_names() {
     let tmp = tempdir().unwrap();
     let pkg = tmp.path().join("pkg");
     let bin_dir = pkg.join("bin");
-    fs::create_dir_all(&bin_dir).unwrap();
-    fs::write(bin_dir.join("good"), "").unwrap();
-    fs::write(bin_dir.join("bad space"), "").unwrap();
+    create_dir_all(&bin_dir).unwrap();
+    write_file(bin_dir.join("good"), "").unwrap();
+    write_file(bin_dir.join("bad space"), "").unwrap();
 
     let manifest = json!({
         "name": "tool",
@@ -383,8 +383,8 @@ fn directories_bin_handles_curdir_in_relative_path() {
     let tmp = tempdir().unwrap();
     let pkg = tmp.path().join("pkg");
     let bin_dir = pkg.join("bin-dir");
-    fs::create_dir_all(&bin_dir).unwrap();
-    fs::write(bin_dir.join("cli"), "").unwrap();
+    create_dir_all(&bin_dir).unwrap();
+    write_file(bin_dir.join("cli"), "").unwrap();
 
     let manifest = json!({
         "name": "tool",
@@ -412,7 +412,7 @@ fn directories_bin_skips_path_without_usable_file_name() {
 
     struct EvilWalker;
     impl FsWalkFiles for EvilWalker {
-        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
             [
                 // `file_name()` returns None for a path ending in `..`,
                 // hitting the `let-else continue` branch.
@@ -444,9 +444,9 @@ fn bin_field_takes_precedence_over_directories_bin() {
     let tmp = tempdir().unwrap();
     let pkg = tmp.path().join("pkg");
     let bin_dir = pkg.join("legacy-bin");
-    fs::create_dir_all(&bin_dir).unwrap();
-    fs::write(bin_dir.join("ignored.js"), "").unwrap();
-    fs::write(pkg.join("primary.js"), "").unwrap();
+    create_dir_all(&bin_dir).unwrap();
+    write_file(bin_dir.join("ignored.js"), "").unwrap();
+    write_file(pkg.join("primary.js"), "").unwrap();
 
     let manifest = json!({
         "name": "tool",

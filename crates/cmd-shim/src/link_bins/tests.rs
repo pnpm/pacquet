@@ -7,7 +7,14 @@ use crate::{
     shim::is_shim_pointing_at,
 };
 use serde_json::{Value, json};
-use std::{fs, path::Path};
+use std::{
+    fs::{
+        create_dir_all, metadata, read as read_file, read_to_string, remove_file,
+        write as write_file,
+    },
+    iter::{Empty, empty},
+    path::{Path, PathBuf},
+};
 use tempfile::tempdir;
 
 /// All three shim flavors (`.sh` / no-extension, `.cmd`, `.ps1`) must
@@ -18,17 +25,17 @@ use tempfile::tempdir;
 fn writes_all_three_shim_flavors_per_bin() {
     let tmp = tempdir().unwrap();
     let pkg_dir = tmp.path().join("node_modules/foo");
-    fs::create_dir_all(&pkg_dir).unwrap();
-    fs::write(
+    create_dir_all(&pkg_dir).unwrap();
+    write_file(
         pkg_dir.join("package.json"),
         json!({"name": "foo", "version": "1.0.0", "bin": "cli.js"}).to_string(),
     )
     .unwrap();
-    fs::write(pkg_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+    write_file(pkg_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
 
     let bins_dir = tmp.path().join("node_modules/.bin");
     let manifest_value: Value =
-        serde_json::from_slice(&fs::read(pkg_dir.join("package.json")).unwrap()).unwrap();
+        serde_json::from_slice(&read_file(pkg_dir.join("package.json")).unwrap()).unwrap();
     link_bins_of_packages::<RealApi>(
         &[PackageBinSource { location: pkg_dir.clone(), manifest: manifest_value }],
         &bins_dir,
@@ -42,11 +49,11 @@ fn writes_all_three_shim_flavors_per_bin() {
     assert!(cmd.exists(), "missing .cmd shim");
     assert!(ps1.exists(), "missing .ps1 shim");
 
-    let cmd_body = fs::read_to_string(&cmd).unwrap();
+    let cmd_body = read_to_string(&cmd).unwrap();
     assert!(cmd_body.starts_with("@SETLOCAL\r\n"), "cmd shim must use CRLF SETLOCAL");
     assert!(cmd_body.contains("\"%~dp0\\..\\foo\\cli.js\""), "cmd target should be windows-style");
 
-    let ps1_body = fs::read_to_string(&ps1).unwrap();
+    let ps1_body = read_to_string(&ps1).unwrap();
     assert!(ps1_body.starts_with("#!/usr/bin/env pwsh\n"));
     assert!(ps1_body.contains("\"$basedir/../foo/cli.js\""));
 }
@@ -58,17 +65,17 @@ fn writes_all_three_shim_flavors_per_bin() {
 fn writes_shim_for_bin_string() {
     let tmp = tempdir().unwrap();
     let pkg_dir = tmp.path().join("node_modules/foo");
-    fs::create_dir_all(pkg_dir.join("bin")).unwrap();
-    fs::write(
+    create_dir_all(pkg_dir.join("bin")).unwrap();
+    write_file(
         pkg_dir.join("package.json"),
         json!({"name": "foo", "version": "1.0.0", "bin": "bin/cli.js"}).to_string(),
     )
     .unwrap();
-    fs::write(pkg_dir.join("bin/cli.js"), "#!/usr/bin/env node\n").unwrap();
+    write_file(pkg_dir.join("bin/cli.js"), "#!/usr/bin/env node\n").unwrap();
 
     let bins_dir = tmp.path().join("node_modules/.bin");
     let manifest_value: Value =
-        serde_json::from_slice(&fs::read(pkg_dir.join("package.json")).unwrap()).unwrap();
+        serde_json::from_slice(&read_file(pkg_dir.join("package.json")).unwrap()).unwrap();
     link_bins_of_packages::<RealApi>(
         &[PackageBinSource { location: pkg_dir.clone(), manifest: manifest_value }],
         &bins_dir,
@@ -78,7 +85,7 @@ fn writes_shim_for_bin_string() {
     let shim_path = bins_dir.join("foo");
     assert!(shim_path.exists(), "shim should be created");
 
-    let body = fs::read_to_string(&shim_path).unwrap();
+    let body = read_to_string(&shim_path).unwrap();
     assert!(body.contains("\"$basedir/../foo/bin/cli.js\""), "shim body: {body}");
     assert!(is_shim_pointing_at(&body, &pkg_dir.join("bin/cli.js")));
 
@@ -86,12 +93,12 @@ fn writes_shim_for_bin_string() {
     {
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(
-            fs::metadata(&shim_path).unwrap().permissions().mode() & 0o777,
+            metadata(&shim_path).unwrap().permissions().mode() & 0o777,
             0o755,
             "shim must be 0o755",
         );
         assert!(
-            fs::metadata(pkg_dir.join("bin/cli.js")).unwrap().permissions().mode() & 0o111 != 0,
+            metadata(pkg_dir.join("bin/cli.js")).unwrap().permissions().mode() & 0o111 != 0,
             "target must have at least one executable bit",
         );
     }
@@ -105,20 +112,20 @@ fn link_bins_walks_modules_and_scopes() {
     let tmp = tempdir().unwrap();
     let modules = tmp.path().join("node_modules");
     // Regular package
-    fs::create_dir_all(modules.join("foo")).unwrap();
-    fs::write(modules.join("foo/package.json"), json!({"name": "foo", "bin": "f.js"}).to_string())
+    create_dir_all(modules.join("foo")).unwrap();
+    write_file(modules.join("foo/package.json"), json!({"name": "foo", "bin": "f.js"}).to_string())
         .unwrap();
-    fs::write(modules.join("foo/f.js"), "#!/usr/bin/env node\n").unwrap();
+    write_file(modules.join("foo/f.js"), "#!/usr/bin/env node\n").unwrap();
     // Scoped package
-    fs::create_dir_all(modules.join("@s/bar")).unwrap();
-    fs::write(
+    create_dir_all(modules.join("@s/bar")).unwrap();
+    write_file(
         modules.join("@s/bar/package.json"),
         json!({"name": "@s/bar", "bin": "b.js"}).to_string(),
     )
     .unwrap();
-    fs::write(modules.join("@s/bar/b.js"), "#!/usr/bin/env node\n").unwrap();
+    write_file(modules.join("@s/bar/b.js"), "#!/usr/bin/env node\n").unwrap();
     // Non-package directory (no package.json) must be ignored, not error.
-    fs::create_dir_all(modules.join("not-a-package")).unwrap();
+    create_dir_all(modules.join("not-a-package")).unwrap();
 
     let bins = modules.join(".bin");
     link_bins::<RealApi>(&modules, &bins).unwrap();
@@ -146,11 +153,11 @@ fn link_bins_handles_missing_modules_dir() {
 fn link_bins_of_packages_no_op_when_no_bins() {
     let tmp = tempdir().unwrap();
     let pkg = tmp.path().join("pkg");
-    fs::create_dir_all(&pkg).unwrap();
-    fs::write(pkg.join("package.json"), json!({"name": "pkg"}).to_string()).unwrap();
+    create_dir_all(&pkg).unwrap();
+    write_file(pkg.join("package.json"), json!({"name": "pkg"}).to_string()).unwrap();
     let bins = tmp.path().join(".bin");
     let manifest: Value =
-        serde_json::from_slice(&fs::read(pkg.join("package.json")).unwrap()).unwrap();
+        serde_json::from_slice(&read_file(pkg.join("package.json")).unwrap()).unwrap();
     link_bins_of_packages::<RealApi>(&[PackageBinSource { location: pkg, manifest }], &bins)
         .unwrap();
     assert!(!bins.exists(), "bins dir must not be created when nothing to link");
@@ -165,24 +172,24 @@ fn lexical_compare_breaks_tie_when_neither_owns() {
     let alpha = tmp.path().join("alpha");
     let beta = tmp.path().join("beta");
     for d in [&alpha, &beta] {
-        fs::create_dir_all(d).unwrap();
-        fs::write(d.join("cmd.js"), "#!/usr/bin/env node\n").unwrap();
+        create_dir_all(d).unwrap();
+        write_file(d.join("cmd.js"), "#!/usr/bin/env node\n").unwrap();
     }
-    fs::write(
+    write_file(
         alpha.join("package.json"),
         json!({"name": "alpha", "bin": {"shared": "cmd.js"}}).to_string(),
     )
     .unwrap();
-    fs::write(
+    write_file(
         beta.join("package.json"),
         json!({"name": "beta", "bin": {"shared": "cmd.js"}}).to_string(),
     )
     .unwrap();
 
     let manifest_alpha: Value =
-        serde_json::from_slice(&fs::read(alpha.join("package.json")).unwrap()).unwrap();
+        serde_json::from_slice(&read_file(alpha.join("package.json")).unwrap()).unwrap();
     let manifest_beta: Value =
-        serde_json::from_slice(&fs::read(beta.join("package.json")).unwrap()).unwrap();
+        serde_json::from_slice(&read_file(beta.join("package.json")).unwrap()).unwrap();
 
     let bins = tmp.path().join(".bin");
     // Order beta-then-alpha to verify the choice doesn't depend on
@@ -196,7 +203,7 @@ fn lexical_compare_breaks_tie_when_neither_owns() {
     )
     .unwrap();
 
-    let body = fs::read_to_string(bins.join("shared")).unwrap();
+    let body = read_to_string(bins.join("shared")).unwrap();
     assert!(
         body.contains("/alpha/cmd.js"),
         "lexically smaller package name `alpha` must win, got body:\n{body}",
@@ -209,8 +216,8 @@ fn lexical_compare_breaks_tie_when_neither_owns() {
 fn link_bins_propagates_parse_manifest_error() {
     let tmp = tempdir().unwrap();
     let modules = tmp.path().join("node_modules");
-    fs::create_dir_all(modules.join("broken")).unwrap();
-    fs::write(modules.join("broken/package.json"), "{ this is not json").unwrap();
+    create_dir_all(modules.join("broken")).unwrap();
+    write_file(modules.join("broken/package.json"), "{ this is not json").unwrap();
 
     let bins = modules.join(".bin");
     let err = link_bins::<RealApi>(&modules, &bins).expect_err("invalid manifest must surface");
@@ -229,21 +236,21 @@ fn link_bins_propagates_parse_manifest_error() {
 fn link_bins_skips_existing_shim_with_matching_marker() {
     let tmp = tempdir().unwrap();
     let modules = tmp.path().join("node_modules");
-    fs::create_dir_all(modules.join("foo")).unwrap();
-    fs::write(modules.join("foo/package.json"), json!({"name": "foo", "bin": "f.js"}).to_string())
+    create_dir_all(modules.join("foo")).unwrap();
+    write_file(modules.join("foo/package.json"), json!({"name": "foo", "bin": "f.js"}).to_string())
         .unwrap();
-    fs::write(modules.join("foo/f.js"), "#!/usr/bin/env node\n").unwrap();
+    write_file(modules.join("foo/f.js"), "#!/usr/bin/env node\n").unwrap();
 
     let bins = modules.join(".bin");
     link_bins::<RealApi>(&modules, &bins).unwrap();
-    let original = fs::read_to_string(bins.join("foo")).unwrap();
+    let original = read_to_string(bins.join("foo")).unwrap();
     // Append a sentinel. If the second pass rewrites the shim, the
     // sentinel disappears.
     let sentinel = format!("{original}\n# SENTINEL");
-    fs::write(bins.join("foo"), &sentinel).unwrap();
+    write_file(bins.join("foo"), &sentinel).unwrap();
 
     link_bins::<RealApi>(&modules, &bins).unwrap();
-    assert_eq!(fs::read_to_string(bins.join("foo")).unwrap(), sentinel);
+    assert_eq!(read_to_string(bins.join("foo")).unwrap(), sentinel);
 }
 
 /// [`link_bins`] must NOT skip when only the canonical `.sh` shim exists.
@@ -256,10 +263,10 @@ fn link_bins_skips_existing_shim_with_matching_marker() {
 fn link_bins_rewrites_when_only_sh_flavor_exists() {
     let tmp = tempdir().unwrap();
     let modules = tmp.path().join("node_modules");
-    fs::create_dir_all(modules.join("foo")).unwrap();
-    fs::write(modules.join("foo/package.json"), json!({"name": "foo", "bin": "f.js"}).to_string())
+    create_dir_all(modules.join("foo")).unwrap();
+    write_file(modules.join("foo/package.json"), json!({"name": "foo", "bin": "f.js"}).to_string())
         .unwrap();
-    fs::write(modules.join("foo/f.js"), "#!/usr/bin/env node\n").unwrap();
+    write_file(modules.join("foo/f.js"), "#!/usr/bin/env node\n").unwrap();
 
     let bins = modules.join(".bin");
     link_bins::<RealApi>(&modules, &bins).unwrap();
@@ -267,8 +274,8 @@ fn link_bins_rewrites_when_only_sh_flavor_exists() {
     // Simulate the partial-write / older-pacquet state: delete the
     // .cmd and .ps1 siblings, leaving only the `.sh` shim with its
     // (still correct) target marker.
-    fs::remove_file(bins.join("foo.cmd")).unwrap();
-    fs::remove_file(bins.join("foo.ps1")).unwrap();
+    remove_file(bins.join("foo.cmd")).unwrap();
+    remove_file(bins.join("foo.ps1")).unwrap();
 
     link_bins::<RealApi>(&modules, &bins).unwrap();
 
@@ -287,8 +294,8 @@ fn link_bins_propagates_create_bin_dir_error_via_di() {
 
     struct FailingCreateDir;
     impl FsReadDir for FailingCreateDir {
-        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
-            Ok(std::iter::empty())
+        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
+            Ok(empty())
         }
     }
     impl FsReadFile for FailingCreateDir {
@@ -327,10 +334,10 @@ fn link_bins_propagates_create_bin_dir_error_via_di() {
         }
     }
     impl FsWalkFiles for FailingCreateDir {
-        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
             unreachable!("directories.bin not exercised by this test");
             #[expect(unreachable_code)]
-            Ok(std::iter::empty())
+            Ok(empty())
         }
     }
 
@@ -338,8 +345,8 @@ fn link_bins_propagates_create_bin_dir_error_via_di() {
     let manifest = serde_json::json!({"name": "foo", "bin": "cli.js"});
     let tmp = tempdir().unwrap();
     let pkg = tmp.path().join("foo");
-    fs::create_dir_all(&pkg).unwrap();
-    fs::write(pkg.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+    create_dir_all(&pkg).unwrap();
+    write_file(pkg.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
     let err = link_bins_of_packages::<FailingCreateDir>(
         &[PackageBinSource { location: pkg, manifest }],
         Path::new("/anything"),
@@ -356,8 +363,8 @@ fn link_bins_propagates_write_shim_error_via_di() {
 
     struct FailingWrite;
     impl FsReadDir for FailingWrite {
-        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
-            Ok(std::iter::empty())
+        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
+            Ok(empty())
         }
     }
     impl FsReadFile for FailingWrite {
@@ -398,18 +405,18 @@ fn link_bins_propagates_write_shim_error_via_di() {
         }
     }
     impl FsWalkFiles for FailingWrite {
-        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
             unreachable!("directories.bin not exercised by this test");
             #[expect(unreachable_code)]
-            Ok(std::iter::empty())
+            Ok(empty())
         }
     }
 
     let manifest = serde_json::json!({"name": "foo", "bin": "cli.js"});
     let tmp = tempdir().unwrap();
     let pkg = tmp.path().join("foo");
-    fs::create_dir_all(&pkg).unwrap();
-    fs::write(pkg.join("cli.js"), "").unwrap();
+    create_dir_all(&pkg).unwrap();
+    write_file(pkg.join("cli.js"), "").unwrap();
     let err = link_bins_of_packages::<FailingWrite>(
         &[PackageBinSource { location: pkg, manifest }],
         &tmp.path().join(".bin"),
@@ -425,8 +432,8 @@ fn link_bins_propagates_chmod_error_via_di() {
 
     struct FailingChmod;
     impl FsReadDir for FailingChmod {
-        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
-            Ok(std::iter::empty())
+        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
+            Ok(empty())
         }
     }
     impl FsReadFile for FailingChmod {
@@ -465,18 +472,18 @@ fn link_bins_propagates_chmod_error_via_di() {
         }
     }
     impl FsWalkFiles for FailingChmod {
-        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
             unreachable!("directories.bin not exercised by this test");
             #[expect(unreachable_code)]
-            Ok(std::iter::empty())
+            Ok(empty())
         }
     }
 
     let manifest = serde_json::json!({"name": "foo", "bin": "cli.js"});
     let tmp = tempdir().unwrap();
     let pkg = tmp.path().join("foo");
-    fs::create_dir_all(&pkg).unwrap();
-    fs::write(pkg.join("cli.js"), "").unwrap();
+    create_dir_all(&pkg).unwrap();
+    write_file(pkg.join("cli.js"), "").unwrap();
     let err = link_bins_of_packages::<FailingChmod>(
         &[PackageBinSource { location: pkg, manifest }],
         &tmp.path().join(".bin"),
@@ -497,8 +504,8 @@ fn link_bins_propagates_target_chmod_error_via_di() {
 
     struct FailingTargetChmod;
     impl FsReadDir for FailingTargetChmod {
-        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
-            Ok(std::iter::empty())
+        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
+            Ok(empty())
         }
     }
     impl FsReadFile for FailingTargetChmod {
@@ -540,18 +547,18 @@ fn link_bins_propagates_target_chmod_error_via_di() {
         }
     }
     impl FsWalkFiles for FailingTargetChmod {
-        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
             unreachable!("directories.bin not exercised by this test");
             #[expect(unreachable_code)]
-            Ok(std::iter::empty())
+            Ok(empty())
         }
     }
 
     let manifest = serde_json::json!({"name": "foo", "bin": "cli.js"});
     let tmp = tempdir().unwrap();
     let pkg = tmp.path().join("foo");
-    fs::create_dir_all(&pkg).unwrap();
-    fs::write(pkg.join("cli.js"), "").unwrap();
+    create_dir_all(&pkg).unwrap();
+    write_file(pkg.join("cli.js"), "").unwrap();
     let err = link_bins_of_packages::<FailingTargetChmod>(
         &[PackageBinSource { location: pkg, manifest }],
         &tmp.path().join(".bin"),
@@ -571,8 +578,8 @@ fn link_bins_swallows_target_chmod_not_found_via_di() {
 
     struct NotFoundTargetChmod;
     impl FsReadDir for NotFoundTargetChmod {
-        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
-            Ok(std::iter::empty())
+        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
+            Ok(empty())
         }
     }
     impl FsReadFile for NotFoundTargetChmod {
@@ -611,18 +618,18 @@ fn link_bins_swallows_target_chmod_not_found_via_di() {
         }
     }
     impl FsWalkFiles for NotFoundTargetChmod {
-        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
             unreachable!("directories.bin not exercised by this test");
             #[expect(unreachable_code)]
-            Ok(std::iter::empty())
+            Ok(empty())
         }
     }
 
     let manifest = serde_json::json!({"name": "foo", "bin": "cli.js"});
     let tmp = tempdir().unwrap();
     let pkg = tmp.path().join("foo");
-    fs::create_dir_all(&pkg).unwrap();
-    fs::write(pkg.join("cli.js"), "").unwrap();
+    create_dir_all(&pkg).unwrap();
+    write_file(pkg.join("cli.js"), "").unwrap();
     link_bins_of_packages::<NotFoundTargetChmod>(
         &[PackageBinSource { location: pkg, manifest }],
         &tmp.path().join(".bin"),
@@ -641,8 +648,8 @@ fn link_bins_propagates_probe_shim_source_error_via_di() {
 
     struct FailingProbe;
     impl FsReadDir for FailingProbe {
-        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
-            Ok(std::iter::empty())
+        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
+            Ok(empty())
         }
     }
     impl FsReadFile for FailingProbe {
@@ -681,17 +688,17 @@ fn link_bins_propagates_probe_shim_source_error_via_di() {
         }
     }
     impl FsWalkFiles for FailingProbe {
-        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
             unreachable!("directories.bin not exercised by this test");
             #[expect(unreachable_code)]
-            Ok(std::iter::empty())
+            Ok(empty())
         }
     }
 
     let manifest = serde_json::json!({"name": "foo", "bin": "cli.js"});
     let tmp = tempdir().unwrap();
     let pkg = tmp.path().join("foo");
-    fs::create_dir_all(&pkg).unwrap();
+    create_dir_all(&pkg).unwrap();
     let err = link_bins_of_packages::<FailingProbe>(
         &[PackageBinSource { location: pkg, manifest }],
         &tmp.path().join(".bin"),
@@ -710,7 +717,7 @@ fn link_bins_propagates_read_manifest_error_via_di() {
 
     struct DenyManifestRead;
     impl FsReadDir for DenyManifestRead {
-        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
             Ok(vec!["foo".into()].into_iter())
         }
     }
@@ -750,10 +757,10 @@ fn link_bins_propagates_read_manifest_error_via_di() {
         }
     }
     impl FsWalkFiles for DenyManifestRead {
-        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
             unreachable!("directories.bin not exercised by this test");
             #[expect(unreachable_code)]
-            Ok(std::iter::empty())
+            Ok(empty())
         }
     }
 
@@ -777,21 +784,21 @@ fn ownership_breaks_bin_conflicts_when_existing_owns() {
     let aaa_other = tmp.path().join("aaa-other");
     let npm = tmp.path().join("npm");
     for d in [&aaa_other, &npm] {
-        fs::create_dir_all(d).unwrap();
-        fs::write(d.join("npx"), "#!/usr/bin/env node\n").unwrap();
+        create_dir_all(d).unwrap();
+        write_file(d.join("npx"), "#!/usr/bin/env node\n").unwrap();
     }
-    fs::write(npm.join("package.json"), json!({"name": "npm", "bin": {"npx": "npx"}}).to_string())
+    write_file(npm.join("package.json"), json!({"name": "npm", "bin": {"npx": "npx"}}).to_string())
         .unwrap();
-    fs::write(
+    write_file(
         aaa_other.join("package.json"),
         json!({"name": "aaa-other", "bin": {"npx": "npx"}}).to_string(),
     )
     .unwrap();
 
     let manifest_other: Value =
-        serde_json::from_slice(&fs::read(aaa_other.join("package.json")).unwrap()).unwrap();
+        serde_json::from_slice(&read_file(aaa_other.join("package.json")).unwrap()).unwrap();
     let manifest_npm: Value =
-        serde_json::from_slice(&fs::read(npm.join("package.json")).unwrap()).unwrap();
+        serde_json::from_slice(&read_file(npm.join("package.json")).unwrap()).unwrap();
 
     // Order npm-first; this exercises the (true, false) arm because
     // `npm` (existing) owns and `aaa-other` (candidate) doesn't.
@@ -805,7 +812,7 @@ fn ownership_breaks_bin_conflicts_when_existing_owns() {
     )
     .unwrap();
 
-    let body = fs::read_to_string(bins.join("npx")).unwrap();
+    let body = read_to_string(bins.join("npx")).unwrap();
     assert!(body.contains("/npm/npx"), "existing-owns winner must be `npm`, body:\n{body}");
 }
 
@@ -818,10 +825,8 @@ fn link_bins_propagates_modules_dir_read_error_via_di() {
 
     struct FailingModulesRead;
     impl FsReadDir for FailingModulesRead {
-        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
-            Err::<std::iter::Empty<std::path::PathBuf>, _>(io::Error::from(
-                io::ErrorKind::PermissionDenied,
-            ))
+        fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
+            Err::<Empty<PathBuf>, _>(io::Error::from(io::ErrorKind::PermissionDenied))
         }
     }
     impl FsReadFile for FailingModulesRead {
@@ -860,10 +865,10 @@ fn link_bins_propagates_modules_dir_read_error_via_di() {
         }
     }
     impl FsWalkFiles for FailingModulesRead {
-        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
+        fn walk_files(_: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
             unreachable!("directories.bin not exercised by this test");
             #[expect(unreachable_code)]
-            Ok(std::iter::empty())
+            Ok(empty())
         }
     }
 
@@ -886,21 +891,21 @@ fn ownership_breaks_bin_conflicts() {
     let npm = tmp.path().join("npm");
     let aaa_other = tmp.path().join("aaa-other");
     for d in [&npm, &aaa_other] {
-        fs::create_dir_all(d).unwrap();
-        fs::write(d.join("npx"), "#!/usr/bin/env node\n").unwrap();
+        create_dir_all(d).unwrap();
+        write_file(d.join("npx"), "#!/usr/bin/env node\n").unwrap();
     }
-    fs::write(npm.join("package.json"), json!({"name": "npm", "bin": {"npx": "npx"}}).to_string())
+    write_file(npm.join("package.json"), json!({"name": "npm", "bin": {"npx": "npx"}}).to_string())
         .unwrap();
-    fs::write(
+    write_file(
         aaa_other.join("package.json"),
         json!({"name": "aaa-other", "bin": {"npx": "npx"}}).to_string(),
     )
     .unwrap();
 
     let manifest_npm: Value =
-        serde_json::from_slice(&fs::read(npm.join("package.json")).unwrap()).unwrap();
+        serde_json::from_slice(&read_file(npm.join("package.json")).unwrap()).unwrap();
     let manifest_other: Value =
-        serde_json::from_slice(&fs::read(aaa_other.join("package.json")).unwrap()).unwrap();
+        serde_json::from_slice(&read_file(aaa_other.join("package.json")).unwrap()).unwrap();
 
     let bins = tmp.path().join(".bin");
     link_bins_of_packages::<RealApi>(
@@ -912,7 +917,7 @@ fn ownership_breaks_bin_conflicts() {
     )
     .unwrap();
 
-    let body = fs::read_to_string(bins.join("npx")).unwrap();
+    let body = read_to_string(bins.join("npx")).unwrap();
     // npm's `npx` lives at `<npm>/npx`; the shim must reference that path.
     assert!(
         body.contains("/npm/npx") || is_shim_pointing_at(&body, &npm.join("npx")),
