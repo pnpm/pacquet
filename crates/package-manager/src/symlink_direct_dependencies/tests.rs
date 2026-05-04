@@ -45,7 +45,7 @@ fn creates_one_symlink_per_dep_pointing_at_virtual_store() {
     );
 }
 
-/// Empty deps list is a no-op — no entries are created under
+/// Empty deps list is a no-op. No entries are created under
 /// `<modules_dir>`.
 #[test]
 fn empty_deps_list_is_no_op() {
