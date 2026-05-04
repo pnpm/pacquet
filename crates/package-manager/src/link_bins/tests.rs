@@ -106,7 +106,7 @@ fn skips_slot_own_package_when_walking_children() {
 }
 
 /// [`LinkVirtualStoreBins`] with a non-existent virtual-store directory
-/// must be a no-op (`Ok`) — a fresh install where the dir doesn't exist
+/// must be a no-op (`Ok`). A fresh install where the dir doesn't exist
 /// yet must not error out.
 #[test]
 fn link_virtual_store_bins_no_op_when_dir_missing() {
@@ -117,7 +117,7 @@ fn link_virtual_store_bins_no_op_when_dir_missing() {
 
 /// Slot whose name has a `+` (scope separator) resolves to
 /// `node_modules/<scope>/<name>`. Pins [`super::find_slot_own_package_dir`]'s
-/// scoped branch — the un-scoped branch is exercised by the existing
+/// scoped branch. The un-scoped branch is exercised by the existing
 /// `writes_child_bins_into_slot_own_package_node_modules` test.
 #[test]
 fn link_virtual_store_bins_handles_scoped_slot_name() {
@@ -152,7 +152,7 @@ fn link_virtual_store_bins_handles_scoped_slot_name() {
 /// `@` characters (one per peer spec). [`super::find_slot_own_package_dir`]
 /// must parse the package-name boundary from the **left**, not the
 /// right, otherwise it splits inside a peer spec and silently fails
-/// to locate the own package — bins of children of the slot then
+/// to locate the own package. Bins of children of the slot then
 /// never get linked.
 ///
 /// Slot name shape verified against
@@ -226,7 +226,7 @@ fn link_direct_dep_bins_writes_shims_for_each_dep() {
     assert!(is_shim_pointing_at(&body, &foo_dir.join("cli.js")));
 }
 
-/// [`link_direct_dep_bins`] with no deps is a no-op — must not even
+/// [`link_direct_dep_bins`] with no deps is a no-op. It must not even
 /// create the `.bin` directory. Mirrors the early-return of
 /// [`pacquet_cmd_shim::link_bins_of_packages`].
 #[test]
@@ -292,6 +292,7 @@ fn link_virtual_store_bins_propagates_read_error_via_di() {
         FsWalkFiles, FsWrite,
     };
     use std::io;
+
     struct DenyVirtualStore;
     impl FsReadDir for DenyVirtualStore {
         fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
