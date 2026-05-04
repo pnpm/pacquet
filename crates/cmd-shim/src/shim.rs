@@ -37,8 +37,8 @@ fn extension_program(extension: &str) -> Option<&'static str> {
 ///    it.
 /// 2. Otherwise look up a default runtime by file extension (e.g. `.js` →
 ///    `node`, `.cmd` → `cmd`).
-/// 3. If neither yields a runtime, return `None` — [`generate_sh_shim`] handles
-///    that by exec'ing the target directly.
+/// 3. If neither yields a runtime, return `None`. [`generate_sh_shim`]
+///    handles that by exec'ing the target directly.
 ///
 /// `NotFound` reading the file degrades to `Ok(None)` so a missing-bin race
 /// doesn't fail the whole install. Other IO errors propagate, since pacquet
@@ -80,7 +80,7 @@ fn read_shebang<Api: FsReadHead>(path: &Path) -> io::Result<Option<ScriptRuntime
 /// even on pseudo-fs paths (`/proc`, `/sys`, FUSE, …) where short
 /// reads are common. On regular files at offset 0 the underlying
 /// `read` returns the whole prefix in one syscall, so the loop adds
-/// no extra syscalls in the hot path — just one branch.
+/// no extra syscalls in the hot path. The cost is one extra branch.
 ///
 /// Kept generic over [`FsReadHead`] so tests can plug in a fake that
 /// deliberately returns short and verify the loop accumulates
@@ -109,7 +109,7 @@ pub fn parse_shebang_from_bytes(bytes: &[u8]) -> Option<ScriptRuntime> {
 ///
 /// Recognises `#!/usr/bin/env <prog>`, `#!/usr/bin/env -S <prog>`, and any
 /// direct `#!/path/to/<prog>` shebang. `args` is captured **including the
-/// leading whitespace** that separates it from `prog` — this matches
+/// leading whitespace** that separates it from `prog`. That matches
 /// upstream's regex group 2 (`(.*)`), which captures everything from after
 /// `prog`'s end-of-match to end of line. Preserving the leading whitespace
 /// is what produces the byte-identical shim text upstream emits (e.g. the
@@ -155,7 +155,7 @@ fn strip_env_prefix(input: &str) -> (&str, bool) {
 ///
 /// 1. Resolves `basedir` to its own directory (with a `cygpath` fixup for
 ///    MSYS-style POSIX shells on Windows).
-/// 2. If the runtime program is colocated at `$basedir/<prog>` (rare —
+/// 2. If the runtime program is colocated at `$basedir/<prog>` (a rare case,
 ///    only true when the runtime was bundled alongside the shim), prefer that
 ///    binary; otherwise fall through to the system PATH.
 /// 3. Forwards `"$@"` to the resolved interpreter, with the target script as
@@ -181,14 +181,14 @@ pub fn generate_sh_shim(
     match runtime {
         Some(ScriptRuntime { prog: Some(prog), args }) => {
             // `sh_long_prog` is the `"$basedir/<prog>"` form upstream uses.
-            // It always carries the leading `$basedir/` and quotes — never
+            // It always carries the leading `$basedir/` and quotes; never
             // just the program name on its own.
             let sh_long_prog = format!("\"$basedir/{prog}\"");
             sh.push_str(&format!(
                 "if [ -x {sh_long_prog} ]; then\n  exec {sh_long_prog} {args} {quoted_target} \"$@\"\nelse\n  exec {prog} {args} {quoted_target} \"$@\"\nfi\n",
             ));
         }
-        // No runtime detected — exec the target directly. Upstream still
+        // No runtime detected, so exec the target directly. Upstream still
         // emits `exit $?` on this branch for parity with non-execve POSIX
         // shells.
         runtime_opt => {
@@ -204,7 +204,7 @@ pub fn generate_sh_shim(
 /// Generate the Windows `.cmd` shim contents for `target_path`. Mirrors
 /// `generateCmdShim` in upstream cmd-shim. Pacquet skips the
 /// `nodePath`/`prependToPath`/`nodeExecPath`/`progArgs` features that
-/// upstream supports — we only ever write a "plain" cmd shim.
+/// upstream supports; we only ever write a "plain" cmd shim.
 ///
 /// CRLF line endings are part of the on-disk contract for `.cmd` files
 /// on Windows, so the template uses literal `\r\n`.
@@ -231,7 +231,7 @@ pub fn generate_cmd_shim(
         }
         runtime_opt => {
             let args = runtime_opt.map(|r| r.args.as_str()).unwrap_or("");
-            // No runtime detected — exec the target directly.
+            // No runtime detected, so exec the target directly.
             cmd.push_str(&format!("@{quoted_target} {args} %*\r\n"));
         }
     }
@@ -256,44 +256,66 @@ pub fn generate_pwsh_shim(
         format!("\"$basedir/{sh_target}\"")
     };
 
+    use std::fmt::Write;
     let mut pwsh = String::from(PWSH_SHIM_HEADER);
 
     match runtime {
         Some(ScriptRuntime { prog: Some(prog), args }) => {
-            let long_prog = format!("\"$basedir/{prog}$exe\"");
-            let prog_quoted = format!("\"{prog}$exe\"");
-            pwsh.push_str(&format!(
-                "\n$ret=0\nif (Test-Path {long_prog}) {{\n  # Support pipeline input\n  if ($MyInvocation.ExpectingInput) {{\n    $input | & {long_prog} {args} {quoted_target} $args\n  }} else {{\n    & {long_prog} {args} {quoted_target} $args\n  }}\n  $ret=$LASTEXITCODE\n}} else {{\n  # Support pipeline input\n  if ($MyInvocation.ExpectingInput) {{\n    $input | & {prog_quoted} {args} {quoted_target} $args\n  }} else {{\n    & {prog_quoted} {args} {quoted_target} $args\n  }}\n  $ret=$LASTEXITCODE\n}}\nexit $ret\n",
-            ));
+            let long_prog = format!(r#""$basedir/{prog}$exe""#);
+            let prog_quoted = format!(r#""{prog}$exe""#);
+            writeln!(pwsh).unwrap();
+            writeln!(pwsh, "$ret=0").unwrap();
+            writeln!(pwsh, "if (Test-Path {long_prog}) {{").unwrap();
+            writeln!(pwsh, "  # Support pipeline input").unwrap();
+            writeln!(pwsh, "  if ($MyInvocation.ExpectingInput) {{").unwrap();
+            writeln!(pwsh, "    $input | & {long_prog} {args} {quoted_target} $args").unwrap();
+            writeln!(pwsh, "  }} else {{").unwrap();
+            writeln!(pwsh, "    & {long_prog} {args} {quoted_target} $args").unwrap();
+            writeln!(pwsh, "  }}").unwrap();
+            writeln!(pwsh, "  $ret=$LASTEXITCODE").unwrap();
+            writeln!(pwsh, "}} else {{").unwrap();
+            writeln!(pwsh, "  # Support pipeline input").unwrap();
+            writeln!(pwsh, "  if ($MyInvocation.ExpectingInput) {{").unwrap();
+            writeln!(pwsh, "    $input | & {prog_quoted} {args} {quoted_target} $args").unwrap();
+            writeln!(pwsh, "  }} else {{").unwrap();
+            writeln!(pwsh, "    & {prog_quoted} {args} {quoted_target} $args").unwrap();
+            writeln!(pwsh, "  }}").unwrap();
+            writeln!(pwsh, "  $ret=$LASTEXITCODE").unwrap();
+            writeln!(pwsh, "}}").unwrap();
+            writeln!(pwsh, "exit $ret").unwrap();
         }
         runtime_opt => {
             let args = runtime_opt.map(|r| r.args.as_str()).unwrap_or("");
-            pwsh.push_str(&format!(
-                "\n# Support pipeline input\nif ($MyInvocation.ExpectingInput) {{\n  $input | & {quoted_target} {args} $args\n}} else {{\n  & {quoted_target} {args} $args\n}}\nexit $LASTEXITCODE\n",
-            ));
+            writeln!(pwsh).unwrap();
+            writeln!(pwsh, "# Support pipeline input").unwrap();
+            writeln!(pwsh, "if ($MyInvocation.ExpectingInput) {{").unwrap();
+            writeln!(pwsh, "  $input | & {quoted_target} {args} $args").unwrap();
+            writeln!(pwsh, "}} else {{").unwrap();
+            writeln!(pwsh, "  & {quoted_target} {args} $args").unwrap();
+            writeln!(pwsh, "}}").unwrap();
+            writeln!(pwsh, "exit $LASTEXITCODE").unwrap();
         }
     }
 
     pwsh
 }
 
-/// `.ps1` template prelude — sets up `$basedir` and `$exe` exactly like
+/// `.ps1` template prelude. Sets up `$basedir` and `$exe` exactly like
 /// upstream's `generatePwshShim`.
-const PWSH_SHIM_HEADER: &str = "\
-#!/usr/bin/env pwsh
+const PWSH_SHIM_HEADER: &str = r#"#!/usr/bin/env pwsh
 $basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent
 
-$exe=\"\"
-if ($PSVersionTable.PSVersion -lt \"6.0\" -or $IsWindows) {
+$exe=""
+if ($PSVersionTable.PSVersion -lt "6.0" -or $IsWindows) {
   # Fix case when both the Windows and Linux builds of Node
   # are installed in the same directory
-  $exe=\".exe\"
-}";
+  $exe=".exe"
+}"#;
 
 /// Compute the Windows-style relative path from `shim_path`'s parent
 /// directory to `target_path`. The `.cmd` shim uses backslashes, so we
 /// convert the lexical-relative result. Falls back to the absolute path
-/// if the relative computation fails — same shape as
+/// if the relative computation fails. Same shape as
 /// [`relative_target`] but with the slash direction flipped.
 fn relative_target_windows(target_path: &Path, shim_path: &Path) -> String {
     let shim_dir = shim_path.parent().unwrap_or_else(|| Path::new(""));
@@ -301,19 +323,18 @@ fn relative_target_windows(target_path: &Path, shim_path: &Path) -> String {
     rel.to_string_lossy().replace('/', "\\")
 }
 
-const SH_SHIM_HEADER: &str = "\
-#!/bin/sh
-basedir=$(dirname \"$(echo \"$0\" | sed -e 's,\\\\,/,g')\")
+const SH_SHIM_HEADER: &str = r#"#!/bin/sh
+basedir=$(dirname "$(echo "$0" | sed -e 's,\\,/,g')")
 
 case `uname` in
     *CYGWIN*|*MINGW*|*MSYS*)
         if command -v cygpath > /dev/null 2>&1; then
-            basedir=`cygpath -w \"$basedir\"`
+            basedir=`cygpath -w "$basedir"`
         fi
     ;;
 esac
 
-";
+"#;
 
 /// Trailing `# cmd-shim-target=<rel>` marker. Upstream uses it to detect
 /// whether an existing shim already targets the same source without
@@ -333,7 +354,7 @@ pub fn is_shim_pointing_at(shim_content: &str, target_path: &Path) -> bool {
 
 /// Compute the relative path from `shim_path`'s parent directory to
 /// `target_path`. Falls back to the absolute target path if the relative
-/// computation fails — this matches the `path.isAbsolute(shTarget)` guard in
+/// computation fails. That matches the `path.isAbsolute(shTarget)` guard in
 /// upstream's `generateShShim`.
 fn relative_target(target_path: &Path, shim_path: &Path) -> String {
     let shim_dir = shim_path.parent().unwrap_or_else(|| Path::new(""));
