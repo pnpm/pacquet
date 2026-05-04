@@ -89,7 +89,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-            bench-work-env/.shared-target
+            bench-work-env/*/pacquet/target
         # Restore can take longer than the previous 1-minute cap once
         # the cache contains a few revisions' worth of artifacts. Five
         # minutes covers normal restores; `continue-on-error` still
