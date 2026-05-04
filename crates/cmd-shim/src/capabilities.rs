@@ -11,14 +11,19 @@
 //! real filesystem can't reach portably (e.g. permission denied,
 //! ENOSPC).
 
-use std::{io, path::Path};
+use pipe_trait::Pipe;
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
 
 /// Read up to `buf.len()` bytes of `path` starting at byte `offset`.
-/// **Single underlying syscall** — POSIX `read(2)` is allowed to
-/// return fewer bytes than requested (a "short read"), so callers
-/// that need a fully-filled buffer must loop. Use
-/// [`crate::read_head_filled`] for that — it stays generic over this
-/// trait so test fakes don't have to grow.
+///
+/// The trait promises a single underlying syscall. POSIX `read(2)`
+/// is allowed to return fewer bytes than requested (a "short read"),
+/// so callers that need a fully-filled buffer must loop.
+/// [`crate::read_head_filled`] supplies that loop while staying
+/// generic over this trait, so test fakes do not have to grow.
 ///
 /// Used by [`crate::search_script_runtime`] (via [`crate::read_head_filled`])
 /// to detect the script runtime via the shebang at the head of a bin
@@ -43,18 +48,19 @@ pub trait FsReadString {
 /// List the entries of a directory.
 ///
 /// Returns an `impl Iterator<Item = PathBuf>` rather than a
-/// `Vec<PathBuf>` so the production impl can stream entries straight
-/// out of `fs::ReadDir` without materialising the whole list, and so
-/// fakes don't have to declare an associated `Iter` type per impl —
-/// they just return whatever concrete iterator they want.
+/// `Vec<PathBuf>`, so the production impl can stream entries straight
+/// out of `fs::ReadDir` without materialising the whole list. The
+/// associated-type-free shape also frees fakes from declaring an
+/// `Iter` type per impl. Each fake just returns whatever concrete
+/// iterator it wants.
 ///
-/// We deliberately don't expose `fs::ReadDir` directly: its iterator
+/// We deliberately do not expose `fs::ReadDir` directly: its iterator
 /// type is platform-specific and yields `io::Result<DirEntry>`,
 /// which would force every fake to fabricate a `DirEntry` (and tie
 /// the trait to libstd's filesystem types). Yielding plain
 /// `PathBuf` keeps fakes trivial.
 pub trait FsReadDir {
-    fn read_dir(path: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>>;
+    fn read_dir(path: &Path) -> io::Result<impl Iterator<Item = PathBuf>>;
 }
 
 /// Recursively walk `path` and yield every regular file found beneath
@@ -63,23 +69,24 @@ pub trait FsReadDir {
 /// `directories.bin` entries.
 ///
 /// Returns an `impl Iterator<Item = PathBuf>` rather than a
-/// `Vec<PathBuf>` so the production walker streams entries straight
+/// `Vec<PathBuf>`, so the production walker streams entries straight
 /// out of `walkdir` instead of materialising the whole list up front.
-/// `directories.bin` trees are usually tiny, but the abstraction
-/// shouldn't bake in an allocation the real implementation doesn't
-/// need. Fakes return whatever concrete iterator they want — typically
-/// [`std::iter::empty`] for the unreachable-walk case or
-/// [`Vec::into_iter`] when feeding a fixed list of paths.
+/// `directories.bin` trees are usually tiny in practice, but the
+/// abstraction should not bake in an allocation the real
+/// implementation does not need. Fakes return whatever concrete
+/// iterator they want. [`std::iter::empty`] fits the unreachable-walk
+/// case, and [`Vec::into_iter`] fits the case that feeds a fixed list
+/// of paths.
 ///
 /// `walkdir`'s builder exposes many knobs (`follow_links`, `min_depth`,
-/// `max_depth`, `sort_by`, …); pacquet uses just one (`follow_links =
-/// false`). Mirroring the full builder through the trait would be
-/// over-engineering for the single call site, so the trait keeps its
-/// surface dead-simple and the impl bakes the option in. If a future
-/// caller needs different walk options, add a new capability rather
-/// than parameterise this one.
+/// `max_depth`, `sort_by`, and so on); pacquet uses just one
+/// (`follow_links = false`). Mirroring the full builder through the
+/// trait would be over-engineering for the single call site, so the
+/// trait keeps its surface dead-simple and the impl bakes the option
+/// in. If a future caller needs different walk options, add a new
+/// capability rather than parameterise this one.
 pub trait FsWalkFiles {
-    fn walk_files(path: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>>;
+    fn walk_files(path: &Path) -> io::Result<impl Iterator<Item = PathBuf>>;
 }
 
 /// Create a directory and any missing ancestors. Used to prepare
@@ -96,24 +103,30 @@ pub trait FsCreateDirAll {
 /// promises: a single `write(2)` call, no tempfile-rename guard.
 /// A SIGINT mid-write can leave a truncated file. If a future
 /// caller needs atomic write semantics, build it on top of this
-/// trait (write to a sibling tempfile, then rename) rather than
-/// hiding the algorithm inside the capability — keeping the trait
-/// minimal lets every callsite see exactly what guarantees it
-/// inherits.
+/// trait by writing to a sibling tempfile and then renaming. Hiding
+/// that algorithm inside the capability would obscure what each
+/// callsite inherits; keeping the trait minimal lets every callsite
+/// see exactly what guarantees it gets.
 pub trait FsWrite {
     fn write(path: &Path, bytes: &[u8]) -> io::Result<()>;
 }
 
-/// Apply a unix mode (or no-op on Windows) to a path. Used to chmod
-/// shims and target binaries to `0o755` for executable-bit parity with
-/// pnpm. The mode argument is `u32` so callers can compute it (read
-/// metadata, OR in `0o111`, write back).
+/// Apply a unix mode to a path. Used to chmod shims and target
+/// binaries to `0o755` for executable-bit parity with pnpm. The mode
+/// argument is `u32` so callers can compute it (read metadata, OR in
+/// `0o111`, write back).
+///
+/// The trait methods are always present so callers don't have to
+/// `#[cfg(unix)]` every chmod call site. On Windows the production
+/// impl is a no-op (Windows has no equivalent permission concept),
+/// so the chmod path runs on every platform but only mutates state
+/// on Unix.
 pub trait FsSetPermissions {
     fn set_executable(path: &Path) -> io::Result<()>;
     fn ensure_executable_bits(path: &Path) -> io::Result<()>;
 }
 
-/// The production filesystem provider — every method delegates straight
+/// The production filesystem provider. Every method delegates straight
 /// to `std::fs`.
 pub struct RealApi;
 
@@ -141,27 +154,28 @@ impl FsReadString for RealApi {
 }
 
 impl FsReadDir for RealApi {
-    fn read_dir(path: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
-        // `flatten()` silently drops per-entry errors (matches the
+    fn read_dir(path: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
+        // `flatten()` silently drops per-entry errors. This matches the
         // prior collect-then-flatten shape and the `tinyglobby`-style
-        // ENOENT-on-subtree behaviour pacquet's callers expect).
-        Ok(std::fs::read_dir(path)?.flatten().map(|entry| entry.path()))
+        // ENOENT-on-subtree behaviour pacquet's callers expect.
+        std::fs::read_dir(path)?.flatten().map(|entry| entry.path()).pipe(Ok)
     }
 }
 
 impl FsWalkFiles for RealApi {
-    fn walk_files(path: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
-        // `flatten()` silently drops per-entry errors (matches pnpm's
-        // tinyglobby ENOENT-on-subtree behaviour); the top-level
-        // missing-dir case also flows through here as a single
-        // dropped `Err`, so a missing `bin_dir` produces an empty
-        // stream rather than an error.
-        Ok(walkdir::WalkDir::new(path)
+    fn walk_files(path: &Path) -> io::Result<impl Iterator<Item = PathBuf>> {
+        // `flatten()` silently drops per-entry errors and matches
+        // pnpm's `tinyglobby` ENOENT-on-subtree behaviour. The
+        // top-level missing-dir case also flows through here as a
+        // single dropped `Err`, so a missing `bin_dir` produces an
+        // empty stream rather than an error.
+        path.pipe(walkdir::WalkDir::new)
             .follow_links(false)
             .into_iter()
             .flatten()
             .filter(|entry| entry.file_type().is_file())
-            .map(|entry| entry.path().to_path_buf()))
+            .map(|entry| entry.path().to_path_buf())
+            .pipe(Ok)
     }
 }
 
@@ -177,32 +191,28 @@ impl FsWrite for RealApi {
     }
 }
 
+#[cfg(unix)]
 impl FsSetPermissions for RealApi {
     fn set_executable(path: &Path) -> io::Result<()> {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = path;
-            Ok(())
-        }
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
     }
 
     fn ensure_executable_bits(path: &Path) -> io::Result<()> {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let metadata = std::fs::metadata(path)?;
-            let mode = metadata.permissions().mode() | 0o111;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = path;
-            Ok(())
-        }
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = std::fs::metadata(path)?;
+        let mode = metadata.permissions().mode() | 0o111;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+    }
+}
+
+#[cfg(not(unix))]
+impl FsSetPermissions for RealApi {
+    fn set_executable(_path: &Path) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn ensure_executable_bits(_path: &Path) -> io::Result<()> {
+        Ok(())
     }
 }
