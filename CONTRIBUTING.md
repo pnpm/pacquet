@@ -36,12 +36,12 @@ See [`CODE_STYLE_GUIDE.md`](./CODE_STYLE_GUIDE.md). Formatting and lint-level ru
 
 Install these manually before running any of the commands below:
 
-- **Rust toolchain** — managed by [`rustup`](https://rustup.rs). The version is pinned in [`rust-toolchain.toml`](./rust-toolchain.toml); `rustup` reads it automatically when you run `cargo` inside the repo.
-- **[`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall)** — required by `just init` to fetch prebuilt binaries for the cargo-based tools listed below. Install with `cargo install cargo-binstall` or download a release binary from the project page.
-- **[`just`](https://just.systems)** — the task runner used throughout this guide. Install with `cargo install just`, `cargo binstall just`, or your system package manager.
-- **Node.js** — required by the mocked registry (`tasks/registry-mock/`), which runs `verdaccio` from npm. Any Node.js release supported by the pinned pnpm works.
-- **[`pnpm`](https://pnpm.io)** — used by `just install` to populate `tasks/registry-mock/node_modules/`. The version is pinned in [`package.json`](./package.json) (`devEngines.packageManager`); install via [Corepack](https://nodejs.org/api/corepack.html) or `npm install -g pnpm@<pinned-version>`.
-- **`git`** — the repo ships pre-push hooks under [`.githooks/`](./.githooks/) that `just install-hooks` activates.
+- **Rust toolchain.** Use [`rustup`](https://rustup.rs) to install it. The channel is pinned in [`rust-toolchain.toml`](./rust-toolchain.toml), and `rustup` reads that file automatically when you run `cargo` inside the repo.
+- **[`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall).** `just init` calls it to fetch prebuilt binaries for the cargo-based tools listed below. Install with `cargo install cargo-binstall` or download a release binary from the project page.
+- **[`just`](https://just.systems).** The task runner used throughout this guide. Install with `cargo install just`, `cargo binstall just`, or your system package manager.
+- **Node.js.** The mocked registry under `tasks/registry-mock/` runs `verdaccio` from npm and therefore needs a Node.js installation. Any release supported by the pinned `pnpm` works.
+- **[`pnpm`](https://pnpm.io).** `just install` uses it to populate `tasks/registry-mock/node_modules/`. The version is pinned in [`package.json`](./package.json) under `devEngines.packageManager`. Install it via [Corepack](https://nodejs.org/api/corepack.html) or `npm install -g pnpm@<pinned-version>`.
+- **`git`.** The repo ships pre-push hooks under [`.githooks/`](./.githooks/), and `just install-hooks` points `git` at that directory.
 
 ### Install
 
