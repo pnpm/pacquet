@@ -111,18 +111,25 @@ pub trait FsWrite {
     fn write(path: &Path, bytes: &[u8]) -> io::Result<()>;
 }
 
-/// Apply a unix mode to a path. Used to chmod shims and target
-/// binaries to `0o755` for executable-bit parity with pnpm. The mode
-/// argument is `u32` so callers can compute it (read metadata, OR in
-/// `0o111`, write back).
+/// Replace the permission bits at `path` with `0o755`. Used to chmod
+/// the freshly written shim file so it is executable.
 ///
-/// The trait methods are always present so callers don't have to
+/// The method is always present so callers don't have to
 /// `#[cfg(unix)]` every chmod call site. On Windows the production
-/// impl is a no-op (Windows has no equivalent permission concept),
-/// so the chmod path runs on every platform but only mutates state
-/// on Unix.
-pub trait FsSetPermissions {
+/// impl is a no-op (Windows has no equivalent permission concept).
+pub trait FsSetExecutable {
     fn set_executable(path: &Path) -> io::Result<()>;
+}
+
+/// Read the existing permission bits at `path`, OR in `0o111`, and
+/// write them back. Used to add the executable bits to the underlying
+/// target binary (mirrors pnpm's `fixBin`) without clobbering the
+/// existing read/write bits the way [`FsSetExecutable`] would.
+///
+/// The method is always present for the same reason as
+/// [`FsSetExecutable::set_executable`]; the production impl is a
+/// no-op on Windows.
+pub trait FsEnsureExecutableBits {
     fn ensure_executable_bits(path: &Path) -> io::Result<()>;
 }
 
@@ -192,12 +199,22 @@ impl FsWrite for RealApi {
 }
 
 #[cfg(unix)]
-impl FsSetPermissions for RealApi {
+impl FsSetExecutable for RealApi {
     fn set_executable(path: &Path) -> io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
     }
+}
 
+#[cfg(not(unix))]
+impl FsSetExecutable for RealApi {
+    fn set_executable(_path: &Path) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+impl FsEnsureExecutableBits for RealApi {
     fn ensure_executable_bits(path: &Path) -> io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
         let metadata = std::fs::metadata(path)?;
@@ -207,11 +224,7 @@ impl FsSetPermissions for RealApi {
 }
 
 #[cfg(not(unix))]
-impl FsSetPermissions for RealApi {
-    fn set_executable(_path: &Path) -> io::Result<()> {
-        Ok(())
-    }
-
+impl FsEnsureExecutableBits for RealApi {
     fn ensure_executable_bits(_path: &Path) -> io::Result<()> {
         Ok(())
     }

@@ -1,8 +1,8 @@
 use super::{LinkBinsError, PackageBinSource, link_bins, link_bins_of_packages};
 use crate::{
     capabilities::{
-        FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions,
-        FsWalkFiles, FsWrite, RealApi,
+        FsCreateDirAll, FsEnsureExecutableBits, FsReadDir, FsReadFile, FsReadHead, FsReadString,
+        FsSetExecutable, FsWalkFiles, FsWrite, RealApi,
     },
     shim::is_shim_pointing_at,
 };
@@ -316,10 +316,12 @@ fn link_bins_propagates_create_bin_dir_error_via_di() {
             unreachable!()
         }
     }
-    impl FsSetPermissions for FailingCreateDir {
+    impl FsSetExecutable for FailingCreateDir {
         fn set_executable(_: &Path) -> io::Result<()> {
             unreachable!()
         }
+    }
+    impl FsEnsureExecutableBits for FailingCreateDir {
         fn ensure_executable_bits(_: &Path) -> io::Result<()> {
             unreachable!()
         }
@@ -385,10 +387,12 @@ fn link_bins_propagates_write_shim_error_via_di() {
             Err(io::Error::from(io::ErrorKind::PermissionDenied))
         }
     }
-    impl FsSetPermissions for FailingWrite {
+    impl FsSetExecutable for FailingWrite {
         fn set_executable(_: &Path) -> io::Result<()> {
             unreachable!()
         }
+    }
+    impl FsEnsureExecutableBits for FailingWrite {
         fn ensure_executable_bits(_: &Path) -> io::Result<()> {
             unreachable!()
         }
@@ -450,10 +454,12 @@ fn link_bins_propagates_chmod_error_via_di() {
             Ok(())
         }
     }
-    impl FsSetPermissions for FailingChmod {
+    impl FsSetExecutable for FailingChmod {
         fn set_executable(_: &Path) -> io::Result<()> {
             Err(io::Error::from(io::ErrorKind::PermissionDenied))
         }
+    }
+    impl FsEnsureExecutableBits for FailingChmod {
         fn ensure_executable_bits(_: &Path) -> io::Result<()> {
             unreachable!()
         }
@@ -520,10 +526,12 @@ fn link_bins_propagates_target_chmod_error_via_di() {
             Ok(())
         }
     }
-    impl FsSetPermissions for FailingTargetChmod {
+    impl FsSetExecutable for FailingTargetChmod {
         fn set_executable(_: &Path) -> io::Result<()> {
             Ok(())
         }
+    }
+    impl FsEnsureExecutableBits for FailingTargetChmod {
         fn ensure_executable_bits(_: &Path) -> io::Result<()> {
             // The target chmod returns a non-`NotFound` error; the
             // implementation must surface it rather than silently
@@ -592,10 +600,12 @@ fn link_bins_swallows_target_chmod_not_found_via_di() {
             Ok(())
         }
     }
-    impl FsSetPermissions for NotFoundTargetChmod {
+    impl FsSetExecutable for NotFoundTargetChmod {
         fn set_executable(_: &Path) -> io::Result<()> {
             Ok(())
         }
+    }
+    impl FsEnsureExecutableBits for NotFoundTargetChmod {
         fn ensure_executable_bits(_: &Path) -> io::Result<()> {
             Err(io::Error::from(io::ErrorKind::NotFound))
         }
@@ -660,10 +670,12 @@ fn link_bins_propagates_probe_shim_source_error_via_di() {
             unreachable!()
         }
     }
-    impl FsSetPermissions for FailingProbe {
+    impl FsSetExecutable for FailingProbe {
         fn set_executable(_: &Path) -> io::Result<()> {
             unreachable!()
         }
+    }
+    impl FsEnsureExecutableBits for FailingProbe {
         fn ensure_executable_bits(_: &Path) -> io::Result<()> {
             unreachable!()
         }
@@ -727,10 +739,12 @@ fn link_bins_propagates_read_manifest_error_via_di() {
             unreachable!()
         }
     }
-    impl FsSetPermissions for DenyManifestRead {
+    impl FsSetExecutable for DenyManifestRead {
         fn set_executable(_: &Path) -> io::Result<()> {
             unreachable!()
         }
+    }
+    impl FsEnsureExecutableBits for DenyManifestRead {
         fn ensure_executable_bits(_: &Path) -> io::Result<()> {
             unreachable!()
         }
@@ -835,10 +849,12 @@ fn link_bins_propagates_modules_dir_read_error_via_di() {
             unreachable!()
         }
     }
-    impl FsSetPermissions for FailingModulesRead {
+    impl FsSetExecutable for FailingModulesRead {
         fn set_executable(_: &Path) -> io::Result<()> {
             unreachable!()
         }
+    }
+    impl FsEnsureExecutableBits for FailingModulesRead {
         fn ensure_executable_bits(_: &Path) -> io::Result<()> {
             unreachable!()
         }

@@ -288,8 +288,8 @@ fn link_direct_dep_bins_skips_dep_with_missing_manifest() {
 #[test]
 fn link_virtual_store_bins_propagates_read_error_via_di() {
     use pacquet_cmd_shim::{
-        FsCreateDirAll, FsReadDir, FsReadFile, FsReadHead, FsReadString, FsSetPermissions,
-        FsWalkFiles, FsWrite,
+        FsCreateDirAll, FsEnsureExecutableBits, FsReadDir, FsReadFile, FsReadHead, FsReadString,
+        FsSetExecutable, FsWalkFiles, FsWrite,
     };
     use std::io;
 
@@ -326,10 +326,12 @@ fn link_virtual_store_bins_propagates_read_error_via_di() {
             unreachable!()
         }
     }
-    impl FsSetPermissions for DenyVirtualStore {
+    impl FsSetExecutable for DenyVirtualStore {
         fn set_executable(_: &Path) -> io::Result<()> {
             unreachable!()
         }
+    }
+    impl FsEnsureExecutableBits for DenyVirtualStore {
         fn ensure_executable_bits(_: &Path) -> io::Result<()> {
             unreachable!()
         }
