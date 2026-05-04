@@ -117,7 +117,7 @@ fn link_bins_walks_modules_and_scopes() {
     )
     .unwrap();
     fs::write(modules.join("@s/bar/b.js"), "#!/usr/bin/env node\n").unwrap();
-    // Non-package directory (no package.json) — must be ignored, not error.
+    // Non-package directory (no package.json) must be ignored, not error.
     fs::create_dir_all(modules.join("not-a-package")).unwrap();
 
     let bins = modules.join(".bin");
@@ -139,8 +139,8 @@ fn link_bins_handles_missing_modules_dir() {
     assert!(!bins_dir.exists(), "no shims means no bin dir created");
 }
 
-/// [`link_bins_of_packages`] with no bins to link is a complete no-op —
-/// it must not even create the bins directory. The empty-`chosen`
+/// [`link_bins_of_packages`] with no bins to link is a complete no-op.
+/// It must not even create the bins directory. The empty-`chosen`
 /// short-circuit guards a slot whose children have no bin field.
 #[test]
 fn link_bins_of_packages_no_op_when_no_bins() {
@@ -237,7 +237,7 @@ fn link_bins_skips_existing_shim_with_matching_marker() {
     let bins = modules.join(".bin");
     link_bins::<RealApi>(&modules, &bins).unwrap();
     let original = fs::read_to_string(bins.join("foo")).unwrap();
-    // Append a sentinel — if the second pass rewrites the shim, the
+    // Append a sentinel. If the second pass rewrites the shim, the
     // sentinel disappears.
     let sentinel = format!("{original}\n# SENTINEL");
     fs::write(bins.join("foo"), &sentinel).unwrap();
@@ -246,10 +246,10 @@ fn link_bins_skips_existing_shim_with_matching_marker() {
     assert_eq!(fs::read_to_string(bins.join("foo")).unwrap(), sentinel);
 }
 
-/// [`link_bins`] must NOT skip when only the canonical `.sh` shim exists
-/// — the `.cmd` and `.ps1` siblings could be missing because an older
-/// pacquet wrote `.sh`-only or a partial-write crash interrupted the
-/// writer mid-batch. Gating on the `.sh` marker alone (an earlier
+/// [`link_bins`] must NOT skip when only the canonical `.sh` shim exists.
+/// The `.cmd` and `.ps1` siblings could be missing because an older
+/// pacquet wrote `.sh`-only or because a partial-write crash interrupted
+/// the writer mid-batch. Gating on the `.sh` marker alone (an earlier
 /// version of [`super::write_shim`]) caused those upgrade paths to leave
 /// the missing siblings permanently absent.
 #[test]
@@ -284,6 +284,7 @@ fn link_bins_rewrites_when_only_sh_flavor_exists() {
 #[test]
 fn link_bins_propagates_create_bin_dir_error_via_di() {
     use std::io;
+
     struct FailingCreateDir;
     impl FsReadDir for FailingCreateDir {
         fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
@@ -350,6 +351,7 @@ fn link_bins_propagates_create_bin_dir_error_via_di() {
 #[test]
 fn link_bins_propagates_write_shim_error_via_di() {
     use std::io;
+
     struct FailingWrite;
     impl FsReadDir for FailingWrite {
         fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
@@ -363,7 +365,7 @@ fn link_bins_propagates_write_shim_error_via_di() {
     }
     impl FsReadString for FailingWrite {
         fn read_to_string(_: &Path) -> io::Result<String> {
-            // Pretend no existing shim — forces the writer path.
+            // Pretend no existing shim, forcing the writer path.
             Err(io::Error::from(io::ErrorKind::NotFound))
         }
     }
@@ -416,6 +418,7 @@ fn link_bins_propagates_write_shim_error_via_di() {
 #[test]
 fn link_bins_propagates_chmod_error_via_di() {
     use std::io;
+
     struct FailingChmod;
     impl FsReadDir for FailingChmod {
         fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
@@ -478,13 +481,14 @@ fn link_bins_propagates_chmod_error_via_di() {
 
 /// [`super::write_shim`] propagates a non-`NotFound` IO error from
 /// [`FsSetPermissions::ensure_executable_bits`] (chmod on the *target*
-/// binary, not the shim). `NotFound` is swallowed by design — the
-/// target may have been removed concurrently — but `PermissionDenied`
-/// and friends must surface as [`LinkBinsError::Chmod`]. Pins the
-/// guard added in this PR (review finding #4).
+/// binary, not the shim). `NotFound` is swallowed by design, since the
+/// target may have been removed concurrently. `PermissionDenied`
+/// and friends must instead surface as [`LinkBinsError::Chmod`]. Pins
+/// the guard added in this PR (review finding #4).
 #[test]
 fn link_bins_propagates_target_chmod_error_via_di() {
     use std::io;
+
     struct FailingTargetChmod;
     impl FsReadDir for FailingTargetChmod {
         fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
@@ -556,6 +560,7 @@ fn link_bins_propagates_target_chmod_error_via_di() {
 #[test]
 fn link_bins_swallows_target_chmod_not_found_via_di() {
     use std::io;
+
     struct NotFoundTargetChmod;
     impl FsReadDir for NotFoundTargetChmod {
         fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
@@ -618,11 +623,12 @@ fn link_bins_swallows_target_chmod_not_found_via_di() {
 /// [`link_bins_of_packages`] propagates a non-`NotFound` IO error from
 /// [`search_script_runtime`] (the [`LinkBinsError::ProbeShimSource`]
 /// variant). Forced via a fake [`FsReadHead`] that fails with
-/// permission-denied — the wider [`super::write_shim`] →
+/// permission-denied. The wider [`super::write_shim`] →
 /// [`search_script_runtime`] chain remains unchanged.
 #[test]
 fn link_bins_propagates_probe_shim_source_error_via_di() {
     use std::io;
+
     struct FailingProbe;
     impl FsReadDir for FailingProbe {
         fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
@@ -689,6 +695,7 @@ fn link_bins_propagates_probe_shim_source_error_via_di() {
 #[test]
 fn link_bins_propagates_read_manifest_error_via_di() {
     use std::io;
+
     struct DenyManifestRead;
     impl FsReadDir for DenyManifestRead {
         fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
@@ -741,8 +748,8 @@ fn link_bins_propagates_read_manifest_error_via_di() {
     assert!(matches!(err, LinkBinsError::ReadManifest { .. }));
 }
 
-/// [`super::pick_winner`] `(true, false)` arm — existing owns, candidate
-/// doesn't → existing wins. The other arm (`(false, true)`) is
+/// [`super::pick_winner`] `(true, false)` arm. Existing owns, candidate
+/// doesn't, so existing wins. The other arm (`(false, true)`) is
 /// covered by `ownership_breaks_bin_conflicts` further down.
 ///
 /// Uses `aaa-other` (lexically less than `npm`) as the non-owner so
@@ -794,6 +801,7 @@ fn ownership_breaks_bin_conflicts_when_existing_owns() {
 #[test]
 fn link_bins_propagates_modules_dir_read_error_via_di() {
     use std::io;
+
     struct FailingModulesRead;
     impl FsReadDir for FailingModulesRead {
         fn read_dir(_: &Path) -> io::Result<impl Iterator<Item = std::path::PathBuf>> {
