@@ -121,6 +121,13 @@ jobs:
       - name: Build the benchmark executor
         run: cargo build --bin=integrated-benchmark
 
+      # `continue-on-error: true` is set on the benchmark steps below because
+      # hyperfine's post-run cleanup (removing the per-revision `node_modules`
+      # and store between iterations) regularly overruns the step timeout even
+      # when the timed runs themselves succeeded. Letting the step fail would
+      # abort the whole workflow and lose the partial results we already have,
+      # so we tolerate the failure here and surface it from the summary step
+      # by checking whether the report files were produced.
       - name: 'Benchmark: Frozen Lockfile'
         shell: bash
         timeout-minutes: 20
@@ -149,32 +156,44 @@ jobs:
       - name: Generate summary
         shell: bash
         run: |
+          # Render one scenario into the summary. If hyperfine failed (or
+          # was killed by the step timeout) the report files won't exist;
+          # in that case emit a `::error::` annotation (to stderr, so it
+          # surfaces in the GHA UI and isn't swallowed by the SUMMARY.md
+          # redirect below) and write a notice into the summary instead
+          # of aborting on a missing file.
+          render_scenario() {
+            local title="$1"
+            local report_md="bench-work-env/BENCHMARK_REPORT_$2.md"
+            local report_json="bench-work-env/BENCHMARK_REPORT_$2.json"
+
+            echo "### Scenario: ${title}"
+            echo
+
+            if [[ ! -f "${report_md}" || ! -f "${report_json}" ]]; then
+              echo "::error::Benchmark scenario '${title}' produced no report (expected ${report_md} and ${report_json}). The benchmark step likely timed out or failed." >&2
+              echo "> :warning: Benchmark scenario \`${title}\` produced no report — the benchmark step likely timed out or failed. See the workflow logs."
+              echo
+              return
+            fi
+
+            cat "${report_md}"
+            echo
+            echo '<details><summary>BENCHMARK_REPORT.json</summary>'
+            echo
+            echo '```json'
+            jq 'del(.results[].exit_codes)' "${report_json}"
+            echo '```'
+            echo
+            echo '</details>'
+          }
+
           (
             echo '## Integrated-Benchmark Report (${{ runner.os }})'
             echo
-            echo '### Scenario: Frozen Lockfile'
+            render_scenario 'Frozen Lockfile' FROZEN_LOCKFILE
             echo
-            cat bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.md
-            echo
-            echo '<details><summary>BENCHMARK_REPORT.json</summary>'
-            echo
-            echo '```json'
-            jq 'del(.results[].exit_codes)' bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE.json
-            echo '```'
-            echo
-            echo '</details>'
-            echo
-            echo '### Scenario: Frozen Lockfile (Hot Cache)'
-            echo
-            cat bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE_HOT_CACHE.md
-            echo
-            echo '<details><summary>BENCHMARK_REPORT.json</summary>'
-            echo
-            echo '```json'
-            jq 'del(.results[].exit_codes)' bench-work-env/BENCHMARK_REPORT_FROZEN_LOCKFILE_HOT_CACHE.json
-            echo '```'
-            echo
-            echo '</details>'
+            render_scenario 'Frozen Lockfile (Hot Cache)' FROZEN_LOCKFILE_HOT_CACHE
             # echo
             # echo '### Scenario: Clean Install'
             # echo
