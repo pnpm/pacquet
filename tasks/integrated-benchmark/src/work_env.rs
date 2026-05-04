@@ -210,35 +210,22 @@ impl WorkEnv {
             }
         }
 
-        // hyperfine runs `--prepare` before *each* timed invocation, so
-        // each command needs its own cleanup that wipes only that
-        // command's bench dir. A single `--prepare` shared across
-        // commands would `rm -rf` every revision's `node_modules` and
-        // `store-dir` before every iteration of every command — which
-        // means transitioning from one command to the next pays a
-        // full-install-sized `rm -rf` of the previous command's freshly
-        // populated tree (~40k+ files on the 1352-snapshot fixture)
-        // before the next command's first warmup. On a slow CI runner
-        // that can push the step over its timeout even though the
-        // timed runs themselves succeeded.
+        // Hyperfine pairs repeated `--prepare` flags 1:1 with the
+        // positional commands, so each benchmark command gets its
+        // own `rm -rf` scoped to that command's bench dir. A single
+        // shared `--prepare` would wipe every revision's
+        // `node_modules` and `store-dir` before every iteration,
+        // making each transition between commands pay a full
+        // install's worth of `rm -rf` on the previous command's
+        // freshly populated tree before the next command's first
+        // warmup. On a slow CI runner that overhead can push the
+        // step over its timeout even when the timed runs themselves
+        // succeeded.
         //
-        // Hyperfine 1.18 pairs repeated `--prepare` flags 1:1 with the
-        // positional commands (`hyperfine --prepare A --prepare B cmd1
-        // cmd2` runs `A` before `cmd1` and `B` before `cmd2`), so we
-        // emit one `--prepare` per command, each scoped to that
-        // command's own bench dir.
-        //
-        // The earlier shared-prepare design existed to cover pnpm —
-        // when `--with-pnpm` was set, pnpm's `node_modules` survived
-        // between iterations and the warmup hit a no-op "already
-        // installed" path instead of doing real work. Per-command
-        // `--prepare` covers pnpm just as well, since pnpm's prepare
-        // wipes pnpm's own dirs.
-        //
-        // Per-iteration cleanup paths come from the scenario: cold-cache
-        // scenarios wipe `node_modules` and `store-dir`, hot-cache wipes
-        // only `node_modules` so the warmup-populated store survives
-        // into the timed runs.
+        // Per-iteration cleanup paths come from the scenario.
+        // Cold-cache scenarios wipe `node_modules` and `store-dir`.
+        // Hot-cache wipes only `node_modules` so the warmup-populated
+        // store survives into the timed runs.
         let cleanup_paths = self.scenario.cleanup_paths();
 
         let mut command = Command::new("hyperfine");
