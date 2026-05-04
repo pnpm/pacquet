@@ -14,7 +14,7 @@ use std::{
 /// and link its bins into `<modules_dir>/.bin`.
 ///
 /// `dep_names` is the list of direct-dependency keys as they appear in
-/// `package.json` — the same names already symlinked under `<modules_dir>/`
+/// `package.json`, the same names already symlinked under `<modules_dir>/`
 /// by [`crate::SymlinkDirectDependencies`]. We resolve `package.json` via
 /// the symlink (`fs::read` follows it transparently) so the read targets
 /// the real package contents in the virtual store.
@@ -121,9 +121,9 @@ impl<'a> LinkVirtualStoreBins<'a> {
         // own `<pkg>/node_modules/.bin` directory and reads only the slot's
         // own children. With ~1300 slots in a real lockfile (the integrated
         // benchmark fixture), the serial loop was the dominant chunk of
-        // the bin-linking pass — driving it on rayon brings that cost down
+        // the bin-linking pass. Driving it on rayon brings that cost down
         // to roughly `total_work / num_cpus`. `Api::read_dir` is now a
-        // streaming iterator; rayon needs a slice to split work, so we
+        // streaming iterator and rayon needs a slice to split work, so we
         // collect just here, at the call site that actually needs it.
         let slots: Vec<PathBuf> = slots.collect();
         slots.par_iter().try_for_each(|slot_dir| {
@@ -138,7 +138,7 @@ impl<'a> LinkVirtualStoreBins<'a> {
             // at `<slot>/node_modules/<pkg>` (see
             // `create_virtual_dir_by_snapshot.rs`), the bin output dir is
             // `<slot>/node_modules/<pkg>/node_modules/.bin`. There's
-            // exactly one such candidate per slot — the others are
+            // exactly one such candidate per slot. The others are
             // `node_modules/<dep>` symlinks pointing at sibling slots.
             let Some(self_pkg_dir) = find_slot_own_package_dir(slot_dir, &modules_dir) else {
                 return Ok(());
@@ -161,7 +161,7 @@ impl<'a> LinkVirtualStoreBins<'a> {
 /// [`pacquet_lockfile::PkgNameVerPeer::to_virtual_store_name`]). For
 /// peer-resolved slots the version segment itself contains additional
 /// `@`-separated peer specs joined by `_`, e.g.
-/// `ts-node@10.9.1_@types+node@18.7.19_typescript@5.1.6` — the `@` after
+/// `ts-node@10.9.1_@types+node@18.7.19_typescript@5.1.6`. The `@` after
 /// `typescript` is part of a peer's version, not the package-name
 /// boundary. Parsing from the right (`rfind('@')`) would split there
 /// and silently break peer-resolved slots; parse from the left
@@ -269,7 +269,7 @@ fn read_package<Api: FsReadFile>(
 }
 
 fn paths_eq(a: &Path, b: &Path) -> bool {
-    // Lexical comparison is enough — both paths come from the same
+    // Lexical comparison is enough; both paths come from the same
     // `node_modules` walk and don't go through canonicalisation.
     a == b
 }
