@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: true # Pull submodules for `cargo coverage`
 
@@ -91,7 +91,7 @@ jobs:
     needs: coverage
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download coverage file
         uses: actions/download-artifact@v8

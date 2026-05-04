@@ -28,7 +28,7 @@ jobs:
           - os: macos-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust Toolchain
         uses: ./.github/actions/rustup
@@ -85,7 +85,7 @@ jobs:
     name: Doc
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust Toolchain
         uses: ./.github/actions/rustup
@@ -104,7 +104,7 @@ jobs:
     name: Spell Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: crate-ci/typos@v1.16.22
         with:
@@ -114,7 +114,7 @@ jobs:
     name: Cargo Deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dorny/paths-filter@v2
         id: filter
@@ -135,7 +135,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: ./.github/actions/rustup
