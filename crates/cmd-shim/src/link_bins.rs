@@ -134,9 +134,9 @@ where
         }
 
         if name_str.starts_with('@') {
-            // Scoped: walk one level deeper. Use `flatten` semantics —
-            // missing-or-unreadable scope dirs are silently skipped, same
-            // as the previous `let Ok(...) else continue` shape.
+            // Scoped: walk one level deeper. Missing or unreadable scope
+            // dirs are silently skipped, same as the previous
+            // `let Ok(...) else continue` shape.
             let Ok(scope_entries) = Api::read_dir(&path) else {
                 continue;
             };
@@ -220,9 +220,9 @@ where
         .map_err(|error| LinkBinsError::CreateBinDir { dir: bins_dir.to_path_buf(), error })?;
 
     // Each shim's read-shebang + write-file + chmod sequence is independent
-    // across bin names — no shared state — so drive them on rayon. The hot
-    // path is per-package-bin; without parallelism the per-shim file I/O
-    // serialised across the whole `chosen` map.
+    // across bin names. There is no shared state, so drive them on rayon.
+    // The hot path is per-package-bin; without parallelism the per-shim
+    // file I/O serialised across the whole `chosen` map.
     chosen.par_iter().try_for_each(|(bin_name, (command, _pkg))| {
         write_shim::<Api>(&command.path, &bins_dir.join(bin_name))
     })?;
@@ -270,10 +270,11 @@ where
     // Idempotent skip only fires when **all three** flavors are already
     // present and the canonical `.sh` shim points at the right target.
     // Gating on the `.sh` flavor alone (an earlier version of this code)
-    // left the upgrade path broken: if a previous install — older
-    // pacquet, partial-write crash — wrote `.sh` correctly but never
-    // wrote `.cmd`/`.ps1`, the marker check would short-circuit and
-    // the missing siblings would never be repaired.
+    // left the upgrade path broken: a previous install (e.g. older
+    // pacquet, partial-write crash) might have written `.sh` correctly
+    // but never written `.cmd`/`.ps1`, in which case the marker check
+    // would short-circuit and the missing siblings would never be
+    // repaired.
     let sh_marker_ok = matches!(
         Api::read_to_string(shim_path),
         Ok(existing) if is_shim_pointing_at(&existing, target_path),
@@ -295,15 +296,16 @@ where
         .map_err(|error| LinkBinsError::Chmod { path: shim_path.to_path_buf(), error })?;
     // Make the underlying script executable too. pnpm calls
     // `fixBin(cmd.path, 0o755)` to do this; we apply the same minimum
-    // mode without rewriting CRLF shebangs (a feature pnpm inherits from
-    // npm's `bin-links/lib/fix-bin.js`). Targets shipped by npm already
-    // use LF in practice, so the simpler chmod-only path is enough for
-    // the install tests this PR ports. `NotFound` is swallowed because
-    // the target may legitimately have been removed by an unrelated
-    // process between extraction and shim linking; everything else
-    // (`PermissionDenied`, `EROFS`, AppArmor deny, foreign uid)
-    // surfaces as `LinkBinsError::Chmod` so real failures don't
-    // disappear silently. Mirrors pnpm's `fixBin` ENOENT guard.
+    // mode without rewriting CRLF shebangs (a feature pnpm inherits
+    // from npm's `bin-links/lib/fix-bin.js`). Targets shipped by npm
+    // already use LF in practice, so the simpler chmod-only path is
+    // enough for the install tests this PR ports. `NotFound` is
+    // swallowed because the target may legitimately have been
+    // removed by an unrelated process between extraction and shim
+    // linking. Everything else (`PermissionDenied`, `EROFS`,
+    // AppArmor deny, foreign uid) surfaces as `LinkBinsError::Chmod`
+    // so real failures don't disappear silently. Mirrors pnpm's
+    // `fixBin` ENOENT guard.
     match Api::ensure_executable_bits(target_path) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -315,11 +317,11 @@ where
     Ok(())
 }
 
-/// Append `<ext>` to `path` as a *new* extension segment (`foo` →
+/// Append `<ext>` to `path` as a *new* extension segment (`foo` becomes
 /// `foo.cmd`), regardless of any existing extension. `Path::with_extension`
-/// would *replace* the existing extension, which is wrong for our case —
-/// the bin name `tsc` keeps its own `tsc` and gains a sibling `tsc.cmd`,
-/// not turn into `tsc.cmd` losing the original `.sh` flavor.
+/// would *replace* the existing extension, which is wrong for our case.
+/// The bin name `tsc` keeps its own `tsc` and gains a sibling `tsc.cmd`,
+/// rather than turning into `tsc.cmd` and losing the original `.sh` flavor.
 fn with_extension_appended(path: &Path, ext: &str) -> std::path::PathBuf {
     let mut result = path.as_os_str().to_owned();
     result.push(".");
