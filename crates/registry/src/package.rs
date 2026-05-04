@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use pacquet_network::ThrottledClient;
+use pacquet_network::{AuthHeaders, ThrottledClient};
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 
@@ -31,17 +31,22 @@ impl Package {
         name: &str,
         http_client: &ThrottledClient,
         registry: &str,
+        auth_headers: &AuthHeaders,
     ) -> Result<Self, RegistryError> {
         let url = || format!("{registry}{name}"); // TODO: use reqwest URL directly
         let network_error = |error| NetworkError { error, url: url() };
-        http_client
-            .acquire()
-            .await
-            .get(url())
-            .header(
-                "accept",
-                "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-            )
+        let mut request = http_client.acquire().await.get(url()).header(
+            "accept",
+            "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+        );
+        // Mirrors `fetchMetadataFromFromRegistry` in pnpm v11's
+        // [`resolving/npm-resolver/src/fetch.ts`](https://github.com/pnpm/pnpm/blob/601317e7a3/resolving/npm-resolver/src/fetch.ts):
+        // resolve the per-URL `Authorization` value before issuing the
+        // request and attach it when present.
+        if let Some(value) = auth_headers.for_url(&url()) {
+            request = request.header("authorization", value);
+        }
+        request
             .send()
             .await
             .map_err(network_error)?

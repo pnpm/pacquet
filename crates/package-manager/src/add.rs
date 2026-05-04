@@ -63,6 +63,7 @@ where
             PackageTag::Latest, // TODO: add support for specifying tags
             http_client,
             &config.registry,
+            &config.auth_headers,
         )
         .await
         .expect("resolve latest tag"); // TODO: properly propagate this error

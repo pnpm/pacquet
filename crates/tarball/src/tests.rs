@@ -3,7 +3,7 @@ use super::{
     TarballError, VerifyChecksumError, allocate_tarball_buffer, extract_tarball_entries,
     fetch_and_extract_with_retry, is_transient_error, prefetch_cas_paths,
 };
-use pacquet_network::ThrottledClient;
+use pacquet_network::{AuthHeaders, ThrottledClient};
 use pacquet_reporter::SilentReporter;
 use pacquet_store_dir::{
     CafsFileInfo, PackageFilesIndex, SharedVerifiedFilesCache, StoreDir, StoreIndex,
@@ -175,6 +175,7 @@ async fn packages_under_orgs_should_work() {
         prefetched_cas_paths: None,
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -222,6 +223,7 @@ async fn should_throw_error_on_checksum_mismatch() {
         prefetched_cas_paths: None,
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -296,6 +298,7 @@ async fn reuses_cached_cas_paths_when_index_entry_is_live() {
         prefetched_cas_paths: None,
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -354,6 +357,7 @@ async fn reuses_prefetched_cas_paths_when_provided() {
         prefetched_cas_paths: Some(&prefetched),
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -580,6 +584,7 @@ async fn falls_through_when_cafs_file_missing() {
         prefetched_cas_paths: None,
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -638,6 +643,7 @@ async fn falls_through_when_digest_is_malformed() {
         prefetched_cas_paths: None,
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -699,6 +705,7 @@ async fn falls_through_when_cafs_path_is_a_directory() {
         prefetched_cas_paths: None,
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -770,6 +777,7 @@ async fn falls_through_when_cafs_path_is_a_symlink() {
         prefetched_cas_paths: None,
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -987,6 +995,7 @@ async fn retries_then_succeeds_on_transient_5xx() {
         "",
         store_path,
         fast_retry_opts(),
+        &AuthHeaders::default(),
     )
     .await
     .expect("transient 503 should be followed by a successful retry");
@@ -1033,6 +1042,7 @@ async fn retries_integrity_mismatch_until_exhausted() {
         "",
         store_path,
         fast_retry_opts(),
+        &AuthHeaders::default(),
     )
     .await
     .expect_err("integrity mismatch should exhaust the retry budget");
@@ -1063,6 +1073,7 @@ async fn fails_fast_on_404() {
         "",
         store_path,
         fast_retry_opts(),
+        &AuthHeaders::default(),
     )
     .await
     .expect_err("404 must fail-fast without retry");
@@ -1102,6 +1113,7 @@ async fn retries_other_4xx_codes() {
         "",
         store_path,
         fast_retry_opts(),
+        &AuthHeaders::default(),
     )
     .await
     .expect_err("non-401/403/404 4xx should exhaust the retry budget");
@@ -1135,6 +1147,7 @@ async fn retry_exhaustion_returns_last_error() {
         "",
         store_path,
         fast_retry_opts(),
+        &AuthHeaders::default(),
     )
     .await
     .expect_err("permanent 500s should exhaust the retry budget");
@@ -1241,6 +1254,8 @@ fn run_with_mem_cache_does_not_deadlock_on_dashmap_shard_contention() {
                 let url1: &'static str = Box::leak(url1.into_boxed_str());
                 let url2: &'static str = Box::leak(url2.into_boxed_str());
 
+                let auth_headers: &'static AuthHeaders =
+                    Box::leak(Box::new(AuthHeaders::default()));
                 let make_dts = |url: &'static str| DownloadTarballToStore {
                     http_client: client,
                     store_dir: store_path,
@@ -1255,6 +1270,7 @@ fn run_with_mem_cache_does_not_deadlock_on_dashmap_shard_contention() {
                     prefetched_cas_paths: None,
                     verified_files_cache: SharedVerifiedFilesCache::default(),
                     retry_opts: RetryOpts { retries: 0, ..RetryOpts::default() },
+                    auth_headers,
                 };
 
                 // Spawn each task and yield once before the next so the
@@ -1322,9 +1338,56 @@ async fn zero_retries_makes_a_single_attempt() {
         "",
         store_path,
         opts,
+        &AuthHeaders::default(),
     )
     .await
     .expect_err("retries=0 must surface the first failure");
+    mock.assert_async().await;
+    drop(store_dir_keep);
+}
+
+/// When [`AuthHeaders`] resolves a credential for the tarball URL,
+/// the GET request must carry the `Authorization` header — including
+/// for tarball hosts that differ from the metadata host.
+/// `mockito::Matcher::Exact` rejects the request unless the header
+/// matches verbatim, so a missing or wrong header would 501 the
+/// request and fail the integrity check downstream.
+#[tokio::test]
+async fn fetch_attaches_authorization_header_when_creds_match_tarball_url() {
+    let (store_dir_keep, store_path) = tempdir_with_leaked_path();
+    let mut server = mockito::Server::new_async().await;
+    let mock = server
+        .mock("GET", "/pkg.tgz")
+        .match_header("authorization", "Bearer test-token")
+        .with_status(200)
+        .with_body(FASTIFY_ERROR_TARBALL)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let url = format!("{}/pkg.tgz", server.url());
+    let client = ThrottledClient::default();
+    let pkg_integrity = integrity(FASTIFY_ERROR_INTEGRITY);
+    let auth_headers = AuthHeaders::from_creds_map(
+        [(pacquet_network::nerf_dart(&url), "Bearer test-token".to_owned())],
+        None,
+    );
+
+    let (cas_paths, _idx) = fetch_and_extract_with_retry::<SilentReporter>(
+        &client,
+        &url,
+        &pkg_integrity,
+        None,
+        "test-pkg",
+        "",
+        store_path,
+        fast_retry_opts(),
+        &auth_headers,
+    )
+    .await
+    .expect("server should accept the request once the bearer header is attached");
+
+    assert!(cas_paths.contains_key("package.json"));
     mock.assert_async().await;
     drop(store_dir_keep);
 }
@@ -1391,6 +1454,7 @@ async fn mem_cache_hit_emits_found_in_store_for_second_requester() {
         requester: "/proj",
         prefetched_cas_paths: None,
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_with_mem_cache::<RecordingReporter>(&mem_cache)
     .await
@@ -1416,6 +1480,7 @@ async fn mem_cache_hit_emits_found_in_store_for_second_requester() {
         requester: "/proj",
         prefetched_cas_paths: None,
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_with_mem_cache::<RecordingReporter>(&mem_cache)
     .await
@@ -1487,6 +1552,7 @@ async fn run_with_mem_cache_recovers_from_owning_fetch_error() {
     let pkg_integrity: &'static Integrity = Box::leak(Box::new(integrity(FASTIFY_ERROR_INTEGRITY)));
     let url: &'static str = Box::leak(url.into_boxed_str());
     let mem_cache: &'static MemCache = Box::leak(Box::new(MemCache::default()));
+    let auth_headers: &'static AuthHeaders = Box::leak(Box::<AuthHeaders>::default());
 
     let make_dts = || DownloadTarballToStore {
         http_client: client,
@@ -1502,6 +1568,7 @@ async fn run_with_mem_cache_recovers_from_owning_fetch_error() {
         requester: "/proj",
         prefetched_cas_paths: None,
         retry_opts: test_retry_opts(),
+        auth_headers,
     };
 
     // Drive both calls concurrently. Pre-fix: the first to hit the
@@ -1599,6 +1666,7 @@ async fn fetching_progress_and_fetched_events_fire_during_download() {
         "",
         store_path,
         fast_retry_opts(),
+        &AuthHeaders::default(),
     )
     .await
     .expect("transient 503 should be followed by a successful retry");
@@ -1687,6 +1755,7 @@ async fn started_fires_for_connection_level_failures() {
         "/proj",
         store_path,
         RetryOpts { retries: 0, ..fast_retry_opts() },
+        &AuthHeaders::default(),
     )
     .await
     .expect_err("connect-refused must surface as a TarballError");
@@ -1775,6 +1844,7 @@ async fn found_in_store_event_fires_on_cache_hit() {
         requester: "/proj",
         prefetched_cas_paths: None,
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -1810,6 +1880,7 @@ async fn found_in_store_event_fires_on_cache_hit() {
         requester: "/proj",
         prefetched_cas_paths: None,
         retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
     }
     .run_without_mem_cache::<RecordingReporter>()
     .await

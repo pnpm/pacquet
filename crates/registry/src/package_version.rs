@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use pacquet_network::ThrottledClient;
+use pacquet_network::{AuthHeaders, ThrottledClient};
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 
@@ -29,18 +29,21 @@ impl PackageVersion {
         tag: PackageTag,
         http_client: &ThrottledClient,
         registry: &str,
+        auth_headers: &AuthHeaders,
     ) -> Result<Self, RegistryError> {
         let url = || format!("{registry}{name}/{tag}");
         let network_error = |error| NetworkError { error, url: url() };
 
-        http_client
-            .acquire()
-            .await
-            .get(url())
-            .header(
-                "accept",
-                "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-            )
+        let mut request = http_client.acquire().await.get(url()).header(
+            "accept",
+            "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+        );
+        // Same auth flow as `Package::fetch_from_registry` — see the
+        // doc comment there.
+        if let Some(value) = auth_headers.for_url(&url()) {
+            request = request.header("authorization", value);
+        }
+        request
             .send()
             .await
             .map_err(network_error)?
@@ -78,5 +81,55 @@ impl PackageVersion {
     pub fn serialize(&self, save_exact: bool) -> String {
         let prefix = if save_exact { "" } else { "^" };
         format!("{0}{1}", prefix, self.version)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AuthHeaders, PackageTag, PackageVersion, ThrottledClient};
+
+    /// [`PackageVersion::fetch_from_registry`] must attach the
+    /// registry-keyed `Authorization` header on every tag GET, just
+    /// like [`crate::Package::fetch_from_registry`].
+    #[tokio::test]
+    async fn fetch_from_registry_attaches_authorization_header() {
+        let mut server = mockito::Server::new_async().await;
+        let body = r#"{
+            "name": "acme",
+            "version": "1.0.0",
+            "dist": {
+                "integrity": "sha512-AAAA",
+                "shasum": "0000000000000000000000000000000000000000",
+                "tarball": "https://registry.test/acme-1.0.0.tgz"
+            }
+        }"#;
+        let mock = server
+            .mock("GET", "/acme/latest")
+            .match_header("authorization", "Bearer top-secret")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let registry = format!("{}/", server.url());
+        let client = ThrottledClient::default();
+        let auth_headers = AuthHeaders::from_creds_map(
+            [(pacquet_network::nerf_dart(&registry), "Bearer top-secret".to_owned())],
+            None,
+        );
+
+        let pkg_version = PackageVersion::fetch_from_registry(
+            "acme",
+            PackageTag::Latest,
+            &client,
+            &registry,
+            &auth_headers,
+        )
+        .await
+        .expect("server should accept the request once the bearer header is attached");
+        assert_eq!(pkg_version.name, "acme");
+        mock.assert_async().await;
     }
 }

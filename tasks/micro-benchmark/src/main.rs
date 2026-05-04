@@ -3,7 +3,7 @@ use std::{fs, path::Path};
 use clap::Parser;
 use criterion::{Criterion, Throughput};
 use mockito::ServerGuard;
-use pacquet_network::ThrottledClient;
+use pacquet_network::{AuthHeaders, ThrottledClient};
 use pacquet_store_dir::StoreDir;
 use pacquet_tarball::{DownloadTarballToStore, RetryOpts};
 use pipe_trait::Pipe;
@@ -50,6 +50,7 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
                 requester: "",
                 prefetched_cas_paths: None,
                 retry_opts: RetryOpts::default(),
+                auth_headers: &AuthHeaders::default(),
             }
             .run_without_mem_cache::<pacquet_reporter::SilentReporter>()
             .await

@@ -133,6 +133,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             requester,
             prefetched_cas_paths,
             retry_opts: retry_opts_from_config(config),
+            auth_headers: &config.auth_headers,
         }
         .run_without_mem_cache::<R>()
         .await

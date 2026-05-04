@@ -40,6 +40,7 @@ fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path)
         fetch_retry_factor: 10,
         fetch_retry_mintimeout: 10_000,
         fetch_retry_maxtimeout: 60_000,
+        auth_headers: Default::default(),
     }
 }
 

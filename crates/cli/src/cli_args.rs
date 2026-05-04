@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use install::InstallArgs;
 use miette::Context;
 use pacquet_executor::execute_shell;
-use pacquet_npmrc::Npmrc;
+use pacquet_npmrc::{Npmrc, RealApi};
 use pacquet_package_manifest::PackageManifest;
 use pacquet_reporter::{NdjsonReporter, SilentReporter};
 use run::RunArgs;
@@ -83,7 +83,18 @@ impl CliArgs {
     pub async fn run(self) -> miette::Result<()> {
         let CliArgs { command, dir, reporter } = self;
         let manifest_path = || dir.join("package.json");
-        let npmrc = || Npmrc::current(env::current_dir, home::home_dir, Default::default).leak();
+        // Production callers turbofish `RealApi` explicitly so the
+        // dependency-injection plumbing is visible at the call site.
+        // See [pnpm/pacquet#339](https://github.com/pnpm/pacquet/issues/339)
+        // for the pattern and rationale.
+        let npmrc = || {
+            Npmrc::current::<RealApi, _, _, _, _>(
+                env::current_dir,
+                home::home_dir,
+                Default::default,
+            )
+            .leak()
+        };
         // `require_lockfile` is the "this subcommand cannot run without a
         // lockfile loaded" signal, used by `State::init` to override
         // `config.lockfile=false`. Only `install --frozen-lockfile` needs
