@@ -20,9 +20,10 @@ fn parses_env_node_shebang() {
 fn parses_env_dash_s_shebang() {
     let rt = parse_shebang("#!/usr/bin/env -S node --experimental").unwrap();
     assert_eq!(rt.prog.as_deref(), Some("node"));
-    // Leading space is preserved — upstream's regex group 2 captures the
-    // separator. Pinning `" --experimental"` (with the space) is what
-    // makes the rendered shim's `exec` line match upstream byte-for-byte.
+    // Leading space is preserved because upstream's regex group 2
+    // captures the separator. Pinning `" --experimental"` (with the
+    // space) is what makes the rendered shim's `exec` line match
+    // upstream byte-for-byte.
     assert_eq!(rt.args, " --experimental");
 }
 
@@ -30,7 +31,7 @@ fn parses_env_dash_s_shebang() {
 fn parses_direct_shebang() {
     let rt = parse_shebang("#!/bin/sh -e").unwrap();
     assert_eq!(rt.prog.as_deref(), Some("/bin/sh"));
-    // Leading space preserved — see `parses_env_dash_s_shebang`.
+    // Leading space preserved (see `parses_env_dash_s_shebang`).
     assert_eq!(rt.args, " -e");
 }
 
@@ -104,8 +105,8 @@ fn extension_program_covers_every_known_extension() {
 }
 
 /// [`super::parse_shebang`] returns None when the line lacks `#!` entirely
-/// (handled elsewhere) or when it's `#!` with only whitespace after — the
-/// `prog.is_empty()` guard.
+/// (handled elsewhere) or when it is `#!` with only whitespace after. The
+/// `prog.is_empty()` guard catches the latter.
 #[test]
 fn parse_shebang_returns_none_for_empty_prog() {
     assert!(parse_shebang("#!\t").is_none());
@@ -161,7 +162,7 @@ fn generate_sh_shim_threads_args_when_prog_is_none() {
 }
 
 /// [`generate_sh_shim`] with a target that lexically resolves to an absolute
-/// path takes the `path::isAbsolute(shTarget)` branch upstream uses — the
+/// path takes the `path::isAbsolute(shTarget)` branch upstream uses. The
 /// quoted target stays absolute and skips the `$basedir/` prefix.
 ///
 /// Unix-only: a path like `/abs/elsewhere/cli` is "absolute" only on Unix.
@@ -169,7 +170,7 @@ fn generate_sh_shim_threads_args_when_prog_is_none() {
 /// `C:\abs\...`), so the same input takes the relative branch. The shim
 /// produced by pacquet is a `/bin/sh` script regardless of host platform,
 /// but the absolute-vs-relative classification of bin paths is itself
-/// platform-dependent — this test pins behavior on Unix only.
+/// platform-dependent. This test pins behavior on Unix only.
 #[cfg(unix)]
 #[test]
 fn generate_sh_shim_uses_absolute_target_when_no_common_prefix() {
@@ -199,15 +200,15 @@ fn relative_target_collapses_to_dot_when_paths_share_dir() {
 /// [`super::relative_path_from`] preserves a single leading `..` in the
 /// target (the `out.push("..")` fallback fires when `out.pop()` returns
 /// false on an empty buffer). Multiple consecutive leading `..`s aren't
-/// tested because [`super::lexical_normalize`] collapses them — `PathBuf::pop` doesn't
-/// treat a trailing `..` component as a parent reference, so the second
-/// `..` pops the first. That edge case doesn't occur in pacquet's
-/// production paths (which are always absolute under `<modules_dir>` /
+/// tested because [`super::lexical_normalize`] collapses them. `PathBuf::pop`
+/// does not treat a trailing `..` component as a parent reference, so the
+/// second `..` pops the first. That edge case doesn't occur in pacquet's
+/// production paths (which are always absolute under `<modules_dir>` or
 /// `<virtual_store_dir>`), so we test only the single-`..` case where
 /// the result is unambiguous.
 ///
 /// Asserting the exact value catches a regression that returns the raw
-/// target unchanged (`../shared/cli`) — a weaker substring assertion
+/// target unchanged (`../shared/cli`). A weaker substring assertion
 /// would pass for both correct and broken outputs.
 #[test]
 fn lexical_normalize_keeps_leading_parent_segments() {
@@ -217,10 +218,10 @@ fn lexical_normalize_keeps_leading_parent_segments() {
     assert_eq!(result, "../../../shared/cli", "leading `..` must propagate");
 }
 
-/// [`lexical_normalize`] drops `.` (CurDir) components — direct test on
-/// the helper itself. The indirect test below pins the same behavior at
-/// the `relative_target` level, but a direct assertion makes the
-/// CurDir arm visible to coverage tooling that can't see through
+/// [`lexical_normalize`] drops `.` (CurDir) components. This is a direct
+/// test on the helper itself. The indirect test below pins the same
+/// behavior at the `relative_target` level, but a direct assertion makes
+/// the CurDir arm visible to coverage tooling that can't see through
 /// inlined call chains.
 #[test]
 fn lexical_normalize_drops_curdir_segments_directly() {
@@ -231,7 +232,7 @@ fn lexical_normalize_drops_curdir_segments_directly() {
 }
 
 /// [`lexical_normalize`] discards `.` (CurDir) components silently.
-/// Verify via [`relative_target`] — a target with embedded `./`
+/// Verify via [`relative_target`]. A target with embedded `./`
 /// resolves the same as without.
 #[test]
 fn lexical_normalize_drops_curdir_components() {
@@ -252,8 +253,8 @@ fn search_script_runtime_reads_shebang_from_real_file() {
     assert_eq!(rt.prog.as_deref(), Some("node"));
 }
 
-/// [`search_script_runtime`] on a missing file must degrade to `Ok(None)`
-/// — the install otherwise races against bin file extraction.
+/// [`search_script_runtime`] on a missing file must degrade to `Ok(None)`.
+/// Otherwise the install races against bin file extraction.
 #[test]
 fn search_script_runtime_returns_none_for_missing_file() {
     let nonexistent = Path::new("/definitely/not/a/real/path/cli");
@@ -301,8 +302,8 @@ fn search_script_runtime_propagates_non_not_found_io_errors() {
     assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
 }
 
-/// A [`FsReadHead`] that returns 0 bytes (empty file) yields no shebang —
-/// the parse step then falls through to the extension fallback. Pin the
+/// A [`FsReadHead`] that returns 0 bytes (empty file) yields no shebang.
+/// The parse step then falls through to the extension fallback. Pin the
 /// behavior so a future tweak to the empty-buffer handling stays
 /// compatible with the no-shebang case.
 #[test]
@@ -381,8 +382,8 @@ fn read_head_filled_real_fs_short_file_returns_partial() {
 }
 
 /// [`read_head_filled`] accumulates short reads from the underlying
-/// capability — the very behaviour the loop exists to provide. A fake
-/// that always returns short proves the loop calls the trait
+/// capability. That is the very behaviour the loop exists to provide.
+/// A fake that always returns short proves the loop calls the trait
 /// repeatedly with advancing offsets until the buffer is full.
 ///
 /// Pinning this with a fake is the only way to verify the loop
@@ -437,7 +438,7 @@ fn read_head_filled_accumulates_short_reads_from_fake() {
 }
 
 /// [`read_head_filled`] terminates when the underlying capability
-/// returns 0 (EOF) — short file shorter than the buffer.
+/// returns 0 (EOF), exercised here with a file shorter than the buffer.
 #[test]
 fn read_head_filled_terminates_on_zero_byte_read_from_fake() {
     struct EofAfterOne;
