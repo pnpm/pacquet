@@ -1,10 +1,13 @@
 use super::{
     ScriptRuntime, extension_program, generate_cmd_shim, generate_pwsh_shim, generate_sh_shim,
-    is_shim_pointing_at, parse_shebang, parse_shebang_from_bytes, read_head_filled,
-    relative_target, search_script_runtime,
+    is_shim_pointing_at, lexical_normalize, parse_shebang, parse_shebang_from_bytes,
+    read_head_filled, relative_target, search_script_runtime,
 };
 use crate::capabilities::{FsReadHead, RealApi};
-use std::{io, path::Path};
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
 
 #[test]
 fn parses_env_node_shebang() {
@@ -214,8 +217,21 @@ fn lexical_normalize_keeps_leading_parent_segments() {
     assert_eq!(result, "../../../shared/cli", "leading `..` must propagate");
 }
 
-/// [`super::lexical_normalize`] discards `.` (CurDir) components silently.
-/// Verify via [`super::relative_target`] — a target with embedded `./`
+/// [`lexical_normalize`] drops `.` (CurDir) components — direct test on
+/// the helper itself. The indirect test below pins the same behavior at
+/// the `relative_target` level, but a direct assertion makes the
+/// CurDir arm visible to coverage tooling that can't see through
+/// inlined call chains.
+#[test]
+fn lexical_normalize_drops_curdir_segments_directly() {
+    assert_eq!(lexical_normalize(Path::new("a/./b")), PathBuf::from("a/b"));
+    assert_eq!(lexical_normalize(Path::new("./a/b")), PathBuf::from("a/b"));
+    assert_eq!(lexical_normalize(Path::new("a/b/.")), PathBuf::from("a/b"));
+    assert_eq!(lexical_normalize(Path::new("./.")), PathBuf::new());
+}
+
+/// [`lexical_normalize`] discards `.` (CurDir) components silently.
+/// Verify via [`relative_target`] — a target with embedded `./`
 /// resolves the same as without.
 #[test]
 fn lexical_normalize_drops_curdir_components() {
