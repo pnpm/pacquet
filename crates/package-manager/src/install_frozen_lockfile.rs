@@ -1,5 +1,5 @@
 use crate::{
-    BuildModules, BuildModulesError, CreateVirtualStore, CreateVirtualStoreError,
+    AllowBuildPolicy, BuildModules, BuildModulesError, CreateVirtualStore, CreateVirtualStoreError,
     SymlinkDirectDependencies, SymlinkDirectDependenciesError,
 };
 use derive_more::{Display, Error};
@@ -79,12 +79,16 @@ where
             .run::<R>()
             .map_err(InstallFrozenLockfileError::SymlinkDirectDependencies)?;
 
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let allow_build_policy = AllowBuildPolicy::from_manifest(&cwd);
+
         BuildModules {
             virtual_store_dir: &config.virtual_store_dir,
             modules_dir: &config.modules_dir,
-            lockfile_dir: &std::env::current_dir().unwrap_or_default(),
+            lockfile_dir: &cwd,
             packages,
             snapshots,
+            allow_build_policy: &allow_build_policy,
         }
         .run()
         .map_err(InstallFrozenLockfileError::BuildModules)?;

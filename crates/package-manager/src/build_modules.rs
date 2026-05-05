@@ -15,6 +15,72 @@ pub enum BuildModulesError {
     LifecycleScript(#[error(source)] LifecycleScriptError),
 }
 
+/// Build policy derived from `pnpm.allowBuilds` in the project manifest.
+///
+/// Ports pnpm's `createAllowBuildFunction` from
+/// `https://github.com/pnpm/pnpm/blob/7e91e4b35f/building/policy/src/index.ts`.
+///
+/// The tri-state return from [`AllowBuildPolicy::check`]:
+/// - `Some(true)`: explicitly allowed, run scripts
+/// - `Some(false)`: explicitly denied, silently skip
+/// - `None`: not in the list, skip and report as ignored
+#[derive(Debug, Default)]
+pub struct AllowBuildPolicy {
+    rules: HashMap<String, bool>,
+    has_any_rules: bool,
+}
+
+impl AllowBuildPolicy {
+    /// Read `pnpm.allowBuilds` from a project's `package.json`.
+    pub fn from_manifest(manifest_dir: &Path) -> Self {
+        let manifest_path = manifest_dir.join("package.json");
+        let text = match fs::read_to_string(manifest_path) {
+            Ok(text) => text,
+            Err(_) => return Self::default(),
+        };
+        let manifest: serde_json::Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(_) => return Self::default(),
+        };
+
+        let allow_builds =
+            manifest.get("pnpm").and_then(|v| v.get("allowBuilds")).and_then(|v| v.as_object());
+
+        let Some(allow_builds) = allow_builds else {
+            return Self::default();
+        };
+
+        let rules: HashMap<String, bool> = allow_builds
+            .iter()
+            .filter_map(|(key, value)| value.as_bool().map(|v| (key.clone(), v)))
+            .collect();
+        let has_any_rules = !rules.is_empty();
+
+        Self { rules, has_any_rules }
+    }
+
+    /// Check whether a package is allowed to run build scripts.
+    ///
+    /// `name` is the package name (e.g. `@pnpm.e2e/install-script-example`).
+    /// `version` is the resolved version (e.g. `1.0.0`).
+    pub fn check(&self, name: &str, version: &str) -> Option<bool> {
+        if !self.has_any_rules {
+            return Some(true);
+        }
+
+        let exact_key = format!("{name}@{version}");
+        if let Some(&allowed) = self.rules.get(&exact_key) {
+            return Some(allowed);
+        }
+
+        if let Some(&allowed) = self.rules.get(name) {
+            return Some(allowed);
+        }
+
+        None
+    }
+}
+
 /// Run lifecycle scripts for all packages that require a build.
 ///
 /// Ports the core of `buildModules` from
@@ -29,12 +95,19 @@ pub struct BuildModules<'a> {
     pub lockfile_dir: &'a Path,
     pub packages: Option<&'a HashMap<PackageKey, PackageMetadata>>,
     pub snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,
+    pub allow_build_policy: &'a AllowBuildPolicy,
 }
 
 impl<'a> BuildModules<'a> {
     pub fn run(self) -> Result<(), BuildModulesError> {
-        let BuildModules { virtual_store_dir, modules_dir, lockfile_dir, packages, snapshots } =
-            self;
+        let BuildModules {
+            virtual_store_dir,
+            modules_dir,
+            lockfile_dir,
+            packages,
+            snapshots,
+            allow_build_policy,
+        } = self;
 
         let Some(snapshots) = snapshots else { return Ok(()) };
         let Some(packages) = packages else { return Ok(()) };
@@ -48,6 +121,20 @@ impl<'a> BuildModules<'a> {
 
             if metadata.requires_build != Some(true) {
                 continue;
+            }
+
+            let (name, version) = parse_name_version_from_key(&snapshot_key.to_string());
+            match allow_build_policy.check(&name, &version) {
+                Some(false) => continue,
+                None => {
+                    tracing::info!(
+                        target: "pacquet::build",
+                        package = %snapshot_key,
+                        "skipping build (not in allowBuilds)",
+                    );
+                    continue;
+                }
+                Some(true) => {}
             }
 
             let pkg_dir = virtual_store_dir_for_key(virtual_store_dir, snapshot_key);
@@ -87,11 +174,17 @@ pub struct BuildModulesByScanning<'a> {
     pub virtual_store_dir: &'a Path,
     pub modules_dir: &'a Path,
     pub lockfile_dir: &'a Path,
+    pub allow_build_policy: &'a AllowBuildPolicy,
 }
 
 impl<'a> BuildModulesByScanning<'a> {
     pub fn run(self) -> Result<(), BuildModulesError> {
-        let BuildModulesByScanning { virtual_store_dir, modules_dir, lockfile_dir } = self;
+        let BuildModulesByScanning {
+            virtual_store_dir,
+            modules_dir,
+            lockfile_dir,
+            allow_build_policy,
+        } = self;
 
         if !virtual_store_dir.exists() {
             return Ok(());
@@ -112,15 +205,29 @@ impl<'a> BuildModulesByScanning<'a> {
                 continue;
             }
 
+            let dep_path = store_entry
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+
             for pkg_entry in walk_package_dirs(&node_modules) {
                 if !has_lifecycle_scripts(&pkg_entry) {
                     continue;
                 }
 
-                let dep_path = store_entry
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_default();
+                let (name, version) = parse_name_version_from_store_entry(&dep_path);
+                match allow_build_policy.check(&name, &version) {
+                    Some(false) => continue,
+                    None => {
+                        tracing::info!(
+                            target: "pacquet::build",
+                            dep_path,
+                            "skipping build (not in allowBuilds)",
+                        );
+                        continue;
+                    }
+                    Some(true) => {}
+                }
 
                 tracing::info!(
                     target: "pacquet::build",
@@ -215,4 +322,25 @@ fn virtual_store_dir_for_key(virtual_store_dir: &Path, key: &PackageKey) -> Path
     let store_name = name_version.replace('/', "+");
 
     virtual_store_dir.join(&store_name).join("node_modules").join(name)
+}
+
+/// Parse `name` and `version` from a lockfile snapshot key like
+/// `/@pnpm.e2e/install-script-example@1.0.0`.
+fn parse_name_version_from_key(key: &str) -> (String, String) {
+    let s = key.strip_prefix('/').unwrap_or(key);
+    match s.rfind('@') {
+        Some(idx) if idx > 0 => (s[..idx].to_string(), s[idx + 1..].to_string()),
+        _ => (s.to_string(), String::new()),
+    }
+}
+
+/// Parse `name` and `version` from a virtual store entry name like
+/// `@pnpm.e2e+install-script-example@1.0.0`.
+fn parse_name_version_from_store_entry(entry: &str) -> (String, String) {
+    let name_version = match entry.rfind('@') {
+        Some(idx) if idx > 0 => (&entry[..idx], &entry[idx + 1..]),
+        _ => (entry, ""),
+    };
+    let name = name_version.0.replacen('+', "/", 1);
+    (name, name_version.1.to_string())
 }
