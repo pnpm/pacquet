@@ -1,4 +1,4 @@
-use super::{AllowBuildPolicy, parse_name_version_from_key, parse_name_version_from_store_entry};
+use super::{AllowBuildPolicy, parse_name_version_from_key};
 use pretty_assertions::assert_eq;
 use std::fs;
 use tempfile::tempdir;
@@ -22,21 +22,6 @@ fn parse_key_without_leading_slash() {
     let (name, version) = parse_name_version_from_key("express@4.18.1");
     assert_eq!(name, "express");
     assert_eq!(version, "4.18.1");
-}
-
-#[test]
-fn parse_scoped_store_entry() {
-    let (name, version) =
-        parse_name_version_from_store_entry("@pnpm.e2e+install-script-example@1.0.0");
-    assert_eq!(name, "@pnpm.e2e/install-script-example");
-    assert_eq!(version, "1.0.0");
-}
-
-#[test]
-fn parse_unscoped_store_entry() {
-    let (name, version) = parse_name_version_from_store_entry("is-positive@1.0.0");
-    assert_eq!(name, "is-positive");
-    assert_eq!(version, "1.0.0");
 }
 
 #[test]

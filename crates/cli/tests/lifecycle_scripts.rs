@@ -1,174 +1,3 @@
-use assert_cmd::prelude::*;
-use command_extra::CommandExtra;
-use pacquet_testing_utils::bin::{AddMockedRegistry, CommandTempCwd};
-use std::fs;
-
-// Ported from https://github.com/pnpm/pnpm/blob/7e91e4b35f/installing/deps-installer/test/install/lifecycleScripts.ts#L121
-#[test]
-fn run_install_scripts() {
-    let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
-        CommandTempCwd::init().add_mocked_registry();
-    let AddMockedRegistry { mock_instance, .. } = npmrc_info;
-
-    eprintln!("Creating package.json...");
-    let manifest_path = workspace.join("package.json");
-    let package_json = serde_json::json!({
-        "dependencies": {
-            "@pnpm.e2e/install-script-example": "1.0.0",
-        },
-        "pnpm": {
-            "allowBuilds": {
-                "@pnpm.e2e/install-script-example": true,
-            },
-        },
-    });
-    fs::write(&manifest_path, package_json.to_string()).expect("write package.json");
-
-    eprintln!("Running pacquet install...");
-    pacquet.with_arg("install").assert().success();
-
-    let pkg_dir = workspace.join(
-        "node_modules/.pnpm/@pnpm.e2e+install-script-example@1.0.0\
-         /node_modules/@pnpm.e2e/install-script-example",
-    );
-
-    eprintln!("Checking generated-by-install.js exists...");
-    assert!(pkg_dir.join("generated-by-install.js").exists());
-
-    drop((root, mock_instance));
-}
-
-// Ported from https://github.com/pnpm/pnpm/blob/7e91e4b35f/installing/deps-installer/test/install/lifecycleScripts.ts#L445
-#[test]
-fn selectively_ignore_scripts_by_allow_builds() {
-    let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
-        CommandTempCwd::init().add_mocked_registry();
-    let AddMockedRegistry { mock_instance, .. } = npmrc_info;
-
-    eprintln!("Creating package.json with allowBuilds...");
-    let manifest_path = workspace.join("package.json");
-    let package_json = serde_json::json!({
-        "dependencies": {
-            "@pnpm.e2e/pre-and-postinstall-scripts-example": "1.0.0",
-            "@pnpm.e2e/install-script-example": "1.0.0",
-        },
-        "pnpm": {
-            "allowBuilds": {
-                "@pnpm.e2e/install-script-example": true,
-            },
-        },
-    });
-    fs::write(&manifest_path, package_json.to_string()).expect("write package.json");
-
-    eprintln!("Running pacquet install...");
-    pacquet.with_arg("install").assert().success();
-
-    let virtual_store = workspace.join("node_modules/.pnpm");
-
-    let denied_pkg = virtual_store.join(
-        "@pnpm.e2e+pre-and-postinstall-scripts-example@1.0.0\
-         /node_modules/@pnpm.e2e/pre-and-postinstall-scripts-example",
-    );
-    eprintln!("Checking denied package did NOT run scripts...");
-    assert!(!denied_pkg.join("generated-by-preinstall.js").exists());
-    assert!(!denied_pkg.join("generated-by-postinstall.js").exists());
-
-    let allowed_pkg = virtual_store.join(
-        "@pnpm.e2e+install-script-example@1.0.0\
-         /node_modules/@pnpm.e2e/install-script-example",
-    );
-    eprintln!("Checking allowed package DID run scripts...");
-    assert!(allowed_pkg.join("generated-by-install.js").exists());
-
-    drop((root, mock_instance));
-}
-
-// Ported from https://github.com/pnpm/pnpm/blob/7e91e4b35f/installing/deps-installer/test/install/lifecycleScripts.ts#L505
-#[test]
-fn selectively_allow_scripts_by_allow_builds() {
-    let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
-        CommandTempCwd::init().add_mocked_registry();
-    let AddMockedRegistry { mock_instance, .. } = npmrc_info;
-
-    eprintln!("Creating package.json with allowBuilds...");
-    let manifest_path = workspace.join("package.json");
-    let package_json = serde_json::json!({
-        "dependencies": {
-            "@pnpm.e2e/pre-and-postinstall-scripts-example": "1.0.0",
-            "@pnpm.e2e/install-script-example": "1.0.0",
-        },
-        "pnpm": {
-            "allowBuilds": {
-                "@pnpm.e2e/install-script-example": true,
-            },
-        },
-    });
-    fs::write(&manifest_path, package_json.to_string()).expect("write package.json");
-
-    eprintln!("Running pacquet install...");
-    pacquet.with_arg("install").assert().success();
-
-    let virtual_store = workspace.join("node_modules/.pnpm");
-
-    let denied_pkg = virtual_store.join(
-        "@pnpm.e2e+pre-and-postinstall-scripts-example@1.0.0\
-         /node_modules/@pnpm.e2e/pre-and-postinstall-scripts-example",
-    );
-    assert!(!denied_pkg.join("generated-by-preinstall.js").exists());
-    assert!(!denied_pkg.join("generated-by-postinstall.js").exists());
-
-    let allowed_pkg = virtual_store.join(
-        "@pnpm.e2e+install-script-example@1.0.0\
-         /node_modules/@pnpm.e2e/install-script-example",
-    );
-    assert!(allowed_pkg.join("generated-by-install.js").exists());
-
-    drop((root, mock_instance));
-}
-
-// Ported from https://github.com/pnpm/pnpm/blob/7e91e4b35f/installing/deps-installer/test/install/lifecycleScripts.ts#L543
-#[test]
-fn selectively_allow_scripts_by_allow_builds_exact_versions() {
-    let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
-        CommandTempCwd::init().add_mocked_registry();
-    let AddMockedRegistry { mock_instance, .. } = npmrc_info;
-
-    eprintln!("Creating package.json with exact-version allowBuilds...");
-    let manifest_path = workspace.join("package.json");
-    let package_json = serde_json::json!({
-        "dependencies": {
-            "@pnpm.e2e/pre-and-postinstall-scripts-example": "1.0.0",
-            "@pnpm.e2e/install-script-example": "1.0.0",
-        },
-        "pnpm": {
-            "allowBuilds": {
-                "@pnpm.e2e/install-script-example@1.0.0": true,
-            },
-        },
-    });
-    fs::write(&manifest_path, package_json.to_string()).expect("write package.json");
-
-    eprintln!("Running pacquet install...");
-    pacquet.with_arg("install").assert().success();
-
-    let virtual_store = workspace.join("node_modules/.pnpm");
-
-    let denied_pkg = virtual_store.join(
-        "@pnpm.e2e+pre-and-postinstall-scripts-example@1.0.0\
-         /node_modules/@pnpm.e2e/pre-and-postinstall-scripts-example",
-    );
-    assert!(!denied_pkg.join("generated-by-preinstall.js").exists());
-    assert!(!denied_pkg.join("generated-by-postinstall.js").exists());
-
-    let allowed_pkg = virtual_store.join(
-        "@pnpm.e2e+install-script-example@1.0.0\
-         /node_modules/@pnpm.e2e/install-script-example",
-    );
-    assert!(allowed_pkg.join("generated-by-install.js").exists());
-
-    drop((root, mock_instance));
-}
-
 mod known_failures {
     use assert_cmd::prelude::*;
     use command_extra::CommandExtra;
@@ -182,7 +11,10 @@ mod known_failures {
 
     fn build_deps_ran(_workspace: &Path) -> KnownResult<()> {
         Err(KnownFailure::new(
-            "bin linking (#330) is not implemented; lifecycle scripts that invoke dependency bins fail with exit 127",
+            "lifecycle scripts only run in the frozen-lockfile path; \
+             the non-frozen path does not write a lockfile so these \
+             tests cannot exercise --frozen-lockfile yet. \
+             Additionally, bin linking (#330) is not implemented.",
         ))
     }
 
@@ -223,6 +55,43 @@ mod known_failures {
 
         eprintln!("Checking generated-by-postinstall.js exists...");
         assert!(pkg_dir.join("generated-by-postinstall.js").exists());
+
+        drop((root, mock_instance));
+    }
+
+    // Ported from https://github.com/pnpm/pnpm/blob/7e91e4b35f/installing/deps-installer/test/install/lifecycleScripts.ts#L121
+    #[test]
+    fn run_install_scripts() {
+        let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
+            CommandTempCwd::init().add_mocked_registry();
+        let AddMockedRegistry { mock_instance, .. } = npmrc_info;
+
+        eprintln!("Creating package.json...");
+        let manifest_path = workspace.join("package.json");
+        let package_json = serde_json::json!({
+            "dependencies": {
+                "@pnpm.e2e/install-script-example": "1.0.0",
+            },
+            "pnpm": {
+                "allowBuilds": {
+                    "@pnpm.e2e/install-script-example": true,
+                },
+            },
+        });
+        fs::write(&manifest_path, package_json.to_string()).expect("write package.json");
+
+        eprintln!("Running pacquet install...");
+        pacquet.with_arg("install").assert().success();
+
+        allow_known_failure!(build_deps_ran(&workspace));
+
+        let pkg_dir = workspace.join(
+            "node_modules/.pnpm/@pnpm.e2e+install-script-example@1.0.0\
+             /node_modules/@pnpm.e2e/install-script-example",
+        );
+
+        eprintln!("Checking generated-by-install.js exists...");
+        assert!(pkg_dir.join("generated-by-install.js").exists());
 
         drop((root, mock_instance));
     }
@@ -375,6 +244,143 @@ mod known_failures {
             !scripts_pkg_dir.join("generated-by-preinstall.js").exists(),
             "scripts should not have run with ignoreScripts"
         );
+
+        drop((root, mock_instance));
+    }
+
+    // Ported from https://github.com/pnpm/pnpm/blob/7e91e4b35f/installing/deps-installer/test/install/lifecycleScripts.ts#L445
+    #[test]
+    fn selectively_ignore_scripts_by_allow_builds() {
+        let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
+            CommandTempCwd::init().add_mocked_registry();
+        let AddMockedRegistry { mock_instance, .. } = npmrc_info;
+
+        eprintln!("Creating package.json with allowBuilds...");
+        let manifest_path = workspace.join("package.json");
+        let package_json = serde_json::json!({
+            "dependencies": {
+                "@pnpm.e2e/pre-and-postinstall-scripts-example": "1.0.0",
+                "@pnpm.e2e/install-script-example": "1.0.0",
+            },
+            "pnpm": {
+                "allowBuilds": {
+                    "@pnpm.e2e/install-script-example": true,
+                },
+            },
+        });
+        fs::write(&manifest_path, package_json.to_string()).expect("write package.json");
+
+        eprintln!("Running pacquet install...");
+        pacquet.with_arg("install").assert().success();
+
+        allow_known_failure!(build_deps_ran(&workspace));
+
+        let virtual_store = workspace.join("node_modules/.pnpm");
+
+        let denied_pkg = virtual_store.join(
+            "@pnpm.e2e+pre-and-postinstall-scripts-example@1.0.0\
+             /node_modules/@pnpm.e2e/pre-and-postinstall-scripts-example",
+        );
+        eprintln!("Checking denied package did NOT run scripts...");
+        assert!(!denied_pkg.join("generated-by-preinstall.js").exists());
+        assert!(!denied_pkg.join("generated-by-postinstall.js").exists());
+
+        let allowed_pkg = virtual_store.join(
+            "@pnpm.e2e+install-script-example@1.0.0\
+             /node_modules/@pnpm.e2e/install-script-example",
+        );
+        eprintln!("Checking allowed package DID run scripts...");
+        assert!(allowed_pkg.join("generated-by-install.js").exists());
+
+        drop((root, mock_instance));
+    }
+
+    // Ported from https://github.com/pnpm/pnpm/blob/7e91e4b35f/installing/deps-installer/test/install/lifecycleScripts.ts#L505
+    #[test]
+    fn selectively_allow_scripts_by_allow_builds() {
+        let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
+            CommandTempCwd::init().add_mocked_registry();
+        let AddMockedRegistry { mock_instance, .. } = npmrc_info;
+
+        eprintln!("Creating package.json with allowBuilds...");
+        let manifest_path = workspace.join("package.json");
+        let package_json = serde_json::json!({
+            "dependencies": {
+                "@pnpm.e2e/pre-and-postinstall-scripts-example": "1.0.0",
+                "@pnpm.e2e/install-script-example": "1.0.0",
+            },
+            "pnpm": {
+                "allowBuilds": {
+                    "@pnpm.e2e/install-script-example": true,
+                },
+            },
+        });
+        fs::write(&manifest_path, package_json.to_string()).expect("write package.json");
+
+        eprintln!("Running pacquet install...");
+        pacquet.with_arg("install").assert().success();
+
+        allow_known_failure!(build_deps_ran(&workspace));
+
+        let virtual_store = workspace.join("node_modules/.pnpm");
+
+        let denied_pkg = virtual_store.join(
+            "@pnpm.e2e+pre-and-postinstall-scripts-example@1.0.0\
+             /node_modules/@pnpm.e2e/pre-and-postinstall-scripts-example",
+        );
+        assert!(!denied_pkg.join("generated-by-preinstall.js").exists());
+        assert!(!denied_pkg.join("generated-by-postinstall.js").exists());
+
+        let allowed_pkg = virtual_store.join(
+            "@pnpm.e2e+install-script-example@1.0.0\
+             /node_modules/@pnpm.e2e/install-script-example",
+        );
+        assert!(allowed_pkg.join("generated-by-install.js").exists());
+
+        drop((root, mock_instance));
+    }
+
+    // Ported from https://github.com/pnpm/pnpm/blob/7e91e4b35f/installing/deps-installer/test/install/lifecycleScripts.ts#L543
+    #[test]
+    fn selectively_allow_scripts_by_allow_builds_exact_versions() {
+        let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
+            CommandTempCwd::init().add_mocked_registry();
+        let AddMockedRegistry { mock_instance, .. } = npmrc_info;
+
+        eprintln!("Creating package.json with exact-version allowBuilds...");
+        let manifest_path = workspace.join("package.json");
+        let package_json = serde_json::json!({
+            "dependencies": {
+                "@pnpm.e2e/pre-and-postinstall-scripts-example": "1.0.0",
+                "@pnpm.e2e/install-script-example": "1.0.0",
+            },
+            "pnpm": {
+                "allowBuilds": {
+                    "@pnpm.e2e/install-script-example@1.0.0": true,
+                },
+            },
+        });
+        fs::write(&manifest_path, package_json.to_string()).expect("write package.json");
+
+        eprintln!("Running pacquet install...");
+        pacquet.with_arg("install").assert().success();
+
+        allow_known_failure!(build_deps_ran(&workspace));
+
+        let virtual_store = workspace.join("node_modules/.pnpm");
+
+        let denied_pkg = virtual_store.join(
+            "@pnpm.e2e+pre-and-postinstall-scripts-example@1.0.0\
+             /node_modules/@pnpm.e2e/pre-and-postinstall-scripts-example",
+        );
+        assert!(!denied_pkg.join("generated-by-preinstall.js").exists());
+        assert!(!denied_pkg.join("generated-by-postinstall.js").exists());
+
+        let allowed_pkg = virtual_store.join(
+            "@pnpm.e2e+install-script-example@1.0.0\
+             /node_modules/@pnpm.e2e/install-script-example",
+        );
+        assert!(allowed_pkg.join("generated-by-install.js").exists());
 
         drop((root, mock_instance));
     }

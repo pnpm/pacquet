@@ -1,6 +1,6 @@
 use crate::{
-    AllowBuildPolicy, BuildModulesByScanning, BuildModulesError, InstallPackageFromRegistry,
-    InstallPackageFromRegistryError, store_init::init_store_dir_best_effort,
+    InstallPackageFromRegistry, InstallPackageFromRegistryError,
+    store_init::init_store_dir_best_effort,
 };
 use async_recursion::async_recursion;
 use dashmap::DashSet;
@@ -52,9 +52,6 @@ pub struct InstallWithoutLockfile<'a, DependencyGroupList> {
 pub enum InstallWithoutLockfileError {
     #[diagnostic(transparent)]
     InstallPackageFromRegistry(#[error(source)] InstallPackageFromRegistryError),
-
-    #[diagnostic(transparent)]
-    BuildModules(#[error(source)] BuildModulesError),
 }
 
 impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
@@ -184,18 +181,6 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
                 "store-index writer task panicked; some rows may not be persisted",
             ),
         }
-
-        let cwd = std::env::current_dir().unwrap_or_default();
-        let allow_build_policy = AllowBuildPolicy::from_manifest(&cwd);
-
-        BuildModulesByScanning {
-            virtual_store_dir: &config.virtual_store_dir,
-            modules_dir: &config.modules_dir,
-            lockfile_dir: &cwd,
-            allow_build_policy: &allow_build_policy,
-        }
-        .run()
-        .map_err(InstallWithoutLockfileError::BuildModules)?;
 
         Ok(())
     }
