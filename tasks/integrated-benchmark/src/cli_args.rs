@@ -5,8 +5,8 @@ use std::{path::PathBuf, process::Command};
 #[derive(Debug, Parser)]
 pub struct CliArgs {
     /// Task to benchmark.
-    #[clap(long, short)]
-    pub scenario: BenchmarkScenario,
+    #[clap(long, short, required_unless_present = "build_only", conflicts_with = "build_only")]
+    pub scenario: Option<BenchmarkScenario>,
 
     /// Port of the local virtual registry.
     #[clap(long, short = 'p', default_value_t = 4873)]
@@ -35,6 +35,10 @@ pub struct CliArgs {
     /// Benchmark against pnpm.
     #[clap(long)]
     pub with_pnpm: bool,
+
+    /// Build each revision without running the benchmark.
+    #[clap(long)]
+    pub build_only: bool,
 
     /// Branch name, tag name, or commit id of the pacquet repo.
     #[clap(required = true)]
