@@ -236,6 +236,11 @@ impl<'a> BuildModulesByScanning<'a> {
                     "running lifecycle scripts (scan)",
                 );
 
+                // Warn instead of failing: the scanning path lacks
+                // dependency bin linking, so scripts that invoke
+                // dependency bins will exit 127. The frozen-lockfile
+                // path (BuildModules) propagates errors because it
+                // has full lockfile metadata to decide what to build.
                 match run_postinstall_hooks(RunPostinstallHooks {
                     dep_path: &dep_path,
                     pkg_root: &pkg_entry,
@@ -309,11 +314,12 @@ fn has_lifecycle_scripts(pkg_dir: &Path) -> bool {
 
 /// Compute the package directory inside the virtual store for a snapshot key.
 ///
-/// For a key like `/@pnpm.e2e/pre-and-postinstall-scripts-example@1.0.0`,
-/// the directory is:
-/// `<virtual_store>/@pnpm.e2e+pre-and-postinstall-scripts-example@1.0.0/node_modules/@pnpm.e2e/pre-and-postinstall-scripts-example`
+/// Uses `without_peer()` to strip any peer-dependency suffix before
+/// computing the path, so keys like
+/// `/@pnpm.e2e/foo@1.0.0(@pnpm.e2e/bar@2.0.0)` resolve correctly.
 fn virtual_store_dir_for_key(virtual_store_dir: &Path, key: &PackageKey) -> PathBuf {
-    let key_str = key.to_string();
+    let bare_key = key.without_peer();
+    let key_str = bare_key.to_string();
     let name_version = key_str.strip_prefix('/').unwrap_or(&key_str);
 
     let at_idx = name_version.rfind('@').unwrap_or(name_version.len());
@@ -344,3 +350,6 @@ fn parse_name_version_from_store_entry(entry: &str) -> (String, String) {
     let name = name_version.0.replacen('+', "/", 1);
     (name, name_version.1.to_string())
 }
+
+#[cfg(test)]
+mod tests;
