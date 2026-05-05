@@ -16,6 +16,7 @@ use std::{
     path::{Path, PathBuf},
     time::SystemTime,
 };
+use strum::IntoStaticStr;
 
 /// Filename of the modules manifest inside `node_modules/`.
 ///
@@ -231,17 +232,28 @@ fn rewrite_virtual_store_dir_relative(modules_dir: &Path, fields: &mut Map<Strin
     fields.insert("virtualStoreDir".to_string(), path_to_value(relative));
 }
 
+/// Per-alias visibility selected by the legacy `shamefullyHoist` flag. The
+/// derive emits `"public"` and `"private"` so the value lands as the
+/// expected JSON string when written into a derived `hoistedDependencies`
+/// entry.
+#[derive(Debug, Clone, Copy, IntoStaticStr)]
+enum HoistKind {
+    #[strum(serialize = "public")]
+    Public,
+    #[strum(serialize = "private")]
+    Private,
+}
+
 /// Translate the legacy `shamefullyHoist` and `hoistedAliases` fields into
 /// the modern `publicHoistPattern` and `hoistedDependencies` shapes. Mirrors
 /// upstream L71-L97.
 fn apply_legacy_shamefully_hoist(fields: &mut Map<String, Value>) {
-    let kind = match fields.get("shamefullyHoist").and_then(Value::as_bool) {
-        Some(true) => "public",
-        Some(false) => "private",
-        None => return,
+    let Some(shamefully_hoist) = fields.get("shamefullyHoist").and_then(Value::as_bool) else {
+        return;
     };
+    let kind = if shamefully_hoist { HoistKind::Public } else { HoistKind::Private };
     if !fields.contains_key("publicHoistPattern") {
-        let default_pattern = if kind == "public" {
+        let default_pattern = if shamefully_hoist {
             Value::Array(vec![Value::String("*".to_string())])
         } else {
             Value::Array(Vec::new())
@@ -257,17 +269,18 @@ fn apply_legacy_shamefully_hoist(fields: &mut Map<String, Value>) {
     }
 }
 
-fn derive_hoisted_dependencies(hoisted_aliases: &Value, kind: &str) -> Value {
-    let Value::Object(aliases) = hoisted_aliases else {
+fn derive_hoisted_dependencies(hoisted_aliases: &Value, kind: HoistKind) -> Value {
+    let Value::Object(aliases_by_path) = hoisted_aliases else {
         return Value::Object(Map::new());
     };
-    let mut derived = Map::with_capacity(aliases.len());
-    for (dep_path, alias_list) in aliases {
+    let kind_str: &'static str = kind.into();
+    let mut derived = Map::with_capacity(aliases_by_path.len());
+    for (dep_path, alias_list) in aliases_by_path {
         let mut entry = Map::new();
-        if let Value::Array(aliases) = alias_list {
-            for alias in aliases {
-                if let Value::String(alias) = alias {
-                    entry.insert(alias.clone(), Value::String(kind.to_string()));
+        if let Value::Array(alias_values) = alias_list {
+            for alias_value in alias_values {
+                if let Value::String(alias_name) = alias_value {
+                    entry.insert(alias_name.clone(), Value::String(kind_str.to_string()));
                 }
             }
         }
@@ -282,6 +295,10 @@ fn sort_skipped(fields: &mut Map<String, Value>) {
     };
     skipped.sort_by(|left, right| match (left, right) {
         (Value::String(left), Value::String(right)) => left.cmp(right),
+        // Non-string entries compare equal to everything else, so stable
+        // sort keeps them in input order. pnpm only ever writes `skipped`
+        // as `string[]`, so this fallback exists for corrupt manifests
+        // rather than any real upstream shape.
         _ => std::cmp::Ordering::Equal,
     });
 }

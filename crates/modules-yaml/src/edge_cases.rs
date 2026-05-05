@@ -13,7 +13,9 @@
 //! the crate became *less* tolerant of garbage, not that it broke a real
 //! pnpm flow.
 
-use super::{derive_hoisted_dependencies, drop_empty_hoist_fields, is_empty_or_null, sort_skipped};
+use super::{
+    HoistKind, derive_hoisted_dependencies, drop_empty_hoist_fields, is_empty_or_null, sort_skipped,
+};
 use pretty_assertions::assert_eq;
 use serde_json::{Map, Value, json};
 
@@ -22,10 +24,10 @@ use serde_json::{Map, Value, json};
 /// where `hoistedAliases` is somehow `null`, an array, or another shape.
 #[test]
 fn derive_hoisted_dependencies_returns_empty_object_for_non_object_input() {
-    let result = derive_hoisted_dependencies(&Value::Null, "public");
+    let result = derive_hoisted_dependencies(&Value::Null, HoistKind::Public);
     assert_eq!(result, Value::Object(Map::new()));
 
-    let result = derive_hoisted_dependencies(&json!(["unexpected"]), "private");
+    let result = derive_hoisted_dependencies(&json!(["unexpected"]), HoistKind::Private);
     assert_eq!(result, Value::Object(Map::new()));
 }
 
@@ -36,7 +38,7 @@ fn derive_hoisted_dependencies_returns_empty_object_for_non_object_input() {
 #[test]
 fn derive_hoisted_dependencies_inserts_empty_entry_for_non_array_alias_list() {
     let aliases = json!({ "/foo/1.0.0": "not-an-array", "/bar/2.0.0": ["bar"] });
-    let result = derive_hoisted_dependencies(&aliases, "public");
+    let result = derive_hoisted_dependencies(&aliases, HoistKind::Public);
     assert_eq!(result, json!({ "/foo/1.0.0": {}, "/bar/2.0.0": { "bar": "public" } }));
 }
 

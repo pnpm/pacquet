@@ -1871,6 +1871,7 @@ dependencies = [
  "pretty_assertions",
  "serde-saphyr",
  "serde_json",
+ "strum",
  "tempfile",
 ]
 
