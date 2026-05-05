@@ -30,7 +30,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout Main Branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: main # Checkout main first because the cache is warm
 
@@ -50,7 +50,7 @@ jobs:
         run: cargo run --bin=micro-benchmark --release -- --save-baseline main
 
       - name: Checkout PR Branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           clean: false
           ref: ${{ github.event.pull_request.head.sha }}
@@ -66,7 +66,7 @@ jobs:
         run: cargo run --bin=micro-benchmark --release -- --save-baseline pr
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-results-${{ matrix.os }}
           path: ./target/criterion
@@ -115,7 +115,7 @@ jobs:
       - name: Create or update comment
         # Check if the event is not triggered by a fork
         if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: peter-evans/create-or-update-comment@v3
+        uses: peter-evans/create-or-update-comment@v5
         with:
           issue-number: ${{ github.event.pull_request.number }}
           edit-mode: replace
