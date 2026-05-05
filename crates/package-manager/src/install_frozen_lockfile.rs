@@ -1,6 +1,6 @@
 use crate::{
-    CreateVirtualStore, CreateVirtualStoreError, SymlinkDirectDependencies,
-    SymlinkDirectDependenciesError,
+    BuildModules, BuildModulesError, CreateVirtualStore, CreateVirtualStoreError,
+    SymlinkDirectDependencies, SymlinkDirectDependenciesError,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
@@ -46,6 +46,9 @@ pub enum InstallFrozenLockfileError {
 
     #[diagnostic(transparent)]
     SymlinkDirectDependencies(#[error(source)] SymlinkDirectDependenciesError),
+
+    #[diagnostic(transparent)]
+    BuildModules(#[error(source)] BuildModulesError),
 }
 
 impl<'a, DependencyGroupList> InstallFrozenLockfile<'a, DependencyGroupList>
@@ -75,6 +78,16 @@ where
         SymlinkDirectDependencies { config, importers, dependency_groups, requester }
             .run::<R>()
             .map_err(InstallFrozenLockfileError::SymlinkDirectDependencies)?;
+
+        BuildModules {
+            virtual_store_dir: &config.virtual_store_dir,
+            modules_dir: &config.modules_dir,
+            lockfile_dir: &std::env::current_dir().unwrap_or_default(),
+            packages,
+            snapshots,
+        }
+        .run()
+        .map_err(InstallFrozenLockfileError::BuildModules)?;
 
         Ok(())
     }

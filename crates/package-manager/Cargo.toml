@@ -11,6 +11,7 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
+pacquet-executor         = { workspace = true }
 pacquet-fs               = { workspace = true }
 pacquet-lockfile         = { workspace = true }
 pacquet-modules-yaml     = { workspace = true }
@@ -30,6 +31,7 @@ httpdate        = { workspace = true }
 node-semver     = { workspace = true }
 pipe-trait      = { workspace = true }
 rayon           = { workspace = true }
+serde_json      = { workspace = true }
 reflink-copy    = { workspace = true }
 tokio           = { workspace = true }
 tracing         = { workspace = true }

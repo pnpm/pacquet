@@ -1,3 +1,38 @@
+use assert_cmd::prelude::*;
+use command_extra::CommandExtra;
+use pacquet_testing_utils::bin::{AddMockedRegistry, CommandTempCwd};
+use std::fs;
+
+// Ported from https://github.com/pnpm/pnpm/blob/7e91e4b35f/installing/deps-installer/test/install/lifecycleScripts.ts#L121
+#[test]
+fn run_install_scripts() {
+    let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
+        CommandTempCwd::init().add_mocked_registry();
+    let AddMockedRegistry { mock_instance, .. } = npmrc_info;
+
+    eprintln!("Creating package.json...");
+    let manifest_path = workspace.join("package.json");
+    let package_json = serde_json::json!({
+        "dependencies": {
+            "@pnpm.e2e/install-script-example": "1.0.0",
+        },
+    });
+    fs::write(&manifest_path, package_json.to_string()).expect("write package.json");
+
+    eprintln!("Running pacquet install...");
+    pacquet.with_arg("install").assert().success();
+
+    let pkg_dir = workspace.join(
+        "node_modules/.pnpm/@pnpm.e2e+install-script-example@1.0.0\
+         /node_modules/@pnpm.e2e/install-script-example",
+    );
+
+    eprintln!("Checking generated-by-install.js exists...");
+    assert!(pkg_dir.join("generated-by-install.js").exists());
+
+    drop((root, mock_instance));
+}
+
 mod known_failures {
     use assert_cmd::prelude::*;
     use command_extra::CommandExtra;
@@ -10,7 +45,9 @@ mod known_failures {
     use std::{fs, path::Path};
 
     fn build_deps_ran(_workspace: &Path) -> KnownResult<()> {
-        Err(KnownFailure::new("building dependencies is not implemented"))
+        Err(KnownFailure::new(
+            "bin linking (#330) is not implemented; lifecycle scripts that invoke dependency bins fail with exit 127",
+        ))
     }
 
     // Ported from https://github.com/pnpm/pnpm/blob/7e91e4b35f/installing/deps-installer/test/install/lifecycleScripts.ts#L26
@@ -50,38 +87,6 @@ mod known_failures {
 
         eprintln!("Checking generated-by-postinstall.js exists...");
         assert!(pkg_dir.join("generated-by-postinstall.js").exists());
-
-        drop((root, mock_instance));
-    }
-
-    // Ported from https://github.com/pnpm/pnpm/blob/7e91e4b35f/installing/deps-installer/test/install/lifecycleScripts.ts#L121
-    #[test]
-    fn run_install_scripts() {
-        let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
-            CommandTempCwd::init().add_mocked_registry();
-        let AddMockedRegistry { mock_instance, .. } = npmrc_info;
-
-        eprintln!("Creating package.json...");
-        let manifest_path = workspace.join("package.json");
-        let package_json = serde_json::json!({
-            "dependencies": {
-                "@pnpm.e2e/install-script-example": "1.0.0",
-            },
-        });
-        fs::write(&manifest_path, package_json.to_string()).expect("write package.json");
-
-        eprintln!("Running pacquet install...");
-        pacquet.with_arg("install").assert().success();
-
-        allow_known_failure!(build_deps_ran(&workspace));
-
-        let pkg_dir = workspace.join(
-            "node_modules/.pnpm/@pnpm.e2e+install-script-example@1.0.0\
-             /node_modules/@pnpm.e2e/install-script-example",
-        );
-
-        eprintln!("Checking generated-by-install.js exists...");
-        assert!(pkg_dir.join("generated-by-install.js").exists());
 
         drop((root, mock_instance));
     }

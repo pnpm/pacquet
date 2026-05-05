@@ -1,4 +1,5 @@
 mod add;
+mod build_modules;
 mod build_snapshot;
 mod create_cas_files;
 mod create_symlink_layout;
@@ -16,6 +17,7 @@ mod symlink_direct_dependencies;
 mod symlink_package;
 
 pub use add::*;
+pub use build_modules::*;
 pub use build_snapshot::*;
 pub use create_cas_files::*;
 pub use create_symlink_layout::*;
