@@ -6,7 +6,7 @@ use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::{fs, path::Path};
 
-// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L10-L40
+/// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L10-L40
 #[test]
 fn write_modules_manifest_and_read_modules_manifest() {
     let temp_dir = tempfile::tempdir().expect("create temporary directory");
@@ -49,7 +49,7 @@ fn write_modules_manifest_and_read_modules_manifest() {
     assert_eq!(Path::new(virtual_store_dir).is_absolute(), cfg!(windows));
 }
 
-// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L42-L53
+/// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L42-L53
 #[test]
 fn read_legacy_shamefully_hoist_true_manifest() {
     let modules_dir =
@@ -69,7 +69,7 @@ fn read_legacy_shamefully_hoist_true_manifest() {
     );
 }
 
-// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L55-L66
+/// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L55-L66
 #[test]
 fn read_legacy_shamefully_hoist_false_manifest() {
     let modules_dir =
@@ -89,7 +89,7 @@ fn read_legacy_shamefully_hoist_false_manifest() {
     );
 }
 
-// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L68-L94
+/// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L68-L94
 #[test]
 fn write_modules_manifest_creates_node_modules_directory() {
     let temp_dir = tempfile::tempdir().expect("create temporary directory");
@@ -122,7 +122,7 @@ fn write_modules_manifest_creates_node_modules_directory() {
     assert_eq!(actual, Some(modules_yaml));
 }
 
-// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L96-L99
+/// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L96-L99
 #[test]
 fn read_empty_modules_manifest_returns_none() {
     let modules_dir =
@@ -138,9 +138,9 @@ fn read_empty_modules_manifest_returns_none() {
 // Those install tests are gated on the install pipeline being ported, so
 // these direct unit tests guard the behavior in the meantime.
 
-// Reading a manifest whose `virtualStoreDir` is already absolute must
-// preserve it verbatim, matching upstream
-// https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L66-L70.
+/// Reading a manifest whose `virtualStoreDir` is already absolute must
+/// preserve it verbatim, matching upstream
+/// https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L66-L70.
 #[test]
 fn read_preserves_absolute_virtual_store_dir() {
     let temp_dir = tempfile::tempdir().expect("create temporary directory");
@@ -158,9 +158,9 @@ fn read_preserves_absolute_virtual_store_dir() {
     assert_eq!(Path::new(stored), custom_store);
 }
 
-// `writeModulesManifest` sorts `skipped` in place before serializing,
-// matching upstream
-// https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L117.
+/// `writeModulesManifest` sorts `skipped` in place before serializing,
+/// matching upstream
+/// https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L117.
 #[test]
 fn write_sorts_skipped_array() {
     let temp_dir = tempfile::tempdir().expect("create temporary directory");
@@ -184,8 +184,8 @@ fn write_sorts_skipped_array() {
 // interface-segregation refinement of the lumped `FsApi` pattern at
 // https://github.com/KSXGitHub/parallel-disk-usage/blob/2aa39917f9/src/app/hdd.rs#L25-L35.
 
-// `read_modules_manifest` should map a non-`NotFound` I/O error from
-// `read_to_string` to `ReadModulesManifestError::ReadFile`.
+/// `read_modules_manifest` should map a non-`NotFound` I/O error from
+/// `read_to_string` to `ReadModulesManifestError::ReadFile`.
 #[test]
 fn read_propagates_non_not_found_io_error() {
     use std::io;
@@ -202,8 +202,8 @@ fn read_propagates_non_not_found_io_error() {
     assert!(matches!(err, pacquet_modules_yaml::ReadModulesManifestError::ReadFile { .. }));
 }
 
-// `read_modules_manifest` should surface a YAML parse failure as
-// `ReadModulesManifestError::ParseYaml`.
+/// `read_modules_manifest` should surface a YAML parse failure as
+/// `ReadModulesManifestError::ParseYaml`.
 #[test]
 fn read_propagates_parse_error() {
     use std::io;
@@ -220,9 +220,9 @@ fn read_propagates_parse_error() {
     assert!(matches!(err, pacquet_modules_yaml::ReadModulesManifestError::ParseYaml { .. }));
 }
 
-// A YAML document that parses to `null` should yield `Ok(None)`, matching
-// upstream's `if (!modulesRaw) return modulesRaw;` at
-// https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L55.
+/// A YAML document that parses to `null` should yield `Ok(None)`, matching
+/// upstream's `if (!modulesRaw) return modulesRaw;` at
+/// https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L55.
 #[test]
 fn read_returns_none_for_null_document() {
     use std::io;
@@ -238,10 +238,10 @@ fn read_returns_none_for_null_document() {
     assert_eq!(result, None);
 }
 
-// `write_modules_manifest` should map a `create_dir_all` failure to
-// `WriteModulesManifestError::CreateDir`. The fake still has to implement
-// `FsWrite` because the function bound includes it, but the body asserts
-// that `write` is never reached on this code path.
+/// `write_modules_manifest` should map a `create_dir_all` failure to
+/// `WriteModulesManifestError::CreateDir`. The fake still has to implement
+/// `FsWrite` because the function bound includes it, but the body asserts
+/// that `write` is never reached on this code path.
 #[test]
 fn write_propagates_create_dir_error() {
     use std::io;
@@ -264,8 +264,8 @@ fn write_propagates_create_dir_error() {
     assert!(matches!(err, pacquet_modules_yaml::WriteModulesManifestError::CreateDir { .. }));
 }
 
-// `write_modules_manifest` should map a `write` failure to
-// `WriteModulesManifestError::WriteFile` after `create_dir_all` succeeds.
+/// `write_modules_manifest` should map a `write` failure to
+/// `WriteModulesManifestError::WriteFile` after `create_dir_all` succeeds.
 #[test]
 fn write_propagates_write_error() {
     use std::io;
@@ -288,9 +288,9 @@ fn write_propagates_write_error() {
     assert!(matches!(err, pacquet_modules_yaml::WriteModulesManifestError::WriteFile { .. }));
 }
 
-// A null `publicHoistPattern` is removed before serializing because the
-// YAML writer fails on undefined fields upstream. The behavior matches
-// https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L123-L125.
+/// A null `publicHoistPattern` is removed before serializing because the
+/// YAML writer fails on undefined fields upstream. The behavior matches
+/// https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L123-L125.
 #[test]
 fn write_removes_null_public_hoist_pattern() {
     let temp_dir = tempfile::tempdir().expect("create temporary directory");
