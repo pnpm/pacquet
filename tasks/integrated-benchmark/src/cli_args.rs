@@ -51,13 +51,7 @@ pub enum BenchmarkScenario {
     CleanInstall,
     /// Benchmark install with a frozen lockfile and without local cache.
     FrozenLockfile,
-    /// Benchmark install with a frozen lockfile and a *warm* local store —
-    /// the "fresh clone of an existing repo" / "CI install where the
-    /// runner-level store cache is hit" path. Mirrors pnpm's
-    /// `Headless install (frozen lockfile, warm store+cache)` benchmark
-    /// in [`pnpm/v11/benchmarks/bench.sh`](https://github.com/pnpm/pnpm/blob/1819226b51/benchmarks/bench.sh).
-    /// Hyperfine's `--warmup` run primes the store; subsequent timed
-    /// runs delete only `node_modules` and reuse the populated store.
+    /// Benchmark install with a frozen lockfile and a warm local store.
     FrozenLockfileHotCache,
 }
 
