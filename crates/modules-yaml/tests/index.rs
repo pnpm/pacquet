@@ -154,7 +154,6 @@ fn read_preserves_absolute_virtual_store_dir() {
         .expect("read manifest")
         .expect("manifest exists");
     let stored = manifest["virtualStoreDir"].as_str().expect("virtualStoreDir is a string");
-    eprintln!("stored virtualStoreDir: {stored}");
     assert_eq!(Path::new(stored), custom_store);
 }
 

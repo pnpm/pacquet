@@ -10,6 +10,7 @@
 
 use derive_more::{Display, Error};
 use pacquet_diagnostics::miette::{self, Diagnostic};
+use pipe_trait::Pipe;
 use serde_json::{Map, Value};
 use std::{
     fs, io,
@@ -135,11 +136,12 @@ pub fn read_modules_manifest<Api: FsReadToString>(
             return Err(ReadModulesManifestError::ReadFile { path: manifest_path, source });
         }
     };
-    let mut manifest: Value =
-        serde_saphyr::from_str(&content).map_err(|source| ReadModulesManifestError::ParseYaml {
+    let mut manifest: Value = content.pipe_as_ref(serde_saphyr::from_str).map_err(|source| {
+        ReadModulesManifestError::ParseYaml {
             path: manifest_path.clone(),
             source: Box::new(source),
-        })?;
+        }
+    })?;
     if manifest.is_null() {
         return Ok(None);
     }
@@ -339,8 +341,19 @@ fn is_empty_or_null(value: Option<&Value>) -> bool {
     }
 }
 
+/// Encode `path` as a JSON string for storage in the manifest.
+///
+/// `to_string_lossy` swaps any invalid UTF-8 byte for `U+FFFD`. In practice
+/// `node_modules` paths and pnpm registry paths are always UTF-8, and
+/// upstream pnpm stores them as JavaScript strings without any width
+/// guard, so the lossy step is acceptable today. Non-UTF-8 input would
+/// silently change the on-disk path.
+//
+// TODO: surface non-UTF-8 paths as a typed error and propagate `Err`
+// from every caller, rather than swallowing the loss here. Tracked
+// alongside the broader install-pipeline port.
 fn path_to_value(path: &Path) -> Value {
-    Value::String(path.to_string_lossy().into_owned())
+    path.to_string_lossy().into_owned().pipe(Value::String)
 }
 
 fn http_date_now() -> String {
