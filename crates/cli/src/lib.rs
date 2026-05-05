@@ -59,9 +59,17 @@ async fn attempt_fallback_command(
 
     os_args.insert(1, fallback_command);
 
-    let args = CliArgs::parse_from(os_args);
-
-    run_command(args).await
+    // If the fallback command failed in any way,
+    // return the original error to the user
+    // This is more intuitive as otherwise the "run" command's error
+    // will hide the old one
+    match CliArgs::try_parse_from(&os_args) {
+        Ok(args) => match run_command(args).await {
+            Ok(_) => Ok(()),
+            Err(_) => err.exit(),
+        },
+        Err(_) => err.exit(),
+    }
 }
 
 /// Size rayon's global pool at `2 × available_parallelism`. The link
