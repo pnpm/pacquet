@@ -276,6 +276,12 @@ impl Npmrc {
     /// come from `pnpm-workspace.yaml` or CLI flags, matching pnpm 11.
     ///
     /// The yaml wins over `.npmrc` on any key it sets.
+    //
+    // TODO: lift `current_dir`, `home_dir`, and `default` into
+    // capability traits on `Api` once the wider DI sweep tracked in
+    // <https://github.com/pnpm/pacquet/issues/339> lands. Doing it
+    // here would touch ~10 unrelated test call sites for no benefit
+    // beyond the rename.
     pub fn current<Api, Error, CurrentDir, HomeDir, Default>(
         current_dir: CurrentDir,
         home_dir: HomeDir,
