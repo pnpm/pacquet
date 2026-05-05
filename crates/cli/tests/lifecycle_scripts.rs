@@ -180,9 +180,9 @@ mod known_failures {
         fs::remove_dir_all(&node_modules).expect("remove node_modules");
 
         eprintln!("Running pacquet install --frozen-lockfile...");
-        CommandTempCwd::init()
-            .add_mocked_registry()
-            .pacquet
+        let CommandTempCwd { pacquet: frozen_pacquet, root: frozen_root, .. } =
+            CommandTempCwd::init().add_mocked_registry();
+        frozen_pacquet
             .with_current_dir(&workspace)
             .with_args(["install", "--frozen-lockfile"])
             .assert()
@@ -198,7 +198,7 @@ mod known_failures {
             assert!(is_path_executable(&node_modules.join(".bin/cmd2")));
         }
 
-        drop((root, mock_instance));
+        drop((root, mock_instance, frozen_root));
     }
 
     // Ported from https://github.com/pnpm/pnpm/blob/7e91e4b35f/installing/deps-installer/test/install/lifecycleScripts.ts#L372
@@ -412,15 +412,15 @@ mod known_failures {
         fs::remove_dir_all(&node_modules).expect("remove node_modules");
 
         eprintln!("Running pacquet install --frozen-lockfile...");
-        CommandTempCwd::init()
-            .add_mocked_registry()
-            .pacquet
+        let CommandTempCwd { pacquet: frozen_pacquet, root: frozen_root, .. } =
+            CommandTempCwd::init().add_mocked_registry();
+        frozen_pacquet
             .with_current_dir(&workspace)
             .with_args(["install", "--frozen-lockfile"])
             .assert()
             .success();
 
-        drop((root, mock_instance));
+        drop((root, mock_instance, frozen_root));
     }
 
     // Ported from https://github.com/pnpm/pnpm/blob/7e91e4b35f/installing/deps-installer/test/install/lifecycleScripts.ts#L724
@@ -480,9 +480,9 @@ mod known_failures {
         });
         fs::write(&manifest_path, updated_manifest.to_string()).expect("write package.json");
 
-        CommandTempCwd::init()
-            .add_mocked_registry()
-            .pacquet
+        let CommandTempCwd { pacquet: frozen_pacquet, root: frozen_root, .. } =
+            CommandTempCwd::init().add_mocked_registry();
+        frozen_pacquet
             .with_current_dir(&workspace)
             .with_args(["install", "--frozen-lockfile"])
             .assert()
@@ -495,7 +495,7 @@ mod known_failures {
         assert!(scripts_pkg.join("generated-by-preinstall.js").exists());
         assert!(scripts_pkg.join("generated-by-postinstall.js").exists());
 
-        drop((root, mock_instance));
+        drop((root, mock_instance, frozen_root));
     }
 
     // Ported from https://github.com/pnpm/pnpm/blob/7e91e4b35f/installing/deps-restorer/test/index.ts#L362

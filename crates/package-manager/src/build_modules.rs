@@ -38,13 +38,30 @@ impl AllowBuildPolicy {
     /// explicitly listed in `allowBuilds` to run their scripts.
     pub fn from_manifest(manifest_dir: &Path) -> Self {
         let manifest_path = manifest_dir.join("package.json");
-        let text = match fs::read_to_string(manifest_path) {
+        let text = match fs::read_to_string(&manifest_path) {
             Ok(text) => text,
-            Err(_) => return Self::default(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Self::default(),
+            Err(e) => {
+                tracing::warn!(
+                    target: "pacquet::build",
+                    path = %manifest_path.display(),
+                    error = %e,
+                    "failed to read package.json for build policy",
+                );
+                return Self::default();
+            }
         };
         let manifest: serde_json::Value = match serde_json::from_str(&text) {
             Ok(v) => v,
-            Err(_) => return Self::default(),
+            Err(e) => {
+                tracing::warn!(
+                    target: "pacquet::build",
+                    path = %manifest_path.display(),
+                    error = %e,
+                    "failed to parse package.json for build policy",
+                );
+                return Self::default();
+            }
         };
 
         let pnpm = manifest.get("pnpm");

@@ -3,6 +3,7 @@ use miette::Diagnostic;
 use std::{
     collections::HashMap,
     env,
+    ffi::OsString,
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
 };
@@ -93,9 +94,6 @@ pub fn run_postinstall_hooks(opts: RunPostinstallHooks<'_>) -> Result<bool, Life
     let get_script =
         |name: &str| -> Option<&str> { scripts.and_then(|s| s.get(name)).and_then(|v| v.as_str()) };
 
-    let has_preinstall = get_script("preinstall").is_some();
-    let has_postinstall = get_script("postinstall").is_some();
-
     let mut ran_any = false;
 
     if let Some(script) = get_script("preinstall") {
@@ -122,7 +120,7 @@ pub fn run_postinstall_hooks(opts: RunPostinstallHooks<'_>) -> Result<bool, Life
         ran_any = true;
     }
 
-    Ok(has_preinstall || install_script.is_some() || has_postinstall || ran_any)
+    Ok(ran_any)
 }
 
 /// Run a single lifecycle hook.
@@ -188,7 +186,7 @@ fn run_lifecycle_hook(
 ///
 /// Prepends the package's own `node_modules/.bin`, any extra bin paths
 /// (from the caller), and the system PATH.
-fn build_path_env(pkg_root: &Path, extra_bin_paths: &[PathBuf]) -> String {
+fn build_path_env(pkg_root: &Path, extra_bin_paths: &[PathBuf]) -> OsString {
     let own_bin = pkg_root.join("node_modules/.bin");
     let system_path = env::var_os("PATH").unwrap_or_default();
 
@@ -199,5 +197,5 @@ fn build_path_env(pkg_root: &Path, extra_bin_paths: &[PathBuf]) -> String {
         paths.push(path);
     }
 
-    env::join_paths(paths).expect("join PATH entries").into_string().expect("PATH is valid UTF-8")
+    env::join_paths(paths).unwrap_or(system_path)
 }
