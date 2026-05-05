@@ -27,11 +27,15 @@ pub enum BuildModulesError {
 #[derive(Debug, Default)]
 pub struct AllowBuildPolicy {
     rules: HashMap<String, bool>,
-    policy_present: bool,
+    dangerously_allow_all: bool,
 }
 
 impl AllowBuildPolicy {
-    /// Read `pnpm.allowBuilds` from a project's `package.json`.
+    /// Read `pnpm.allowBuilds` and `pnpm.dangerouslyAllowAllBuilds`
+    /// from a project's `package.json`.
+    ///
+    /// pnpm 11 denies lifecycle scripts by default. Packages must be
+    /// explicitly listed in `allowBuilds` to run their scripts.
     pub fn from_manifest(manifest_dir: &Path) -> Self {
         let manifest_path = manifest_dir.join("package.json");
         let text = match fs::read_to_string(manifest_path) {
@@ -43,27 +47,34 @@ impl AllowBuildPolicy {
             Err(_) => return Self::default(),
         };
 
-        let allow_builds =
-            manifest.get("pnpm").and_then(|v| v.get("allowBuilds")).and_then(|v| v.as_object());
+        let pnpm = manifest.get("pnpm");
 
-        let Some(allow_builds) = allow_builds else {
-            return Self::default();
-        };
+        let dangerously_allow_all = pnpm
+            .and_then(|v| v.get("dangerouslyAllowAllBuilds"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let allow_builds = pnpm.and_then(|v| v.get("allowBuilds")).and_then(|v| v.as_object());
 
         let rules: HashMap<String, bool> = allow_builds
-            .iter()
-            .filter_map(|(key, value)| value.as_bool().map(|v| (key.clone(), v)))
-            .collect();
+            .map(|obj| {
+                obj.iter()
+                    .filter_map(|(key, value)| value.as_bool().map(|v| (key.clone(), v)))
+                    .collect()
+            })
+            .unwrap_or_default();
 
-        Self { rules, policy_present: true }
+        Self { rules, dangerously_allow_all }
     }
 
     /// Check whether a package is allowed to run build scripts.
     ///
-    /// `name` is the package name (e.g. `@pnpm.e2e/install-script-example`).
-    /// `version` is the resolved version (e.g. `1.0.0`).
+    /// Returns:
+    /// - `Some(true)`: explicitly allowed (or `dangerouslyAllowAllBuilds`)
+    /// - `Some(false)`: explicitly denied, silently skip
+    /// - `None`: not in the list, skip and report as ignored
     pub fn check(&self, name: &str, version: &str) -> Option<bool> {
-        if !self.policy_present {
+        if self.dangerously_allow_all {
             return Some(true);
         }
 

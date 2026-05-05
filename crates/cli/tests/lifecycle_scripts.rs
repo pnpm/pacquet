@@ -16,6 +16,11 @@ fn run_install_scripts() {
         "dependencies": {
             "@pnpm.e2e/install-script-example": "1.0.0",
         },
+        "pnpm": {
+            "allowBuilds": {
+                "@pnpm.e2e/install-script-example": true,
+            },
+        },
     });
     fs::write(&manifest_path, package_json.to_string()).expect("write package.json");
 

@@ -40,13 +40,13 @@ fn parse_unscoped_store_entry() {
 }
 
 #[test]
-fn allow_build_policy_no_rules_allows_all() {
+fn default_policy_denies_all() {
     let policy = AllowBuildPolicy::default();
-    assert_eq!(policy.check("any-package", "1.0.0"), Some(true));
+    assert_eq!(policy.check("any-package", "1.0.0"), None);
 }
 
 #[test]
-fn allow_build_policy_explicit_allow() {
+fn explicit_allow() {
     let dir = tempdir().expect("create temp dir");
     let manifest = serde_json::json!({
         "pnpm": {
@@ -62,7 +62,7 @@ fn allow_build_policy_explicit_allow() {
 }
 
 #[test]
-fn allow_build_policy_explicit_deny() {
+fn explicit_deny() {
     let dir = tempdir().expect("create temp dir");
     let manifest = serde_json::json!({
         "pnpm": {
@@ -78,7 +78,7 @@ fn allow_build_policy_explicit_deny() {
 }
 
 #[test]
-fn allow_build_policy_unlisted_returns_none() {
+fn unlisted_returns_none() {
     let dir = tempdir().expect("create temp dir");
     let manifest = serde_json::json!({
         "pnpm": {
@@ -94,7 +94,7 @@ fn allow_build_policy_unlisted_returns_none() {
 }
 
 #[test]
-fn allow_build_policy_exact_version_match() {
+fn exact_version_takes_precedence() {
     let dir = tempdir().expect("create temp dir");
     let manifest = serde_json::json!({
         "pnpm": {
@@ -112,14 +112,14 @@ fn allow_build_policy_exact_version_match() {
 }
 
 #[test]
-fn allow_build_policy_missing_manifest() {
+fn missing_manifest_denies_all() {
     let dir = tempdir().expect("create temp dir");
     let policy = AllowBuildPolicy::from_manifest(dir.path());
-    assert_eq!(policy.check("anything", "1.0.0"), Some(true));
+    assert_eq!(policy.check("anything", "1.0.0"), None);
 }
 
 #[test]
-fn allow_build_policy_empty_object_blocks_unlisted() {
+fn empty_allow_builds_denies_all() {
     let dir = tempdir().expect("create temp dir");
     let manifest = serde_json::json!({
         "pnpm": {
@@ -130,4 +130,36 @@ fn allow_build_policy_empty_object_blocks_unlisted() {
 
     let policy = AllowBuildPolicy::from_manifest(dir.path());
     assert_eq!(policy.check("any-package", "1.0.0"), None);
+}
+
+#[test]
+fn dangerously_allow_all_builds() {
+    let dir = tempdir().expect("create temp dir");
+    let manifest = serde_json::json!({
+        "pnpm": {
+            "dangerouslyAllowAllBuilds": true,
+        },
+    });
+    fs::write(dir.path().join("package.json"), manifest.to_string()).expect("write manifest");
+
+    let policy = AllowBuildPolicy::from_manifest(dir.path());
+    assert_eq!(policy.check("any-package", "1.0.0"), Some(true));
+    assert_eq!(policy.check("other-package", "2.0.0"), Some(true));
+}
+
+#[test]
+fn dangerously_allow_all_overrides_deny() {
+    let dir = tempdir().expect("create temp dir");
+    let manifest = serde_json::json!({
+        "pnpm": {
+            "dangerouslyAllowAllBuilds": true,
+            "allowBuilds": {
+                "@pnpm.e2e/pkg": false,
+            },
+        },
+    });
+    fs::write(dir.path().join("package.json"), manifest.to_string()).expect("write manifest");
+
+    let policy = AllowBuildPolicy::from_manifest(dir.path());
+    assert_eq!(policy.check("@pnpm.e2e/pkg", "1.0.0"), Some(true));
 }
