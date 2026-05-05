@@ -24,10 +24,6 @@ pub struct WorkEnv {
     pub revisions: Vec<String>,
     pub registry: String,
     pub repository: PathBuf,
-    /// `None` only when we're in `--build-only` mode (clap enforces that
-    /// `--scenario` is otherwise required). Methods that read it —
-    /// `init()` and `benchmark()` — are only called from `run()`, which
-    /// the `build_only` branch in `main.rs` skips.
     pub scenario: Option<BenchmarkScenario>,
     pub hyperfine_options: HyperfineOptions,
     pub fixture_dir: Option<PathBuf>,
@@ -119,7 +115,7 @@ impl WorkEnv {
             .pipe_mut(executor("install.bash"))
     }
 
-    fn build(&self) {
+    pub fn build(&self) {
         eprintln!("Building...");
         for revision in self.revision_names() {
             eprintln!("Revision: {revision:?}");
@@ -259,15 +255,6 @@ impl WorkEnv {
         self.init();
         self.build();
         self.benchmark();
-    }
-
-    /// Clone and build each revision without setting up the per-revision
-    /// install scripts, priming the proxy cache, or running hyperfine.
-    /// Used by CI to precompile every revision in a step of its own so
-    /// the timed benchmark steps don't race their timeout against
-    /// `cargo build`.
-    pub fn build_only(&self) {
-        self.build();
     }
 }
 

@@ -4,7 +4,7 @@ use std::{path::PathBuf, process::Command};
 
 #[derive(Debug, Parser)]
 pub struct CliArgs {
-    /// Task to benchmark. Required unless `--build-only` is given.
+    /// Task to benchmark.
     #[clap(long, short, required_unless_present = "build_only", conflicts_with = "build_only")]
     pub scenario: Option<BenchmarkScenario>,
 
@@ -36,10 +36,7 @@ pub struct CliArgs {
     #[clap(long)]
     pub with_pnpm: bool,
 
-    /// Clone and build each revision but skip the proxy-cache priming and
-    /// the hyperfine run. Intended for CI to precompile every revision in
-    /// a step of its own so the timed benchmark steps don't race their
-    /// timeout against `cargo build`.
+    /// Build each revision without running the benchmark.
     #[clap(long)]
     pub build_only: bool,
 

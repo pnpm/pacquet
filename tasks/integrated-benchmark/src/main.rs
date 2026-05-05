@@ -25,8 +25,6 @@ async fn main() {
     }
     let work_env = std::fs::canonicalize(work_env).expect("get absolute path to work env");
     let registry = format!("http://localhost:{registry_port}/");
-    // `--build-only` only clones and compiles each revision, so it doesn't
-    // need verdaccio, hyperfine, or pnpm.
     let verdaccio = if build_only {
         None
     } else if verdaccio {
@@ -65,7 +63,7 @@ async fn main() {
         fixture_dir,
     };
     if build_only {
-        env.build_only();
+        env.build();
     } else {
         env.run();
     }
