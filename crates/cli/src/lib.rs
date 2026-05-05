@@ -38,23 +38,6 @@ async fn attempt_fallback_command(
     err: clap::Error,
     mut os_args: Vec<OsString>,
 ) -> miette::Result<()> {
-    let mut os_args_without_executable = os_args.iter().skip(1);
-
-    let is_pacquet_command_provided = os_args_without_executable.any(|arg| {
-        if let Some(arg) = arg.to_str() {
-            let is_single_dash = arg.starts_with('-');
-            let is_double_dash = arg.starts_with("--");
-
-            !is_single_dash && !is_double_dash
-        } else {
-            false
-        }
-    });
-
-    if !is_pacquet_command_provided {
-        err.exit();
-    }
-
     let fallback_command = OsString::from("run");
 
     os_args.insert(1, fallback_command);
