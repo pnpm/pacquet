@@ -36,6 +36,13 @@ pub struct CliArgs {
     #[clap(long)]
     pub with_pnpm: bool,
 
+    /// Clone and build each revision but skip the proxy-cache priming and
+    /// the hyperfine run. Intended for CI to precompile every revision in
+    /// a step of its own so the timed benchmark steps don't race their
+    /// timeout against `cargo build`.
+    #[clap(long)]
+    pub build_only: bool,
+
     /// Branch name, tag name, or commit id of the pacquet repo.
     #[clap(required = true)]
     pub revisions: Vec<String>,

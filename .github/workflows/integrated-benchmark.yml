@@ -128,12 +128,27 @@ jobs:
       - name: Build the benchmark executor
         run: cargo build --bin=integrated-benchmark
 
+      - name: Precompile benchmark revisions
+        shell: bash
+        # Clone HEAD and main and run `cargo build --release --bin=pacquet`
+        # for each, in a step of its own. Both timed benchmark steps below
+        # consume the same per-revision targets, so doing the compile here
+        # leaves them as near-no-op incremental builds. With the Rust build
+        # cache in place this is fast; on a cold cache it can take several
+        # minutes, which is exactly why it lives outside the timed steps —
+        # 15 min covers a cold-cache double build with headroom.
+        timeout-minutes: 15
+        run: just integrated-benchmark --scenario=frozen-lockfile --build-only HEAD main
+
       - name: 'Benchmark: Frozen Lockfile'
         shell: bash
         # Hyperfine has no per-command timeout, so a single hanging
         # install takes the whole step down with the GHA default job
         # timeout (6 h). A normal run is ~2 min — 10 min is generous
         # headroom, and a failure surfaces fast enough to iterate on.
+        # The preceding "Precompile benchmark revisions" step has already
+        # built each revision's pacquet binary, so the build phase here
+        # is an incremental near-no-op.
         timeout-minutes: 10
         run: |
           just integrated-benchmark --scenario=frozen-lockfile --verdaccio --with-pnpm HEAD main

@@ -254,6 +254,15 @@ impl WorkEnv {
         self.build();
         self.benchmark();
     }
+
+    /// Clone and build each revision without setting up the per-revision
+    /// install scripts, priming the proxy cache, or running hyperfine.
+    /// Used by CI to precompile every revision in a step of its own so
+    /// the timed benchmark steps don't race their timeout against
+    /// `cargo build`.
+    pub fn build_only(&self) {
+        self.build();
+    }
 }
 
 fn create_package_json(dst_dir: &Path, src_dir: Option<&Path>) {
