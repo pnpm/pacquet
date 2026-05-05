@@ -50,7 +50,7 @@ fn should_support_run_command_aliasing_for_scripts_with_arguments() {
 
     fs::write(package_json_path, package_json_content).expect("write to package.json");
 
-    fs::write(record_args_script_path, record_args_script).expect("write to record_args.sh");
+    fs::write(record_args_script_path, record_args_script).expect("write to record_args.js");
 
     pacquet.with_arg("build").arg("arg1").arg("arg2").arg("arg3").assert().success();
 
@@ -63,7 +63,15 @@ fn should_support_run_command_aliasing_for_scripts_with_arguments() {
 
 #[test]
 fn should_fail_if_run_command_alias_does_not_exist() {
-    let CommandTempCwd { pacquet, root, .. } = CommandTempCwd::init();
+    let CommandTempCwd { pacquet, root, workspace, .. } = CommandTempCwd::init();
+
+    let package_json_path = workspace.join("package.json");
+    let package_json_content = serde_json::json!({
+        "scripts": {}
+    })
+    .to_string();
+
+    fs::write(package_json_path, package_json_content).expect("write to package.json");
 
     pacquet.with_arg("build").assert().failure();
 
