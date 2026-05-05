@@ -1869,9 +1869,9 @@ dependencies = [
  "pacquet-testing-utils",
  "pipe-trait",
  "pretty_assertions",
+ "serde",
  "serde-saphyr",
  "serde_json",
- "strum",
  "tempfile",
 ]
 

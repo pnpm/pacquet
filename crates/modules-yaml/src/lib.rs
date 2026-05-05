@@ -11,13 +11,13 @@
 use derive_more::{Display, Error};
 use pacquet_diagnostics::miette::{self, Diagnostic};
 use pipe_trait::Pipe;
-use serde_json::{Map, Value};
+use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     fs, io,
     path::{Path, PathBuf},
     time::SystemTime,
 };
-use strum::IntoStaticStr;
 
 /// Filename of the modules manifest inside `node_modules/`.
 ///
@@ -79,12 +79,123 @@ impl FsWrite for RealApi {
     }
 }
 
-/// Free-form representation of a `.modules.yaml` manifest.
+/// Typed view of a `node_modules/.modules.yaml` manifest.
 ///
-/// pnpm carries a strongly-typed `Modules` interface upstream. Pacquet keeps
-/// the manifest as a [`serde_json::Value`] while the surrounding install
-/// pipeline is being ported; the on-disk format is JSON regardless.
-pub type ModulesManifest = Value;
+/// Mirrors upstream's `ModulesRaw` interface at
+/// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L23-L44>.
+/// Every required-by-upstream field carries a `#[serde(default)]` so legacy
+/// manifests written by older pnpm versions still deserialize; the read
+/// path then fills in the modern shape from the legacy fields.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModulesManifest {
+    /// Legacy: the v5-era flat alias map, kept for read-side
+    /// compatibility. Replaced by [`Self::hoisted_dependencies`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hoisted_aliases: Option<BTreeMap<String, Vec<String>>>,
+
+    #[serde(default)]
+    pub hoisted_dependencies: BTreeMap<String, BTreeMap<String, HoistKind>>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hoist_pattern: Option<Vec<String>>,
+
+    #[serde(default)]
+    pub included: IncludedDependencies,
+
+    #[serde(default)]
+    pub layout_version: u32,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_linker: Option<NodeLinker>,
+
+    #[serde(default)]
+    pub package_manager: String,
+
+    #[serde(default)]
+    pub pending_builds: Vec<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ignored_builds: Option<Vec<String>>,
+
+    #[serde(default)]
+    pub pruned_at: String,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registries: Option<BTreeMap<String, String>>,
+
+    /// Legacy: the v5-era flag used to mean "hoist everything publicly."
+    /// Replaced by [`Self::public_hoist_pattern`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shamefully_hoist: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_hoist_pattern: Option<Vec<String>>,
+
+    #[serde(default)]
+    pub skipped: Vec<String>,
+
+    #[serde(default)]
+    pub store_dir: String,
+
+    #[serde(default)]
+    pub virtual_store_dir: String,
+
+    #[serde(default)]
+    pub virtual_store_dir_max_length: u64,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub injected_deps: Option<BTreeMap<String, Vec<String>>>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hoisted_locations: Option<BTreeMap<String, Vec<String>>>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_builds: Option<BTreeMap<String, AllowBuildValue>>,
+}
+
+/// Which dependency groups the install pipeline included. Mirrors
+/// upstream's `IncludedDependencies` at
+/// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L19-L21>.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IncludedDependencies {
+    #[serde(default)]
+    pub dependencies: bool,
+    #[serde(default)]
+    pub dev_dependencies: bool,
+    #[serde(default)]
+    pub optional_dependencies: bool,
+}
+
+/// Linker variant the install pipeline used. The string variants match
+/// pnpm's runtime values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NodeLinker {
+    Hoisted,
+    Isolated,
+    Pnp,
+}
+
+/// Per-alias visibility selected by the legacy `shamefullyHoist` flag.
+/// Serializes as `"public"` or `"private"` to match the JSON shape pnpm
+/// stores in `hoistedDependencies`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HoistKind {
+    Public,
+    Private,
+}
+
+/// Value stored under an [`ModulesManifest::allow_builds`] entry. pnpm
+/// allows either a boolean toggle or a string allowlist label.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AllowBuildValue {
+    Bool(bool),
+    String(String),
+}
 
 /// Error returned by [`read_modules_manifest`].
 #[derive(Debug, Display, Error, Diagnostic)]
@@ -118,8 +229,8 @@ pub enum WriteModulesManifestError {
 
 /// Read `<modules_dir>/.modules.yaml` and return the normalized manifest.
 ///
-/// Returns `Ok(None)` when the file does not exist or is empty, matching
-/// upstream `readModulesManifest` at
+/// Returns `Ok(None)` when the file does not exist or contains a YAML
+/// `null` document, matching upstream `readModulesManifest` at
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L50-L105>.
 ///
 /// Production callers turbofish [`RealApi`]: `read_modules_manifest::<RealApi>(dir)`.
@@ -136,17 +247,21 @@ pub fn read_modules_manifest<Api: FsReadToString>(
             return Err(ReadModulesManifestError::ReadFile { path: manifest_path, source });
         }
     };
-    let mut manifest: Value = content.pipe_as_ref(serde_saphyr::from_str).map_err(|source| {
-        ReadModulesManifestError::ParseYaml {
-            path: manifest_path.clone(),
-            source: Box::new(source),
-        }
-    })?;
-    if manifest.is_null() {
-        return Ok(None);
+    let parsed: Option<ModulesManifest> =
+        content.pipe_as_ref(serde_saphyr::from_str).map_err(|source| {
+            ReadModulesManifestError::ParseYaml {
+                path: manifest_path.clone(),
+                source: Box::new(source),
+            }
+        })?;
+    let Some(mut manifest) = parsed else { return Ok(None) };
+    apply_legacy_shamefully_hoist(&mut manifest);
+    resolve_virtual_store_dir(&mut manifest, modules_dir);
+    if manifest.pruned_at.is_empty() {
+        manifest.pruned_at = http_date_now();
     }
-    if let Value::Object(fields) = &mut manifest {
-        normalize_after_read(modules_dir, fields);
+    if manifest.virtual_store_dir_max_length == 0 {
+        manifest.virtual_store_dir_max_length = DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH;
     }
     Ok(Some(manifest))
 }
@@ -164,8 +279,12 @@ pub fn write_modules_manifest<Api: FsCreateDirAll + FsWrite>(
     manifest: &ModulesManifest,
 ) -> Result<(), WriteModulesManifestError> {
     let mut to_save = manifest.clone();
-    if let Value::Object(fields) = &mut to_save {
-        normalize_before_write(modules_dir, fields);
+    to_save.skipped.sort();
+    drop_legacy_hoisted_aliases_when_unreferenced(&mut to_save);
+    // Junctions on Windows break when the project moves, so the absolute
+    // path is intentionally preserved there. See upstream L129-L135.
+    if !cfg!(windows) {
+        rewrite_virtual_store_dir_relative(&mut to_save, modules_dir);
     }
     let serialized =
         serde_json::to_string_pretty(&to_save).map_err(WriteModulesManifestError::SerializeJson)?;
@@ -178,187 +297,65 @@ pub fn write_modules_manifest<Api: FsCreateDirAll + FsWrite>(
         .map_err(|source| WriteModulesManifestError::WriteFile { path: manifest_path, source })
 }
 
-/// Apply the post-read transforms pnpm performs at upstream L62-L104.
-fn normalize_after_read(modules_dir: &Path, fields: &mut Map<String, Value>) {
-    resolve_virtual_store_dir(modules_dir, fields);
-    apply_legacy_shamefully_hoist(fields);
-    if !is_present_string(fields.get("prunedAt")) {
-        fields.insert("prunedAt".to_string(), Value::String(http_date_now()));
-    }
-    if !is_present_number(fields.get("virtualStoreDirMaxLength")) {
-        fields.insert(
-            "virtualStoreDirMaxLength".to_string(),
-            Value::Number(DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH.into()),
-        );
-    }
-}
-
-/// Apply the pre-write transforms pnpm performs at upstream L116-L135.
-fn normalize_before_write(modules_dir: &Path, fields: &mut Map<String, Value>) {
-    sort_skipped(fields);
-    drop_empty_hoist_fields(fields);
-    // Junctions on Windows break when the project moves, so the absolute
-    // path is intentionally preserved there. See upstream L129-L135.
-    if !cfg!(windows) {
-        rewrite_virtual_store_dir_relative(modules_dir, fields);
-    }
-}
-
 /// Match pnpm's L66-L70. When `virtualStoreDir` is missing, default to
 /// `modules_dir/.pnpm`. When it is relative, resolve it against
 /// `modules_dir`.
-fn resolve_virtual_store_dir(modules_dir: &Path, fields: &mut Map<String, Value>) {
-    let resolved = match fields.get("virtualStoreDir").and_then(Value::as_str) {
-        None | Some("") => modules_dir.join(".pnpm"),
-        Some(stored) => {
-            let stored_path = Path::new(stored);
-            if stored_path.is_absolute() {
-                stored_path.to_path_buf()
-            } else {
-                modules_dir.join(stored_path)
-            }
+fn resolve_virtual_store_dir(manifest: &mut ModulesManifest, modules_dir: &Path) {
+    let resolved = if manifest.virtual_store_dir.is_empty() {
+        modules_dir.join(".pnpm")
+    } else {
+        let stored_path = Path::new(&manifest.virtual_store_dir);
+        if stored_path.is_absolute() {
+            stored_path.to_path_buf()
+        } else {
+            modules_dir.join(stored_path)
         }
     };
-    fields.insert("virtualStoreDir".to_string(), path_to_value(&resolved));
+    manifest.virtual_store_dir = resolved.to_string_lossy().into_owned();
 }
 
 /// Match pnpm's L132-L135 by storing `virtualStoreDir` relative to
 /// `modules_dir`. Falls back to the original value when stripping the
 /// prefix fails.
-fn rewrite_virtual_store_dir_relative(modules_dir: &Path, fields: &mut Map<String, Value>) {
-    let Some(stored) = fields.get("virtualStoreDir").and_then(Value::as_str) else {
-        return;
-    };
-    let stored_path = Path::new(stored);
+fn rewrite_virtual_store_dir_relative(manifest: &mut ModulesManifest, modules_dir: &Path) {
+    let stored_path = Path::new(&manifest.virtual_store_dir);
     let relative = stored_path.strip_prefix(modules_dir).unwrap_or(stored_path);
-    fields.insert("virtualStoreDir".to_string(), path_to_value(relative));
-}
-
-/// Per-alias visibility selected by the legacy `shamefullyHoist` flag. The
-/// derive emits `"public"` and `"private"` so the value lands as the
-/// expected JSON string when written into a derived `hoistedDependencies`
-/// entry.
-#[derive(Debug, Clone, Copy, IntoStaticStr)]
-enum HoistKind {
-    #[strum(serialize = "public")]
-    Public,
-    #[strum(serialize = "private")]
-    Private,
+    manifest.virtual_store_dir = relative.to_string_lossy().into_owned();
 }
 
 /// Translate the legacy `shamefullyHoist` and `hoistedAliases` fields into
 /// the modern `publicHoistPattern` and `hoistedDependencies` shapes. Mirrors
 /// upstream L71-L97.
-fn apply_legacy_shamefully_hoist(fields: &mut Map<String, Value>) {
-    let Some(shamefully_hoist) = fields.get("shamefullyHoist").and_then(Value::as_bool) else {
+fn apply_legacy_shamefully_hoist(manifest: &mut ModulesManifest) {
+    let Some(shamefully_hoist) = manifest.shamefully_hoist else {
         return;
     };
     let kind = if shamefully_hoist { HoistKind::Public } else { HoistKind::Private };
-    if !fields.contains_key("publicHoistPattern") {
-        let default_pattern = if shamefully_hoist {
-            Value::Array(vec![Value::String("*".to_string())])
-        } else {
-            Value::Array(Vec::new())
-        };
-        fields.insert("publicHoistPattern".to_string(), default_pattern);
+    if manifest.public_hoist_pattern.is_none() {
+        manifest.public_hoist_pattern =
+            Some(if shamefully_hoist { vec!["*".to_string()] } else { Vec::new() });
     }
-    if fields.contains_key("hoistedAliases") && !fields.contains_key("hoistedDependencies") {
-        let hoisted_aliases = fields.get("hoistedAliases").cloned().unwrap_or(Value::Null);
-        fields.insert(
-            "hoistedDependencies".to_string(),
-            derive_hoisted_dependencies(&hoisted_aliases, kind),
-        );
-    }
-}
-
-fn derive_hoisted_dependencies(hoisted_aliases: &Value, kind: HoistKind) -> Value {
-    let Value::Object(aliases_by_path) = hoisted_aliases else {
-        return Value::Object(Map::new());
-    };
-    let kind_str: &'static str = kind.into();
-    let mut derived = Map::with_capacity(aliases_by_path.len());
-    for (dep_path, alias_list) in aliases_by_path {
-        let mut entry = Map::new();
-        if let Value::Array(alias_values) = alias_list {
-            for alias_value in alias_values {
-                if let Value::String(alias_name) = alias_value {
-                    entry.insert(alias_name.clone(), Value::String(kind_str.to_string()));
-                }
-            }
-        }
-        derived.insert(dep_path.clone(), Value::Object(entry));
-    }
-    Value::Object(derived)
-}
-
-fn sort_skipped(fields: &mut Map<String, Value>) {
-    let Some(Value::Array(skipped)) = fields.get_mut("skipped") else {
-        return;
-    };
-    skipped.sort_by(|left, right| match (left, right) {
-        (Value::String(left), Value::String(right)) => left.cmp(right),
-        // Non-string entries compare equal to everything else, so stable
-        // sort keeps them in input order. pnpm only ever writes `skipped`
-        // as `string[]`, so this fallback exists for corrupt manifests
-        // rather than any real upstream shape.
-        _ => std::cmp::Ordering::Equal,
-    });
-}
-
-fn drop_empty_hoist_fields(fields: &mut Map<String, Value>) {
-    if is_empty_or_null(fields.get("hoistPattern")) {
-        fields.shift_remove("hoistPattern");
-    }
-    if is_null_or_missing(fields.get("publicHoistPattern")) {
-        fields.shift_remove("publicHoistPattern");
-    }
-    let drop_hoisted_aliases = match fields.get("hoistedAliases") {
-        None | Some(Value::Null) => true,
-        _ => !fields.contains_key("hoistPattern") && !fields.contains_key("publicHoistPattern"),
-    };
-    if drop_hoisted_aliases {
-        fields.shift_remove("hoistedAliases");
+    if manifest.hoisted_dependencies.is_empty()
+        && let Some(aliases_by_path) = &manifest.hoisted_aliases
+    {
+        manifest.hoisted_dependencies = aliases_by_path
+            .iter()
+            .map(|(dep_path, alias_names)| {
+                let entry = alias_names.iter().map(|alias| (alias.clone(), kind)).collect();
+                (dep_path.clone(), entry)
+            })
+            .collect();
     }
 }
 
-fn is_present_string(value: Option<&Value>) -> bool {
-    matches!(value, Some(Value::String(string)) if !string.is_empty())
-}
-
-fn is_present_number(value: Option<&Value>) -> bool {
-    matches!(value, Some(Value::Number(_)))
-}
-
-fn is_null_or_missing(value: Option<&Value>) -> bool {
-    matches!(value, None | Some(Value::Null))
-}
-
-fn is_empty_or_null(value: Option<&Value>) -> bool {
-    match value {
-        None | Some(Value::Null) => true,
-        Some(Value::String(string)) => string.is_empty(),
-        _ => false,
+/// Drop the legacy `hoistedAliases` field on write when neither hoist
+/// pattern is present, mirroring pnpm's L126-L128 cleanup.
+fn drop_legacy_hoisted_aliases_when_unreferenced(manifest: &mut ModulesManifest) {
+    if manifest.hoist_pattern.is_none() && manifest.public_hoist_pattern.is_none() {
+        manifest.hoisted_aliases = None;
     }
-}
-
-/// Encode `path` as a JSON string for storage in the manifest.
-///
-/// `to_string_lossy` swaps any invalid UTF-8 byte for `U+FFFD`. In practice
-/// `node_modules` paths and pnpm registry paths are always UTF-8, and
-/// upstream pnpm stores them as JavaScript strings without any width
-/// guard, so the lossy step is acceptable today. Non-UTF-8 input would
-/// silently change the on-disk path.
-//
-// TODO: surface non-UTF-8 paths as a typed error and propagate `Err`
-// from every caller, rather than swallowing the loss here. Tracked
-// alongside the broader install-pipeline port.
-fn path_to_value(path: &Path) -> Value {
-    path.to_string_lossy().into_owned().pipe(Value::String)
 }
 
 fn http_date_now() -> String {
     httpdate::fmt_http_date(SystemTime::now())
 }
-
-#[cfg(test)]
-mod edge_cases;

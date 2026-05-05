@@ -1,17 +1,22 @@
 use pacquet_modules_yaml::{
-    FsCreateDirAll, FsReadToString, FsWrite, RealApi, read_modules_manifest, write_modules_manifest,
+    FsCreateDirAll, FsReadToString, FsWrite, HoistKind, ModulesManifest, RealApi,
+    read_modules_manifest, write_modules_manifest,
 };
 use pipe_trait::Pipe;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
+
+fn manifest_from_json(value: Value) -> ModulesManifest {
+    serde_json::from_value(value).expect("deserialize ModulesManifest fixture")
+}
 
 /// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L10-L40
 #[test]
 fn write_modules_manifest_and_read_modules_manifest() {
     let temp_dir = tempfile::tempdir().expect("create temporary directory");
     let modules_dir = temp_dir.path();
-    let modules_yaml = json!({
+    let modules_yaml = manifest_from_json(json!({
         "hoistedDependencies": {},
         "included": {
             "dependencies": true,
@@ -32,7 +37,7 @@ fn write_modules_manifest_and_read_modules_manifest() {
         "storeDir": "/.pnpm-store",
         "virtualStoreDir": modules_dir.join(".pnpm"),
         "virtualStoreDirMaxLength": 120,
-    });
+    }));
 
     write_modules_manifest::<RealApi>(modules_dir, &modules_yaml).expect("write manifest");
     let actual = read_modules_manifest::<RealApi>(modules_dir).expect("read manifest");
@@ -54,19 +59,20 @@ fn write_modules_manifest_and_read_modules_manifest() {
 fn read_legacy_shamefully_hoist_true_manifest() {
     let modules_dir =
         env!("CARGO_MANIFEST_DIR").pipe(Path::new).join("tests/fixtures/old-shamefully-hoist");
-    let modules_yaml = read_modules_manifest::<RealApi>(&modules_dir)
+    let manifest = read_modules_manifest::<RealApi>(&modules_dir)
         .expect("read manifest")
         .expect("modules manifest exists");
 
-    assert_eq!(modules_yaml["publicHoistPattern"], json!(["*"]));
-    assert_eq!(
-        modules_yaml["hoistedDependencies"],
-        json!({
-            "/accepts/1.3.7": { "accepts": "public" },
-            "/array-flatten/1.1.1": { "array-flatten": "public" },
-            "/body-parser/1.19.0": { "body-parser": "public" },
-        }),
-    );
+    assert_eq!(manifest.public_hoist_pattern.as_deref(), Some(&["*".to_string()][..]));
+
+    let mut expected: BTreeMap<String, BTreeMap<String, HoistKind>> = BTreeMap::new();
+    for dep_path in ["/accepts/1.3.7", "/array-flatten/1.1.1", "/body-parser/1.19.0"] {
+        let alias = dep_path.split('/').nth(1).expect("dep path has alias segment").to_string();
+        let mut entry = BTreeMap::new();
+        entry.insert(alias, HoistKind::Public);
+        expected.insert(dep_path.to_string(), entry);
+    }
+    assert_eq!(manifest.hoisted_dependencies, expected);
 }
 
 /// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L55-L66
@@ -74,19 +80,20 @@ fn read_legacy_shamefully_hoist_true_manifest() {
 fn read_legacy_shamefully_hoist_false_manifest() {
     let modules_dir =
         env!("CARGO_MANIFEST_DIR").pipe(Path::new).join("tests/fixtures/old-no-shamefully-hoist");
-    let modules_yaml = read_modules_manifest::<RealApi>(&modules_dir)
+    let manifest = read_modules_manifest::<RealApi>(&modules_dir)
         .expect("read manifest")
         .expect("modules manifest exists");
 
-    assert_eq!(modules_yaml["publicHoistPattern"], json!([]));
-    assert_eq!(
-        modules_yaml["hoistedDependencies"],
-        json!({
-            "/accepts/1.3.7": { "accepts": "private" },
-            "/array-flatten/1.1.1": { "array-flatten": "private" },
-            "/body-parser/1.19.0": { "body-parser": "private" },
-        }),
-    );
+    assert_eq!(manifest.public_hoist_pattern.as_deref(), Some(&[][..]));
+
+    let mut expected: BTreeMap<String, BTreeMap<String, HoistKind>> = BTreeMap::new();
+    for dep_path in ["/accepts/1.3.7", "/array-flatten/1.1.1", "/body-parser/1.19.0"] {
+        let alias = dep_path.split('/').nth(1).expect("dep path has alias segment").to_string();
+        let mut entry = BTreeMap::new();
+        entry.insert(alias, HoistKind::Private);
+        expected.insert(dep_path.to_string(), entry);
+    }
+    assert_eq!(manifest.hoisted_dependencies, expected);
 }
 
 /// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L68-L94
@@ -94,7 +101,7 @@ fn read_legacy_shamefully_hoist_false_manifest() {
 fn write_modules_manifest_creates_node_modules_directory() {
     let temp_dir = tempfile::tempdir().expect("create temporary directory");
     let modules_dir = temp_dir.path().join("node_modules");
-    let modules_yaml = json!({
+    let modules_yaml = manifest_from_json(json!({
         "hoistedDependencies": {},
         "included": {
             "dependencies": true,
@@ -115,7 +122,7 @@ fn write_modules_manifest_creates_node_modules_directory() {
         "storeDir": "/.pnpm-store",
         "virtualStoreDir": modules_dir.join(".pnpm"),
         "virtualStoreDirMaxLength": 120,
-    });
+    }));
 
     write_modules_manifest::<RealApi>(&modules_dir, &modules_yaml).expect("write manifest");
     let actual = read_modules_manifest::<RealApi>(&modules_dir).expect("read manifest");
@@ -153,8 +160,7 @@ fn read_preserves_absolute_virtual_store_dir() {
     let manifest = read_modules_manifest::<RealApi>(&modules_dir)
         .expect("read manifest")
         .expect("manifest exists");
-    let stored = manifest["virtualStoreDir"].as_str().expect("virtualStoreDir is a string");
-    assert_eq!(Path::new(stored), custom_store);
+    assert_eq!(Path::new(&manifest.virtual_store_dir), custom_store);
 }
 
 /// `writeModulesManifest` sorts `skipped` in place before serializing,
@@ -164,10 +170,10 @@ fn read_preserves_absolute_virtual_store_dir() {
 fn write_sorts_skipped_array() {
     let temp_dir = tempfile::tempdir().expect("create temporary directory");
     let modules_dir = temp_dir.path();
-    let manifest = json!({
+    let manifest = manifest_from_json(json!({
         "layoutVersion": 1,
         "skipped": ["zeta", "alpha", "mu"],
-    });
+    }));
 
     write_modules_manifest::<RealApi>(modules_dir, &manifest).expect("write manifest");
     let raw =
@@ -257,7 +263,7 @@ fn write_propagates_create_dir_error() {
     }
 
     let modules_dir = Path::new("/dev/null/unused");
-    let err = write_modules_manifest::<FailingMkdir>(modules_dir, &json!({}))
+    let err = write_modules_manifest::<FailingMkdir>(modules_dir, &ModulesManifest::default())
         .expect_err("expected error");
     eprintln!("error: {err}");
     assert!(matches!(err, pacquet_modules_yaml::WriteModulesManifestError::CreateDir { .. }));
@@ -281,7 +287,7 @@ fn write_propagates_write_error() {
     }
 
     let modules_dir = Path::new("/dev/null/unused");
-    let err = write_modules_manifest::<FailingWrite>(modules_dir, &json!({}))
+    let err = write_modules_manifest::<FailingWrite>(modules_dir, &ModulesManifest::default())
         .expect_err("expected error");
     eprintln!("error: {err}");
     assert!(matches!(err, pacquet_modules_yaml::WriteModulesManifestError::WriteFile { .. }));
@@ -294,10 +300,10 @@ fn write_propagates_write_error() {
 fn write_removes_null_public_hoist_pattern() {
     let temp_dir = tempfile::tempdir().expect("create temporary directory");
     let modules_dir = temp_dir.path();
-    let manifest = json!({
+    let manifest = manifest_from_json(json!({
         "layoutVersion": 1,
         "publicHoistPattern": null,
-    });
+    }));
 
     write_modules_manifest::<RealApi>(modules_dir, &manifest).expect("write manifest");
     let raw =
