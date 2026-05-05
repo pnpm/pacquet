@@ -45,13 +45,11 @@ async fn main() {
     };
     verify::ensure_git_repo(&repository);
     verify::validate_revision_list(&revisions);
+    verify::ensure_program("bash");
     verify::ensure_program("cargo");
     verify::ensure_program("git");
-    if !build_only {
-        verify::ensure_program("bash");
-        verify::ensure_program("hyperfine");
-        verify::ensure_program("pnpm");
-    }
+    verify::ensure_program("hyperfine");
+    verify::ensure_program("pnpm");
     let env = work_env::WorkEnv {
         root: work_env,
         with_pnpm,
