@@ -7,7 +7,7 @@ use crate::State;
 use add::AddArgs;
 use clap::{Parser, Subcommand, ValueEnum};
 use install::InstallArgs;
-use miette::Context;
+use miette::{Context, miette};
 use pacquet_executor::execute_shell;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::PackageManifest;
@@ -76,6 +76,9 @@ pub enum CliCommand {
     /// Managing the package store.
     #[clap(subcommand)]
     Store(StoreCommand),
+    /// Runs a defined package script when no built-in command matches
+    #[clap(external_subcommand)]
+    RunCommandAlias(Vec<String>),
 }
 
 impl CliArgs {
@@ -131,6 +134,19 @@ impl CliArgs {
                 execute_shell(command).wrap_err(format!("executing command: \"{0}\"", command))?;
             }
             CliCommand::Store(command) => command.run(|| npmrc())?,
+            CliCommand::RunCommandAlias(args) => {
+                if let Some((command, args)) = args.split_first() {
+                    let run_args = RunArgs {
+                        command: command.to_owned(),
+                        args: args.to_vec(),
+                        if_present: false,
+                    };
+
+                    run_args.run(manifest_path())?;
+                } else {
+                    return Err(miette!("No command provided to run"));
+                }
+            }
         }
 
         Ok(())
