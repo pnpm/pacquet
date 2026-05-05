@@ -128,6 +128,11 @@ jobs:
       - name: Build the benchmark executor
         run: cargo build --bin=integrated-benchmark
 
+      - name: Precompile benchmark revisions
+        shell: bash
+        timeout-minutes: 15
+        run: just integrated-benchmark --build-only HEAD main
+
       - name: 'Benchmark: Frozen Lockfile'
         shell: bash
         # Hyperfine has no per-command timeout, so a single hanging
