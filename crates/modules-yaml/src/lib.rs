@@ -52,8 +52,8 @@ pub trait FsWrite {
 }
 
 /// Production implementation, backed by [`std::fs`]. One impl block per
-/// capability trait — production uses the full set; tests pick what they
-/// need.
+/// capability trait. Production uses the full set; tests pick the methods
+/// they need.
 pub struct RealApi;
 
 impl FsReadToString for RealApi {
@@ -201,8 +201,9 @@ fn normalize_before_write(modules_dir: &Path, fields: &mut Map<String, Value>) {
     }
 }
 
-/// Match pnpm's L66-L70: if `virtualStoreDir` is missing, default to
-/// `modules_dir/.pnpm`; if relative, resolve against `modules_dir`.
+/// Match pnpm's L66-L70. When `virtualStoreDir` is missing, default to
+/// `modules_dir/.pnpm`. When it is relative, resolve it against
+/// `modules_dir`.
 fn resolve_virtual_store_dir(modules_dir: &Path, fields: &mut Map<String, Value>) {
     let resolved = match fields.get("virtualStoreDir").and_then(Value::as_str) {
         None | Some("") => modules_dir.join(".pnpm"),

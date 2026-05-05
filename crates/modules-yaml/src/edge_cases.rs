@@ -1,24 +1,25 @@
 //! Edge-case unit tests for defensive fallbacks in [`pacquet_modules_yaml`].
 //!
 //! These tests cover branches that exist purely to keep the crate
-//! "tolerant of unknown shapes" — non-object `hoistedAliases`, mixed-type
-//! `skipped` entries, non-string `hoistPattern`, etc. pnpm itself never
-//! emits these shapes; they're guard rails for downstream code that
-//! might deserialize a corrupt manifest. The tests exist to lock in the
-//! fallback behavior and to close coverage holes that pnpm-sourced
-//! fixtures cannot reach.
+//! tolerant of unknown shapes. Examples include a non-object
+//! `hoistedAliases`, mixed-type `skipped` entries, and a non-string
+//! `hoistPattern`. pnpm itself never emits these shapes; they are guard
+//! rails for downstream code that might deserialize a corrupt manifest.
+//! The tests exist to lock in the fallback behavior and to close
+//! coverage holes that pnpm-sourced fixtures cannot reach.
 //!
-//! Lower priority than the ports in `crates/modules-yaml/tests/index.rs`:
-//! a regression in any of these means the crate became *less* tolerant of
-//! garbage, not that it broke a real pnpm flow.
+//! These tests are lower priority than the ports in
+//! `crates/modules-yaml/tests/index.rs`. A regression in any of them means
+//! the crate became *less* tolerant of garbage, not that it broke a real
+//! pnpm flow.
 
 use super::{derive_hoisted_dependencies, drop_empty_hoist_fields, is_empty_or_null, sort_skipped};
 use pretty_assertions::assert_eq;
 use serde_json::{Map, Value, json};
 
 // `derive_hoisted_dependencies` returns an empty `Object` when the input
-// isn't an object at all. Guard rail for a corrupt manifest where
-// `hoistedAliases` is somehow `null`, an array, etc.
+// is not an object at all. The fallback guards against a corrupt manifest
+// where `hoistedAliases` is somehow `null`, an array, or another shape.
 #[test]
 fn derive_hoisted_dependencies_returns_empty_object_for_non_object_input() {
     let result = derive_hoisted_dependencies(&Value::Null, "public");
@@ -63,7 +64,7 @@ fn sort_skipped_returns_equal_for_non_string_pairs() {
 }
 
 // `drop_empty_hoist_fields` keeps `hoistedAliases` when *both*
-// `hoistPattern` and `publicHoistPattern` are present — covers the
+// `hoistPattern` and `publicHoistPattern` are present. This covers the
 // `_ => !contains && !contains` arm of the fallthrough match.
 #[test]
 fn drop_empty_hoist_fields_keeps_hoisted_aliases_when_patterns_present() {

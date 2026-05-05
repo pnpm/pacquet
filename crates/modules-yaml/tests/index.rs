@@ -179,7 +179,7 @@ fn write_sorts_skipped_array() {
 
 // The next five tests use dependency injection to drive I/O outcomes that
 // are awkward or impossible to provoke with the real filesystem. Each fake
-// implements only the capability trait the function under test consumes —
+// implements only the capability trait the function under test consumes,
 // so a read fake never has to declare `write`. This is the
 // interface-segregation refinement of the lumped `FsApi` pattern at
 // https://github.com/KSXGitHub/parallel-disk-usage/blob/2aa39917f9/src/app/hdd.rs#L25-L35.
@@ -289,7 +289,7 @@ fn write_propagates_write_error() {
 }
 
 // A null `publicHoistPattern` is removed before serializing because the
-// YAML writer fails on undefined fields upstream. Matches
+// YAML writer fails on undefined fields upstream. The behavior matches
 // https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L123-L125.
 #[test]
 fn write_removes_null_public_hoist_pattern() {
