@@ -24,7 +24,7 @@ pub struct WorkEnv {
     pub revisions: Vec<String>,
     pub registry: String,
     pub repository: PathBuf,
-    pub scenario: BenchmarkScenario,
+    pub scenario: Option<BenchmarkScenario>,
     pub hyperfine_options: HyperfineOptions,
     pub fixture_dir: Option<PathBuf>,
 }
@@ -91,6 +91,7 @@ impl WorkEnv {
     }
 
     fn init(&self) {
+        let scenario = self.scenario.expect("scenario set when init() is reached");
         eprintln!("Initializing...");
         let id_list = self
             .revision_ids()
@@ -103,9 +104,9 @@ impl WorkEnv {
             fs::create_dir_all(&dir).expect("create directory for the revision");
             create_package_json(&dir, self.fixture_dir.as_deref());
             create_pnpm_workspace(&dir, self.fixture_dir.as_deref());
-            create_install_script(&dir, self.scenario, for_pnpm);
-            create_npmrc(&dir, self.registry(), self.scenario);
-            may_create_lockfile(&dir, self.scenario, self.fixture_dir.as_deref());
+            create_install_script(&dir, scenario, for_pnpm);
+            create_npmrc(&dir, self.registry(), scenario);
+            may_create_lockfile(&dir, scenario, self.fixture_dir.as_deref());
         }
 
         eprintln!("Populating proxy registry cache...");
@@ -114,7 +115,7 @@ impl WorkEnv {
             .pipe_mut(executor("install.bash"))
     }
 
-    fn build(&self) {
+    pub fn build(&self) {
         eprintln!("Building...");
         for revision in self.revision_names() {
             eprintln!("Revision: {revision:?}");
@@ -221,7 +222,8 @@ impl WorkEnv {
         // scenarios wipe `node_modules` and `store-dir`, hot-cache wipes
         // only `node_modules` so the warmup-populated store survives
         // into the timed runs.
-        let cleanup_paths = self.scenario.cleanup_paths();
+        let cleanup_paths =
+            self.scenario.expect("scenario set when benchmark() is reached").cleanup_paths();
         let cleanup_targets = self
             .revision_ids()
             .chain(self.with_pnpm.then_some(WorkEnv::PNPM))

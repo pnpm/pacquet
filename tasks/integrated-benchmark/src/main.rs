@@ -16,6 +16,7 @@ async fn main() {
         hyperfine_options,
         work_env,
         with_pnpm,
+        build_only,
         revisions,
     } = clap::Parser::parse();
     let repository = std::fs::canonicalize(repository).expect("get absolute path to repository");
@@ -24,7 +25,9 @@ async fn main() {
     }
     let work_env = std::fs::canonicalize(work_env).expect("get absolute path to work env");
     let registry = format!("http://localhost:{registry_port}/");
-    let verdaccio = if verdaccio {
+    let verdaccio = if build_only {
+        None
+    } else if verdaccio {
         verify::ensure_program("just").arg("install").pipe(verify::executor("just install"));
         pacquet_registry_mock::MockInstanceOptions {
             client: &Default::default(),
@@ -47,7 +50,7 @@ async fn main() {
     verify::ensure_program("git");
     verify::ensure_program("hyperfine");
     verify::ensure_program("pnpm");
-    work_env::WorkEnv {
+    let env = work_env::WorkEnv {
         root: work_env,
         with_pnpm,
         revisions,
@@ -56,7 +59,11 @@ async fn main() {
         scenario,
         hyperfine_options,
         fixture_dir,
+    };
+    if build_only {
+        env.build();
+    } else {
+        env.run();
     }
-    .run();
     drop(verdaccio); // terminate verdaccio if exists
 }

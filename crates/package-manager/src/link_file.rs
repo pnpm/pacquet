@@ -110,7 +110,7 @@ fn log_method_once<R: Reporter>(logged: &AtomicU8, flag: u8, method: WireImportM
 ///   `importFile` (see `fs/indexed-pkg-importer/src/importIndexedDir.ts`,
 ///   `tryImportIndexedDir`), which mkdirs the unique parent set
 ///   sequentially up-front and then calls into the import primitive
-///   per file. [`create_cas_files`](crate::create_cas_files) is the
+///   per file. [`create_cas_files`](crate::create_cas_files()) is the
 ///   production caller and handles that pre-pass.
 pub fn link_file<R: Reporter>(
     logged: &AtomicU8,
