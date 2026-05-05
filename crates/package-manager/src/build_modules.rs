@@ -27,7 +27,7 @@ pub enum BuildModulesError {
 #[derive(Debug, Default)]
 pub struct AllowBuildPolicy {
     rules: HashMap<String, bool>,
-    has_any_rules: bool,
+    policy_present: bool,
 }
 
 impl AllowBuildPolicy {
@@ -54,9 +54,8 @@ impl AllowBuildPolicy {
             .iter()
             .filter_map(|(key, value)| value.as_bool().map(|v| (key.clone(), v)))
             .collect();
-        let has_any_rules = !rules.is_empty();
 
-        Self { rules, has_any_rules }
+        Self { rules, policy_present: true }
     }
 
     /// Check whether a package is allowed to run build scripts.
@@ -64,7 +63,7 @@ impl AllowBuildPolicy {
     /// `name` is the package name (e.g. `@pnpm.e2e/install-script-example`).
     /// `version` is the resolved version (e.g. `1.0.0`).
     pub fn check(&self, name: &str, version: &str) -> Option<bool> {
-        if !self.has_any_rules {
+        if !self.policy_present {
             return Some(true);
         }
 
@@ -123,7 +122,7 @@ impl<'a> BuildModules<'a> {
                 continue;
             }
 
-            let (name, version) = parse_name_version_from_key(&snapshot_key.to_string());
+            let (name, version) = parse_name_version_from_key(&metadata_key.to_string());
             match allow_build_policy.check(&name, &version) {
                 Some(false) => continue,
                 None => {
@@ -156,7 +155,6 @@ impl<'a> BuildModules<'a> {
                 init_cwd: lockfile_dir,
                 extra_bin_paths: &extra_bin_paths,
                 extra_env: &extra_env,
-                optional: false,
             })
             .map_err(BuildModulesError::LifecycleScript)?;
         }
@@ -248,7 +246,6 @@ impl<'a> BuildModulesByScanning<'a> {
                     init_cwd: lockfile_dir,
                     extra_bin_paths: &extra_bin_paths,
                     extra_env: &extra_env,
-                    optional: false,
                 }) {
                     Ok(_) => {}
                     Err(err) => {

@@ -117,3 +117,17 @@ fn allow_build_policy_missing_manifest() {
     let policy = AllowBuildPolicy::from_manifest(dir.path());
     assert_eq!(policy.check("anything", "1.0.0"), Some(true));
 }
+
+#[test]
+fn allow_build_policy_empty_object_blocks_unlisted() {
+    let dir = tempdir().expect("create temp dir");
+    let manifest = serde_json::json!({
+        "pnpm": {
+            "allowBuilds": {},
+        },
+    });
+    fs::write(dir.path().join("package.json"), manifest.to_string()).expect("write manifest");
+
+    let policy = AllowBuildPolicy::from_manifest(dir.path());
+    assert_eq!(policy.check("any-package", "1.0.0"), None);
+}

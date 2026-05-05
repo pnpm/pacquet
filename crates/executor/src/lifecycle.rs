@@ -64,7 +64,6 @@ pub struct RunPostinstallHooks<'a> {
     pub init_cwd: &'a Path,
     pub extra_bin_paths: &'a [PathBuf],
     pub extra_env: &'a HashMap<String, String>,
-    pub optional: bool,
 }
 
 /// Run the preinstall, install, and postinstall lifecycle scripts for
