@@ -4,9 +4,9 @@ use std::{path::PathBuf, process::Command};
 
 #[derive(Debug, Parser)]
 pub struct CliArgs {
-    /// Task to benchmark.
-    #[clap(long, short)]
-    pub scenario: BenchmarkScenario,
+    /// Task to benchmark. Required unless `--build-only` is given.
+    #[clap(long, short, required_unless_present = "build_only", conflicts_with = "build_only")]
+    pub scenario: Option<BenchmarkScenario>,
 
     /// Port of the local virtual registry.
     #[clap(long, short = 'p', default_value_t = 4873)]

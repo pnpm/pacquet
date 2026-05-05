@@ -138,7 +138,7 @@ jobs:
         # minutes, which is exactly why it lives outside the timed steps —
         # 15 min covers a cold-cache double build with headroom.
         timeout-minutes: 15
-        run: just integrated-benchmark --scenario=frozen-lockfile --build-only HEAD main
+        run: just integrated-benchmark --build-only HEAD main
 
       - name: 'Benchmark: Frozen Lockfile'
         shell: bash
