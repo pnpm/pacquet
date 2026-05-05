@@ -6,18 +6,62 @@ use cli_args::CliArgs;
 use miette::set_panic_hook;
 use pacquet_diagnostics::enable_tracing_by_env;
 use state::State;
+use std::ffi::OsString;
 
 pub async fn main() -> miette::Result<()> {
     enable_tracing_by_env();
+
     set_panic_hook();
+
+    let os_args: Vec<OsString> = std::env::args_os().collect();
+
     // Run argument parsing *before* sizing the rayon pool so
     // `pacquet --help` / `--version` (and any clap parse error) exit
     // without spinning up worker threads. `clap::Parser::parse` calls
     // `std::process::exit` on those paths, so we never reach
     // `configure_rayon_pool` for them (Copilot review on #292).
-    let args = CliArgs::parse();
+    match CliArgs::try_parse_from(&os_args) {
+        Ok(args) => run_command(args).await,
+        Err(err) => attempt_fallback_command(err, os_args).await,
+    }
+}
+
+async fn run_command(args: CliArgs) -> miette::Result<()> {
     configure_rayon_pool();
-    args.run().await
+
+    args.run().await?;
+
+    Ok(())
+}
+
+async fn attempt_fallback_command(
+    err: clap::Error,
+    mut os_args: Vec<OsString>,
+) -> miette::Result<()> {
+    let mut os_args_without_executable = os_args.iter().skip(1);
+
+    let is_pacquet_command_provided = os_args_without_executable.any(|arg| {
+        if let Some(arg) = arg.to_str() {
+            let is_single_dash = arg.starts_with('-');
+            let is_double_dash = arg.starts_with("--");
+
+            !is_single_dash && !is_double_dash
+        } else {
+            false
+        }
+    });
+
+    if !is_pacquet_command_provided {
+        err.exit();
+    }
+
+    let fallback_command = OsString::from("run");
+
+    os_args.insert(1, fallback_command);
+
+    let args = CliArgs::parse_from(os_args);
+
+    run_command(args).await
 }
 
 /// Size rayon's global pool at `2 × available_parallelism`. The link
