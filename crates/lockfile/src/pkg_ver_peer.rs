@@ -1,7 +1,7 @@
 use derive_more::{Display, Error};
 use node_semver::{SemverError, Version};
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
+use std::{borrow::Cow, str::FromStr};
 
 /// Suffix type of [`PkgNameVerPeer`](crate::PkgNameVerPeer) and
 /// type of [`ResolvedDependencySpec::version`](crate::ResolvedDependencySpec::version).
@@ -11,7 +11,7 @@ use std::str::FromStr;
 /// **NOTE:** The peer part isn't guaranteed to be correct. It is only assumed to be.
 #[derive(Debug, Display, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[display("{version}{peer}")]
-#[serde(try_from = "&'de str", into = "String")]
+#[serde(try_from = "Cow<'de, str>", into = "String")]
 pub struct PkgVerPeer {
     version: Version,
     peer: String,
@@ -66,9 +66,9 @@ impl FromStr for PkgVerPeer {
     }
 }
 
-impl<'a> TryFrom<&'a str> for PkgVerPeer {
+impl<'a> TryFrom<Cow<'a, str>> for PkgVerPeer {
     type Error = ParsePkgVerPeerError;
-    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+    fn try_from(value: Cow<'a, str>) -> Result<Self, Self::Error> {
         value.parse()
     }
 }

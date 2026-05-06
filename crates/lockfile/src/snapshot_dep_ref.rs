@@ -1,7 +1,7 @@
 use crate::{ParsePkgNameSuffixError, ParsePkgVerPeerError, PkgName, PkgNameVerPeer, PkgVerPeer};
 use derive_more::{Display, Error};
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
+use std::{borrow::Cow, str::FromStr};
 
 /// Value of a single entry in [`SnapshotEntry::dependencies`](crate::SnapshotEntry::dependencies)
 /// (or `optional_dependencies`).
@@ -33,7 +33,7 @@ use std::str::FromStr;
 ///
 /// Reference: <https://github.com/pnpm/pnpm/blob/1819226b51/deps/path/src/index.ts>
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(try_from = "&'de str", into = "String")]
+#[serde(try_from = "Cow<'de, str>", into = "String")]
 pub enum SnapshotDepRef {
     Plain(PkgVerPeer),
     Alias(PkgNameVerPeer),
@@ -109,9 +109,9 @@ impl FromStr for SnapshotDepRef {
     }
 }
 
-impl<'a> TryFrom<&'a str> for SnapshotDepRef {
+impl<'a> TryFrom<Cow<'a, str>> for SnapshotDepRef {
     type Error = ParseSnapshotDepRefError;
-    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+    fn try_from(value: Cow<'a, str>) -> Result<Self, Self::Error> {
         value.parse()
     }
 }

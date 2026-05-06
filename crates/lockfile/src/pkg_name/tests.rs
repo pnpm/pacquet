@@ -27,6 +27,19 @@ fn deserialize_ok() {
 }
 
 #[test]
+fn deserialize_decodes_escape_sequences() {
+    // The YAML scalar `"\u0040foo/bar"` decodes the `\u0040` escape
+    // to `@`, yielding `@foo/bar`. The deserializer must allocate a
+    // fresh buffer to apply the escape, so a borrowed `&'de str`
+    // source would reject this input.
+    let input = r##""\u0040foo/bar""##;
+    eprintln!("CASE: {input:?}");
+    let actual: PkgName = serde_saphyr::from_str(input).unwrap();
+    dbg!(&actual);
+    assert_eq!(actual, PkgName { scope: Some("foo".to_string()), bare: "bar".to_string() });
+}
+
+#[test]
 fn parse_err() {
     macro_rules! case {
         ($input:expr => $message:expr, $pattern:pat) => {{
