@@ -111,9 +111,9 @@ Rules when porting code that uses a branded string type:
    newtype wrapper. The set of valid values is closed, so encode that.
 8. **Template literal types are branded strings.** If upstream uses a
    string template literal type (for example,
-   <code>&#96;${string}@${string}&#96;</code>), treat it the same as a
-   branded string type. Use a newtype wrapper with the validation
-   discipline from rules 2 through 5 above.
+   ``` `${string}@${string}` ```), treat it the same as a branded string
+   type. Use a newtype wrapper with the validation discipline from rules
+   2 through 5 above.
 
 ## Follow the project guides
 
