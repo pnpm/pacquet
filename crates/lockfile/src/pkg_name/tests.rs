@@ -35,6 +35,7 @@ fn deserialize_decodes_escape_sequences() {
     let input = r##""\u0040foo/bar""##;
     eprintln!("CASE: {input:?}");
     let actual: PkgName = serde_saphyr::from_str(input).unwrap();
+    dbg!(&actual);
     assert_eq!(actual, PkgName { scope: Some("foo".to_string()), bare: "bar".to_string() });
 }
 
