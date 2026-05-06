@@ -356,9 +356,12 @@ fn dep_path_serializes_transparently() {
     }));
     assert_eq!(
         manifest.hoisted_aliases.as_ref().and_then(|m| m.keys().next()),
-        Some(&DepPath::from("/accepts/1.3.7")),
+        Some(&DepPath("/accepts/1.3.7".to_string())),
     );
-    assert_eq!(manifest.ignored_builds.as_deref(), Some(&[DepPath::from("/sharp/0.32.0")][..]),);
+    assert_eq!(
+        manifest.ignored_builds.as_deref(),
+        Some(&[DepPath("/sharp/0.32.0".to_string())][..]),
+    );
 
     write_modules_manifest::<RealApi>(modules_dir, manifest).expect("write manifest");
     let raw =

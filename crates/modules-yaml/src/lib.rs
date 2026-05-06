@@ -8,7 +8,7 @@
 //! format is JSON (which YAML accepts), so reads use a YAML parser and
 //! writes emit [`serde_json::to_string_pretty`] output to match pnpm exactly.
 
-use derive_more::{Display, Error};
+use derive_more::{AsRef, Display, Error, From};
 use pacquet_diagnostics::miette::{self, Diagnostic};
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
@@ -91,34 +91,16 @@ impl FsWrite for RealApi {
 /// validation runs at construction, and `#[serde(transparent)]` makes the
 /// wire format identical to `String` so a `DepPath` round-trips through
 /// JSON / YAML the same way upstream's branded string does.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Default, Serialize, Deserialize, From, AsRef,
+)]
+#[as_ref(forward)]
 #[serde(transparent)]
 pub struct DepPath(pub String);
 
 impl DepPath {
     #[inline]
     pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<String> for DepPath {
-    #[inline]
-    fn from(value: String) -> Self {
-        Self(value)
-    }
-}
-
-impl From<&str> for DepPath {
-    #[inline]
-    fn from(value: &str) -> Self {
-        Self(value.to_string())
-    }
-}
-
-impl AsRef<str> for DepPath {
-    #[inline]
-    fn as_ref(&self) -> &str {
         &self.0
     }
 }
