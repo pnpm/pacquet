@@ -96,8 +96,7 @@ Rules when porting code that uses a branded string type:
    validation policy survives serialization:
    - `#[serde(try_from = "&'de str")]` for deserialization, so
      deserialized values go through the validator without allocating an
-     owned `String`. Use `try_from = "String"` only when the validator
-     genuinely needs an owned input.
+     owned `String` for every value.
    - `#[serde(into = "String")]` for serialization.
    Use both when the type is round-tripped.
 6. **Derive simple conversions with `derive_more`.** When the conversion
