@@ -61,7 +61,7 @@ TypeScript pnpm leans on *branded* string types. A branded string is a
 plain string narrowed by a phantom property (for example,
 `type PkgName = string & { __brand: 'PkgName' }`), so the type system can
 track intent that the runtime cannot see. Some brands are stamped through
-a validating constructor. Others are minted with a bare `as` type-cast and
+a validating constructor. Others are minted with a bare `as` type assertion and
 have no runtime check at all. Pacquet must preserve that distinction,
 because it is part of the public contract pnpm exposes through manifest,
 lockfile, state, and config files.
@@ -86,7 +86,7 @@ Rules when porting code that uses a branded string type:
    is needed.
 4. **If upstream occasionally constructs without validation, expose
    `from_str_unchecked`.** When pnpm sometimes mints the brand via a bare
-   `as` cast, skipping its validator, add a `from_str_unchecked` (or
+   `as` assertion, skipping its validator, add a `from_str_unchecked` (or
    similarly named) constructor on the Rust side so callers can opt into
    the same unchecked path explicitly. Keep the validating constructor as
    well. `from_str_unchecked` is the escape hatch, not the default.
