@@ -11,7 +11,7 @@ fn manifest_from_json(value: Value) -> ModulesManifest {
     serde_json::from_value(value).expect("deserialize ModulesManifest fixture")
 }
 
-/// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L10-L40
+// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L10-L40
 #[test]
 fn write_modules_manifest_and_read_modules_manifest() {
     let temp_dir = tempfile::tempdir().expect("create temporary directory");
@@ -39,7 +39,7 @@ fn write_modules_manifest_and_read_modules_manifest() {
         "virtualStoreDirMaxLength": 120,
     }));
 
-    write_modules_manifest::<RealApi>(modules_dir, &modules_yaml).expect("write manifest");
+    write_modules_manifest::<RealApi>(modules_dir, modules_yaml.clone()).expect("write manifest");
     let actual = read_modules_manifest::<RealApi>(modules_dir).expect("read manifest");
     assert_eq!(actual, Some(modules_yaml));
 
@@ -54,7 +54,7 @@ fn write_modules_manifest_and_read_modules_manifest() {
     assert_eq!(Path::new(virtual_store_dir).is_absolute(), cfg!(windows));
 }
 
-/// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L42-L53
+// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L42-L53
 #[test]
 fn read_legacy_shamefully_hoist_true_manifest() {
     let modules_dir =
@@ -75,7 +75,7 @@ fn read_legacy_shamefully_hoist_true_manifest() {
     assert_eq!(manifest.hoisted_dependencies, expected);
 }
 
-/// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L55-L66
+// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L55-L66
 #[test]
 fn read_legacy_shamefully_hoist_false_manifest() {
     let modules_dir =
@@ -96,7 +96,7 @@ fn read_legacy_shamefully_hoist_false_manifest() {
     assert_eq!(manifest.hoisted_dependencies, expected);
 }
 
-/// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L68-L94
+// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L68-L94
 #[test]
 fn write_modules_manifest_creates_node_modules_directory() {
     let temp_dir = tempfile::tempdir().expect("create temporary directory");
@@ -124,12 +124,12 @@ fn write_modules_manifest_creates_node_modules_directory() {
         "virtualStoreDirMaxLength": 120,
     }));
 
-    write_modules_manifest::<RealApi>(&modules_dir, &modules_yaml).expect("write manifest");
+    write_modules_manifest::<RealApi>(&modules_dir, modules_yaml.clone()).expect("write manifest");
     let actual = read_modules_manifest::<RealApi>(&modules_dir).expect("read manifest");
     assert_eq!(actual, Some(modules_yaml));
 }
 
-/// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L96-L99
+// Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L96-L99
 #[test]
 fn read_empty_modules_manifest_returns_none() {
     let modules_dir =
@@ -175,7 +175,7 @@ fn write_sorts_skipped_array() {
         "skipped": ["zeta", "alpha", "mu"],
     }));
 
-    write_modules_manifest::<RealApi>(modules_dir, &manifest).expect("write manifest");
+    write_modules_manifest::<RealApi>(modules_dir, manifest).expect("write manifest");
     let raw =
         fs::read_to_string(modules_dir.join(".modules.yaml")).expect("read raw .modules.yaml");
     let parsed: Value = serde_json::from_str(&raw).expect("parse raw .modules.yaml");
@@ -263,7 +263,7 @@ fn write_propagates_create_dir_error() {
     }
 
     let modules_dir = Path::new("/dev/null/unused");
-    let err = write_modules_manifest::<FailingMkdir>(modules_dir, &ModulesManifest::default())
+    let err = write_modules_manifest::<FailingMkdir>(modules_dir, ModulesManifest::default())
         .expect_err("expected error");
     eprintln!("error: {err}");
     assert!(matches!(err, pacquet_modules_yaml::WriteModulesManifestError::CreateDir { .. }));
@@ -287,7 +287,7 @@ fn write_propagates_write_error() {
     }
 
     let modules_dir = Path::new("/dev/null/unused");
-    let err = write_modules_manifest::<FailingWrite>(modules_dir, &ModulesManifest::default())
+    let err = write_modules_manifest::<FailingWrite>(modules_dir, ModulesManifest::default())
         .expect_err("expected error");
     eprintln!("error: {err}");
     assert!(matches!(err, pacquet_modules_yaml::WriteModulesManifestError::WriteFile { .. }));
@@ -328,7 +328,7 @@ fn write_removes_null_public_hoist_pattern() {
         "publicHoistPattern": null,
     }));
 
-    write_modules_manifest::<RealApi>(modules_dir, &manifest).expect("write manifest");
+    write_modules_manifest::<RealApi>(modules_dir, manifest).expect("write manifest");
     let raw =
         fs::read_to_string(modules_dir.join(".modules.yaml")).expect("read raw .modules.yaml");
     let parsed: Value = serde_json::from_str(&raw).expect("parse raw .modules.yaml");

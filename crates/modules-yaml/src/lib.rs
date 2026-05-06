@@ -201,9 +201,8 @@ pub enum NodeLinker {
 pub struct LayoutVersion;
 
 impl LayoutVersion {
-    /// The single layout version pacquet supports, equal to upstream's
-    /// `LAYOUT_VERSION = 5`.
-    pub const VALUE: u32 = 5;
+    /// The single layout version pacquet supports.
+    const VALUE: u32 = 5;
 }
 
 impl From<LayoutVersion> for u32 {
@@ -228,7 +227,8 @@ impl TryFrom<u32> for LayoutVersion {
 /// is not the one pacquet supports.
 #[derive(Debug, Display, Error)]
 #[display(
-    "Unsupported layout version {found}; this build of pacquet only supports layout version 5"
+    "Unsupported layout version {found}; this build of pacquet only supports layout version {}",
+    LayoutVersion::VALUE
 )]
 pub struct UnsupportedLayoutVersionError {
     pub found: u32,
@@ -328,22 +328,29 @@ pub fn read_modules_manifest<Api: FsReadToString>(
 /// Mirrors upstream `writeModulesManifest` at
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L111-L138>.
 ///
-/// Production callers turbofish [`RealApi`]: `write_modules_manifest::<RealApi>(dir, &m)`.
+/// Takes `manifest` by value because the body unconditionally rewrites
+/// fields (sort `skipped`, drop legacy `hoistedAliases`, relativize
+/// `virtualStoreDir`); making the caller hand over ownership keeps the
+/// in-place mutation visible at the call site instead of forcing a hidden
+/// `clone()` inside the function. Per the CODE_STYLE_GUIDE rule that
+/// owned-vs-borrowed parameter choice should minimize copies.
+///
+/// Production callers turbofish [`RealApi`]: `write_modules_manifest::<RealApi>(dir, m)`.
 /// Bounds are minimal: only [`FsCreateDirAll`] and [`FsWrite`] are required.
 pub fn write_modules_manifest<Api: FsCreateDirAll + FsWrite>(
     modules_dir: &Path,
-    manifest: &ModulesManifest,
+    mut manifest: ModulesManifest,
 ) -> Result<(), WriteModulesManifestError> {
-    let mut to_save = manifest.clone();
-    to_save.skipped.sort();
-    drop_legacy_hoisted_aliases_when_unreferenced(&mut to_save);
+    manifest.skipped.sort();
+    drop_legacy_hoisted_aliases_when_unreferenced(&mut manifest);
     // Junctions on Windows break when the project moves, so the absolute
-    // path is intentionally preserved there. See upstream L129-L135.
+    // path is intentionally preserved there. See upstream
+    // <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L129-L135>.
     if !cfg!(windows) {
-        rewrite_virtual_store_dir_relative(&mut to_save, modules_dir);
+        rewrite_virtual_store_dir_relative(&mut manifest, modules_dir);
     }
-    let serialized =
-        serde_json::to_string_pretty(&to_save).map_err(WriteModulesManifestError::SerializeJson)?;
+    let serialized = serde_json::to_string_pretty(&manifest)
+        .map_err(WriteModulesManifestError::SerializeJson)?;
     Api::create_dir_all(modules_dir).map_err(|source| WriteModulesManifestError::CreateDir {
         path: modules_dir.to_path_buf(),
         source,
@@ -353,9 +360,10 @@ pub fn write_modules_manifest<Api: FsCreateDirAll + FsWrite>(
         .map_err(|source| WriteModulesManifestError::WriteFile { path: manifest_path, source })
 }
 
-/// Match pnpm's L66-L70. When `virtualStoreDir` is missing, default to
-/// `modules_dir/.pnpm`. When it is relative, resolve it against
-/// `modules_dir`.
+/// When `virtualStoreDir` is missing, default to `modules_dir/.pnpm`. When
+/// it is relative, resolve it against `modules_dir`. Mirrors upstream's
+/// resolution at
+/// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L66-L70>.
 fn resolve_virtual_store_dir(manifest: &mut ModulesManifest, modules_dir: &Path) {
     let resolved = if manifest.virtual_store_dir.is_empty() {
         modules_dir.join(".pnpm")
@@ -370,9 +378,10 @@ fn resolve_virtual_store_dir(manifest: &mut ModulesManifest, modules_dir: &Path)
     manifest.virtual_store_dir = resolved.to_string_lossy().into_owned();
 }
 
-/// Match pnpm's L132-L135 by storing `virtualStoreDir` relative to
-/// `modules_dir`. Falls back to the original value when stripping the
-/// prefix fails.
+/// Store `virtualStoreDir` relative to `modules_dir`, falling back to the
+/// original value when stripping the prefix fails. Mirrors upstream's
+/// relativization at
+/// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L132-L135>.
 fn rewrite_virtual_store_dir_relative(manifest: &mut ModulesManifest, modules_dir: &Path) {
     let stored_path = Path::new(&manifest.virtual_store_dir);
     let relative = stored_path.strip_prefix(modules_dir).unwrap_or(stored_path);
@@ -381,7 +390,8 @@ fn rewrite_virtual_store_dir_relative(manifest: &mut ModulesManifest, modules_di
 
 /// Translate the legacy `shamefullyHoist` and `hoistedAliases` fields into
 /// the modern `publicHoistPattern` and `hoistedDependencies` shapes. Mirrors
-/// upstream L71-L97.
+/// upstream's translation block at
+/// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L71-L97>.
 fn apply_legacy_shamefully_hoist(manifest: &mut ModulesManifest) {
     let Some(shamefully_hoist) = manifest.shamefully_hoist else {
         return;
@@ -405,7 +415,8 @@ fn apply_legacy_shamefully_hoist(manifest: &mut ModulesManifest) {
 }
 
 /// Drop the legacy `hoistedAliases` field on write when neither hoist
-/// pattern is present, mirroring pnpm's L126-L128 cleanup.
+/// pattern is present, mirroring upstream's cleanup at
+/// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L126-L128>.
 fn drop_legacy_hoisted_aliases_when_unreferenced(manifest: &mut ModulesManifest) {
     if manifest.hoist_pattern.is_none() && manifest.public_hoist_pattern.is_none() {
         manifest.hoisted_aliases = None;
