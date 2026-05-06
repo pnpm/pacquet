@@ -109,15 +109,16 @@ impl DepPath {
 /// Typed view of a `node_modules/.modules.yaml` manifest.
 ///
 /// Mirrors upstream's normalized [`Modules`](https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L46-L48)
-/// type, which is `ModulesRaw` with `ignoredBuilds` widened from
-/// `DepPath[]` (the on-disk shape) to `Set<DepPath>` (the in-memory
-/// shape). Pacquet collapses the two upstream types into a single
-/// struct: serde handles the array↔[`IndexSet`] conversion at the
-/// [`Self::ignored_builds`] field via [`IndexSet`]'s deduplicating
-/// `Deserialize` impl, so a separate raw-shape type is not needed.
-/// `IndexSet` (insertion-ordered) is chosen over `HashSet` /
-/// `BTreeSet` to match JavaScript `Set`'s iteration semantics — the
-/// on-disk array order round-trips byte-for-byte.
+/// type, which is [`ModulesRaw`](https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L23-L44)
+/// with `ignoredBuilds` widened from `DepPath[]` (the on-disk shape)
+/// to `Set<DepPath>` (the in-memory shape). Pacquet collapses the two
+/// upstream types into a single struct: serde handles the
+/// array↔[`IndexSet`] conversion at the [`Self::ignored_builds`]
+/// field via [`IndexSet`]'s deduplicating `Deserialize` impl, so a
+/// separate raw-shape type is not needed. `IndexSet` (insertion-ordered)
+/// is chosen over `HashSet` / `BTreeSet` to match JavaScript `Set`'s
+/// iteration semantics — the on-disk array order round-trips
+/// byte-for-byte.
 ///
 /// Every required-by-upstream field carries a `#[serde(default)]` so
 /// legacy manifests written by older pnpm versions still deserialize;
