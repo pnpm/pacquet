@@ -1,5 +1,5 @@
 use pacquet_modules_yaml::{
-    FsCreateDirAll, FsReadToString, FsWrite, HoistKind, ModulesManifest, RealApi,
+    DepPath, FsCreateDirAll, FsReadToString, FsWrite, HoistKind, ModulesManifest, RealApi,
     read_modules_manifest, write_modules_manifest,
 };
 use pipe_trait::Pipe;
@@ -335,5 +335,43 @@ fn write_removes_null_public_hoist_pattern() {
     assert!(
         parsed.get("publicHoistPattern").is_none(),
         "publicHoistPattern was kept after write: {parsed}",
+    );
+}
+
+/// `DepPath` is a transparent newtype around `String`: on the wire it
+/// is indistinguishable from a plain string, so `hoistedAliases` keys
+/// and `ignoredBuilds` elements round-trip through JSON (and YAML) the
+/// same way upstream's `as DepPath`-cast values do.
+#[test]
+fn dep_path_serializes_transparently() {
+    let temp_dir = tempfile::tempdir().expect("create temporary directory");
+    let modules_dir = temp_dir.path();
+    let manifest = manifest_from_json(json!({
+        "layoutVersion": 5,
+        "hoistedAliases": {
+            "/accepts/1.3.7": ["accepts"],
+        },
+        "ignoredBuilds": ["/sharp/0.32.0"],
+        "publicHoistPattern": [],
+    }));
+    assert_eq!(
+        manifest.hoisted_aliases.as_ref().and_then(|m| m.keys().next()),
+        Some(&DepPath::from("/accepts/1.3.7")),
+    );
+    assert_eq!(manifest.ignored_builds.as_deref(), Some(&[DepPath::from("/sharp/0.32.0")][..]),);
+
+    write_modules_manifest::<RealApi>(modules_dir, manifest).expect("write manifest");
+    let raw =
+        fs::read_to_string(modules_dir.join(".modules.yaml")).expect("read raw .modules.yaml");
+    let parsed: Value = serde_json::from_str(&raw).expect("parse raw .modules.yaml");
+    assert_eq!(
+        parsed["hoistedAliases"]["/accepts/1.3.7"],
+        json!(["accepts"]),
+        "DepPath key did not serialize as a plain string",
+    );
+    assert_eq!(
+        parsed["ignoredBuilds"],
+        json!(["/sharp/0.32.0"]),
+        "DepPath element did not serialize as a plain string",
     );
 }

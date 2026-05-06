@@ -86,14 +86,64 @@ impl FsWrite for RealApi {
 /// Every required-by-upstream field carries a `#[serde(default)]` so legacy
 /// manifests written by older pnpm versions still deserialize; the read
 /// path then fills in the modern shape from the legacy fields.
+/// Branded wrapper around a dependency-path string. Mirrors upstream's
+/// `DepPath` phantom type at
+/// <https://github.com/pnpm/pnpm/blob/1819226b51/core/types/src/misc.ts#L65>.
+///
+/// Upstream's `DepPath` is `string & { __brand: 'DepPath' }`. Every
+/// construction site uses an `as DepPath` cast — there are no validating
+/// constructors anywhere in pnpm. The brand exists purely to stop a plain
+/// `string` from being assigned where a `DepPath` is expected at compile
+/// time. This newtype mirrors that contract: the inner field is `pub`, no
+/// validation runs at construction, and `#[serde(transparent)]` makes the
+/// wire format identical to `String` so a `DepPath` round-trips through
+/// JSON / YAML the same way upstream's branded string does.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct DepPath(pub String);
+
+impl DepPath {
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for DepPath {
+    #[inline]
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for DepPath {
+    #[inline]
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl AsRef<str> for DepPath {
+    #[inline]
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModulesManifest {
     /// Legacy: the v5-era flat alias map, kept for read-side
     /// compatibility. Replaced by [`Self::hoisted_dependencies`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hoisted_aliases: Option<BTreeMap<String, Vec<String>>>,
+    pub hoisted_aliases: Option<BTreeMap<DepPath, Vec<String>>>,
 
+    /// Upstream's [`HoistedDependencies`](https://github.com/pnpm/pnpm/blob/1819226b51/core/types/src/misc.ts#L57)
+    /// is `Record<DepPath | ProjectId, …>`. Pacquet keeps the key as
+    /// [`String`] because [`DepPath`] and `ProjectId` share the same
+    /// underlying type with no validation, so the union cannot be
+    /// disambiguated statically; the [`String`] type faithfully ports
+    /// upstream's union.
     #[serde(default)]
     pub hoisted_dependencies: BTreeMap<String, BTreeMap<String, HoistKind>>,
 
@@ -116,7 +166,7 @@ pub struct ModulesManifest {
     pub pending_builds: Vec<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ignored_builds: Option<Vec<String>>,
+    pub ignored_builds: Option<Vec<DepPath>>,
 
     #[serde(default)]
     pub pruned_at: String,
@@ -408,7 +458,7 @@ fn apply_legacy_shamefully_hoist(manifest: &mut ModulesManifest) {
             .iter()
             .map(|(dep_path, alias_names)| {
                 let entry = alias_names.iter().map(|alias| (alias.clone(), kind)).collect();
-                (dep_path.clone(), entry)
+                (dep_path.0.clone(), entry)
             })
             .collect();
     }
