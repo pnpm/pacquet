@@ -15,7 +15,7 @@ use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    fs, io,
+    fs, io, iter,
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -447,7 +447,7 @@ fn apply_legacy_shamefully_hoist(manifest: &mut Modules) {
         manifest.hoisted_dependencies = aliases_by_path
             .iter()
             .map(|(dep_path, alias_names)| {
-                let entry = alias_names.iter().map(|alias| (alias.clone(), kind)).collect();
+                let entry = alias_names.iter().cloned().zip(iter::repeat(kind)).collect();
                 (dep_path.0.clone(), entry)
             })
             .collect();
