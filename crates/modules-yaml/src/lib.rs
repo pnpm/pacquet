@@ -437,9 +437,10 @@ fn apply_legacy_shamefully_hoist(manifest: &mut Modules) {
         return;
     };
     let kind = if shamefully_hoist { HoistKind::Public } else { HoistKind::Private };
-    if manifest.public_hoist_pattern.is_none() {
-        manifest.public_hoist_pattern =
-            Some(if shamefully_hoist { vec!["*".to_string()] } else { Vec::new() });
+    match (&manifest.public_hoist_pattern, shamefully_hoist) {
+        (None, false) => manifest.public_hoist_pattern = Some(Vec::new()),
+        (None, true) => manifest.public_hoist_pattern = Some(vec!["*".to_string()]),
+        (Some(_), _) => {}
     }
     if manifest.hoisted_dependencies.is_empty()
         && let Some(aliases_by_path) = &manifest.hoisted_aliases
