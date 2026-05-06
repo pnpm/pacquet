@@ -94,8 +94,10 @@ Rules when porting code that uses a branded string type:
    JSON, YAML, or INI boundary (manifest files, lockfiles, state files,
    config files, and similar), wire the wrapper into serde so the
    validation policy survives serialization:
-   - `#[serde(try_from = "String")]` for deserialization, so deserialized
-     values go through the validator.
+   - `#[serde(try_from = "&'de str")]` for deserialization, so
+     deserialized values go through the validator without allocating an
+     owned `String`. Use `try_from = "String"` only when the validator
+     genuinely needs an owned input.
    - `#[serde(into = "String")]` for serialization.
    Use both when the type is round-tripped.
 6. **Derive simple conversions with `derive_more`.** When the conversion
