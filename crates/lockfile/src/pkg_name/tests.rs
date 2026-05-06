@@ -28,7 +28,7 @@ fn deserialize_ok() {
 
 #[test]
 fn deserialize_decodes_escape_sequences() {
-    // The YAML scalar `"@foo/bar"` decodes the `@` escape
+    // The YAML scalar `"\u0040foo/bar"` decodes the `\u0040` escape
     // to `@`, yielding `@foo/bar`. The deserializer must allocate a
     // fresh buffer to apply the escape, so a borrowed `&'de str`
     // source would reject this input.

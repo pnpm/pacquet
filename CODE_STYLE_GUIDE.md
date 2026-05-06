@@ -452,13 +452,15 @@ fn walk_deps_inner(/* ... */) { /* ... */ }
 
 When wiring a type into `serde` with `#[serde(try_from = "...")]` or `#[serde(from = "...")]`, pick the source according to whether the deserialized value retains the string.
 
-Do not use `&'de str`. Text formats such as JSON, YAML, and TOML accept escape sequences like `"\u{61}"`, and the deserializer must decode them into a fresh buffer. Borrowed `&'de str` deserialization rejects every input that requires decoding, so the type fails on values the format itself accepts.
+Do not use `&'de str`. Text formats such as JSON, YAML, and TOML accept escape sequences (for example, JSON's `"\u0061"`) that the deserializer must decode into a fresh buffer. Borrowed `&'de str` deserialization rejects every input that requires decoding, so the type fails on values the format itself accepts.
 
-Prefer `Cow<'de, str>` when the conversion discards the string, for example when it parses into a number, an enum discriminant, or any value that no longer references the original characters. The deserializer borrows from the input when no decoding is needed and allocates only when escapes force it.
+Prefer `Cow<'de, str>` when the conversion discards the string or splits it into pieces, for example when it parses into a number, an enum discriminant, or a struct whose fields are substrings of the input. The deserializer borrows from the input when no decoding is needed and allocates only when escapes force it.
 
-Prefer `String` when the conversion keeps the string. Taking `String` lets the conversion move the buffer into the resulting value without an extra clone.
+Prefer `String` when the entire input is moved into the resulting value verbatim. Taking `String` lets the conversion store the buffer directly without re-cloning.
 
 ```rust
+use std::borrow::Cow;
+
 #[derive(serde::Deserialize)]
 #[serde(try_from = "Cow<'de, str>")]
 struct Port(u16);
