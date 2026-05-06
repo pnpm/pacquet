@@ -24,7 +24,7 @@ fn write_modules_manifest_and_read_modules_manifest() {
             "optionalDependencies": true,
         },
         "ignoredBuilds": [],
-        "layoutVersion": 1,
+        "layoutVersion": 5,
         "packageManager": "pnpm@2",
         "pendingBuilds": [],
         "publicHoistPattern": [],
@@ -109,7 +109,7 @@ fn write_modules_manifest_creates_node_modules_directory() {
             "optionalDependencies": true,
         },
         "ignoredBuilds": [],
-        "layoutVersion": 1,
+        "layoutVersion": 5,
         "packageManager": "pnpm@2",
         "pendingBuilds": [],
         "publicHoistPattern": [],
@@ -154,7 +154,7 @@ fn read_preserves_absolute_virtual_store_dir() {
     let modules_dir = temp_dir.path().join("node_modules");
     fs::create_dir_all(&modules_dir).expect("create modules dir");
     let custom_store = temp_dir.path().join("custom-store");
-    let raw = json!({ "virtualStoreDir": &custom_store, "layoutVersion": 1 }).to_string();
+    let raw = json!({ "virtualStoreDir": &custom_store, "layoutVersion": 5 }).to_string();
     fs::write(modules_dir.join(".modules.yaml"), raw).expect("write fixture");
 
     let manifest = read_modules_manifest::<RealApi>(&modules_dir)
@@ -171,7 +171,7 @@ fn write_sorts_skipped_array() {
     let temp_dir = tempfile::tempdir().expect("create temporary directory");
     let modules_dir = temp_dir.path();
     let manifest = manifest_from_json(json!({
-        "layoutVersion": 1,
+        "layoutVersion": 5,
         "skipped": ["zeta", "alpha", "mu"],
     }));
 
@@ -293,6 +293,29 @@ fn write_propagates_write_error() {
     assert!(matches!(err, pacquet_modules_yaml::WriteModulesManifestError::WriteFile { .. }));
 }
 
+/// `LayoutVersion` is a unit type pinned to `5`. A manifest whose
+/// `layoutVersion` is any other number must fail at parse time. This is
+/// stricter than upstream's `readModulesManifest`, which accepts any number
+/// and defers the decision to `checkCompatibility` at
+/// https://github.com/pnpm/pnpm/blob/1819226b51/installing/deps-installer/src/install/checkCompatibility/index.ts#L18-L22;
+/// the end-to-end behavior matches because both code paths reject
+/// incompatible manifests.
+#[test]
+fn read_rejects_incompatible_layout_version() {
+    use std::io;
+    struct LegacyVersion;
+    impl FsReadToString for LegacyVersion {
+        fn read_to_string(_: &Path) -> io::Result<String> {
+            Ok("layoutVersion: 4\n".to_string())
+        }
+    }
+
+    let modules_dir = Path::new("/dev/null/unused");
+    let err = read_modules_manifest::<LegacyVersion>(modules_dir).expect_err("expected error");
+    eprintln!("error: {err}");
+    assert!(matches!(err, pacquet_modules_yaml::ReadModulesManifestError::ParseYaml { .. }));
+}
+
 /// A null `publicHoistPattern` is removed before serializing because the
 /// YAML writer fails on undefined fields upstream. The behavior matches
 /// https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L123-L125.
@@ -301,7 +324,7 @@ fn write_removes_null_public_hoist_pattern() {
     let temp_dir = tempfile::tempdir().expect("create temporary directory");
     let modules_dir = temp_dir.path();
     let manifest = manifest_from_json(json!({
-        "layoutVersion": 1,
+        "layoutVersion": 5,
         "publicHoistPattern": null,
     }));
 

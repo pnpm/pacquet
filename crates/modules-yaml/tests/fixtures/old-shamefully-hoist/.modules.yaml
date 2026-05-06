@@ -11,7 +11,7 @@ included:
   dependencies: true
   devDependencies: true
   optionalDependencies: true
-layoutVersion: 4
+layoutVersion: 5
 packageManager: pnpm@5.1.8
 pendingBuilds: []
 registries:

@@ -103,8 +103,8 @@ pub struct ModulesManifest {
     #[serde(default)]
     pub included: IncludedDependencies,
 
-    #[serde(default)]
-    pub layout_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_version: Option<LayoutVersion>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_linker: Option<NodeLinker>,
@@ -176,6 +176,62 @@ pub enum NodeLinker {
     Hoisted,
     Isolated,
     Pnp,
+}
+
+/// Pinned identifier for the `node_modules` layout pacquet emits, mirroring
+/// upstream's `LAYOUT_VERSION` constant at
+/// <https://github.com/pnpm/pnpm/blob/1819226b51/core/constants/src/index.ts#L8>.
+///
+/// The unit type carries no data: its existence is the value. It serializes
+/// as the integer `5` and deserializes only when the on-disk value is
+/// exactly `5`. Any other version causes a deserialization error, mirroring
+/// upstream's `checkCompatibility` reaction at
+/// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/deps-installer/src/install/checkCompatibility/index.ts#L18-L22>,
+/// which throws `ModulesBreakingChangeError` for a missing or mismatched
+/// `layoutVersion`. Wrapping this in [`Option`] on [`ModulesManifest`]
+/// distinguishes "missing" (legacy, breaking change) from "present and
+/// matching".
+///
+/// The `#[serde(try_from = "u32", into = "u32")]` proxy lets us reuse
+/// serde's number deserializer, while the [`TryFrom`] impl owns the
+/// "is this version supported" decision and returns
+/// [`UnsupportedLayoutVersionError`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(try_from = "u32", into = "u32")]
+pub struct LayoutVersion;
+
+impl LayoutVersion {
+    /// The single layout version pacquet supports, equal to upstream's
+    /// `LAYOUT_VERSION = 5`.
+    pub const VALUE: u32 = 5;
+}
+
+impl From<LayoutVersion> for u32 {
+    fn from(_: LayoutVersion) -> u32 {
+        LayoutVersion::VALUE
+    }
+}
+
+impl TryFrom<u32> for LayoutVersion {
+    type Error = UnsupportedLayoutVersionError;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        if value == LayoutVersion::VALUE {
+            Ok(Self)
+        } else {
+            Err(UnsupportedLayoutVersionError { found: value })
+        }
+    }
+}
+
+/// Returned by [`LayoutVersion::try_from`] when the on-disk `layoutVersion`
+/// is not the one pacquet supports.
+#[derive(Debug, Display, Error)]
+#[display(
+    "Unsupported layout version {found}; this build of pacquet only supports layout version 5"
+)]
+pub struct UnsupportedLayoutVersionError {
+    pub found: u32,
 }
 
 /// Per-alias visibility selected by the legacy `shamefullyHoist` flag.
