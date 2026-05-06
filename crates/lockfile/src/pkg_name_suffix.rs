@@ -2,7 +2,7 @@ use crate::{ParsePkgNameError, PkgName};
 use derive_more::{Display, Error};
 use serde::{Deserialize, Serialize};
 use split_first_char::SplitFirstChar;
-use std::str::FromStr;
+use std::{borrow::Cow, str::FromStr};
 
 /// Syntax: `{name}@{suffix}`
 ///
@@ -12,7 +12,7 @@ use std::str::FromStr;
 #[derive(Debug, Display, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[display(bound(Suffix: std::fmt::Display))]
 #[display("{name}@{suffix}")]
-#[serde(try_from = "&'de str", into = "String")]
+#[serde(try_from = "Cow<'de, str>", into = "String")]
 #[serde(bound(
     deserialize = "Suffix: FromStr, Suffix::Err: std::fmt::Display",
     serialize = "Suffix: std::fmt::Display + Clone",
@@ -74,9 +74,9 @@ impl<Suffix: FromStr> FromStr for PkgNameSuffix<Suffix> {
     }
 }
 
-impl<'a, Suffix: FromStr> TryFrom<&'a str> for PkgNameSuffix<Suffix> {
+impl<'a, Suffix: FromStr> TryFrom<Cow<'a, str>> for PkgNameSuffix<Suffix> {
     type Error = ParsePkgNameSuffixError<Suffix::Err>;
-    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+    fn try_from(value: Cow<'a, str>) -> Result<Self, Self::Error> {
         value.parse()
     }
 }

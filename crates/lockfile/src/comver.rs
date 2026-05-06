@@ -1,13 +1,13 @@
 use derive_more::{Display, Error};
 use serde::{Deserialize, Serialize};
-use std::{num::ParseIntError, str::FromStr};
+use std::{borrow::Cow, num::ParseIntError, str::FromStr};
 
 /// Information of the top-level field `lockfileVersion`.
 ///
 /// It contains only major and minor.
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[display("{major}.{minor}")]
-#[serde(try_from = "&'de str", into = "String")]
+#[serde(try_from = "Cow<'de, str>", into = "String")]
 pub struct ComVer {
     pub major: u16,
     pub minor: u16,
@@ -41,9 +41,9 @@ impl FromStr for ComVer {
     }
 }
 
-impl<'a> TryFrom<&'a str> for ComVer {
+impl<'a> TryFrom<Cow<'a, str>> for ComVer {
     type Error = ParseComVerError;
-    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+    fn try_from(value: Cow<'a, str>) -> Result<Self, Self::Error> {
         value.parse()
     }
 }
