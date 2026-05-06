@@ -448,43 +448,42 @@ pub fn build_lockfile(/* ... */) { /* ... */ }
 fn walk_deps_inner(/* ... */) { /* ... */ }
 ```
 
-### Serde `&'de str` vs `String` source types
+### Serde `Cow<'de, str>` vs `String` source types
 
-When wiring a type into `serde` with `#[serde(try_from = "...")]` or `#[serde(from = "...")]`, choose the source type based on whether the deserialized value retains the string data.
+When wiring a type into `serde` with `#[serde(try_from = "...")]` or `#[serde(from = "...")]`, pick the source according to whether the deserialized value retains the string.
 
-- **Prefer `&'de str`** when the conversion can save an allocation. If an owned `String` would be wasteful — for example, when the input is parsed into a number, a unit-like type, an enum discriminant, or any other value that no longer references the original characters — the deserializer can borrow directly from the input buffer and avoid allocating a `String` that is immediately discarded.
-- **Prefer `String`** when the allocated string would be moved into the resulting value. If the conversion stores the original characters (a validating newtype around a `String`, a struct that keeps the raw text, etc.), taking `String` lets the conversion move the buffer into the value rather than borrowing it and then cloning.
+Do not use `&'de str`. Text formats such as JSON, YAML, and TOML accept escape sequences like `"\u{61}"`, and the deserializer must decode them into a fresh buffer. Borrowed `&'de str` deserialization rejects every input that requires decoding, so the type fails on values the format itself accepts.
+
+Prefer `Cow<'de, str>` when the conversion discards the string, for example when it parses into a number, an enum discriminant, or any value that no longer references the original characters. The deserializer borrows from the input when no decoding is needed and allocates only when escapes force it.
+
+Prefer `String` when the conversion keeps the string. Taking `String` lets the conversion move the buffer into the resulting value without an extra clone.
 
 ```rust
-// Good: parsed into an integer; the original string is discarded.
 #[derive(serde::Deserialize)]
-#[serde(try_from = "&'de str")]
+#[serde(try_from = "Cow<'de, str>")]
 struct Port(u16);
 
-impl TryFrom<&str> for Port {
+impl<'a> TryFrom<Cow<'a, str>> for Port {
     type Error = std::num::ParseIntError;
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        s.parse().map(Port)
+    fn try_from(value: Cow<'a, str>) -> Result<Self, Self::Error> {
+        value.parse().map(Port)
     }
 }
 
-// Good: validated newtype that stores the input verbatim.
 #[derive(serde::Deserialize)]
 #[serde(try_from = "String")]
 struct PackageName(String);
 
 impl TryFrom<String> for PackageName {
     type Error = InvalidPackageName;
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        validate_package_name(&s)?;
-        Ok(PackageName(s))
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        validate(&value)?;
+        Ok(PackageName(value))
     }
 }
 ```
 
-The same trade-off applies to the infallible `#[serde(from = "...")]` form: pick `&'de str` when the conversion drops the string and `String` when it keeps it.
-
-See also the branded-string rules in [`AGENTS.md`](./AGENTS.md), which describe when a branded newtype must round-trip through serde and which validation discipline applies.
+The same trade-off applies to the infallible `#[serde(from = "...")]` form.
 
 ### Error Handling
 
