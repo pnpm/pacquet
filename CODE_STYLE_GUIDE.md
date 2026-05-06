@@ -448,6 +448,44 @@ pub fn build_lockfile(/* ... */) { /* ... */ }
 fn walk_deps_inner(/* ... */) { /* ... */ }
 ```
 
+### Serde `&'de str` vs `String` source types
+
+When wiring a type into `serde` with `#[serde(try_from = "...")]` or `#[serde(from = "...")]`, choose the source type based on whether the deserialized value retains the string data.
+
+- **Prefer `&'de str`** when the conversion can save an allocation. If an owned `String` would be wasteful — for example, when the input is parsed into a number, a unit-like type, an enum discriminant, or any other value that no longer references the original characters — the deserializer can borrow directly from the input buffer and avoid allocating a `String` that is immediately discarded.
+- **Prefer `String`** when the allocated string would be moved into the resulting value. If the conversion stores the original characters (a validating newtype around a `String`, a struct that keeps the raw text, etc.), taking `String` lets the conversion move the buffer into the value rather than borrowing it and then cloning.
+
+```rust
+// Good: parsed into an integer; the original string is discarded.
+#[derive(serde::Deserialize)]
+#[serde(try_from = "&'de str")]
+struct Port(u16);
+
+impl TryFrom<&str> for Port {
+    type Error = std::num::ParseIntError;
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        s.parse().map(Port)
+    }
+}
+
+// Good: validated newtype that stores the input verbatim.
+#[derive(serde::Deserialize)]
+#[serde(try_from = "String")]
+struct PackageName(String);
+
+impl TryFrom<String> for PackageName {
+    type Error = InvalidPackageName;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        validate_package_name(&s)?;
+        Ok(PackageName(s))
+    }
+}
+```
+
+The same trade-off applies to the infallible `#[serde(from = "...")]` form: pick `&'de str` when the conversion drops the string and `String` when it keeps it.
+
+See also the branded-string rules in [`AGENTS.md`](./AGENTS.md), which describe when a branded newtype must round-trip through serde and which validation discipline applies.
+
 ### Error Handling
 
 - Use `derive_more` for error types. Only derive the traits that are actually used:
