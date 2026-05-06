@@ -55,6 +55,48 @@ disambiguate a commit in any real-world repository. Resolve the SHA with
 GitHub and trimming the SHA segment. This rule applies to every GitHub
 repository, not only `pnpm/pnpm`.
 
+## Porting branded string types
+
+TypeScript pnpm leans on *branded* string types — strings narrowed by a
+phantom property (e.g. `type PkgName = string & { __brand: 'PkgName' }`) so
+the type system tracks intent that the runtime can't see. Some are stamped
+through a validating constructor; others are minted with a bare `as`
+type-cast. Pacquet must preserve that distinction, because it is part of the
+public contract pnpm exposes through manifest, lockfile, state, and config
+files.
+
+Rules when porting code that uses a branded string type:
+
+1. **Declare a newtype wrapper.** Do not collapse the brand into a plain
+   `String` or `&str`. Give the type its own struct so misuse is a type
+   error in pacquet too.
+2. **If upstream always validates before construction, validate too.**
+   When every brand site in pnpm runs through a checking factory, pacquet's
+   wrapper must construct only via `TryFrom<String>` and/or `FromStr` (i.e.
+   no infallible public constructor that takes an arbitrary string).
+3. **If upstream occasionally constructs without validation, expose
+   `from_str_unchecked`.** When pnpm sometimes mints the brand via a bare
+   `as` cast (skipping its validator), add a `from_str_unchecked` (or
+   similarly named) constructor on the Rust side so callers can opt into
+   the same un-checked path explicitly. Keep the validating constructor
+   too — `from_str_unchecked` is the escape hatch, not the default.
+4. **Match upstream serde behavior.** If the branded type crosses a
+   JSON / YAML / INI boundary (manifest files, lockfiles, state files,
+   config files, etc.), wire the wrapper into serde so the validation
+   policy survives serialization:
+   - `#[serde(try_from = "String")]` for deserialization (so deserialized
+     values go through the validator),
+   - `#[serde(into = "String")]` for serialization.
+   Use both when the type is round-tripped.
+5. **String-literal unions become `enum`s.** If upstream uses a string
+   literal type or a union of string literals (e.g.
+   `'auto' | 'always' | 'never'`), model it as a Rust `enum`, not a
+   newtype wrapper. The set of valid values is closed; encode that.
+6. **Template literal types are branded strings.** If upstream uses a
+   string template literal type (e.g. ``` `${string}@${string}` ```),
+   treat it the same as a branded string type — newtype wrapper with the
+   validation discipline in rules 2–4 above.
+
 ## Follow the project guides
 
 1. Follow the contributing guide in [`CONTRIBUTING.md`](./CONTRIBUTING.md), and **ALWAYS** double-check before committing. It covers commit message format, writing style, setup, and the automated checks to run before committing.
