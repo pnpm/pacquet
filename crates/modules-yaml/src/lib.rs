@@ -405,15 +405,11 @@ pub fn write_modules_manifest<Api: FsCreateDirAll + FsWrite>(
 /// resolution at
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L66-L70>.
 fn resolve_virtual_store_dir(manifest: &mut Modules, modules_dir: &Path) {
-    let resolved = if manifest.virtual_store_dir.is_empty() {
-        modules_dir.join(".pnpm")
-    } else {
-        let stored_path = Path::new(&manifest.virtual_store_dir);
-        if stored_path.is_absolute() {
-            stored_path.to_path_buf()
-        } else {
-            modules_dir.join(stored_path)
-        }
+    let stored_path = Path::new(&manifest.virtual_store_dir);
+    let resolved = match (manifest.virtual_store_dir.is_empty(), stored_path.is_absolute()) {
+        (true, _) => modules_dir.join(".pnpm"),
+        (false, true) => stored_path.to_path_buf(),
+        (false, false) => modules_dir.join(stored_path),
     };
     manifest.virtual_store_dir = resolved.to_string_lossy().into_owned();
 }
