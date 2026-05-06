@@ -2,7 +2,7 @@ use derive_more::{Display, Error};
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
 use split_first_char::SplitFirstChar;
-use std::{fmt, str::FromStr};
+use std::{borrow::Cow, fmt, str::FromStr};
 
 /// Represent the name of an npm package.
 ///
@@ -10,7 +10,7 @@ use std::{fmt, str::FromStr};
 /// * Without scope: `{bare}`
 /// * With scope: `@{scope}/bare`
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
-#[serde(try_from = "&'de str", into = "String")]
+#[serde(try_from = "Cow<'de, str>", into = "String")]
 pub struct PkgName {
     /// The scope (if any) without the `@` prefix.
     pub scope: Option<String>,
@@ -57,9 +57,9 @@ impl TryFrom<String> for PkgName {
     }
 }
 
-impl<'a> TryFrom<&'a str> for PkgName {
+impl<'a> TryFrom<Cow<'a, str>> for PkgName {
     type Error = ParsePkgNameError;
-    fn try_from(input: &'a str) -> Result<Self, Self::Error> {
+    fn try_from(input: Cow<'a, str>) -> Result<Self, Self::Error> {
         PkgName::parse(input)
     }
 }
