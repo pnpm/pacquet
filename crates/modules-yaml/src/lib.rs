@@ -79,13 +79,6 @@ impl FsWrite for RealApi {
     }
 }
 
-/// Typed view of a `node_modules/.modules.yaml` manifest.
-///
-/// Mirrors upstream's `ModulesRaw` interface at
-/// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L23-L44>.
-/// Every required-by-upstream field carries a `#[serde(default)]` so legacy
-/// manifests written by older pnpm versions still deserialize; the read
-/// path then fills in the modern shape from the legacy fields.
 /// Branded wrapper around a dependency-path string. Mirrors upstream's
 /// `DepPath` phantom type at
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/core/types/src/misc.ts#L65>.
@@ -130,6 +123,13 @@ impl AsRef<str> for DepPath {
     }
 }
 
+/// Typed view of a `node_modules/.modules.yaml` manifest.
+///
+/// Mirrors upstream's `ModulesRaw` interface at
+/// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L23-L44>.
+/// Every required-by-upstream field carries a `#[serde(default)]` so legacy
+/// manifests written by older pnpm versions still deserialize; the read
+/// path then fills in the modern shape from the legacy fields.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModulesManifest {
