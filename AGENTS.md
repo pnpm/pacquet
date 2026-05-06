@@ -74,13 +74,20 @@ Rules when porting code that uses a branded string type:
    When every brand site in pnpm runs through a checking factory, pacquet's
    wrapper must construct only via `TryFrom<String>` and/or `FromStr` (i.e.
    no infallible public constructor that takes an arbitrary string).
-3. **If upstream occasionally constructs without validation, expose
+3. **If upstream never validates, just brand for type-safety.** Some
+   upstream brands exist purely to keep the type system from confusing
+   one string slot with another (e.g. preventing a `PkgId` from being
+   passed where a `PkgName` is expected) and are never validated at
+   runtime. In that case the Rust wrapper should expose an infallible
+   `From<String>` (and/or `From<&str>`) — the type-safety win is the
+   whole point, no validator is needed.
+4. **If upstream occasionally constructs without validation, expose
    `from_str_unchecked`.** When pnpm sometimes mints the brand via a bare
    `as` cast (skipping its validator), add a `from_str_unchecked` (or
    similarly named) constructor on the Rust side so callers can opt into
    the same un-checked path explicitly. Keep the validating constructor
    too — `from_str_unchecked` is the escape hatch, not the default.
-4. **Match upstream serde behavior.** If the branded type crosses a
+5. **Match upstream serde behavior.** If the branded type crosses a
    JSON / YAML / INI boundary (manifest files, lockfiles, state files,
    config files, etc.), wire the wrapper into serde so the validation
    policy survives serialization:
@@ -88,14 +95,21 @@ Rules when porting code that uses a branded string type:
      values go through the validator),
    - `#[serde(into = "String")]` for serialization.
    Use both when the type is round-tripped.
-5. **String-literal unions become `enum`s.** If upstream uses a string
+6. **Derive simple conversions with `derive_more`.** When the conversion
+   impls implied by the rules above are mechanical (a one-liner that
+   wraps or unwraps the inner field), use `#[derive(derive_more::From)]`
+   / `#[derive(derive_more::Into)]` rather than handwriting an `impl`
+   block. Only fall back to a manual `impl` when the conversion needs
+   custom logic (e.g. validation or normalization). `derive_more` is
+   already a workspace dependency.
+7. **String-literal unions become `enum`s.** If upstream uses a string
    literal type or a union of string literals (e.g.
    `'auto' | 'always' | 'never'`), model it as a Rust `enum`, not a
    newtype wrapper. The set of valid values is closed; encode that.
-6. **Template literal types are branded strings.** If upstream uses a
+8. **Template literal types are branded strings.** If upstream uses a
    string template literal type (e.g. ``` `${string}@${string}` ```),
    treat it the same as a branded string type — newtype wrapper with the
-   validation discipline in rules 2–4 above.
+   validation discipline in rules 2–5 above.
 
 ## Follow the project guides
 
