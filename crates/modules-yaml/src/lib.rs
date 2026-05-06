@@ -9,6 +9,7 @@
 //! writes emit [`serde_json::to_string_pretty`] output to match pnpm exactly.
 
 use derive_more::{AsRef, Display, Error, From};
+use indexmap::IndexSet;
 use pacquet_diagnostics::miette::{self, Diagnostic};
 use pipe_trait::Pipe;
 use serde::{Deserialize, Serialize};
@@ -107,14 +108,23 @@ impl DepPath {
 
 /// Typed view of a `node_modules/.modules.yaml` manifest.
 ///
-/// Mirrors upstream's `ModulesRaw` interface at
-/// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L23-L44>.
-/// Every required-by-upstream field carries a `#[serde(default)]` so legacy
-/// manifests written by older pnpm versions still deserialize; the read
-/// path then fills in the modern shape from the legacy fields.
+/// Mirrors upstream's normalized [`Modules`](https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L46-L48)
+/// type, which is `ModulesRaw` with `ignoredBuilds` widened from
+/// `DepPath[]` (the on-disk shape) to `Set<DepPath>` (the in-memory
+/// shape). Pacquet collapses the two upstream types into a single
+/// struct: serde handles the array↔[`IndexSet`] conversion at the
+/// [`Self::ignored_builds`] field via [`IndexSet`]'s deduplicating
+/// `Deserialize` impl, so a separate raw-shape type is not needed.
+/// `IndexSet` (insertion-ordered) is chosen over `HashSet` /
+/// `BTreeSet` to match JavaScript `Set`'s iteration semantics — the
+/// on-disk array order round-trips byte-for-byte.
+///
+/// Every required-by-upstream field carries a `#[serde(default)]` so
+/// legacy manifests written by older pnpm versions still deserialize;
+/// the read path then fills in the modern shape from the legacy fields.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ModulesManifest {
+pub struct Modules {
     /// Legacy: the v5-era flat alias map, kept for read-side
     /// compatibility. Replaced by [`Self::hoisted_dependencies`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -148,7 +158,7 @@ pub struct ModulesManifest {
     pub pending_builds: Vec<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ignored_builds: Option<Vec<DepPath>>,
+    pub ignored_builds: Option<IndexSet<DepPath>>,
 
     #[serde(default)]
     pub pruned_at: String,
@@ -220,7 +230,7 @@ pub enum NodeLinker {
 /// upstream's `checkCompatibility` reaction at
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/deps-installer/src/install/checkCompatibility/index.ts#L18-L22>,
 /// which throws `ModulesBreakingChangeError` for a missing or mismatched
-/// `layoutVersion`. Wrapping this in [`Option`] on [`ModulesManifest`]
+/// `layoutVersion`. Wrapping this in [`Option`] on [`Modules`]
 /// distinguishes "missing" (legacy, breaking change) from "present and
 /// matching".
 ///
@@ -276,7 +286,7 @@ pub enum HoistKind {
     Private,
 }
 
-/// Value stored under an [`ModulesManifest::allow_builds`] entry. pnpm
+/// Value stored under an [`Modules::allow_builds`] entry. pnpm
 /// allows either a boolean toggle or a string allowlist label.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -288,7 +298,7 @@ pub enum AllowBuildValue {
 /// Error returned by [`read_modules_manifest`].
 #[derive(Debug, Display, Error, Diagnostic)]
 #[non_exhaustive]
-pub enum ReadModulesManifestError {
+pub enum ReadModulesError {
     #[display("Failed to read {path:?}: {source}")]
     #[diagnostic(code(pacquet_modules_yaml::read_io))]
     ReadFile { path: PathBuf, source: io::Error },
@@ -301,7 +311,7 @@ pub enum ReadModulesManifestError {
 /// Error returned by [`write_modules_manifest`].
 #[derive(Debug, Display, Error, Diagnostic)]
 #[non_exhaustive]
-pub enum WriteModulesManifestError {
+pub enum WriteModulesError {
     #[display("Failed to create directory {path:?}: {source}")]
     #[diagnostic(code(pacquet_modules_yaml::create_dir))]
     CreateDir { path: PathBuf, source: io::Error },
@@ -318,7 +328,7 @@ pub enum WriteModulesManifestError {
 /// Read `<modules_dir>/.modules.yaml` and return the normalized manifest.
 ///
 /// Returns `Ok(None)` when the file does not exist or contains a YAML
-/// `null` document, matching upstream `readModulesManifest` at
+/// `null` document, matching upstream `readModules` at
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L50-L105>.
 ///
 /// Production callers turbofish [`RealApi`]: `read_modules_manifest::<RealApi>(dir)`.
@@ -326,21 +336,18 @@ pub enum WriteModulesManifestError {
 /// only need to implement the method that is actually called.
 pub fn read_modules_manifest<Api: FsReadToString>(
     modules_dir: &Path,
-) -> Result<Option<ModulesManifest>, ReadModulesManifestError> {
+) -> Result<Option<Modules>, ReadModulesError> {
     let manifest_path = modules_dir.join(MODULES_FILENAME);
     let content = match Api::read_to_string(&manifest_path) {
         Ok(content) => content,
         Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(source) => {
-            return Err(ReadModulesManifestError::ReadFile { path: manifest_path, source });
+            return Err(ReadModulesError::ReadFile { path: manifest_path, source });
         }
     };
-    let parsed: Option<ModulesManifest> =
+    let parsed: Option<Modules> =
         content.pipe_as_ref(serde_saphyr::from_str).map_err(|source| {
-            ReadModulesManifestError::ParseYaml {
-                path: manifest_path.clone(),
-                source: Box::new(source),
-            }
+            ReadModulesError::ParseYaml { path: manifest_path.clone(), source: Box::new(source) }
         })?;
     let Some(mut manifest) = parsed else { return Ok(None) };
     apply_legacy_shamefully_hoist(&mut manifest);
@@ -357,7 +364,7 @@ pub fn read_modules_manifest<Api: FsReadToString>(
 /// Write `manifest` to `<modules_dir>/.modules.yaml`, creating `modules_dir`
 /// if it does not already exist.
 ///
-/// Mirrors upstream `writeModulesManifest` at
+/// Mirrors upstream `writeModules` at
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L111-L138>.
 ///
 /// Takes `manifest` by value because the body unconditionally rewrites
@@ -371,8 +378,8 @@ pub fn read_modules_manifest<Api: FsReadToString>(
 /// Bounds are minimal: only [`FsCreateDirAll`] and [`FsWrite`] are required.
 pub fn write_modules_manifest<Api: FsCreateDirAll + FsWrite>(
     modules_dir: &Path,
-    mut manifest: ModulesManifest,
-) -> Result<(), WriteModulesManifestError> {
+    mut manifest: Modules,
+) -> Result<(), WriteModulesError> {
     manifest.skipped.sort();
     drop_legacy_hoisted_aliases_when_unreferenced(&mut manifest);
     // Junctions on Windows break when the project moves, so the absolute
@@ -381,22 +388,22 @@ pub fn write_modules_manifest<Api: FsCreateDirAll + FsWrite>(
     if !cfg!(windows) {
         rewrite_virtual_store_dir_relative(&mut manifest, modules_dir);
     }
-    let serialized = serde_json::to_string_pretty(&manifest)
-        .map_err(WriteModulesManifestError::SerializeJson)?;
-    Api::create_dir_all(modules_dir).map_err(|source| WriteModulesManifestError::CreateDir {
+    let serialized =
+        serde_json::to_string_pretty(&manifest).map_err(WriteModulesError::SerializeJson)?;
+    Api::create_dir_all(modules_dir).map_err(|source| WriteModulesError::CreateDir {
         path: modules_dir.to_path_buf(),
         source,
     })?;
     let manifest_path = modules_dir.join(MODULES_FILENAME);
     Api::write(&manifest_path, serialized.as_bytes())
-        .map_err(|source| WriteModulesManifestError::WriteFile { path: manifest_path, source })
+        .map_err(|source| WriteModulesError::WriteFile { path: manifest_path, source })
 }
 
 /// When `virtualStoreDir` is missing, default to `modules_dir/.pnpm`. When
 /// it is relative, resolve it against `modules_dir`. Mirrors upstream's
 /// resolution at
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L66-L70>.
-fn resolve_virtual_store_dir(manifest: &mut ModulesManifest, modules_dir: &Path) {
+fn resolve_virtual_store_dir(manifest: &mut Modules, modules_dir: &Path) {
     let resolved = if manifest.virtual_store_dir.is_empty() {
         modules_dir.join(".pnpm")
     } else {
@@ -414,7 +421,7 @@ fn resolve_virtual_store_dir(manifest: &mut ModulesManifest, modules_dir: &Path)
 /// original value when stripping the prefix fails. Mirrors upstream's
 /// relativization at
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L132-L135>.
-fn rewrite_virtual_store_dir_relative(manifest: &mut ModulesManifest, modules_dir: &Path) {
+fn rewrite_virtual_store_dir_relative(manifest: &mut Modules, modules_dir: &Path) {
     let stored_path = Path::new(&manifest.virtual_store_dir);
     let relative = stored_path.strip_prefix(modules_dir).unwrap_or(stored_path);
     manifest.virtual_store_dir = relative.to_string_lossy().into_owned();
@@ -424,7 +431,7 @@ fn rewrite_virtual_store_dir_relative(manifest: &mut ModulesManifest, modules_di
 /// the modern `publicHoistPattern` and `hoistedDependencies` shapes. Mirrors
 /// upstream's translation block at
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L71-L97>.
-fn apply_legacy_shamefully_hoist(manifest: &mut ModulesManifest) {
+fn apply_legacy_shamefully_hoist(manifest: &mut Modules) {
     let Some(shamefully_hoist) = manifest.shamefully_hoist else {
         return;
     };
@@ -449,7 +456,7 @@ fn apply_legacy_shamefully_hoist(manifest: &mut ModulesManifest) {
 /// Drop the legacy `hoistedAliases` field on write when neither hoist
 /// pattern is present, mirroring upstream's cleanup at
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L126-L128>.
-fn drop_legacy_hoisted_aliases_when_unreferenced(manifest: &mut ModulesManifest) {
+fn drop_legacy_hoisted_aliases_when_unreferenced(manifest: &mut Modules) {
     if manifest.hoist_pattern.is_none() && manifest.public_hoist_pattern.is_none() {
         manifest.hoisted_aliases = None;
     }

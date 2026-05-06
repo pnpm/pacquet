@@ -1,5 +1,6 @@
+use indexmap::IndexSet;
 use pacquet_modules_yaml::{
-    DepPath, FsCreateDirAll, FsReadToString, FsWrite, HoistKind, ModulesManifest, RealApi,
+    DepPath, FsCreateDirAll, FsReadToString, FsWrite, HoistKind, Modules, RealApi,
     read_modules_manifest, write_modules_manifest,
 };
 use pipe_trait::Pipe;
@@ -7,8 +8,8 @@ use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, fs, path::Path};
 
-fn manifest_from_json(value: Value) -> ModulesManifest {
-    serde_json::from_value(value).expect("deserialize ModulesManifest fixture")
+fn manifest_from_json(value: Value) -> Modules {
+    serde_json::from_value(value).expect("deserialize Modules fixture")
 }
 
 // Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L10-L40
@@ -163,7 +164,7 @@ fn read_preserves_absolute_virtual_store_dir() {
     assert_eq!(Path::new(&manifest.virtual_store_dir), custom_store);
 }
 
-/// `writeModulesManifest` sorts `skipped` in place before serializing,
+/// `writeModules` sorts `skipped` in place before serializing,
 /// matching upstream
 /// https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L117.
 #[test]
@@ -190,7 +191,7 @@ fn write_sorts_skipped_array() {
 // https://github.com/KSXGitHub/parallel-disk-usage/blob/2aa39917f9/src/app/hdd.rs#L25-L35.
 
 /// `read_modules_manifest` should map a non-`NotFound` I/O error from
-/// `read_to_string` to `ReadModulesManifestError::ReadFile`.
+/// `read_to_string` to `ReadModulesError::ReadFile`.
 #[test]
 fn read_propagates_non_not_found_io_error() {
     use std::io;
@@ -204,11 +205,11 @@ fn read_propagates_non_not_found_io_error() {
     let modules_dir = Path::new("/dev/null/unused");
     let err = read_modules_manifest::<FailingRead>(modules_dir).expect_err("expected error");
     eprintln!("error: {err}");
-    assert!(matches!(err, pacquet_modules_yaml::ReadModulesManifestError::ReadFile { .. }));
+    assert!(matches!(err, pacquet_modules_yaml::ReadModulesError::ReadFile { .. }));
 }
 
 /// `read_modules_manifest` should surface a YAML parse failure as
-/// `ReadModulesManifestError::ParseYaml`.
+/// `ReadModulesError::ParseYaml`.
 #[test]
 fn read_propagates_parse_error() {
     use std::io;
@@ -222,7 +223,7 @@ fn read_propagates_parse_error() {
     let modules_dir = Path::new("/dev/null/unused");
     let err = read_modules_manifest::<BadYamlContent>(modules_dir).expect_err("expected error");
     eprintln!("error: {err}");
-    assert!(matches!(err, pacquet_modules_yaml::ReadModulesManifestError::ParseYaml { .. }));
+    assert!(matches!(err, pacquet_modules_yaml::ReadModulesError::ParseYaml { .. }));
 }
 
 /// A YAML document that parses to `null` should yield `Ok(None)`, matching
@@ -244,7 +245,7 @@ fn read_returns_none_for_null_document() {
 }
 
 /// `write_modules_manifest` should map a `create_dir_all` failure to
-/// `WriteModulesManifestError::CreateDir`. The fake still has to implement
+/// `WriteModulesError::CreateDir`. The fake still has to implement
 /// `FsWrite` because the function bound includes it, but the body asserts
 /// that `write` is never reached on this code path.
 #[test]
@@ -263,14 +264,14 @@ fn write_propagates_create_dir_error() {
     }
 
     let modules_dir = Path::new("/dev/null/unused");
-    let err = write_modules_manifest::<FailingMkdir>(modules_dir, ModulesManifest::default())
+    let err = write_modules_manifest::<FailingMkdir>(modules_dir, Modules::default())
         .expect_err("expected error");
     eprintln!("error: {err}");
-    assert!(matches!(err, pacquet_modules_yaml::WriteModulesManifestError::CreateDir { .. }));
+    assert!(matches!(err, pacquet_modules_yaml::WriteModulesError::CreateDir { .. }));
 }
 
 /// `write_modules_manifest` should map a `write` failure to
-/// `WriteModulesManifestError::WriteFile` after `create_dir_all` succeeds.
+/// `WriteModulesError::WriteFile` after `create_dir_all` succeeds.
 #[test]
 fn write_propagates_write_error() {
     use std::io;
@@ -287,15 +288,15 @@ fn write_propagates_write_error() {
     }
 
     let modules_dir = Path::new("/dev/null/unused");
-    let err = write_modules_manifest::<FailingWrite>(modules_dir, ModulesManifest::default())
+    let err = write_modules_manifest::<FailingWrite>(modules_dir, Modules::default())
         .expect_err("expected error");
     eprintln!("error: {err}");
-    assert!(matches!(err, pacquet_modules_yaml::WriteModulesManifestError::WriteFile { .. }));
+    assert!(matches!(err, pacquet_modules_yaml::WriteModulesError::WriteFile { .. }));
 }
 
 /// `LayoutVersion` is a unit type pinned to `5`. A manifest whose
 /// `layoutVersion` is any other number must fail at parse time. This is
-/// stricter than upstream's `readModulesManifest`, which accepts any number
+/// stricter than upstream's `readModules`, which accepts any number
 /// and defers the decision to `checkCompatibility` at
 /// https://github.com/pnpm/pnpm/blob/1819226b51/installing/deps-installer/src/install/checkCompatibility/index.ts#L18-L22;
 /// the end-to-end behavior matches because both code paths reject
@@ -313,7 +314,7 @@ fn read_rejects_incompatible_layout_version() {
     let modules_dir = Path::new("/dev/null/unused");
     let err = read_modules_manifest::<LegacyVersion>(modules_dir).expect_err("expected error");
     eprintln!("error: {err}");
-    assert!(matches!(err, pacquet_modules_yaml::ReadModulesManifestError::ParseYaml { .. }));
+    assert!(matches!(err, pacquet_modules_yaml::ReadModulesError::ParseYaml { .. }));
 }
 
 /// A null `publicHoistPattern` is removed before serializing because the
@@ -358,10 +359,9 @@ fn dep_path_serializes_transparently() {
         manifest.hoisted_aliases.as_ref().and_then(|m| m.keys().next()),
         Some(&DepPath("/accepts/1.3.7".to_string())),
     );
-    assert_eq!(
-        manifest.ignored_builds.as_deref(),
-        Some(&[DepPath("/sharp/0.32.0".to_string())][..]),
-    );
+    let expected_ignored: IndexSet<DepPath> =
+        [DepPath("/sharp/0.32.0".to_string())].into_iter().collect();
+    assert_eq!(manifest.ignored_builds.as_ref(), Some(&expected_ignored));
 
     write_modules_manifest::<RealApi>(modules_dir, manifest).expect("write manifest");
     let raw =
@@ -377,4 +377,43 @@ fn dep_path_serializes_transparently() {
         json!(["/sharp/0.32.0"]),
         "DepPath element did not serialize as a plain string",
     );
+}
+
+/// `ignoredBuilds` deserializes into an [`IndexSet`], mirroring upstream's
+/// `new Set<DepPath>(modulesRaw.ignoredBuilds)` normalization at
+/// https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L64.
+/// Duplicates are dropped, and insertion order is preserved so a
+/// write-after-read round-trip leaves the on-disk array byte-stable
+/// against an upstream-written manifest.
+#[test]
+fn ignored_builds_dedups_and_preserves_insertion_order() {
+    use std::io;
+    struct DupIgnored;
+    impl FsReadToString for DupIgnored {
+        fn read_to_string(_: &Path) -> io::Result<String> {
+            Ok(concat!(
+                "layoutVersion: 5\n",
+                "ignoredBuilds:\n",
+                "  - /b@1\n",
+                "  - /a@1\n",
+                "  - /b@1\n",
+                "  - /c@1\n",
+                "  - /a@1\n",
+            )
+            .to_string())
+        }
+    }
+
+    let modules_dir = Path::new("/dev/null/unused");
+    let manifest = read_modules_manifest::<DupIgnored>(modules_dir)
+        .expect("read manifest")
+        .expect("manifest exists");
+    let ignored: Vec<&str> = manifest
+        .ignored_builds
+        .as_ref()
+        .expect("ignored_builds present")
+        .iter()
+        .map(DepPath::as_str)
+        .collect();
+    assert_eq!(ignored, ["/b@1", "/a@1", "/c@1"]);
 }
