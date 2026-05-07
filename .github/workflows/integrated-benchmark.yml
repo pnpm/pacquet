@@ -21,9 +21,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
+# This workflow runs in the PR's privilege context, which is read-only for
+# fork PRs (GitHub Actions security policy). The result is uploaded as an
+# artifact and posted by `integrated-benchmark-comment.yml`, which runs in
+# the base-repo privilege context via `workflow_run`.
 permissions:
-  issues: write
-  pull-requests: write
+  contents: read
 
 jobs:
   benchmark:
@@ -209,22 +212,20 @@ jobs:
             # echo '</details>'
           ) > bench-work-env/SUMMARY.md
 
-      - name: Find Comment
-        # Check if the event is not triggered by a fork
-        if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: peter-evans/find-comment@v4
-        id: fc
-        with:
-          issue-number: ${{ github.event.pull_request.number }}
-          comment-author: 'github-actions[bot]'
-          body-includes: Integrated-Benchmark Report (${{ runner.os }})
+      - name: Stage artifact contents
+        # The artifact carries only the rendered report. The PR number
+        # and runner OS are derived from the trusted workflow_run
+        # event payload in the comment-posting workflow, not from
+        # fork-controlled artifact contents.
+        shell: bash
+        run: |
+          mkdir -p benchmark-artifact
+          cp bench-work-env/SUMMARY.md benchmark-artifact/SUMMARY.md
 
-      - name: Create or update comment
-        # Check if the event is not triggered by a fork
-        if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: peter-evans/create-or-update-comment@v5
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v7
         with:
-          issue-number: ${{ github.event.pull_request.number }}
-          edit-mode: replace
-          comment-id: ${{ steps.fc.outputs.comment-id }}
-          body-file: bench-work-env/SUMMARY.md
+          name: integrated-benchmark-report-${{ matrix.os }}
+          path: benchmark-artifact/
+          if-no-files-found: error
+          retention-days: 14

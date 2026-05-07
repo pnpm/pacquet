@@ -358,7 +358,12 @@ perf(store-dir): share one read-only StoreIndex across cache lookups
 - Do not add features, flags, or behaviors that pnpm does not have.
 - Do not change lockfile format, store layout, `.npmrc` semantics, or CLI
   surface unless pnpm changed them first.
-- Do not add dependencies casually — check `deny.toml` and prefer crates
-  already in the workspace.
+- A dependency that is already declared in `[workspace.dependencies]` in the
+  root `Cargo.toml` may be added to any crate that needs it.
+- Do not add a dependency that is not already declared in the workspace
+  without an explicit human request. If there is a clear benefit and
+  justification for pulling in a new third-party crate, ask the human to
+  approve it and to add it to `[workspace.dependencies]` rather than adding
+  it yourself. Consult `deny.toml` when evaluating candidates.
 - Do not introduce `unsafe` without a clear justification and review.
 - Do not disable lints, tests, or CI checks to make a PR green.
