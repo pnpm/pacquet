@@ -1,10 +1,9 @@
 ---
 source: crates/cli/tests/init.rs
-assertion_line: 31
 expression: package_json_content
 ---
 {
-  "name": "",
+  "name": "workspace",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
