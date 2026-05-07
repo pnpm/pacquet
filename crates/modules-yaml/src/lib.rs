@@ -54,9 +54,7 @@ pub trait FsWrite {
     fn write(path: &Path, contents: &[u8]) -> io::Result<()>;
 }
 
-/// Production implementation, backed by [`std::fs`]. One impl block per
-/// capability trait. Production uses the full set; tests pick the methods
-/// they need.
+/// Production implementation, backed by [`std::fs`].
 pub struct RealApi;
 
 impl FsReadToString for RealApi {
@@ -80,15 +78,15 @@ impl FsWrite for RealApi {
     }
 }
 
-/// Branded wrapper around a dependency-path string. Mirrors upstream's
-/// `DepPath` phantom type at
+/// Newtype wrapper around a dependency-path string. Mirrors upstream's
+/// `DepPath` branded type at
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/core/types/src/misc.ts#L65>.
 ///
-/// Upstream's `DepPath` is `string & { __brand: 'DepPath' }`. Every
-/// construction site uses an `as DepPath` cast — there are no validating
-/// constructors anywhere in pnpm. The brand exists purely to stop a plain
-/// `string` from being assigned where a `DepPath` is expected at compile
-/// time. This newtype mirrors that contract: the inner field is `pub`, no
+/// Upstream's `DepPath` is `string & { __brand: 'DepPath' }`, a branded
+/// string. Every construction site uses an `as DepPath` cast — there are
+/// no validating constructors anywhere in pnpm. The brand exists purely
+/// to stop a plain `string` from being assigned where a `DepPath` is
+/// expected at compile time. This Rust wrapper mirrors that contract: no
 /// validation runs at construction, and `#[serde(transparent)]` makes the
 /// wire format identical to `String` so a `DepPath` round-trips through
 /// JSON / YAML the same way upstream's branded string does.
@@ -132,7 +130,7 @@ pub struct Modules {
     pub hoisted_aliases: Option<BTreeMap<DepPath, Vec<String>>>,
 
     /// Upstream's [`HoistedDependencies`](https://github.com/pnpm/pnpm/blob/1819226b51/core/types/src/misc.ts#L57)
-    /// is `Record<DepPath | ProjectId, …>`. Pacquet keeps the key as
+    /// is `Record<DepPath | ProjectId, ...>`. Pacquet keeps the key as
     /// [`String`] because [`DepPath`] and `ProjectId` share the same
     /// underlying type with no validation, so the union cannot be
     /// disambiguated statically; the [`String`] type faithfully ports
