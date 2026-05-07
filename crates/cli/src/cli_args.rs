@@ -94,7 +94,7 @@ impl CliArgs {
         // `lockfileDir`, threaded into every event's `prefix`).
         let dir = dunce::canonicalize(&dir)
             .into_diagnostic()
-            .wrap_err_with(|| format!("canonicalizing the working directory: {}", dir.display()))?;
+            .wrap_err_with(|| format!("canonicalizing the `--dir` argument: {}", dir.display()))?;
         let manifest_path = || dir.join("package.json");
         let npmrc = || Npmrc::current(env::current_dir, home::home_dir, Default::default).leak();
         // `require_lockfile` is the "this subcommand cannot run without a
