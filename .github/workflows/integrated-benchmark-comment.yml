@@ -61,9 +61,18 @@ jobs:
             # 40-char SHA is a unique identifier; multiple PRs sharing
             # one is essentially impossible, but the count check below
             # still flags it loudly if it ever happens.
+            #
+            # `--paginate --jq '.[]'` emits each PR object on its own
+            # line so `jq -s` can slurp the whole stream into a single
+            # array; using `--paginate --jq '[...]'` would apply the
+            # filter per-page and produce one array per page (broken
+            # past 100 open PRs). `--arg sha` keeps the head SHA out
+            # of the jq program text — defensive against any future
+            # change to where HEAD_SHA is sourced from.
             pr=$(
-              gh api "repos/$REPO/pulls?state=open&per_page=100" --paginate \
-                --jq "[.[] | select(.head.sha == \"$HEAD_SHA\") | .number] | unique"
+              gh api "repos/$REPO/pulls?state=open&per_page=100" --paginate --jq '.[]' \
+                | jq -s --arg sha "$HEAD_SHA" \
+                    '[.[] | select(.head.sha == $sha) | .number] | unique'
             )
             count=$(echo "$pr" | jq 'length')
             if [[ "$count" == "0" ]]; then
