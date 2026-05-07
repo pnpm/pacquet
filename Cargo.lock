@@ -1860,6 +1860,8 @@ dependencies = [
  "pacquet-registry-mock",
  "pipe-trait",
  "reqwest",
+ "serde",
+ "serde-saphyr",
  "tokio",
  "which",
 ]

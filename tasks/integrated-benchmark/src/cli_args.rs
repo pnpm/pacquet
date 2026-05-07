@@ -76,6 +76,16 @@ impl BenchmarkScenario {
         }
     }
 
+    /// Whether the lockfile is enabled for this scenario. Mirrored into
+    /// `pnpm-workspace.yaml` alongside `.npmrc` so pnpm picks the same
+    /// value up regardless of which config source it prefers.
+    pub fn lockfile_enabled(self) -> bool {
+        match self {
+            BenchmarkScenario::CleanInstall => false,
+            BenchmarkScenario::FrozenLockfile | BenchmarkScenario::FrozenLockfileHotCache => true,
+        }
+    }
+
     /// Whether to use a lockfile.
     pub fn lockfile<Text, LoadLockfile>(self, load_lockfile: LoadLockfile) -> Option<String>
     where
