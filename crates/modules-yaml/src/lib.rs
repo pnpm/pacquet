@@ -178,10 +178,10 @@ pub struct Modules {
     #[serde(default)]
     pub pruned_at: String,
 
-    /// TODO: upstream's `StrictModules` (which `writeModulesManifest`
-    /// takes) tightens this to a required `Registries`. Revisit when
-    /// the install-pipeline port supplies a producer that always
-    /// populates `default`.
+    // TODO: upstream's `StrictModules` (which `writeModulesManifest`
+    // takes) tightens this to a required `Registries`. Revisit when
+    // the install-pipeline port supplies a producer that always
+    // populates `default`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registries: Option<BTreeMap<String, String>>,
 
