@@ -354,9 +354,10 @@ pub enum WriteModulesError {
 /// The bounds list the minimal capabilities ([`FsReadToString`] +
 /// [`Clock`]) so test fakes only need to implement the methods that are
 /// actually called.
-pub fn read_modules_manifest<Api: FsReadToString + Clock>(
-    modules_dir: &Path,
-) -> Result<Option<Modules>, ReadModulesError> {
+pub fn read_modules_manifest<Api>(modules_dir: &Path) -> Result<Option<Modules>, ReadModulesError>
+where
+    Api: FsReadToString + Clock,
+{
     let manifest_path = modules_dir.join(MODULES_FILENAME);
     let content = match Api::read_to_string(&manifest_path) {
         Ok(content) => content,
@@ -396,10 +397,13 @@ pub fn read_modules_manifest<Api: FsReadToString + Clock>(
 ///
 /// Production callers turbofish [`RealApi`]: `write_modules_manifest::<RealApi>(dir, m)`.
 /// Bounds are minimal: only [`FsCreateDirAll`] and [`FsWrite`] are required.
-pub fn write_modules_manifest<Api: FsCreateDirAll + FsWrite>(
+pub fn write_modules_manifest<Api>(
     modules_dir: &Path,
     mut manifest: Modules,
-) -> Result<(), WriteModulesError> {
+) -> Result<(), WriteModulesError>
+where
+    Api: FsCreateDirAll + FsWrite,
+{
     manifest.skipped.sort();
     drop_legacy_hoisted_aliases_when_unreferenced(&mut manifest);
     // Junctions on Windows break when the project moves, so the absolute
