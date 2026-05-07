@@ -1,12 +1,12 @@
 use indexmap::IndexSet;
 use pacquet_modules_yaml::{
-    DepPath, FsCreateDirAll, FsReadToString, FsWrite, HoistKind, Modules, RealApi,
+    Clock, DepPath, FsCreateDirAll, FsReadToString, FsWrite, HoistKind, Modules, RealApi,
     read_modules_manifest, write_modules_manifest,
 };
 use pipe_trait::Pipe;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path, time::SystemTime};
 
 fn manifest_from_json(value: Value) -> Modules {
     serde_json::from_value(value).expect("deserialize Modules fixture")
@@ -201,6 +201,11 @@ fn read_propagates_non_not_found_io_error() {
             Err(io::Error::new(io::ErrorKind::PermissionDenied, "mocked"))
         }
     }
+    impl Clock for FailingRead {
+        fn now() -> SystemTime {
+            unreachable!("clock must not be called when read_to_string fails");
+        }
+    }
 
     let modules_dir = Path::new("/dev/null/unused");
     let err = read_modules_manifest::<FailingRead>(modules_dir).expect_err("expected error");
@@ -217,6 +222,11 @@ fn read_propagates_parse_error() {
     impl FsReadToString for BadYamlContent {
         fn read_to_string(_: &Path) -> io::Result<String> {
             Ok("{ this is not valid yaml or json".to_string())
+        }
+    }
+    impl Clock for BadYamlContent {
+        fn now() -> SystemTime {
+            unreachable!("clock must not be called when YAML parsing fails");
         }
     }
 
@@ -236,6 +246,11 @@ fn read_returns_none_for_null_document() {
     impl FsReadToString for NullDocContent {
         fn read_to_string(_: &Path) -> io::Result<String> {
             Ok("null\n".to_string())
+        }
+    }
+    impl Clock for NullDocContent {
+        fn now() -> SystemTime {
+            unreachable!("clock must not be called when document is null");
         }
     }
 
@@ -308,6 +323,11 @@ fn read_rejects_incompatible_layout_version() {
     impl FsReadToString for LegacyVersion {
         fn read_to_string(_: &Path) -> io::Result<String> {
             Ok("layoutVersion: 4\n".to_string())
+        }
+    }
+    impl Clock for LegacyVersion {
+        fn now() -> SystemTime {
+            unreachable!("clock must not be called when layout version is rejected");
         }
     }
 
@@ -403,6 +423,11 @@ fn ignored_builds_dedups_and_preserves_insertion_order() {
             .to_string())
         }
     }
+    impl Clock for DupIgnored {
+        fn now() -> SystemTime {
+            SystemTime::UNIX_EPOCH
+        }
+    }
 
     let modules_dir = Path::new("/dev/null/unused");
     let manifest = read_modules_manifest::<DupIgnored>(modules_dir)
@@ -416,4 +441,35 @@ fn ignored_builds_dedups_and_preserves_insertion_order() {
         .map(DepPath::as_str)
         .collect();
     assert_eq!(ignored, ["/b@1", "/a@1", "/c@1"]);
+}
+
+/// `read_modules_manifest` fills in a missing `prunedAt` from the
+/// injected [`Clock`] capability, formatting it as an HTTP date.
+/// Mirrors upstream's `if (!modules.prunedAt) modules.prunedAt = new
+/// Date().toUTCString()` at
+/// https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L98-L99.
+/// This test pins the formatted output by faking the clock to a known
+/// epoch value, since `SystemTime::now()` is otherwise non-deterministic.
+#[test]
+fn read_fills_pruned_at_from_clock_when_missing() {
+    use std::io;
+    use std::time::Duration;
+    struct FakeClock;
+    impl FsReadToString for FakeClock {
+        fn read_to_string(_: &Path) -> io::Result<String> {
+            Ok("layoutVersion: 5\n".to_string())
+        }
+    }
+    impl Clock for FakeClock {
+        fn now() -> SystemTime {
+            // 2026-01-01T00:00:00Z = 1767225600 seconds past the UNIX epoch.
+            SystemTime::UNIX_EPOCH + Duration::from_secs(1767225600)
+        }
+    }
+
+    let modules_dir = Path::new("/dev/null/unused");
+    let manifest = read_modules_manifest::<FakeClock>(modules_dir)
+        .expect("read manifest")
+        .expect("manifest exists");
+    assert_eq!(manifest.pruned_at, "Thu, 01 Jan 2026 00:00:00 GMT");
 }

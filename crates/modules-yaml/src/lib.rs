@@ -54,7 +54,17 @@ pub trait FsWrite {
     fn write(path: &Path, contents: &[u8]) -> io::Result<()>;
 }
 
-/// Production implementation, backed by [`std::fs`].
+/// Capability trait: read the current wall-clock time as a [`SystemTime`].
+///
+/// Mirrors upstream's `new Date()` call at
+/// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L98-L99>.
+/// Decoupled from [`SystemTime::now`] so tests can fake the clock and
+/// assert deterministic `prunedAt` values.
+pub trait Clock {
+    fn now() -> SystemTime;
+}
+
+/// Production implementation, backed by [`std::fs`] and [`SystemTime::now`].
 pub struct RealApi;
 
 impl FsReadToString for RealApi {
@@ -75,6 +85,13 @@ impl FsWrite for RealApi {
     #[inline]
     fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
         fs::write(path, contents)
+    }
+}
+
+impl Clock for RealApi {
+    #[inline]
+    fn now() -> SystemTime {
+        SystemTime::now()
     }
 }
 
@@ -330,9 +347,10 @@ pub enum WriteModulesError {
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L50-L105>.
 ///
 /// Production callers turbofish [`RealApi`]: `read_modules_manifest::<RealApi>(dir)`.
-/// The bound is the minimal capability ([`FsReadToString`]) so test fakes
-/// only need to implement the method that is actually called.
-pub fn read_modules_manifest<Api: FsReadToString>(
+/// The bounds list the minimal capabilities ([`FsReadToString`] +
+/// [`Clock`]) so test fakes only need to implement the methods that are
+/// actually called.
+pub fn read_modules_manifest<Api: FsReadToString + Clock>(
     modules_dir: &Path,
 ) -> Result<Option<Modules>, ReadModulesError> {
     let manifest_path = modules_dir.join(MODULES_FILENAME);
@@ -351,7 +369,7 @@ pub fn read_modules_manifest<Api: FsReadToString>(
     apply_legacy_shamefully_hoist(&mut manifest);
     resolve_virtual_store_dir(&mut manifest, modules_dir);
     if manifest.pruned_at.is_empty() {
-        manifest.pruned_at = http_date_now();
+        manifest.pruned_at = httpdate::fmt_http_date(Api::now());
     }
     if manifest.virtual_store_dir_max_length == 0 {
         manifest.virtual_store_dir_max_length = DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH;
@@ -455,8 +473,4 @@ fn drop_legacy_hoisted_aliases_when_unreferenced(manifest: &mut Modules) {
     if manifest.hoist_pattern.is_none() && manifest.public_hoist_pattern.is_none() {
         manifest.hoisted_aliases = None;
     }
-}
-
-fn http_date_now() -> String {
-    httpdate::fmt_http_date(SystemTime::now())
 }
