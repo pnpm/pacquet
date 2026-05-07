@@ -178,6 +178,10 @@ pub struct Modules {
     #[serde(default)]
     pub pruned_at: String,
 
+    /// TODO: upstream's `StrictModules` (which `writeModulesManifest`
+    /// takes) tightens this to a required `Registries`. Revisit when
+    /// the install-pipeline port supplies a producer that always
+    /// populates `default`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registries: Option<BTreeMap<String, String>>,
 
@@ -382,20 +386,6 @@ pub fn read_modules_manifest<Api: FsReadToString + Clock>(
 ///
 /// Mirrors upstream `writeModules` at
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L111-L138>.
-///
-/// TODO: upstream tightens the parameter type to
-/// [`StrictModules`](https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L107-L109)
-/// at this boundary, which extends [`Modules`] by promoting
-/// `registries` from `Option<Registries>` to a required `Registries`
-/// (with `default` always populated). The non-optional invariant is
-/// established by the npmrc reader at
-/// <https://github.com/pnpm/pnpm/blob/1819226b51/config/reader/src/index.ts#L449-L455>
-/// and threaded through the install context. Pacquet should add an
-/// equivalent `StrictModules` (or normalize `registries` at the writer
-/// boundary) once the install-pipeline port supplies a producer that
-/// can guarantee a populated `default` registry. Until then,
-/// `Modules::registries` stays `Option<...>` and a caller passing
-/// `None` will silently write a manifest without that field.
 ///
 /// Takes `manifest` by value because the body unconditionally rewrites
 /// fields (sort `skipped`, drop legacy `hoistedAliases`, relativize
