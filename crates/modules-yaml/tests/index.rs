@@ -56,8 +56,9 @@ fn write_modules_manifest_and_read_modules_manifest() {
         .get("virtualStoreDir")
         .expect("virtualStoreDir is present")
         .as_str()
-        .expect("virtualStoreDir is a string");
-    assert_eq!(Path::new(virtual_store_dir).is_absolute(), cfg!(windows));
+        .expect("virtualStoreDir is a string")
+        .pipe(Path::new);
+    assert_eq!(virtual_store_dir.is_absolute(), cfg!(windows));
 }
 
 // Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L42-L53
