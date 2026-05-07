@@ -313,26 +313,25 @@ fn create_pnpm_workspace(
     scenario: BenchmarkScenario,
 ) {
     let dst = dst_dir.join("pnpm-workspace.yaml");
-    let mut manifest = match src_dir {
-        Some(src_dir) => {
-            let src = src_dir.join("pnpm-workspace.yaml");
-            if src.is_file() {
-                assert_ne!(src, dst);
-                let text = fs::read_to_string(&src).expect("read fixture pnpm-workspace.yaml");
-                let parsed: MinimalWorkspaceManifest =
-                    serde_saphyr::from_str(&text).expect("parse fixture pnpm-workspace.yaml");
-                if parsed.store_dir.is_none() {
-                    eprintln!(
-                        "warn: fixture's pnpm-workspace.yaml has no top-level `storeDir:` — \
-                         injecting `storeDir: ./store-dir` so per-revision store isolation works"
-                    );
-                }
-                parsed
-            } else {
-                MinimalWorkspaceManifest::default()
+    let mut manifest = if let Some(src_dir) = src_dir {
+        let src = src_dir.join("pnpm-workspace.yaml");
+        if src.is_file() {
+            assert_ne!(src, dst);
+            let text = fs::read_to_string(&src).expect("read fixture pnpm-workspace.yaml");
+            let parsed: MinimalWorkspaceManifest =
+                serde_saphyr::from_str(&text).expect("parse fixture pnpm-workspace.yaml");
+            if parsed.store_dir.is_none() {
+                eprintln!(
+                    "warn: fixture's pnpm-workspace.yaml has no top-level `storeDir:` — \
+                     injecting `storeDir: ./store-dir` so per-revision store isolation works"
+                );
             }
+            parsed
+        } else {
+            MinimalWorkspaceManifest::default()
         }
-        None => MinimalWorkspaceManifest::default_for_benchmark(),
+    } else {
+        MinimalWorkspaceManifest::default_for_benchmark()
     };
     if manifest.store_dir.is_none() {
         manifest.store_dir = Some("./store-dir".to_string());

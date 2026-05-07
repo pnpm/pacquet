@@ -1,15 +1,12 @@
-//! A minimal subset of pnpm's workspace-manifest schema, used by the
-//! integrated benchmark to produce a `pnpm-workspace.yaml` that pnpm
-//! and pacquet both read consistently.
-//!
-//! The full upstream schema (see
-//! `crates/npmrc/src/workspace_yaml.rs::WorkspaceSettings`, mirroring
-//! pnpm/pnpm@8eb1be4988 `config/reader/src/Config.ts`) carries dozens
-//! of fields. This module models only the keys the benchmark reads or
-//! writes; unknown keys in a user-provided fixture are dropped on
-//! deserialization (no `deny_unknown_fields`), which is acceptable
-//! because the benchmark's job is to drive a known-good install, not
-//! preserve arbitrary user config.
+//! Pacquet's prod manifest type
+//! (`pacquet_npmrc::workspace_yaml::WorkspaceSettings`) is shaped for
+//! deserializing user input as an additive overlay over `Npmrc` — it
+//! is `Deserialize`-only, has no `supportedArchitectures` /
+//! `allowBuilds` fields, and its semantics are "apply non-`None` fields
+//! onto an existing `Npmrc`". The benchmark needs to *emit* a complete
+//! workspace manifest including those benchmark-only fields, so this
+//! module defines a small `Serialize + Deserialize` shape with just
+//! the keys we read and write.
 
 use crate::fixtures::PNPM_WORKSPACE;
 use serde::{Deserialize, Serialize};
