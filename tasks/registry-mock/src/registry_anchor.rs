@@ -75,13 +75,14 @@ impl RegistryAnchor {
     pub fn load_or_init(init_options: MockInstanceOptions<'_>) -> Self {
         if let Some(guard) = GuardFile::try_lock() {
             // Run the spawn on a fresh OS thread so the freshly built tokio
-            // runtime is not nested inside a caller's runtime. `#[tokio::test]`
-            // runs the test on a current-thread runtime, and tokio panics with
-            // `Cannot start a runtime from within a runtime` if `block_on` is
-            // invoked from a thread that is already inside one.
+            // runtime is not nested inside a caller's runtime. Tokio panics
+            // with `Cannot start a runtime from within a runtime` whenever
+            // `block_on` runs on a thread that already drives a runtime,
+            // regardless of flavor, and `#[tokio::test]` callers reach this
+            // function from such a thread.
             let mock_instance = std::thread::scope(|scope| {
                 scope
-                    .spawn(|| {
+                    .spawn(move || {
                         tokio::runtime::Builder::new_current_thread()
                             .enable_all()
                             .build()
