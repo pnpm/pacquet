@@ -328,7 +328,7 @@ fn create_pnpm_workspace(
             }
             parsed
         } else {
-            MinimalWorkspaceManifest::default()
+            MinimalWorkspaceManifest::default_for_benchmark()
         }
     } else {
         MinimalWorkspaceManifest::default_for_benchmark()

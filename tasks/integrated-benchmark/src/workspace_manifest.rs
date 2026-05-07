@@ -32,9 +32,13 @@ pub struct MinimalWorkspaceManifest {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SupportedArchitectures {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub os: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub cpu: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub libc: Vec<String>,
 }
 
