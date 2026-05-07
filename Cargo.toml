@@ -85,7 +85,7 @@ zune-inflate       = { version = "0.2.54" }
 
 # Dev dependencies
 assert_cmd        = { version = "2.2.1" }
-chrono            = { version = "0.4", default-features = false, features = ["clock"] }
+chrono            = { version = "0.4.44", default-features = false, features = ["clock"] }
 criterion         = { version = "0.8.2", features = ["async_tokio"] }
 pretty_assertions = { version = "1.4.1" }
 project-root      = { version = "0.2.2" }
