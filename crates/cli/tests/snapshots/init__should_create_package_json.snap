@@ -1,5 +1,6 @@
 ---
 source: crates/cli/tests/init.rs
+assertion_line: 0
 expression: package_json_content
 ---
 {
