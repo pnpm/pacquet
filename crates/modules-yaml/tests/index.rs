@@ -1,3 +1,4 @@
+use chrono::{TimeZone, Utc};
 use indexmap::IndexSet;
 use pacquet_modules_yaml::{
     Clock, DepPath, FsCreateDirAll, FsReadToString, FsWrite, HoistKind, Modules, RealApi,
@@ -7,6 +8,7 @@ use pipe_trait::Pipe;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, fs, path::Path, time::SystemTime};
+use text_block_macros::text_block;
 
 fn manifest_from_json(value: Value) -> Modules {
     serde_json::from_value(value).expect("deserialize Modules fixture")
@@ -44,9 +46,12 @@ fn write_modules_manifest_and_read_modules_manifest() {
     let actual = read_modules_manifest::<RealApi>(modules_dir).expect("read manifest");
     assert_eq!(actual, Some(modules_yaml));
 
-    let raw =
-        fs::read_to_string(modules_dir.join(".modules.yaml")).expect("read raw .modules.yaml");
-    let raw: Value = serde_json::from_str(&raw).expect("parse raw .modules.yaml");
+    let raw: Value = modules_dir
+        .join(".modules.yaml")
+        .pipe(fs::read_to_string)
+        .expect("read raw .modules.yaml")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse raw .modules.yaml");
     let virtual_store_dir = raw
         .get("virtualStoreDir")
         .expect("virtualStoreDir is present")
@@ -65,15 +70,23 @@ fn read_legacy_shamefully_hoist_true_manifest() {
         .expect("modules manifest exists");
 
     assert_eq!(manifest.public_hoist_pattern.as_deref(), Some(&["*".to_string()][..]));
-
-    let mut expected: BTreeMap<String, BTreeMap<String, HoistKind>> = BTreeMap::new();
-    for dep_path in ["/accepts/1.3.7", "/array-flatten/1.1.1", "/body-parser/1.19.0"] {
-        let alias = dep_path.split('/').nth(1).expect("dep path has alias segment").to_string();
-        let mut entry = BTreeMap::new();
-        entry.insert(alias, HoistKind::Public);
-        expected.insert(dep_path.to_string(), entry);
-    }
-    assert_eq!(manifest.hoisted_dependencies, expected);
+    assert_eq!(
+        manifest.hoisted_dependencies,
+        BTreeMap::from([
+            (
+                "/accepts/1.3.7".to_string(),
+                BTreeMap::from([("accepts".to_string(), HoistKind::Public)]),
+            ),
+            (
+                "/array-flatten/1.1.1".to_string(),
+                BTreeMap::from([("array-flatten".to_string(), HoistKind::Public)]),
+            ),
+            (
+                "/body-parser/1.19.0".to_string(),
+                BTreeMap::from([("body-parser".to_string(), HoistKind::Public)]),
+            ),
+        ]),
+    );
 }
 
 // Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L55-L66
@@ -86,15 +99,23 @@ fn read_legacy_shamefully_hoist_false_manifest() {
         .expect("modules manifest exists");
 
     assert_eq!(manifest.public_hoist_pattern.as_deref(), Some(&[][..]));
-
-    let mut expected: BTreeMap<String, BTreeMap<String, HoistKind>> = BTreeMap::new();
-    for dep_path in ["/accepts/1.3.7", "/array-flatten/1.1.1", "/body-parser/1.19.0"] {
-        let alias = dep_path.split('/').nth(1).expect("dep path has alias segment").to_string();
-        let mut entry = BTreeMap::new();
-        entry.insert(alias, HoistKind::Private);
-        expected.insert(dep_path.to_string(), entry);
-    }
-    assert_eq!(manifest.hoisted_dependencies, expected);
+    assert_eq!(
+        manifest.hoisted_dependencies,
+        BTreeMap::from([
+            (
+                "/accepts/1.3.7".to_string(),
+                BTreeMap::from([("accepts".to_string(), HoistKind::Private)]),
+            ),
+            (
+                "/array-flatten/1.1.1".to_string(),
+                BTreeMap::from([("array-flatten".to_string(), HoistKind::Private)]),
+            ),
+            (
+                "/body-parser/1.19.0".to_string(),
+                BTreeMap::from([("body-parser".to_string(), HoistKind::Private)]),
+            ),
+        ]),
+    );
 }
 
 // Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L68-L94
@@ -177,10 +198,13 @@ fn write_sorts_skipped_array() {
     }));
 
     write_modules_manifest::<RealApi>(modules_dir, manifest).expect("write manifest");
-    let raw =
-        fs::read_to_string(modules_dir.join(".modules.yaml")).expect("read raw .modules.yaml");
-    let parsed: Value = serde_json::from_str(&raw).expect("parse raw .modules.yaml");
-    assert_eq!(parsed["skipped"], json!(["alpha", "mu", "zeta"]));
+    let raw: Value = modules_dir
+        .join(".modules.yaml")
+        .pipe(fs::read_to_string)
+        .expect("read raw .modules.yaml")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse raw .modules.yaml");
+    assert_eq!(raw["skipped"], json!(["alpha", "mu", "zeta"]));
 }
 
 // The next five tests use dependency injection to drive I/O outcomes that
@@ -195,6 +219,7 @@ fn write_sorts_skipped_array() {
 #[test]
 fn read_propagates_non_not_found_io_error() {
     use std::io;
+
     struct FailingRead;
     impl FsReadToString for FailingRead {
         fn read_to_string(_: &Path) -> io::Result<String> {
@@ -207,8 +232,10 @@ fn read_propagates_non_not_found_io_error() {
         }
     }
 
-    let modules_dir = Path::new("/dev/null/unused");
-    let err = read_modules_manifest::<FailingRead>(modules_dir).expect_err("expected error");
+    let err = "/dev/null/unused"
+        .pipe(Path::new)
+        .pipe(read_modules_manifest::<FailingRead>)
+        .expect_err("expected error");
     eprintln!("error: {err}");
     assert!(matches!(err, pacquet_modules_yaml::ReadModulesError::ReadFile { .. }));
 }
@@ -218,6 +245,7 @@ fn read_propagates_non_not_found_io_error() {
 #[test]
 fn read_propagates_parse_error() {
     use std::io;
+
     struct BadYamlContent;
     impl FsReadToString for BadYamlContent {
         fn read_to_string(_: &Path) -> io::Result<String> {
@@ -230,8 +258,10 @@ fn read_propagates_parse_error() {
         }
     }
 
-    let modules_dir = Path::new("/dev/null/unused");
-    let err = read_modules_manifest::<BadYamlContent>(modules_dir).expect_err("expected error");
+    let err = "/dev/null/unused"
+        .pipe(Path::new)
+        .pipe(read_modules_manifest::<BadYamlContent>)
+        .expect_err("expected error");
     eprintln!("error: {err}");
     assert!(matches!(err, pacquet_modules_yaml::ReadModulesError::ParseYaml { .. }));
 }
@@ -242,6 +272,7 @@ fn read_propagates_parse_error() {
 #[test]
 fn read_returns_none_for_null_document() {
     use std::io;
+
     struct NullDocContent;
     impl FsReadToString for NullDocContent {
         fn read_to_string(_: &Path) -> io::Result<String> {
@@ -254,8 +285,10 @@ fn read_returns_none_for_null_document() {
         }
     }
 
-    let modules_dir = Path::new("/dev/null/unused");
-    let result = read_modules_manifest::<NullDocContent>(modules_dir).expect("read manifest");
+    let result = "/dev/null/unused"
+        .pipe(Path::new)
+        .pipe(read_modules_manifest::<NullDocContent>)
+        .expect("read manifest");
     assert_eq!(result, None);
 }
 
@@ -266,6 +299,7 @@ fn read_returns_none_for_null_document() {
 #[test]
 fn write_propagates_create_dir_error() {
     use std::io;
+
     struct FailingMkdir;
     impl FsCreateDirAll for FailingMkdir {
         fn create_dir_all(_: &Path) -> io::Result<()> {
@@ -290,6 +324,7 @@ fn write_propagates_create_dir_error() {
 #[test]
 fn write_propagates_write_error() {
     use std::io;
+
     struct FailingWrite;
     impl FsCreateDirAll for FailingWrite {
         fn create_dir_all(_: &Path) -> io::Result<()> {
@@ -319,6 +354,7 @@ fn write_propagates_write_error() {
 #[test]
 fn read_rejects_incompatible_layout_version() {
     use std::io;
+
     struct LegacyVersion;
     impl FsReadToString for LegacyVersion {
         fn read_to_string(_: &Path) -> io::Result<String> {
@@ -331,8 +367,10 @@ fn read_rejects_incompatible_layout_version() {
         }
     }
 
-    let modules_dir = Path::new("/dev/null/unused");
-    let err = read_modules_manifest::<LegacyVersion>(modules_dir).expect_err("expected error");
+    let err = "/dev/null/unused"
+        .pipe(Path::new)
+        .pipe(read_modules_manifest::<LegacyVersion>)
+        .expect_err("expected error");
     eprintln!("error: {err}");
     assert!(matches!(err, pacquet_modules_yaml::ReadModulesError::ParseYaml { .. }));
 }
@@ -350,12 +388,15 @@ fn write_removes_null_public_hoist_pattern() {
     }));
 
     write_modules_manifest::<RealApi>(modules_dir, manifest).expect("write manifest");
-    let raw =
-        fs::read_to_string(modules_dir.join(".modules.yaml")).expect("read raw .modules.yaml");
-    let parsed: Value = serde_json::from_str(&raw).expect("parse raw .modules.yaml");
+    let raw: Value = modules_dir
+        .join(".modules.yaml")
+        .pipe(fs::read_to_string)
+        .expect("read raw .modules.yaml")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse raw .modules.yaml");
     assert!(
-        parsed.get("publicHoistPattern").is_none(),
-        "publicHoistPattern was kept after write: {parsed}",
+        raw.get("publicHoistPattern").is_none(),
+        "publicHoistPattern was kept after write: {raw}",
     );
 }
 
@@ -384,16 +425,19 @@ fn dep_path_serializes_transparently() {
     assert_eq!(manifest.ignored_builds.as_ref(), Some(&expected_ignored));
 
     write_modules_manifest::<RealApi>(modules_dir, manifest).expect("write manifest");
-    let raw =
-        fs::read_to_string(modules_dir.join(".modules.yaml")).expect("read raw .modules.yaml");
-    let parsed: Value = serde_json::from_str(&raw).expect("parse raw .modules.yaml");
+    let raw: Value = modules_dir
+        .join(".modules.yaml")
+        .pipe(fs::read_to_string)
+        .expect("read raw .modules.yaml")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse raw .modules.yaml");
     assert_eq!(
-        parsed["hoistedAliases"]["/accepts/1.3.7"],
+        raw["hoistedAliases"]["/accepts/1.3.7"],
         json!(["accepts"]),
         "DepPath key did not serialize as a plain string",
     );
     assert_eq!(
-        parsed["ignoredBuilds"],
+        raw["ignoredBuilds"],
         json!(["/sharp/0.32.0"]),
         "DepPath element did not serialize as a plain string",
     );
@@ -408,18 +452,19 @@ fn dep_path_serializes_transparently() {
 #[test]
 fn ignored_builds_dedups_and_preserves_insertion_order() {
     use std::io;
+
     struct DupIgnored;
     impl FsReadToString for DupIgnored {
         fn read_to_string(_: &Path) -> io::Result<String> {
-            Ok(concat!(
-                "layoutVersion: 5\n",
-                "ignoredBuilds:\n",
-                "  - /b@1\n",
-                "  - /a@1\n",
-                "  - /b@1\n",
-                "  - /c@1\n",
-                "  - /a@1\n",
-            )
+            Ok(text_block! {
+                "layoutVersion: 5"
+                "ignoredBuilds:"
+                "  - /b@1"
+                "  - /a@1"
+                "  - /b@1"
+                "  - /c@1"
+                "  - /a@1"
+            }
             .to_string())
         }
     }
@@ -429,8 +474,9 @@ fn ignored_builds_dedups_and_preserves_insertion_order() {
         }
     }
 
-    let modules_dir = Path::new("/dev/null/unused");
-    let manifest = read_modules_manifest::<DupIgnored>(modules_dir)
+    let manifest = "/dev/null/unused"
+        .pipe(Path::new)
+        .pipe(read_modules_manifest::<DupIgnored>)
         .expect("read manifest")
         .expect("manifest exists");
     let ignored: Vec<&str> = manifest
@@ -449,11 +495,11 @@ fn ignored_builds_dedups_and_preserves_insertion_order() {
 /// Date().toUTCString()` at
 /// https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L98-L99.
 /// This test pins the formatted output by faking the clock to a known
-/// epoch value, since `SystemTime::now()` is otherwise non-deterministic.
+/// instant, since `SystemTime::now()` is otherwise non-deterministic.
 #[test]
 fn read_fills_pruned_at_from_clock_when_missing() {
     use std::io;
-    use std::time::Duration;
+
     struct FakeClock;
     impl FsReadToString for FakeClock {
         fn read_to_string(_: &Path) -> io::Result<String> {
@@ -462,13 +508,13 @@ fn read_fills_pruned_at_from_clock_when_missing() {
     }
     impl Clock for FakeClock {
         fn now() -> SystemTime {
-            // 2026-01-01T00:00:00Z = 1767225600 seconds past the UNIX epoch.
-            SystemTime::UNIX_EPOCH + Duration::from_secs(1767225600)
+            Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap().into()
         }
     }
 
-    let modules_dir = Path::new("/dev/null/unused");
-    let manifest = read_modules_manifest::<FakeClock>(modules_dir)
+    let manifest = "/dev/null/unused"
+        .pipe(Path::new)
+        .pipe(read_modules_manifest::<FakeClock>)
         .expect("read manifest")
         .expect("manifest exists");
     assert_eq!(manifest.pruned_at, "Thu, 01 Jan 2026 00:00:00 GMT");

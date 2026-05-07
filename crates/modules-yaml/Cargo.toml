@@ -24,6 +24,8 @@ serde_json   = { workspace = true }
 [dev-dependencies]
 pacquet-testing-utils = { workspace = true }
 
+chrono            = { workspace = true }
 pretty_assertions = { workspace = true }
 serde_json        = { workspace = true }
 tempfile          = { workspace = true }
+text-block-macros = { workspace = true }
