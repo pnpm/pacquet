@@ -32,12 +32,17 @@ jobs:
     steps:
       - name: Resolve PR number from workflow_run trigger
         # `workflow_run.pull_requests` is empty for fork PRs (the case
-        # this workflow exists to fix), so fall back to the API lookup
-        # via the trusted `head_sha`. Querying through the BASE repo's
-        # `commits/{sha}/pulls` endpoint returns PRs targeting this
-        # repo regardless of whether the head branch lives on a fork.
-        # The PR number is never read from the artifact — that would
-        # let a fork redirect the comment to an arbitrary PR.
+        # this workflow exists to fix), so fall back to listing open
+        # PRs in this repo and filtering by `head.sha`. The base repo's
+        # `commits/{sha}/pulls` endpoint *only* finds PRs whose head
+        # commit exists on the base repo — for fork PRs the head lives
+        # on the fork, so the lookup returns `[]`. Listing PRs and
+        # filtering works for both cases.
+        #
+        # `head_sha` is sourced from the `workflow_run` event payload,
+        # which GitHub fills in for us — not from the artifact, since
+        # the artifact is fork-controlled and could otherwise redirect
+        # the comment to an arbitrary PR.
         id: meta
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -49,15 +54,25 @@ jobs:
           set -eu
           if [[ -n "${TRIGGER_PR:-}" ]]; then
             # Same-repo PR: GitHub already gave us the number on the
-            # trigger payload. Trusted source.
+            # trigger payload. Trusted source, no API call needed.
             pr="$TRIGGER_PR"
           else
-            # Fork PR: look up the PR by head SHA via the API. The SHA
-            # comes from the workflow_run trigger payload, which is
-            # filled in by GitHub itself, not by the fork.
+            # Fork PR: walk every open PR and match by head.sha. The
+            # 40-char SHA is a unique identifier; multiple PRs sharing
+            # one is essentially impossible, but the count check below
+            # still flags it loudly if it ever happens.
+            #
+            # `--paginate --jq '.[]'` emits each PR object on its own
+            # line so `jq -s` can slurp the whole stream into a single
+            # array; using `--paginate --jq '[...]'` would apply the
+            # filter per-page and produce one array per page (broken
+            # past 100 open PRs). `--arg sha` keeps the head SHA out
+            # of the jq program text — defensive against any future
+            # change to where HEAD_SHA is sourced from.
             pr=$(
-              gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
-                --jq '[.[] | select(.state == "open") | .number] | unique'
+              gh api "repos/$REPO/pulls?state=open&per_page=100" --paginate --jq '.[]' \
+                | jq -s --arg sha "$HEAD_SHA" \
+                    '[.[] | select(.head.sha == $sha) | .number] | unique'
             )
             count=$(echo "$pr" | jq 'length')
             if [[ "$count" == "0" ]]; then
