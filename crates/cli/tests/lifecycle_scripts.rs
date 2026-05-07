@@ -295,7 +295,7 @@ mod known_failures {
         drop((root, mock_instance));
     }
 
-    // Ported from https://github.com/pnpm/pnpm/blob/7e91e4b35f/installing/deps-installer/test/install/lifecycleScripts.ts#L505
+    // Ported from https://github.com/pnpm/pnpm/blob/7e91e4b35f/installing/deps-installer/test/install/lifecycleScripts.ts#L466
     #[test]
     fn selectively_allow_scripts_by_allow_builds() {
         let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
@@ -323,6 +323,7 @@ mod known_failures {
         allow_known_failure!(build_deps_ran(&workspace));
 
         let virtual_store = workspace.join("node_modules/.pnpm");
+        let node_modules = workspace.join("node_modules");
 
         let denied_pkg = virtual_store.join(
             "@pnpm.e2e+pre-and-postinstall-scripts-example@1.0.0\
@@ -337,7 +338,45 @@ mod known_failures {
         );
         assert!(allowed_pkg.join("generated-by-install.js").exists());
 
-        drop((root, mock_instance));
+        // TODO: assert the `pnpm:ignored-scripts` reporter event lists
+        // `@pnpm.e2e/pre-and-postinstall-scripts-example@1.0.0` here. Pacquet
+        // does not emit that channel yet (see issue #397).
+
+        eprintln!(
+            "Re-running install with explicit denial of pre-and-postinstall-scripts-example..."
+        );
+        fs::remove_dir_all(&node_modules).expect("remove node_modules");
+        let updated_package_json = serde_json::json!({
+            "dependencies": {
+                "@pnpm.e2e/pre-and-postinstall-scripts-example": "1.0.0",
+                "@pnpm.e2e/install-script-example": "1.0.0",
+            },
+            "pnpm": {
+                "allowBuilds": {
+                    "@pnpm.e2e/install-script-example": true,
+                    "@pnpm.e2e/pre-and-postinstall-scripts-example": false,
+                },
+            },
+        });
+        fs::write(&manifest_path, updated_package_json.to_string()).expect("update package.json");
+
+        let CommandTempCwd { pacquet: frozen_pacquet, root: frozen_root, .. } =
+            CommandTempCwd::init().add_mocked_registry();
+        frozen_pacquet
+            .with_current_dir(&workspace)
+            .with_args(["install", "--frozen-lockfile"])
+            .assert()
+            .success();
+
+        assert!(!denied_pkg.join("generated-by-preinstall.js").exists());
+        assert!(!denied_pkg.join("generated-by-postinstall.js").exists());
+        assert!(allowed_pkg.join("generated-by-install.js").exists());
+
+        // TODO: assert the `pnpm:ignored-scripts` reporter event lists no
+        // package names this time — explicit denial moves the package from
+        // "ignored" to "silently skipped".
+
+        drop((root, mock_instance, frozen_root));
     }
 
     // Ported from https://github.com/pnpm/pnpm/blob/7e91e4b35f/installing/deps-installer/test/install/lifecycleScripts.ts#L543

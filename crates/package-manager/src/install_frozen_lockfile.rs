@@ -9,7 +9,7 @@ use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::DependencyGroup;
 use pacquet_reporter::Reporter;
-use std::{collections::HashMap, sync::atomic::AtomicU8};
+use std::{collections::HashMap, path::Path, sync::atomic::AtomicU8};
 
 /// This subroutine installs dependencies from a frozen lockfile.
 ///
@@ -79,13 +79,13 @@ where
             .run::<R>()
             .map_err(InstallFrozenLockfileError::SymlinkDirectDependencies)?;
 
-        let cwd = std::env::current_dir().unwrap_or_default();
-        let allow_build_policy = AllowBuildPolicy::from_manifest(&cwd);
+        let manifest_dir = Path::new(requester);
+        let allow_build_policy = AllowBuildPolicy::from_manifest(manifest_dir);
 
         BuildModules {
             virtual_store_dir: &config.virtual_store_dir,
             modules_dir: &config.modules_dir,
-            lockfile_dir: &cwd,
+            lockfile_dir: manifest_dir,
             packages,
             snapshots,
             importers,
