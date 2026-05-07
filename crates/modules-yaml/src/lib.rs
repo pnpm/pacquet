@@ -438,12 +438,19 @@ fn resolve_virtual_store_dir(manifest: &mut Modules, modules_dir: &Path) {
 }
 
 /// Store `virtualStoreDir` relative to `modules_dir`, falling back to the
-/// original value when stripping the prefix fails. Mirrors upstream's
-/// relativization at
+/// original value when no relative form exists. Mirrors upstream's
+/// `path.relative(modulesDir, saveModules.virtualStoreDir)` at
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L132-L135>.
+///
+/// `pathdiff::diff_paths` is the Rust-side equivalent of Node's
+/// `path.relative` (i.e. it produces `..` segments for non-descendant
+/// targets); plain `Path::strip_prefix` would only handle descendants
+/// and leave sibling/parent absolute paths untouched, which would
+/// diverge from upstream's `path.relative` output.
 fn rewrite_virtual_store_dir_relative(manifest: &mut Modules, modules_dir: &Path) {
     let stored_path = Path::new(&manifest.virtual_store_dir);
-    let relative = stored_path.strip_prefix(modules_dir).unwrap_or(stored_path);
+    let relative =
+        pathdiff::diff_paths(stored_path, modules_dir).unwrap_or_else(|| stored_path.to_path_buf());
     manifest.virtual_store_dir = relative.to_string_lossy().into_owned();
 }
 

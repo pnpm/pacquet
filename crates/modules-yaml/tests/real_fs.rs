@@ -39,6 +39,32 @@ fn read_preserves_absolute_virtual_store_dir() {
     assert_eq!(Path::new(&manifest.virtual_store_dir), custom_store);
 }
 
+/// On non-Windows, `write_modules_manifest` rewrites a non-descendant
+/// `virtualStoreDir` (sibling, parent, etc.) to a relative path with
+/// `..` segments — matching upstream's `path.relative()` output at
+/// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L132-L135>,
+/// not just the descendant case that `Path::strip_prefix` covers.
+#[cfg(not(windows))]
+#[test]
+fn write_relativizes_non_descendant_virtual_store_dir() {
+    let temp_dir = tempfile::tempdir().expect("create temporary directory");
+    let modules_dir = temp_dir.path().join("project").join("node_modules");
+    let sibling_store = temp_dir.path().join(".pnpm-store");
+    let manifest = manifest_from_json(json!({
+        "layoutVersion": 5,
+        "virtualStoreDir": &sibling_store,
+    }));
+
+    write_modules_manifest::<RealApi>(&modules_dir, manifest).expect("write manifest");
+    let raw: Value = modules_dir
+        .join(".modules.yaml")
+        .pipe(fs::read_to_string)
+        .expect("read raw .modules.yaml")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse raw .modules.yaml");
+    assert_eq!(raw["virtualStoreDir"], json!("../../.pnpm-store"));
+}
+
 /// `writeModules` sorts `skipped` in place before serializing, matching
 /// upstream
 /// <https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/src/index.ts#L117>.

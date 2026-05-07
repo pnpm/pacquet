@@ -14,8 +14,9 @@ repository.workspace  = true
 pacquet-diagnostics = { workspace = true }
 
 derive_more  = { workspace = true }
-httpdate     = { workspace = true }
-indexmap     = { workspace = true }
+httpdate     = { version = "1.0.3" }
+indexmap     = { version = "2.14.0", features = ["serde"] }
+pathdiff     = { version = "0.2.3" }
 pipe-trait   = { workspace = true }
 serde        = { workspace = true }
 serde-saphyr = { workspace = true }
@@ -24,7 +25,7 @@ serde_json   = { workspace = true }
 [dev-dependencies]
 pacquet-testing-utils = { workspace = true }
 
-chrono            = { workspace = true }
+chrono            = { version = "0.4.44", default-features = false, features = ["clock"] }
 pretty_assertions = { workspace = true }
 serde_json        = { workspace = true }
 tempfile          = { workspace = true }
