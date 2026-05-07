@@ -838,12 +838,21 @@ async fn fetch_and_extract_once<R: Reporter>(
     // reporter checks `size != null` before rendering a percent
     // gauge, so this admits "we don't know yet" only when we truly
     // don't know.
+    //
+    // `attempt` is one-indexed (the in-flight attempt) to match
+    // pnpm's wire shape — `node-retry`'s `op.attempt(cb)` callback
+    // hands `cb` a 1-indexed counter, which `packageRequester`
+    // forwards verbatim into the `attempt` field. Pacquet's loop
+    // counter is zero-indexed, so emit `attempt + 1`. The default
+    // reporter's `reportBigTarballsProgress` filters on
+    // `log.attempt === 1` (so retries don't reset the progress
+    // line), so a zero would silence every "Downloading …" line.
     let send_result = client.get(package_url).send().await;
     let size = send_result.as_ref().ok().and_then(|r| r.content_length());
     R::emit(&LogEvent::FetchingProgress(FetchingProgressLog {
         level: LogLevel::Debug,
         message: FetchingProgressMessage::Started {
-            attempt,
+            attempt: attempt + 1,
             package_id: package_id.to_owned(),
             size,
         },

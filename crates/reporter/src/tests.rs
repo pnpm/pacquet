@@ -232,7 +232,7 @@ fn fetching_progress_event_matches_pnpm_wire_shape() {
     let event = LogEvent::FetchingProgress(FetchingProgressLog {
         level: LogLevel::Debug,
         message: FetchingProgressMessage::Started {
-            attempt: 0,
+            attempt: 1,
             package_id: "react@18.0.0".to_string(),
             size: None,
         },

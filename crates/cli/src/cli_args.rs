@@ -7,7 +7,7 @@ use crate::State;
 use add::AddArgs;
 use clap::{Parser, Subcommand, ValueEnum};
 use install::InstallArgs;
-use miette::Context;
+use miette::{Context, IntoDiagnostic};
 use pacquet_executor::execute_shell;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::PackageManifest;
@@ -82,6 +82,19 @@ impl CliArgs {
     /// Execute the command
     pub async fn run(self) -> miette::Result<()> {
         let CliArgs { command, dir, reporter } = self;
+        // Canonicalize `--dir` so the bunyan-envelope `prefix` emitted by
+        // the reporter is the same absolute, symlink-resolved path that
+        // `@pnpm/cli.default-reporter` derives via `process.cwd()`. Without
+        // this, a default `--dir=.` leaves `prefix` as `"."`, the reporter
+        // never matches it against its `cwd`, and every progress / stats
+        // line gets a redundant `.` path prefix prepended. Mirrors pnpm's
+        // <https://github.com/pnpm/pnpm/blob/8eb1be4988/config/reader/src/index.ts#L270>
+        // `cwd = fs.realpathSync(betterPathResolve(cliOptions.dir ...))`,
+        // later assigned to `pnpmConfig.dir` (used as the install
+        // `lockfileDir`, threaded into every event's `prefix`).
+        let dir = dunce::canonicalize(&dir)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("canonicalizing the `--dir` argument: {}", dir.display()))?;
         let manifest_path = || dir.join("package.json");
         let npmrc = || Npmrc::current(env::current_dir, home::home_dir, Default::default).leak();
         // `require_lockfile` is the "this subcommand cannot run without a
