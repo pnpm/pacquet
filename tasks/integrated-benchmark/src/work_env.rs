@@ -1,7 +1,8 @@
 use crate::{
     cli_args::{BenchmarkScenario, HyperfineOptions},
-    fixtures::{LOCKFILE, PACKAGE_JSON, PNPM_WORKSPACE},
+    fixtures::{LOCKFILE, PACKAGE_JSON},
     verify::executor,
+    workspace_manifest::MinimalWorkspaceManifest,
 };
 use itertools::Itertools;
 use os_display::Quotable;
@@ -270,12 +271,19 @@ fn create_package_json(dst_dir: &Path, src_dir: Option<&Path>) {
     }
 }
 
-/// Copy or write the fixture's `pnpm-workspace.yaml`. Pacquet's `.npmrc`
-/// sets `ignore-scripts=true` so no scripts actually run, but pnpm still
-/// warns about `ERR_PNPM_IGNORED_BUILDS` for packages whose postinstalls
-/// would have fired — the workspace file's `allowBuilds: {core-js: false,
-/// es5-ext: false}` silences those specific warnings and keeps pnpm's
-/// output clean so hyperfine doesn't see stderr noise.
+/// Synthesize the per-revision `pnpm-workspace.yaml` through a typed
+/// [`MinimalWorkspaceManifest`] and emit it via `serde_saphyr`, instead
+/// of formatting raw YAML strings. The typed round-trip rules out the
+/// `duplicated mapping key` failure modes a string-injection approach
+/// is prone to, and keeps the on-disk file in sync with the schema as
+/// new fields are added.
+///
+/// Pacquet's `.npmrc` sets `ignore-scripts=true` so no scripts actually
+/// run, but pnpm still warns about `ERR_PNPM_IGNORED_BUILDS` for
+/// packages whose postinstalls would have fired — the manifest's
+/// `allowBuilds: {core-js: false, es5-ext: false, fsevents: false}`
+/// silences those specific warnings and keeps pnpm's output clean so
+/// hyperfine doesn't see stderr noise.
 ///
 /// Always guarantees `storeDir: ./store-dir` ends up in the destination.
 /// Both pnpm and pacquet read the store path from this file (pacquet
@@ -305,86 +313,36 @@ fn create_pnpm_workspace(
     scenario: BenchmarkScenario,
 ) {
     let dst = dst_dir.join("pnpm-workspace.yaml");
-    let base = if let Some(src_dir) = src_dir {
-        let src = src_dir.join("pnpm-workspace.yaml");
-        if src.is_file() {
-            assert_ne!(src, dst);
-            fs::read_to_string(src).expect("read fixture pnpm-workspace.yaml")
-        } else {
-            String::new()
+    let mut manifest = match src_dir {
+        Some(src_dir) => {
+            let src = src_dir.join("pnpm-workspace.yaml");
+            if src.is_file() {
+                assert_ne!(src, dst);
+                let text = fs::read_to_string(&src).expect("read fixture pnpm-workspace.yaml");
+                let parsed: MinimalWorkspaceManifest =
+                    serde_saphyr::from_str(&text).expect("parse fixture pnpm-workspace.yaml");
+                if parsed.store_dir.is_none() {
+                    eprintln!(
+                        "warn: fixture's pnpm-workspace.yaml has no top-level `storeDir:` — \
+                         injecting `storeDir: ./store-dir` so per-revision store isolation works"
+                    );
+                }
+                parsed
+            } else {
+                MinimalWorkspaceManifest::default()
+            }
         }
-    } else {
-        PNPM_WORKSPACE.to_string()
+        None => MinimalWorkspaceManifest::default_for_benchmark(),
     };
-    // Strip any top-level occurrences of the keys we're about to inject
-    // so the prepended block can't collide with values already present
-    // in the fixture (or written back into the file by a previous pnpm
-    // run). YAML rejects duplicate mapping keys, so without this guard
-    // a user fixture that happens to declare `autoInstallPeers` causes
-    // the benchmark to fail with `duplicated mapping key`.
-    const INJECTED_KEYS: &[&str] = &["registry", "autoInstallPeers", "ignoreScripts", "lockfile"];
-    let base = strip_top_level_keys(&base, INJECTED_KEYS);
-    let injected = format!(
-        "registry: {registry}\n\
-         autoInstallPeers: true\n\
-         ignoreScripts: true\n\
-         lockfile: {lockfile}\n",
-        lockfile = scenario.lockfile_enabled(),
-    );
-    let content = if has_top_level_store_dir(&base) {
-        format!("{injected}{base}")
-    } else {
-        if !base.is_empty() {
-            eprintln!(
-                "warn: fixture's pnpm-workspace.yaml has no top-level `storeDir:` — \
-                 prepending `storeDir: ./store-dir` so per-revision store isolation works"
-            );
-        }
-        format!("storeDir: ./store-dir\n{injected}{base}")
-    };
-    fs::write(dst, content).expect("write pnpm-workspace.yaml for the revision");
-}
-
-/// Detect a top-level `storeDir:` key in a YAML document. We only look
-/// at lines whose first byte is a non-whitespace, non-`#` character so
-/// nested keys (`foo:\n  storeDir: …`) and comments don't count. This
-/// is a deliberately tiny scan, not a real YAML parse — the workspace
-/// files we ship and accept are flat enough that line-level matching
-/// covers the practical cases.
-fn has_top_level_store_dir(yaml: &str) -> bool {
-    yaml.lines().any(|line| {
-        let first = match line.as_bytes().first() {
-            Some(&b) => b,
-            None => return false,
-        };
-        if first.is_ascii_whitespace() || first == b'#' {
-            return false;
-        }
-        line.starts_with("storeDir:")
-    })
-}
-
-/// Remove every top-level YAML mapping entry whose key matches one of
-/// `keys`. Top-level here means "first byte of the line is a non-`#`,
-/// non-whitespace character" — same line-level scan as
-/// `has_top_level_store_dir`, just inverted into a filter. The keys are
-/// scalars in our use-case (no nested children), so dropping a single
-/// line is enough; no orphan-block worries.
-fn strip_top_level_keys(yaml: &str, keys: &[&str]) -> String {
-    let mut out = String::with_capacity(yaml.len());
-    for line in yaml.lines() {
-        let first = line.as_bytes().first().copied();
-        let is_top_level_target =
-            first.filter(|b| !b.is_ascii_whitespace() && *b != b'#').is_some_and(|_| {
-                keys.iter()
-                    .any(|k| line.starts_with(k) && line.as_bytes().get(k.len()) == Some(&b':'))
-            });
-        if !is_top_level_target {
-            out.push_str(line);
-            out.push('\n');
-        }
+    if manifest.store_dir.is_none() {
+        manifest.store_dir = Some("./store-dir".to_string());
     }
-    out
+    manifest.registry = Some(registry.to_string());
+    manifest.auto_install_peers = Some(true);
+    manifest.ignore_scripts = Some(true);
+    manifest.lockfile = Some(scenario.lockfile_enabled());
+    let yaml = serde_saphyr::to_string(&manifest).expect("serialize pnpm-workspace.yaml");
+    fs::write(dst, yaml).expect("write pnpm-workspace.yaml for the revision");
 }
 
 fn create_npmrc(dir: &Path, registry: &str, scenario: BenchmarkScenario) {

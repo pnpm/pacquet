@@ -2,6 +2,7 @@ mod cli_args;
 mod fixtures;
 mod verify;
 mod work_env;
+mod workspace_manifest;
 
 #[tokio::main]
 async fn main() {
