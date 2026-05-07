@@ -1,0 +1,83 @@
+name: Integrated-Benchmark Comment
+
+# Stage 2 of the benchmark pipeline. `integrated-benchmark.yml` runs the
+# benchmark on `pull_request` (read-only token on fork PRs) and uploads
+# the report as an artifact. This workflow runs on `workflow_run`, which
+# fires in the base repository's privilege context, so it can post the
+# comment back to the PR even when the PR is from a fork. See
+# https://securitylab.github.com/research/github-actions-preventing-pwn-requests/
+# for the security rationale.
+
+on:
+  workflow_run:
+    workflows: ["Integrated-Benchmark"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  comment:
+    name: Post benchmark comment
+    runs-on: ubuntu-latest
+    # Only post when the upstream benchmark ran on a PR and succeeded.
+    # Same gating as the original in-workflow comment, which only ran
+    # on the success path of the previous steps.
+    if: |
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Download benchmark report
+        # `run-id` + `github-token` lets v8 pull artifacts from a different
+        # workflow run, which is exactly the workflow_run pattern.
+        uses: actions/download-artifact@v8
+        with:
+          name: integrated-benchmark-report-ubuntu-latest
+          path: benchmark-artifact
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read PR number and runner OS
+        id: meta
+        shell: bash
+        run: |
+          set -eu
+          # Sanitise the PR number — must be a positive integer. The
+          # artifact comes from a fork-controlled workflow run, so we
+          # treat its contents as untrusted user input.
+          pr_raw=$(cat benchmark-artifact/pr-number.txt | tr -d '[:space:]')
+          if ! [[ "$pr_raw" =~ ^[0-9]+$ ]]; then
+            echo "::error::pr-number.txt did not contain a positive integer: '$pr_raw'"
+            exit 1
+          fi
+          # Sanitise runner-os similarly — accept only the GitHub-defined
+          # runner OS strings.
+          os_raw=$(cat benchmark-artifact/runner-os.txt | tr -d '[:space:]')
+          case "$os_raw" in
+            Linux|macOS|Windows) ;;
+            *)
+              echo "::error::runner-os.txt did not contain a known runner OS: '$os_raw'"
+              exit 1
+              ;;
+          esac
+          echo "pr=$pr_raw" >> "$GITHUB_OUTPUT"
+          echo "os=$os_raw" >> "$GITHUB_OUTPUT"
+
+      - name: Find existing comment
+        uses: peter-evans/find-comment@v4
+        id: fc
+        with:
+          issue-number: ${{ steps.meta.outputs.pr }}
+          comment-author: 'github-actions[bot]'
+          body-includes: Integrated-Benchmark Report (${{ steps.meta.outputs.os }})
+
+      - name: Create or update comment
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          issue-number: ${{ steps.meta.outputs.pr }}
+          edit-mode: replace
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          body-file: benchmark-artifact/SUMMARY.md
