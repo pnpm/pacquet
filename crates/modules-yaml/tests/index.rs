@@ -357,10 +357,10 @@ fn dep_path_serializes_transparently() {
     }));
     assert_eq!(
         manifest.hoisted_aliases.as_ref().and_then(|m| m.keys().next()),
-        Some(&DepPath("/accepts/1.3.7".to_string())),
+        Some(&DepPath::from("/accepts/1.3.7".to_string())),
     );
     let expected_ignored: IndexSet<DepPath> =
-        [DepPath("/sharp/0.32.0".to_string())].into_iter().collect();
+        [DepPath::from("/sharp/0.32.0".to_string())].into_iter().collect();
     assert_eq!(manifest.ignored_builds.as_ref(), Some(&expected_ignored));
 
     write_modules_manifest::<RealApi>(modules_dir, manifest).expect("write manifest");

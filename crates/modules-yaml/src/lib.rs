@@ -8,7 +8,7 @@
 //! format is JSON (which YAML accepts), so reads use a YAML parser and
 //! writes emit [`serde_json::to_string_pretty`] output to match pnpm exactly.
 
-use derive_more::{AsRef, Display, Error, From};
+use derive_more::{Display, Error, From, Into};
 use indexmap::IndexSet;
 use pacquet_diagnostics::miette::{self, Diagnostic};
 use pipe_trait::Pipe;
@@ -91,11 +91,10 @@ impl FsWrite for RealApi {
 /// wire format identical to `String` so a `DepPath` round-trips through
 /// JSON / YAML the same way upstream's branded string does.
 #[derive(
-    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Default, Serialize, Deserialize, From, AsRef,
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, From, Into,
 )]
-#[as_ref(forward)]
 #[serde(transparent)]
-pub struct DepPath(pub String);
+pub struct DepPath(String);
 
 impl DepPath {
     #[inline]
@@ -443,7 +442,7 @@ fn apply_legacy_shamefully_hoist(manifest: &mut Modules) {
             .iter()
             .map(|(dep_path, alias_names)| {
                 let entry = alias_names.iter().cloned().zip(iter::repeat(kind)).collect();
-                (dep_path.0.clone(), entry)
+                (dep_path.clone().into(), entry)
             })
             .collect();
     }
