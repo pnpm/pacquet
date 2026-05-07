@@ -1,7 +1,8 @@
+use crate::build_sequence::build_sequence;
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_executor::{LifecycleScriptError, RunPostinstallHooks, run_postinstall_hooks};
-use pacquet_lockfile::{PackageKey, PackageMetadata, SnapshotEntry};
+use pacquet_lockfile::{PackageKey, PackageMetadata, ProjectSnapshot, SnapshotEntry};
 use std::{
     collections::HashMap,
     fs,
@@ -111,21 +112,19 @@ impl AllowBuildPolicy {
 /// Run lifecycle scripts for all packages that require a build.
 ///
 /// Ports the core of `buildModules` from
-/// `https://github.com/pnpm/pnpm/blob/7e91e4b35f/building/during-install/src/index.ts`.
+/// `https://github.com/pnpm/pnpm/blob/80037699fb/building/during-install/src/index.ts`.
 ///
-/// TODO: pnpm topologically sorts the dep graph via `buildSequence()`
-/// and runs each chunk concurrently (bounded by `childConcurrency`).
-/// This implementation iterates in arbitrary HashMap order and runs
-/// sequentially. If package A's postinstall depends on B having
-/// already built, it may fail non-deterministically. Port
-/// `buildSequence` from `building/during-install/src/buildSequence.ts`
-/// to fix this.
+/// Packages are visited in topological order (children before parents) via
+/// [`build_sequence`]. Within a chunk, members are independent and could run
+/// concurrently — pacquet currently runs them sequentially (TODO: honor
+/// `childConcurrency`).
 pub struct BuildModules<'a> {
     pub virtual_store_dir: &'a Path,
     pub modules_dir: &'a Path,
     pub lockfile_dir: &'a Path,
     pub packages: Option<&'a HashMap<PackageKey, PackageMetadata>>,
     pub snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,
+    pub importers: &'a HashMap<String, ProjectSnapshot>,
     pub allow_build_policy: &'a AllowBuildPolicy,
 }
 
@@ -137,6 +136,7 @@ impl<'a> BuildModules<'a> {
             lockfile_dir,
             packages,
             snapshots,
+            importers,
             allow_build_policy,
         } = self;
 
@@ -146,49 +146,55 @@ impl<'a> BuildModules<'a> {
         let extra_env = HashMap::new();
         let extra_bin_paths: Vec<PathBuf> = vec![];
 
-        for snapshot_key in snapshots.keys() {
-            let metadata_key = snapshot_key.without_peer();
-            let Some(metadata) = packages.get(&metadata_key) else { continue };
+        let chunks = build_sequence(packages, snapshots, importers);
 
-            if metadata.requires_build != Some(true) {
-                continue;
-            }
+        for chunk in chunks {
+            for snapshot_key in chunk {
+                let metadata_key = snapshot_key.without_peer();
+                let Some(metadata) = packages.get(&metadata_key) else { continue };
 
-            let (name, version) = parse_name_version_from_key(&metadata_key.to_string());
-            match allow_build_policy.check(&name, &version) {
-                Some(false) => continue,
-                None => {
-                    tracing::info!(
-                        target: "pacquet::build",
-                        package = %snapshot_key,
-                        "skipping build (not in allowBuilds)",
-                    );
+                // Ancestors-of-build packages are included in the sequence
+                // but only run scripts when they themselves require a build.
+                if metadata.requires_build != Some(true) {
                     continue;
                 }
-                Some(true) => {}
+
+                let (name, version) = parse_name_version_from_key(&metadata_key.to_string());
+                match allow_build_policy.check(&name, &version) {
+                    Some(false) => continue,
+                    None => {
+                        tracing::info!(
+                            target: "pacquet::build",
+                            package = %snapshot_key,
+                            "skipping build (not in allowBuilds)",
+                        );
+                        continue;
+                    }
+                    Some(true) => {}
+                }
+
+                let pkg_dir = virtual_store_dir_for_key(virtual_store_dir, &snapshot_key);
+                if !pkg_dir.exists() {
+                    continue;
+                }
+
+                tracing::info!(
+                    target: "pacquet::build",
+                    package = %snapshot_key,
+                    dir = %pkg_dir.display(),
+                    "running lifecycle scripts",
+                );
+
+                run_postinstall_hooks(RunPostinstallHooks {
+                    dep_path: &snapshot_key.to_string(),
+                    pkg_root: &pkg_dir,
+                    root_modules_dir: modules_dir,
+                    init_cwd: lockfile_dir,
+                    extra_bin_paths: &extra_bin_paths,
+                    extra_env: &extra_env,
+                })
+                .map_err(BuildModulesError::LifecycleScript)?;
             }
-
-            let pkg_dir = virtual_store_dir_for_key(virtual_store_dir, snapshot_key);
-            if !pkg_dir.exists() {
-                continue;
-            }
-
-            tracing::info!(
-                target: "pacquet::build",
-                package = %snapshot_key,
-                dir = %pkg_dir.display(),
-                "running lifecycle scripts",
-            );
-
-            run_postinstall_hooks(RunPostinstallHooks {
-                dep_path: &snapshot_key.to_string(),
-                pkg_root: &pkg_dir,
-                root_modules_dir: modules_dir,
-                init_cwd: lockfile_dir,
-                extra_bin_paths: &extra_bin_paths,
-                extra_env: &extra_env,
-            })
-            .map_err(BuildModulesError::LifecycleScript)?;
         }
 
         Ok(())

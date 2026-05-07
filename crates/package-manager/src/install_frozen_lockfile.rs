@@ -88,6 +88,7 @@ where
             lockfile_dir: &cwd,
             packages,
             snapshots,
+            importers,
             allow_build_policy: &allow_build_policy,
         }
         .run()
