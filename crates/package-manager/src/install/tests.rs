@@ -8,8 +8,8 @@ use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry_mock::AutoMockInstance;
 use pacquet_reporter::{
-    ContextLog, LogEvent, PackageManifestLog, PackageManifestMessage, Reporter, SilentReporter,
-    Stage, StageLog, StatsLog, StatsMessage, SummaryLog,
+    ContextLog, IgnoredScriptsLog, LogEvent, PackageManifestLog, PackageManifestMessage, Reporter,
+    SilentReporter, Stage, StageLog, StatsLog, StatsMessage, SummaryLog,
 };
 use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
 use pipe_trait::Pipe;
@@ -482,10 +482,12 @@ async fn install_emits_pnpm_event_sequence() {
 
     // Event ordering matches pnpm: manifest snapshot, context,
     // importing_started, the `pnpm:stats` added/removed pair from
-    // `CreateVirtualStore::run`, importing_done, and summary
+    // `CreateVirtualStore::run`, the `pnpm:ignored-scripts` summary
+    // emitted after `BuildModules::run`, importing_done, and summary
     // closing the run. The empty snapshot map still triggers the
     // stats emit (`added: 0`, `removed: 0`), matching pnpm's
-    // unconditional emit at link time.
+    // unconditional emit at link time. The empty lockfile produces
+    // no ignored builds, so `ignored-scripts` carries an empty list.
     assert!(
         matches!(
             captured.as_slice(),
@@ -498,12 +500,19 @@ async fn install_emits_pnpm_event_sequence() {
                 LogEvent::Stage(StageLog { stage: Stage::ImportingStarted, .. }),
                 LogEvent::Stats(StatsLog { message: StatsMessage::Added { added: 0, .. }, .. }),
                 LogEvent::Stats(StatsLog { message: StatsMessage::Removed { removed: 0, .. }, .. }),
+                LogEvent::IgnoredScripts(_),
                 LogEvent::Stage(StageLog { stage: Stage::ImportingDone, .. }),
                 LogEvent::Summary(_),
             ]
         ),
         "unexpected event sequence: {captured:?}",
     );
+
+    // Empty lockfile produces no ignored builds.
+    let LogEvent::IgnoredScripts(IgnoredScriptsLog { package_names, .. }) = &captured[5] else {
+        unreachable!("ignored-scripts at index 5, asserted above");
+    };
+    assert!(package_names.is_empty(), "no builds in empty lockfile: {package_names:?}");
 
     let expected_prefix = manifest.path().parent().unwrap().to_string_lossy().into_owned();
 

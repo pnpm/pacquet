@@ -3,8 +3,9 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_executor::{LifecycleScriptError, RunPostinstallHooks, run_postinstall_hooks};
 use pacquet_lockfile::{PackageKey, PackageMetadata, ProjectSnapshot, SnapshotEntry};
+use pacquet_reporter::Reporter;
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     fs,
     path::{Path, PathBuf},
 };
@@ -129,7 +130,13 @@ pub struct BuildModules<'a> {
 }
 
 impl<'a> BuildModules<'a> {
-    pub fn run(self) -> Result<(), BuildModulesError> {
+    /// Run the build, returning the sorted set of `name@version` keys whose
+    /// scripts were skipped because the package was not in `allowBuilds`.
+    ///
+    /// The caller is expected to fold the returned set into a single
+    /// `pnpm:ignored-scripts` event — mirroring upstream's emit at
+    /// <https://github.com/pnpm/pnpm/blob/80037699fb/installing/deps-installer/src/install/index.ts#L414>.
+    pub fn run<R: Reporter>(self) -> Result<Vec<String>, BuildModulesError> {
         let BuildModules {
             virtual_store_dir,
             modules_dir,
@@ -140,13 +147,17 @@ impl<'a> BuildModules<'a> {
             allow_build_policy,
         } = self;
 
-        let Some(snapshots) = snapshots else { return Ok(()) };
-        let Some(packages) = packages else { return Ok(()) };
+        let Some(snapshots) = snapshots else { return Ok(Vec::new()) };
+        let Some(packages) = packages else { return Ok(Vec::new()) };
 
         let extra_env = HashMap::new();
         let extra_bin_paths: Vec<PathBuf> = vec![];
 
         let chunks = build_sequence(packages, snapshots, importers);
+
+        // Collect peer-stripped keys so the final list is unique and
+        // sorted lexicographically — matches `dedupePackageNamesFromIgnoredBuilds`.
+        let mut ignored_builds: BTreeSet<String> = BTreeSet::new();
 
         for chunk in chunks {
             for snapshot_key in chunk {
@@ -163,11 +174,10 @@ impl<'a> BuildModules<'a> {
                 match allow_build_policy.check(&name, &version) {
                     Some(false) => continue,
                     None => {
-                        tracing::info!(
-                            target: "pacquet::build",
-                            package = %snapshot_key,
-                            "skipping build (not in allowBuilds)",
-                        );
+                        // "Not in allowBuilds" — surfaced as `pnpm:ignored-scripts`.
+                        // Explicit `false` is silently skipped (above), matching
+                        // upstream's switch in `building/during-install/src/index.ts:88-101`.
+                        ignored_builds.insert(metadata_key.to_string());
                         continue;
                     }
                     Some(true) => {}
@@ -178,14 +188,7 @@ impl<'a> BuildModules<'a> {
                     continue;
                 }
 
-                tracing::info!(
-                    target: "pacquet::build",
-                    package = %snapshot_key,
-                    dir = %pkg_dir.display(),
-                    "running lifecycle scripts",
-                );
-
-                run_postinstall_hooks(RunPostinstallHooks {
+                run_postinstall_hooks::<R>(RunPostinstallHooks {
                     dep_path: &snapshot_key.to_string(),
                     pkg_root: &pkg_dir,
                     root_modules_dir: modules_dir,
@@ -197,7 +200,7 @@ impl<'a> BuildModules<'a> {
             }
         }
 
-        Ok(())
+        Ok(ignored_builds.into_iter().collect())
     }
 }
 

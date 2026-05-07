@@ -8,7 +8,7 @@ use pacquet_lockfile::{PackageKey, PackageMetadata, ProjectSnapshot, SnapshotEnt
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::DependencyGroup;
-use pacquet_reporter::Reporter;
+use pacquet_reporter::{IgnoredScriptsLog, LogEvent, LogLevel, Reporter};
 use std::{collections::HashMap, path::Path, sync::atomic::AtomicU8};
 
 /// This subroutine installs dependencies from a frozen lockfile.
@@ -82,7 +82,7 @@ where
         let manifest_dir = Path::new(requester);
         let allow_build_policy = AllowBuildPolicy::from_manifest(manifest_dir);
 
-        BuildModules {
+        let ignored_builds = BuildModules {
             virtual_store_dir: &config.virtual_store_dir,
             modules_dir: &config.modules_dir,
             lockfile_dir: manifest_dir,
@@ -91,8 +91,17 @@ where
             importers,
             allow_build_policy: &allow_build_policy,
         }
-        .run()
+        .run::<R>()
         .map_err(InstallFrozenLockfileError::BuildModules)?;
+
+        // Mirrors upstream's single emit at the end of the build phase:
+        // <https://github.com/pnpm/pnpm/blob/80037699fb/installing/deps-installer/src/install/index.ts#L414>.
+        // Always emitted (with an empty list when nothing was ignored), so
+        // the reporter can display a consistent "no ignored scripts" state.
+        R::emit(&LogEvent::IgnoredScripts(IgnoredScriptsLog {
+            level: LogLevel::Debug,
+            package_names: ignored_builds,
+        }));
 
         Ok(())
     }

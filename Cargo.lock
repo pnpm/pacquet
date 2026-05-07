@@ -1837,7 +1837,10 @@ version = "0.0.1"
 dependencies = [
  "derive_more",
  "miette 7.6.0",
+ "pacquet-reporter",
+ "pretty_assertions",
  "serde_json",
+ "tempfile",
  "tracing",
 ]
 

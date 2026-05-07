@@ -1,11 +1,16 @@
 use derive_more::{Display, Error};
 use miette::Diagnostic;
+use pacquet_reporter::{
+    LifecycleLog, LifecycleMessage, LifecycleStdio, LogEvent, LogLevel, Reporter,
+};
 use std::{
     collections::HashMap,
     env,
     ffi::OsString,
+    io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
+    thread,
 };
 
 /// Error from running lifecycle scripts.
@@ -71,10 +76,12 @@ pub struct RunPostinstallHooks<'a> {
 /// a single dependency.
 ///
 /// Ports `runPostinstallHooks` from
-/// `https://github.com/pnpm/pnpm/blob/7e91e4b35f/exec/lifecycle/src/index.ts`.
+/// `https://github.com/pnpm/pnpm/blob/80037699fb/exec/lifecycle/src/index.ts`.
 ///
 /// Returns `true` if any script was present and executed.
-pub fn run_postinstall_hooks(opts: RunPostinstallHooks<'_>) -> Result<bool, LifecycleScriptError> {
+pub fn run_postinstall_hooks<R: Reporter>(
+    opts: RunPostinstallHooks<'_>,
+) -> Result<bool, LifecycleScriptError> {
     let manifest_path = opts.pkg_root.join("package.json");
     let manifest_text = match std::fs::read_to_string(&manifest_path) {
         Ok(text) => text,
@@ -97,7 +104,7 @@ pub fn run_postinstall_hooks(opts: RunPostinstallHooks<'_>) -> Result<bool, Life
     let mut ran_any = false;
 
     if let Some(script) = get_script("preinstall") {
-        run_lifecycle_hook("preinstall", script, &opts)?;
+        run_lifecycle_hook::<R>("preinstall", script, &opts)?;
         ran_any = true;
     }
 
@@ -111,23 +118,27 @@ pub fn run_postinstall_hooks(opts: RunPostinstallHooks<'_>) -> Result<bool, Life
     if let Some(script) = &install_script
         && script != "npx only-allow pnpm"
     {
-        run_lifecycle_hook("install", script, &opts)?;
+        run_lifecycle_hook::<R>("install", script, &opts)?;
         ran_any = true;
     }
 
     if let Some(script) = get_script("postinstall") {
-        run_lifecycle_hook("postinstall", script, &opts)?;
+        run_lifecycle_hook::<R>("postinstall", script, &opts)?;
         ran_any = true;
     }
 
     Ok(ran_any)
 }
 
-/// Run a single lifecycle hook.
+/// Run a single lifecycle hook and emit `pnpm:lifecycle` events.
 ///
 /// Ports the core of `runLifecycleHook` from
-/// `https://github.com/pnpm/pnpm/blob/7e91e4b35f/exec/lifecycle/src/runLifecycleHook.ts`.
-fn run_lifecycle_hook(
+/// `https://github.com/pnpm/pnpm/blob/80037699fb/exec/lifecycle/src/runLifecycleHook.ts`.
+///
+/// Mirrors the upstream emit ordering: a `Script` event before the spawn,
+/// `Stdio` events for each stdout/stderr line, then an `Exit` event with
+/// the resolved exit code.
+fn run_lifecycle_hook<R: Reporter>(
     stage: &str,
     script: &str,
     opts: &RunPostinstallHooks<'_>,
@@ -140,6 +151,21 @@ fn run_lifecycle_hook(
         pkg_root = %opts.pkg_root.display(),
     );
 
+    let pkg_root_str = opts.pkg_root.to_string_lossy().into_owned();
+
+    // Mirrors `lifecycleLogger.debug({ depPath, optional, script, stage, wd })`
+    // at <https://github.com/pnpm/pnpm/blob/80037699fb/exec/lifecycle/src/runLifecycleHook.ts#L102>.
+    R::emit(&LogEvent::Lifecycle(LifecycleLog {
+        level: LogLevel::Debug,
+        message: LifecycleMessage::Script {
+            dep_path: opts.dep_path.to_string(),
+            optional: false,
+            script: script.to_string(),
+            stage: stage.to_string(),
+            wd: pkg_root_str.clone(),
+        },
+    }));
+
     let path_env = build_path_env(opts.pkg_root, opts.extra_bin_paths);
 
     let mut cmd = Command::new("sh");
@@ -149,26 +175,56 @@ fn run_lifecycle_hook(
         .env("PATH", &path_env)
         .env("INIT_CWD", opts.init_cwd)
         .env("PNPM_SCRIPT_SRC_DIR", opts.pkg_root)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     for (key, value) in opts.extra_env {
         cmd.env(key, value);
     }
 
-    let status = cmd
-        .spawn()
-        .map_err(|e| LifecycleScriptError::Spawn {
+    let mut child = cmd.spawn().map_err(|e| LifecycleScriptError::Spawn {
+        dep_path: opts.dep_path.to_string(),
+        stage: stage.to_string(),
+        source: e,
+    })?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let stdout_handle = stdout.map(|s| {
+        spawn_line_pump::<R>(s, LifecycleStdio::Stdout, opts.dep_path, stage, &pkg_root_str)
+    });
+    let stderr_handle = stderr.map(|s| {
+        spawn_line_pump::<R>(s, LifecycleStdio::Stderr, opts.dep_path, stage, &pkg_root_str)
+    });
+
+    let status = child.wait().map_err(|e| LifecycleScriptError::Wait {
+        dep_path: opts.dep_path.to_string(),
+        stage: stage.to_string(),
+        source: e,
+    })?;
+
+    // Joining the pumps after `wait` ensures every line they read is
+    // emitted before the `Exit` event below, matching pnpm's ordering.
+    if let Some(h) = stdout_handle {
+        let _ = h.join();
+    }
+    if let Some(h) = stderr_handle {
+        let _ = h.join();
+    }
+
+    // Mirrors `lifecycleLogger.debug({ depPath, exitCode, optional, stage, wd })`
+    // at <https://github.com/pnpm/pnpm/blob/80037699fb/exec/lifecycle/src/runLifecycleHook.ts#L165>.
+    R::emit(&LogEvent::Lifecycle(LifecycleLog {
+        level: LogLevel::Debug,
+        message: LifecycleMessage::Exit {
             dep_path: opts.dep_path.to_string(),
+            exit_code: status.code().unwrap_or(-1),
+            optional: false,
             stage: stage.to_string(),
-            source: e,
-        })?
-        .wait()
-        .map_err(|e| LifecycleScriptError::Wait {
-            dep_path: opts.dep_path.to_string(),
-            stage: stage.to_string(),
-            source: e,
-        })?;
+            wd: pkg_root_str,
+        },
+    }));
 
     if !status.success() {
         return Err(LifecycleScriptError::ScriptFailed {
@@ -180,6 +236,44 @@ fn run_lifecycle_hook(
     }
 
     Ok(())
+}
+
+/// Spawn a thread that reads `reader` line-by-line and emits a
+/// `LifecycleMessage::Stdio` event per line. Mirrors the per-chunk
+/// logging callback at
+/// <https://github.com/pnpm/pnpm/blob/80037699fb/exec/lifecycle/src/runLifecycleHook.ts#L147>.
+fn spawn_line_pump<R: Reporter>(
+    reader: impl Read + Send + 'static,
+    stdio: LifecycleStdio,
+    dep_path: &str,
+    stage: &str,
+    wd: &str,
+) -> thread::JoinHandle<()> {
+    let dep_path = dep_path.to_string();
+    let stage = stage.to_string();
+    let wd = wd.to_string();
+    thread::spawn(move || {
+        let buf = BufReader::new(reader);
+        for line in buf.lines() {
+            let Ok(line) = line else {
+                // Stop pumping on read error — an EBADF or EPIPE means
+                // the child closed the stream. Errors are not fatal to
+                // the install; the wait below will surface a non-zero
+                // exit code if the child failed because of them.
+                break;
+            };
+            R::emit(&LogEvent::Lifecycle(LifecycleLog {
+                level: LogLevel::Debug,
+                message: LifecycleMessage::Stdio {
+                    dep_path: dep_path.clone(),
+                    line,
+                    stage: stage.clone(),
+                    stdio,
+                    wd: wd.clone(),
+                },
+            }));
+        }
+    })
 }
 
 /// Build the `PATH` environment variable for lifecycle scripts.
@@ -199,3 +293,6 @@ fn build_path_env(pkg_root: &Path, extra_bin_paths: &[PathBuf]) -> OsString {
 
     env::join_paths(paths).unwrap_or(system_path)
 }
+
+#[cfg(test)]
+mod tests;
