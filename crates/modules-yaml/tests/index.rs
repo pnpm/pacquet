@@ -63,9 +63,10 @@ fn write_modules_manifest_and_read_modules_manifest() {
 // Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L42-L53
 #[test]
 fn read_legacy_shamefully_hoist_true_manifest() {
-    let modules_dir =
-        env!("CARGO_MANIFEST_DIR").pipe(Path::new).join("tests/fixtures/old-shamefully-hoist");
-    let manifest = read_modules_manifest::<RealApi>(&modules_dir)
+    let manifest = env!("CARGO_MANIFEST_DIR")
+        .pipe(Path::new)
+        .join("tests/fixtures/old-shamefully-hoist")
+        .pipe_as_ref(read_modules_manifest::<RealApi>)
         .expect("read manifest")
         .expect("modules manifest exists");
 
@@ -92,9 +93,10 @@ fn read_legacy_shamefully_hoist_true_manifest() {
 // Ported from https://github.com/pnpm/pnpm/blob/1819226b51/installing/modules-yaml/test/index.ts#L55-L66
 #[test]
 fn read_legacy_shamefully_hoist_false_manifest() {
-    let modules_dir =
-        env!("CARGO_MANIFEST_DIR").pipe(Path::new).join("tests/fixtures/old-no-shamefully-hoist");
-    let manifest = read_modules_manifest::<RealApi>(&modules_dir)
+    let manifest = env!("CARGO_MANIFEST_DIR")
+        .pipe(Path::new)
+        .join("tests/fixtures/old-no-shamefully-hoist")
+        .pipe_as_ref(read_modules_manifest::<RealApi>)
         .expect("read manifest")
         .expect("modules manifest exists");
 
@@ -179,7 +181,8 @@ fn read_preserves_absolute_virtual_store_dir() {
     let raw = json!({ "virtualStoreDir": &custom_store, "layoutVersion": 5 }).to_string();
     fs::write(modules_dir.join(".modules.yaml"), raw).expect("write fixture");
 
-    let manifest = read_modules_manifest::<RealApi>(&modules_dir)
+    let manifest = modules_dir
+        .pipe_as_ref(read_modules_manifest::<RealApi>)
         .expect("read manifest")
         .expect("manifest exists");
     assert_eq!(Path::new(&manifest.virtual_store_dir), custom_store);
