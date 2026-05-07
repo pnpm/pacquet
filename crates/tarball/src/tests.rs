@@ -1957,6 +1957,7 @@ async fn request_retry_event_fires_per_retried_attempt() {
         "",
         store_path,
         fast_retry_opts(),
+        &AuthHeaders::default(),
     )
     .await
     .expect("transient 503 should be followed by a successful retry");
