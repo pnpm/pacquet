@@ -103,7 +103,7 @@ impl WorkEnv {
             let for_pnpm = matches!(id, BenchId::Static(_));
             fs::create_dir_all(&dir).expect("create directory for the revision");
             create_package_json(&dir, self.fixture_dir.as_deref());
-            create_pnpm_workspace(&dir, self.fixture_dir.as_deref());
+            create_pnpm_workspace(&dir, self.fixture_dir.as_deref(), self.registry(), scenario);
             create_install_script(&dir, scenario, for_pnpm);
             create_npmrc(&dir, self.registry(), scenario);
             may_create_lockfile(&dir, scenario, self.fixture_dir.as_deref());
@@ -290,7 +290,20 @@ fn create_package_json(dst_dir: &Path, src_dir: Option<&Path>) {
 /// trust it — that's the user opting into a different store layout
 /// (e.g. shared store across revisions to test a specific scenario).
 /// Only inject our default when the key is absent.
-fn create_pnpm_workspace(dst_dir: &Path, src_dir: Option<&Path>) {
+///
+/// Also mirrors the `.npmrc` settings (`registry`, `autoInstallPeers`,
+/// `ignoreScripts`, `lockfile`) into the workspace file as camelCase
+/// keys so pnpm 10 picks them up from either source. Per pnpm's reader
+/// (`config/reader/src/index.ts:802-808` at pnpm/pnpm@8eb1be4988),
+/// non-camelCase keys in `pnpm-workspace.yaml` are silently dropped, so
+/// the npmrc spelling can't be reused verbatim. Pacquet's npmrc parser
+/// is the only thing that reads `.npmrc` here; pnpm reads both.
+fn create_pnpm_workspace(
+    dst_dir: &Path,
+    src_dir: Option<&Path>,
+    registry: &str,
+    scenario: BenchmarkScenario,
+) {
     let dst = dst_dir.join("pnpm-workspace.yaml");
     let base = if let Some(src_dir) = src_dir {
         let src = src_dir.join("pnpm-workspace.yaml");
@@ -303,8 +316,15 @@ fn create_pnpm_workspace(dst_dir: &Path, src_dir: Option<&Path>) {
     } else {
         PNPM_WORKSPACE.to_string()
     };
+    let injected = format!(
+        "registry: {registry}\n\
+         autoInstallPeers: false\n\
+         ignoreScripts: true\n\
+         lockfile: {lockfile}\n",
+        lockfile = scenario.lockfile_enabled(),
+    );
     let content = if has_top_level_store_dir(&base) {
-        base
+        format!("{injected}{base}")
     } else {
         if !base.is_empty() {
             eprintln!(
@@ -312,11 +332,7 @@ fn create_pnpm_workspace(dst_dir: &Path, src_dir: Option<&Path>) {
                  prepending `storeDir: ./store-dir` so per-revision store isolation works"
             );
         }
-        if base.is_empty() {
-            "storeDir: ./store-dir\n".to_string()
-        } else {
-            format!("storeDir: ./store-dir\n{base}")
-        }
+        format!("storeDir: ./store-dir\n{injected}{base}")
     };
     fs::write(dst, content).expect("write pnpm-workspace.yaml for the revision");
 }
