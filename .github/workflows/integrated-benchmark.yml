@@ -213,16 +213,14 @@ jobs:
           ) > bench-work-env/SUMMARY.md
 
       - name: Stage artifact contents
-        # Bundle the report and the PR number into one directory so the
-        # comment-posting workflow can find both with a single download.
-        # The runner.os string also rides along so the comment matcher
-        # can distinguish per-OS comments if the matrix ever expands.
+        # The artifact carries only the rendered report. The PR number
+        # and runner OS are derived from the trusted workflow_run
+        # event payload in the comment-posting workflow, not from
+        # fork-controlled artifact contents.
         shell: bash
         run: |
           mkdir -p benchmark-artifact
           cp bench-work-env/SUMMARY.md benchmark-artifact/SUMMARY.md
-          echo '${{ github.event.pull_request.number }}' > benchmark-artifact/pr-number.txt
-          echo '${{ runner.os }}' > benchmark-artifact/runner-os.txt
 
       - name: Upload benchmark report
         uses: actions/upload-artifact@v7
