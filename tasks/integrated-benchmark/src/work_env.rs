@@ -316,9 +316,17 @@ fn create_pnpm_workspace(
     } else {
         PNPM_WORKSPACE.to_string()
     };
+    // Strip any top-level occurrences of the keys we're about to inject
+    // so the prepended block can't collide with values already present
+    // in the fixture (or written back into the file by a previous pnpm
+    // run). YAML rejects duplicate mapping keys, so without this guard
+    // a user fixture that happens to declare `autoInstallPeers` causes
+    // the benchmark to fail with `duplicated mapping key`.
+    const INJECTED_KEYS: &[&str] = &["registry", "autoInstallPeers", "ignoreScripts", "lockfile"];
+    let base = strip_top_level_keys(&base, INJECTED_KEYS);
     let injected = format!(
         "registry: {registry}\n\
-         autoInstallPeers: false\n\
+         autoInstallPeers: true\n\
          ignoreScripts: true\n\
          lockfile: {lockfile}\n",
         lockfile = scenario.lockfile_enabled(),
@@ -356,6 +364,29 @@ fn has_top_level_store_dir(yaml: &str) -> bool {
     })
 }
 
+/// Remove every top-level YAML mapping entry whose key matches one of
+/// `keys`. Top-level here means "first byte of the line is a non-`#`,
+/// non-whitespace character" — same line-level scan as
+/// `has_top_level_store_dir`, just inverted into a filter. The keys are
+/// scalars in our use-case (no nested children), so dropping a single
+/// line is enough; no orphan-block worries.
+fn strip_top_level_keys(yaml: &str, keys: &[&str]) -> String {
+    let mut out = String::with_capacity(yaml.len());
+    for line in yaml.lines() {
+        let first = line.as_bytes().first().copied();
+        let is_top_level_target =
+            first.filter(|b| !b.is_ascii_whitespace() && *b != b'#').is_some_and(|_| {
+                keys.iter()
+                    .any(|k| line.starts_with(k) && line.as_bytes().get(k.len()) == Some(&b':'))
+            });
+        if !is_top_level_target {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 fn create_npmrc(dir: &Path, registry: &str, scenario: BenchmarkScenario) {
     let path = dir.join(".npmrc");
     eprintln!("Creating config file {path:?}...");
@@ -368,7 +399,7 @@ fn create_npmrc(dir: &Path, registry: &str, scenario: BenchmarkScenario) {
     // `storeDir: ./store-dir` already resolves to `{bench_dir}/store-dir`
     // under each per-revision CWD, which gives the same per-revision
     // isolation the redundant `.npmrc` line was supposedly providing.
-    writeln!(file, "auto-install-peers=false").unwrap();
+    writeln!(file, "auto-install-peers=true").unwrap();
     writeln!(file, "ignore-scripts=true").unwrap();
     writeln!(file, "{}", scenario.npmrc_lockfile_setting()).unwrap();
 }
