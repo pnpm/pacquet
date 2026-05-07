@@ -1,0 +1,110 @@
+name: Integrated-Benchmark Comment
+
+# Stage 2 of the benchmark pipeline. `integrated-benchmark.yml` runs the
+# benchmark on `pull_request` (read-only token on fork PRs) and uploads
+# the report as an artifact. This workflow runs on `workflow_run`, which
+# fires in the base repository's privilege context, so it can post the
+# comment back to the PR even when the PR is from a fork. See
+# https://securitylab.github.com/research/github-actions-preventing-pwn-requests/
+# for the security rationale.
+
+on:
+  workflow_run:
+    workflows: ["Integrated-Benchmark"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  comment:
+    name: Post benchmark comment
+    runs-on: ubuntu-latest
+    # Only post when the upstream benchmark ran on a PR and succeeded.
+    # Same gating as the original in-workflow comment, which only ran
+    # on the success path of the previous steps.
+    if: |
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Resolve PR number from workflow_run trigger
+        # `workflow_run.pull_requests` is empty for fork PRs (the case
+        # this workflow exists to fix), so fall back to the API lookup
+        # via the trusted `head_sha`. Querying through the BASE repo's
+        # `commits/{sha}/pulls` endpoint returns PRs targeting this
+        # repo regardless of whether the head branch lives on a fork.
+        # The PR number is never read from the artifact — that would
+        # let a fork redirect the comment to an arbitrary PR.
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          REPO: ${{ github.repository }}
+          TRIGGER_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+        shell: bash
+        run: |
+          set -eu
+          if [[ -n "${TRIGGER_PR:-}" ]]; then
+            # Same-repo PR: GitHub already gave us the number on the
+            # trigger payload. Trusted source.
+            pr="$TRIGGER_PR"
+          else
+            # Fork PR: look up the PR by head SHA via the API. The SHA
+            # comes from the workflow_run trigger payload, which is
+            # filled in by GitHub itself, not by the fork.
+            pr=$(
+              gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
+                --jq '[.[] | select(.state == "open") | .number] | unique'
+            )
+            count=$(echo "$pr" | jq 'length')
+            if [[ "$count" == "0" ]]; then
+              echo "::error::no open PR matches head_sha=$HEAD_SHA in $REPO"
+              exit 1
+            fi
+            if [[ "$count" != "1" ]]; then
+              echo "::error::ambiguous head_sha=$HEAD_SHA matches $count PRs: $pr"
+              exit 1
+            fi
+            pr=$(echo "$pr" | jq '.[0]')
+          fi
+          # Final sanity check: the resolved value must be a positive integer.
+          if ! [[ "$pr" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::resolved PR number is not a positive integer: '$pr'"
+            exit 1
+          fi
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+
+      - name: Download benchmark report
+        # `run-id` + `github-token` lets v8 pull artifacts from a different
+        # workflow run, which is exactly the workflow_run pattern.
+        uses: actions/download-artifact@v8
+        with:
+          name: integrated-benchmark-report-ubuntu-latest
+          path: benchmark-artifact
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Find existing comment
+        # Match on the literal substring the report header carries.
+        # Updating the heading text in `integrated-benchmark.yml` (the
+        # `Integrated-Benchmark Report (${{ runner.os }})` line) needs
+        # to keep this matcher in sync, otherwise duplicate comments
+        # accrue across runs. Today the matrix only runs on Linux, so
+        # there is one fixed string to track.
+        uses: peter-evans/find-comment@v4
+        id: fc
+        with:
+          issue-number: ${{ steps.meta.outputs.pr }}
+          comment-author: 'github-actions[bot]'
+          body-includes: 'Integrated-Benchmark Report (Linux)'
+
+      - name: Create or update comment
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          issue-number: ${{ steps.meta.outputs.pr }}
+          edit-mode: replace
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          body-file: benchmark-artifact/SUMMARY.md
