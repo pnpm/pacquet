@@ -17,9 +17,10 @@ fn included(nodes: &[&str]) -> Vec<String> {
 fn empty_graph() {
     let g: HashMap<String, Vec<String>> = HashMap::new();
     let r = graph_sequencer(&g, &[]);
-    assert!(r.safe);
-    assert!(r.chunks.is_empty());
-    assert!(r.cycles.is_empty());
+    dbg!(&r);
+    assert!(r.safe, "empty graph is trivially safe");
+    assert!(r.chunks.is_empty(), "no included nodes ⇒ no chunks");
+    assert!(r.cycles.is_empty(), "no nodes ⇒ no cycles");
 }
 
 #[test]
@@ -28,7 +29,8 @@ fn linear_chain_runs_leaf_first() {
     let g = graph(&[("a", &["b"]), ("b", &["c"]), ("c", &[])]);
     let nodes = included(&["a", "b", "c"]);
     let r = graph_sequencer(&g, &nodes);
-    assert!(r.safe);
+    dbg!(&r);
+    assert!(r.safe, "DAG must sort safely: {r:?}");
     assert_eq!(r.chunks, vec![vec!["c".to_string()], vec!["b".to_string()], vec!["a".to_string()]]);
 }
 
@@ -38,7 +40,8 @@ fn parallel_siblings_share_chunk() {
     let g = graph(&[("root", &["a", "b", "c"]), ("a", &[]), ("b", &[]), ("c", &[])]);
     let nodes = included(&["root", "a", "b", "c"]);
     let r = graph_sequencer(&g, &nodes);
-    assert!(r.safe);
+    dbg!(&r);
+    assert!(r.safe, "DAG must sort safely: {r:?}");
     assert_eq!(r.chunks.len(), 2);
     let mut first = r.chunks[0].clone();
     first.sort();
@@ -52,7 +55,8 @@ fn diamond_dag() {
     let g = graph(&[("a", &["b", "c"]), ("b", &["d"]), ("c", &["d"]), ("d", &[])]);
     let nodes = included(&["a", "b", "c", "d"]);
     let r = graph_sequencer(&g, &nodes);
-    assert!(r.safe);
+    dbg!(&r);
+    assert!(r.safe, "DAG must sort safely: {r:?}");
     assert_eq!(r.chunks.len(), 3);
     assert_eq!(r.chunks[0], vec!["d".to_string()]);
     let mut middle = r.chunks[1].clone();
@@ -67,7 +71,8 @@ fn excluded_nodes_are_ignored() {
     let g = graph(&[("a", &["b"]), ("b", &["c"]), ("c", &[])]);
     let nodes = included(&["a", "c"]);
     let r = graph_sequencer(&g, &nodes);
-    assert!(r.safe);
+    dbg!(&r);
+    assert!(r.safe, "excluded-edge subgraph must sort safely: {r:?}");
     // a's only outgoing edge is to b which is excluded, so a has degree 0.
     // c also has degree 0.
     assert_eq!(r.chunks.len(), 1);
@@ -82,8 +87,9 @@ fn cycle_marks_unsafe_and_groups_cycle_nodes() {
     let g = graph(&[("a", &["b"]), ("b", &["a"])]);
     let nodes = included(&["a", "b"]);
     let r = graph_sequencer(&g, &nodes);
-    assert!(!r.safe);
-    assert!(!r.cycles.is_empty());
+    dbg!(&r);
+    assert!(!r.safe, "length-2 cycle must mark unsafe: {r:?}");
+    assert!(!r.cycles.is_empty(), "cycle list must record the cycle: {r:?}");
     // Both nodes still appear in some chunk.
     let flat: Vec<String> = r.chunks.into_iter().flatten().collect();
     let mut sorted = flat.clone();
@@ -97,7 +103,8 @@ fn self_loop_not_safe_flag() {
     let g = graph(&[("a", &["a"])]);
     let nodes = included(&["a"]);
     let r = graph_sequencer(&g, &nodes);
-    assert!(r.safe);
+    dbg!(&r);
+    assert!(r.safe, "length-1 self-loop must not mark unsafe: {r:?}");
     assert_eq!(r.chunks.len(), 1);
     assert_eq!(r.chunks[0], vec!["a".to_string()]);
 }

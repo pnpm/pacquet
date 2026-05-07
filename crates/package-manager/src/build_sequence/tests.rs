@@ -75,7 +75,8 @@ fn root_importers(deps: &[(&str, &str)]) -> HashMap<String, ProjectSnapshot> {
 #[test]
 fn empty_inputs() {
     let chunks = build_sequence(&HashMap::new(), &HashMap::new(), &HashMap::new());
-    assert!(chunks.is_empty());
+    dbg!(&chunks);
+    assert!(chunks.is_empty(), "empty inputs ⇒ no chunks: {chunks:?}");
 }
 
 #[test]
@@ -89,7 +90,8 @@ fn no_requires_build_yields_empty() {
     let importers = root_importers(&[("a", "1.0.0")]);
 
     let chunks = build_sequence(&packages, &snapshots, &importers);
-    assert!(chunks.is_empty());
+    dbg!(&chunks);
+    assert!(chunks.is_empty(), "no requires_build ⇒ no chunks: {chunks:?}");
 }
 
 #[test]
@@ -153,10 +155,11 @@ fn unrelated_subgraph_excluded() {
 
     let chunks = build_sequence(&packages, &snapshots, &importers);
     let flat: Vec<_> = chunks.into_iter().flatten().collect();
-    assert!(flat.contains(&key("a", "1.0.0")));
-    assert!(flat.contains(&key("b", "1.0.0")));
-    assert!(!flat.contains(&key("x", "1.0.0")));
-    assert!(!flat.contains(&key("y", "1.0.0")));
+    dbg!(&flat);
+    assert!(flat.contains(&key("a", "1.0.0")), "ancestor of build leaf must appear: {flat:?}");
+    assert!(flat.contains(&key("b", "1.0.0")), "build leaf must appear: {flat:?}");
+    assert!(!flat.contains(&key("x", "1.0.0")), "unreachable ancestor must be excluded: {flat:?}");
+    assert!(!flat.contains(&key("y", "1.0.0")), "unreachable build leaf must be excluded: {flat:?}");
 }
 
 #[test]
