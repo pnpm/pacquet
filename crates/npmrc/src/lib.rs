@@ -258,11 +258,18 @@ impl Npmrc {
     /// come from `pnpm-workspace.yaml` or CLI flags, matching pnpm 11.
     ///
     /// The yaml wins over `.npmrc` on any key it sets.
+    ///
+    /// Returns [`LoadWorkspaceYamlError`] when an existing
+    /// `pnpm-workspace.yaml` cannot be read or parsed. A missing file is
+    /// not an error — it falls through to defaults / `.npmrc`. This
+    /// matches pnpm's
+    /// [`readWorkspaceManifest`](https://github.com/pnpm/pnpm/blob/8eb1be4988/workspace/workspace-manifest-reader/src/index.ts):
+    /// `ENOENT` is silent, every other error fails the process.
     pub fn current<Error, CurrentDir, HomeDir, Default>(
         current_dir: CurrentDir,
         home_dir: HomeDir,
         default: Default,
-    ) -> Self
+    ) -> Result<Self, LoadWorkspaceYamlError>
     where
         CurrentDir: FnOnce() -> Result<PathBuf, Error>,
         HomeDir: FnOnce() -> Option<PathBuf>,
@@ -281,17 +288,17 @@ impl Npmrc {
             crate::npmrc_auth::NpmrcAuth::from_ini(&text).apply_to(&mut npmrc);
         }
 
-        // Layer pnpm-workspace.yaml overrides on top. Missing file or
-        // unreadable yaml is silently ignored, matching .npmrc's
-        // best-effort behaviour above.
+        // Layer pnpm-workspace.yaml overrides on top. Missing file is
+        // silent (Ok(None)); read or parse errors propagate so the user
+        // sees the same hard failure pnpm itself raises.
         if let Some(start) = cwd
-            && let Ok(Some((path, settings))) = WorkspaceSettings::find_and_load(&start)
+            && let Some((path, settings)) = WorkspaceSettings::find_and_load(&start)?
         {
             let base_dir = path.parent().unwrap_or(&start).to_path_buf();
             settings.apply_to(&mut npmrc, &base_dir);
         }
 
-        npmrc
+        Ok(npmrc)
     }
 
     /// Persist the config data until the program terminates.
@@ -440,7 +447,8 @@ mod tests {
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || unreachable!("shouldn't reach home dir"),
             Npmrc::new,
-        );
+        )
+        .expect("workspace yaml absent => no error");
         assert_eq!(config.registry, "https://cwd.example/");
     }
 
@@ -454,7 +462,8 @@ mod tests {
         fs::write(tmp.path().join(".npmrc"), non_auth_ini).expect("write to .npmrc");
         let defaults = Npmrc::new();
         let config =
-            Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new);
+            Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new)
+                .expect("workspace yaml absent => no error");
         assert_eq!(config.symlink, defaults.symlink);
         assert_eq!(config.lockfile, defaults.lockfile);
         assert_eq!(config.hoist, defaults.hoist);
@@ -474,7 +483,8 @@ mod tests {
         fs::write(tmp.path().join(".npmrc"), ini).expect("write to .npmrc");
         let defaults = Npmrc::new();
         let config =
-            Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new);
+            Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new)
+                .expect("workspace yaml absent => no error");
         assert_eq!(config.fetch_retries, defaults.fetch_retries);
         assert_eq!(config.fetch_retry_factor, defaults.fetch_retry_factor);
         assert_eq!(config.fetch_retry_mintimeout, defaults.fetch_retry_mintimeout);
@@ -487,7 +497,8 @@ mod tests {
         // write invalid utf-8 value to npmrc
         fs::write(tmp.path().join(".npmrc"), b"Hello \xff World").expect("write to .npmrc");
         let config =
-            Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new);
+            Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new)
+                .expect("workspace yaml absent => no error");
         assert!(config.symlink); // default — invalid .npmrc is silently ignored
     }
 
@@ -501,7 +512,8 @@ mod tests {
             || current_dir.path().to_path_buf().pipe(Ok::<_, ()>),
             || home_dir.path().to_path_buf().pipe(Some),
             Npmrc::new,
-        );
+        )
+        .expect("workspace yaml absent => no error");
         assert_eq!(config.registry, "https://home.example/");
     }
 
@@ -519,7 +531,8 @@ mod tests {
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || unreachable!("shouldn't reach home dir"),
             Npmrc::new,
-        );
+        )
+        .expect("yaml is valid");
         assert_eq!(config.registry, "https://from-yaml.test/");
     }
 
@@ -532,7 +545,8 @@ mod tests {
             .expect("write to pnpm-workspace.yaml");
         // No `.npmrc` anywhere, but a parent dir has `pnpm-workspace.yaml` —
         // the yaml should still be applied.
-        let config = Npmrc::current(|| nested.clone().pipe(Ok::<_, ()>), || None, Npmrc::new);
+        let config = Npmrc::current(|| nested.clone().pipe(Ok::<_, ()>), || None, Npmrc::new)
+            .expect("yaml is valid");
         assert!(!config.symlink);
     }
 
@@ -544,7 +558,30 @@ mod tests {
             || current_dir.path().to_path_buf().pipe(Ok::<_, ()>),
             || home_dir.path().to_path_buf().pipe(Some),
             || serde_ini::from_str("symlink=false").unwrap(),
-        );
+        )
+        .expect("workspace yaml absent => no error");
         assert!(!config.symlink);
+    }
+
+    /// pnpm's
+    /// [`workspace-manifest-reader`](https://github.com/pnpm/pnpm/blob/8eb1be4988/workspace/workspace-manifest-reader/src/index.ts)
+    /// throws on invalid yaml — only `ENOENT` is treated as "no manifest".
+    /// `Npmrc::current` must do the same so a typo in `pnpm-workspace.yaml`
+    /// surfaces as a hard failure instead of silently falling back to
+    /// defaults and confusing the user about which install settings are
+    /// actually in effect.
+    #[test]
+    pub fn invalid_workspace_yaml_propagates_error() {
+        let tmp = tempdir().unwrap();
+        // `: : :` is unambiguously not valid yaml — saphyr rejects it.
+        fs::write(tmp.path().join("pnpm-workspace.yaml"), ": : :\n")
+            .expect("write to pnpm-workspace.yaml");
+        let result =
+            Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new);
+        let err = result.expect_err("invalid yaml should error");
+        assert!(
+            matches!(err, crate::LoadWorkspaceYamlError::ParseYaml { .. }),
+            "expected ParseYaml, got {err:?}",
+        );
     }
 }

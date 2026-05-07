@@ -1,4 +1,6 @@
 use crate::{NodeLinker, Npmrc, PackageImportMethod};
+use derive_more::{Display, Error};
+use miette::Diagnostic;
 use pacquet_store_dir::StoreDir;
 use serde::Deserialize;
 use std::{
@@ -56,11 +58,41 @@ pub struct WorkspaceSettings {
 pub const WORKSPACE_MANIFEST_FILENAME: &str = "pnpm-workspace.yaml";
 
 /// Error when reading `pnpm-workspace.yaml`.
-#[derive(Debug)]
+///
+/// Pnpm's
+/// [`workspace-manifest-reader`](https://github.com/pnpm/pnpm/blob/8eb1be4988/workspace/workspace-manifest-reader/src/index.ts)
+/// silently treats `ENOENT` as "no manifest" and propagates every other
+/// error (read failure, invalid yaml, …). Pacquet mirrors that split:
+/// [`WorkspaceSettings::find_and_load`] returns `Ok(None)` for the
+/// "no file" case and a [`LoadWorkspaceYamlError`] for everything else.
+///
+/// The variants box their payload so the `Result<_, _>` pacquet hands
+/// to call sites stays small (`serde_saphyr::Error` alone is ~128 B).
+#[derive(Debug, Display, Error, Diagnostic)]
 #[non_exhaustive]
 pub enum LoadWorkspaceYamlError {
-    ReadFile(io::Error),
-    ParseYaml(serde_saphyr::Error),
+    #[display("Failed to read pnpm-workspace.yaml at {}: {}", _0.path.display(), _0.error)]
+    ReadFile(#[error(source)] Box<ReadFileError>),
+    #[display("Failed to parse pnpm-workspace.yaml at {}: {}", _0.path.display(), _0.error)]
+    ParseYaml(#[error(source)] Box<ParseYamlError>),
+}
+
+/// Payload of [`LoadWorkspaceYamlError::ReadFile`].
+#[derive(Debug, Display, Error)]
+#[display("{}: {error}", path.display())]
+pub struct ReadFileError {
+    pub path: PathBuf,
+    #[error(source)]
+    pub error: io::Error,
+}
+
+/// Payload of [`LoadWorkspaceYamlError::ParseYaml`].
+#[derive(Debug, Display, Error)]
+#[display("{}: {error}", path.display())]
+pub struct ParseYamlError {
+    pub path: PathBuf,
+    #[error(source)]
+    pub error: serde_saphyr::Error,
 }
 
 impl WorkspaceSettings {
@@ -77,9 +109,15 @@ impl WorkspaceSettings {
         let Some(path) = find_workspace_manifest(start_dir) else {
             return Ok(None);
         };
-        let text = fs::read_to_string(&path).map_err(LoadWorkspaceYamlError::ReadFile)?;
-        let settings: WorkspaceSettings =
-            serde_saphyr::from_str(&text).map_err(LoadWorkspaceYamlError::ParseYaml)?;
+        let text = fs::read_to_string(&path).map_err(|error| {
+            LoadWorkspaceYamlError::ReadFile(Box::new(ReadFileError { path: path.clone(), error }))
+        })?;
+        let settings: WorkspaceSettings = serde_saphyr::from_str(&text).map_err(|error| {
+            LoadWorkspaceYamlError::ParseYaml(Box::new(ParseYamlError {
+                path: path.clone(),
+                error,
+            }))
+        })?;
         Ok(Some((path, settings)))
     }
 
