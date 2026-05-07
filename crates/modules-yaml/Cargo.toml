@@ -27,6 +27,5 @@ pacquet-testing-utils = { workspace = true }
 
 chrono            = { version = "0.4.44", default-features = false, features = ["clock"] }
 pretty_assertions = { workspace = true }
-serde_json        = { workspace = true }
 tempfile          = { workspace = true }
 text-block-macros = { workspace = true }
