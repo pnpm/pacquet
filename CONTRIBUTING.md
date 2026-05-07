@@ -32,13 +32,26 @@ See [`CODE_STYLE_GUIDE.md`](./CODE_STYLE_GUIDE.md). Formatting and lint-level ru
 
 ## Setup
 
-Install the Rust toolchain pinned in [`rust-toolchain.toml`](./rust-toolchain.toml). Then install the project's task tools and the git pre-push hook:
+### Prerequisites
+
+Install these first:
+
+- [`rustup`](https://rustup.rs)
+- [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall)
+- [`just`](https://just.systems)
+- Node.js
+- [`pnpm`](https://pnpm.io)
+- `git`
+
+### Install
+
+Install the project's task tools and the git pre-push hook:
 
 ```sh
 just init
 ```
 
-`just init` requires [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall). It installs `cargo-nextest`, `cargo-watch`, `cargo-insta`, `typos-cli`, `taplo-cli`, `wasm-pack`, and `cargo-llvm-cov`, then points `git` at the tracked `.githooks/` directory so the pre-push format check runs on `git push`.
+`just init` invokes `cargo-binstall` to install `cargo-nextest`, `cargo-watch`, `cargo-insta`, `typos-cli`, `taplo-cli`, `wasm-pack`, and `cargo-llvm-cov`, then points `git` at the tracked `.githooks/` directory so the pre-push format check runs on `git push`.
 
 Install the test dependencies:
 
