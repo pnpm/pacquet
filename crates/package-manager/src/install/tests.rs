@@ -4,7 +4,8 @@ use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry_mock::AutoMockInstance;
 use pacquet_reporter::{
-    ContextLog, LogEvent, Reporter, SilentReporter, Stage, StageLog, SummaryLog,
+    ContextLog, LogEvent, PackageManifestLog, PackageManifestMessage, Reporter, SilentReporter,
+    Stage, StageLog, StatsLog, StatsMessage, SummaryLog,
 };
 use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
 use std::sync::Mutex;
@@ -396,14 +397,15 @@ async fn frozen_lockfile_flag_with_no_lockfile_errors() {
     drop(dir);
 }
 
-/// [`Install::run`] emits `pnpm:context`, then `pnpm:stage`
-/// `importing_started`, then on the success path `importing_done`
-/// followed by `pnpm:summary`. On an early-error path such as
-/// [`InstallError::NoLockfile`] only the leading events fire. This
-/// matches pnpm: context is emitted once alongside the install
-/// header, the stage pairing drives the JS reporter's progress
-/// UI, and summary closes the run so the reporter can render its
-/// "+N -M" block.
+/// [`Install::run`] emits `pnpm:package-manifest initial`,
+/// `pnpm:context`, then `pnpm:stage` `importing_started`, then on
+/// the success path `importing_done` followed by `pnpm:summary`.
+/// On an early-error path such as [`InstallError::NoLockfile`]
+/// only the leading events fire. This matches pnpm: the manifest
+/// snapshot lands first so consumers can diff it against
+/// `updated`, context is emitted alongside the install header, the
+/// stage pairing drives the JS reporter's progress UI, and summary
+/// closes the run so the reporter can render its "+N -M" block.
 ///
 /// `pnpm:package-import-method` is emitted lazily by `link_file`
 /// the first time each method actually resolves (after `auto`'s
@@ -473,20 +475,44 @@ async fn install_emits_pnpm_event_sequence() {
 
     let captured = EVENTS.lock().unwrap();
 
-    // Event ordering matches pnpm: context, then the stage
-    // bracketing pair, then summary closing the run.
+    // Event ordering matches pnpm: manifest snapshot, context,
+    // importing_started, the `pnpm:stats` added/removed pair from
+    // `CreateVirtualStore::run`, importing_done, and summary
+    // closing the run. The empty snapshot map still triggers the
+    // stats emit (`added: 0`, `removed: 0`), matching pnpm's
+    // unconditional emit at link time.
     assert!(
         matches!(
             captured.as_slice(),
             [
+                LogEvent::PackageManifest(PackageManifestLog {
+                    message: PackageManifestMessage::Initial { .. },
+                    ..
+                }),
                 LogEvent::Context(_),
                 LogEvent::Stage(StageLog { stage: Stage::ImportingStarted, .. }),
+                LogEvent::Stats(StatsLog { message: StatsMessage::Added { added: 0, .. }, .. }),
+                LogEvent::Stats(StatsLog { message: StatsMessage::Removed { removed: 0, .. }, .. }),
                 LogEvent::Stage(StageLog { stage: Stage::ImportingDone, .. }),
                 LogEvent::Summary(_),
             ]
         ),
         "unexpected event sequence: {captured:?}",
     );
+
+    let expected_prefix = manifest.path().parent().unwrap().to_string_lossy().into_owned();
+
+    // Manifest event carries the on-disk JSON unchanged so consumers
+    // can diff `initial` vs a later `updated` byte-for-byte.
+    let LogEvent::PackageManifest(PackageManifestLog {
+        message: PackageManifestMessage::Initial { prefix: manifest_prefix, initial },
+        ..
+    }) = &captured[0]
+    else {
+        unreachable!("first event is package-manifest, asserted above");
+    };
+    assert_eq!(manifest_prefix, &expected_prefix);
+    assert_eq!(initial, manifest.value());
 
     // Spot-check the context payload: pacquet's directories must
     // round-trip through the wire shape, and `currentLockfileExists`
@@ -496,9 +522,9 @@ async fn install_emits_pnpm_event_sequence() {
         store_dir: emitted_store_dir,
         virtual_store_dir: emitted_virtual_store_dir,
         ..
-    }) = &captured[0]
+    }) = &captured[1]
     else {
-        unreachable!("first event is context, asserted above");
+        unreachable!("second event is context, asserted above");
     };
     assert!(!current_lockfile_exists);
     assert_eq!(emitted_store_dir, &store_dir.display().to_string());
@@ -507,10 +533,11 @@ async fn install_emits_pnpm_event_sequence() {
     // Summary's `prefix` must equal the manifest-parent value
     // `Install::run` derives, since pnpm's reporter keys its
     // accumulated root-events by prefix to render the diff.
-    let LogEvent::Summary(SummaryLog { prefix: summary_prefix, .. }) = &captured[3] else {
-        unreachable!("fourth event is summary, asserted above");
+    let LogEvent::Summary(SummaryLog { prefix: summary_prefix, .. }) = captured.last().unwrap()
+    else {
+        unreachable!("last event is summary, asserted above");
     };
-    assert_eq!(summary_prefix, &manifest.path().parent().unwrap().to_string_lossy().into_owned(),);
+    assert_eq!(summary_prefix, &expected_prefix);
 
     drop(dir);
 }

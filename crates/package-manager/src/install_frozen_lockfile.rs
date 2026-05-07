@@ -72,8 +72,8 @@ where
             .await
             .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
 
-        SymlinkDirectDependencies { config, importers, dependency_groups }
-            .run()
+        SymlinkDirectDependencies { config, importers, dependency_groups, requester }
+            .run::<R>()
             .map_err(InstallFrozenLockfileError::SymlinkDirectDependencies)?;
 
         Ok(())
