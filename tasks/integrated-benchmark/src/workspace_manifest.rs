@@ -11,6 +11,7 @@
 //! because the benchmark's job is to drive a known-good install, not
 //! preserve arbitrary user config.
 
+use crate::fixtures::PNPM_WORKSPACE;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -42,40 +43,19 @@ pub struct SupportedArchitectures {
 
 impl MinimalWorkspaceManifest {
     /// The default manifest the benchmark uses when no `--fixture-dir`
-    /// is provided. Replaces the previous static
+    /// is provided. Loaded from the static
     /// `tasks/integrated-benchmark/src/fixtures/pnpm-workspace.yaml`
-    /// text fixture.
+    /// text fixture, parallel to how `package.json` and `pnpm-lock.yaml`
+    /// are bundled.
+    ///
+    /// The fixture pins `supportedArchitectures` to every OS/CPU/libc
+    /// pnpm releases for, so pnpm on Linux CI doesn't skip darwin-only
+    /// optionals (e.g. `fsevents`) while pacquet installs every snapshot
+    /// unconditionally — the asymmetry would tilt the benchmark in
+    /// pnpm's favour. It also pins `allowBuilds` to `false` for the
+    /// three packages whose postinstalls would otherwise trip pnpm's
+    /// `ERR_PNPM_IGNORED_BUILDS` warning under `ignore-scripts=true`.
     pub fn default_for_benchmark() -> Self {
-        // Force pnpm to install every optional dependency in the
-        // lockfile regardless of the runner's own os/cpu/libc, so its
-        // install payload matches pacquet's (which currently installs
-        // every snapshot in the lockfile unconditionally — it doesn't
-        // filter optionals by platform). Without this, pnpm on Linux
-        // CI skips darwin-only optionals like `fsevents` and ends up
-        // doing less work than pacquet, which quietly tilts the
-        // benchmark in pnpm's favour. The exact set mirrors pnpm's own
-        // release matrix.
-        let supported_architectures = SupportedArchitectures {
-            os: ["darwin", "linux", "win32"].iter().map(|s| (*s).to_string()).collect(),
-            cpu: ["x64", "arm64"].iter().map(|s| (*s).to_string()).collect(),
-            libc: ["glibc", "musl"].iter().map(|s| (*s).to_string()).collect(),
-        };
-        // `core-js`, `es5-ext`, and `fsevents` ship native or generated
-        // postinstalls that would fire by default. The benchmark's
-        // `.npmrc` sets `ignore-scripts=true`, so pnpm emits
-        // `ERR_PNPM_IGNORED_BUILDS` and exits 1 on the first warmup
-        // run, taking the whole benchmark down. Explicitly declining
-        // their builds silences the error. `fsevents` is reachable on
-        // Linux too because `supportedArchitectures` above pulls it in
-        // on every platform.
-        let allow_builds = [("core-js", false), ("es5-ext", false), ("fsevents", false)]
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect();
-        Self {
-            supported_architectures: Some(supported_architectures),
-            allow_builds,
-            ..Self::default()
-        }
+        serde_saphyr::from_str(PNPM_WORKSPACE).expect("parse default pnpm-workspace.yaml fixture")
     }
 }
