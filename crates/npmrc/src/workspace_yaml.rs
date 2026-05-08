@@ -90,77 +90,35 @@ impl WorkspaceSettings {
     /// resolve-against-cwd behaviour but anchored at the workspace root
     /// where the yaml was found, which is what pnpm does.
     pub fn apply_to(self, npmrc: &mut Npmrc, base_dir: &Path) {
-        if let Some(v) = self.hoist {
-            npmrc.hoist = v;
+        macro_rules! apply {
+            ($($field:ident),* $(,)?) => {$(
+                if let Some(v) = self.$field {
+                    npmrc.$field = v;
+                }
+            )*};
         }
-        if let Some(v) = self.hoist_pattern {
-            npmrc.hoist_pattern = v;
+
+        apply! {
+            hoist, hoist_pattern, public_hoist_pattern, shamefully_hoist,
+            node_linker, symlink, package_import_method, modules_cache_max_age,
+            lockfile, prefer_frozen_lockfile, lockfile_include_tarball_url,
+            auto_install_peers, dedupe_peer_dependents, strict_peer_dependencies,
+            resolve_peers_from_workspace_root, verify_store_integrity,
+            fetch_retries, fetch_retry_factor, fetch_retry_mintimeout,
+            fetch_retry_maxtimeout,
         }
-        if let Some(v) = self.public_hoist_pattern {
-            npmrc.public_hoist_pattern = v;
-        }
-        if let Some(v) = self.shamefully_hoist {
-            npmrc.shamefully_hoist = v;
-        }
-        if let Some(v) = self.store_dir {
-            npmrc.store_dir = StoreDir::from(resolve(base_dir, &v));
-        }
+
         if let Some(v) = self.modules_dir {
             npmrc.modules_dir = resolve(base_dir, &v);
-        }
-        if let Some(v) = self.node_linker {
-            npmrc.node_linker = v;
-        }
-        if let Some(v) = self.symlink {
-            npmrc.symlink = v;
         }
         if let Some(v) = self.virtual_store_dir {
             npmrc.virtual_store_dir = resolve(base_dir, &v);
         }
-        if let Some(v) = self.package_import_method {
-            npmrc.package_import_method = v;
-        }
-        if let Some(v) = self.modules_cache_max_age {
-            npmrc.modules_cache_max_age = v;
-        }
-        if let Some(v) = self.lockfile {
-            npmrc.lockfile = v;
-        }
-        if let Some(v) = self.prefer_frozen_lockfile {
-            npmrc.prefer_frozen_lockfile = v;
-        }
-        if let Some(v) = self.lockfile_include_tarball_url {
-            npmrc.lockfile_include_tarball_url = v;
+        if let Some(v) = self.store_dir {
+            npmrc.store_dir = StoreDir::from(resolve(base_dir, &v));
         }
         if let Some(v) = self.registry {
             npmrc.registry = if v.ends_with('/') { v } else { format!("{v}/") };
-        }
-        if let Some(v) = self.auto_install_peers {
-            npmrc.auto_install_peers = v;
-        }
-        if let Some(v) = self.dedupe_peer_dependents {
-            npmrc.dedupe_peer_dependents = v;
-        }
-        if let Some(v) = self.strict_peer_dependencies {
-            npmrc.strict_peer_dependencies = v;
-        }
-        if let Some(v) = self.resolve_peers_from_workspace_root {
-            npmrc.resolve_peers_from_workspace_root = v;
-        }
-        if let Some(v) = self.verify_store_integrity {
-            npmrc.verify_store_integrity = v;
-        }
-        if let Some(v) = self.fetch_retries {
-            npmrc.fetch_retries = v;
-        }
-        if let Some(v) = self.fetch_retry_factor {
-            npmrc.fetch_retry_factor = v;
-        }
-        if let Some(v) = self.fetch_retry_mintimeout {
-            npmrc.fetch_retry_mintimeout = v;
-        }
-        if let Some(v) = self.fetch_retry_maxtimeout {
-            npmrc.fetch_retry_maxtimeout = v;
         }
     }
 }
