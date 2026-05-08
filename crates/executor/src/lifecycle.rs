@@ -27,14 +27,6 @@ pub enum LifecycleScriptError {
         source: std::io::Error,
     },
 
-    #[display("Failed to parse package.json at {path}: {source}")]
-    #[diagnostic(code(pacquet_executor::parse_manifest))]
-    ParseManifest {
-        path: String,
-        #[error(source)]
-        source: serde_json::Error,
-    },
-
     #[display("{dep_path} {stage}: `{script}` exited with {status}")]
     #[diagnostic(code(pacquet_executor::lifecycle_script_failed))]
     ScriptFailed { dep_path: String, stage: String, script: String, status: ExitStatus },
@@ -93,9 +85,10 @@ pub fn run_postinstall_hooks<R: Reporter>(
             });
         }
     };
-    let manifest: serde_json::Value = serde_json::from_str(&manifest_text).map_err(|e| {
-        LifecycleScriptError::ParseManifest { path: manifest_path.display().to_string(), source: e }
-    })?;
+    let manifest: serde_json::Value = match serde_json::from_str(&manifest_text) {
+        Ok(v) => v,
+        Err(_) => return Ok(false),
+    };
 
     let scripts = manifest.get("scripts").and_then(|v| v.as_object());
     let get_script =
@@ -103,7 +96,9 @@ pub fn run_postinstall_hooks<R: Reporter>(
 
     let mut ran_any = false;
 
-    if let Some(script) = get_script("preinstall") {
+    if let Some(script) = get_script("preinstall")
+        && script != "npx only-allow pnpm"
+    {
         run_lifecycle_hook::<R>("preinstall", script, &opts)?;
         ran_any = true;
     }
@@ -122,7 +117,9 @@ pub fn run_postinstall_hooks<R: Reporter>(
         ran_any = true;
     }
 
-    if let Some(script) = get_script("postinstall") {
+    if let Some(script) = get_script("postinstall")
+        && script != "npx only-allow pnpm"
+    {
         run_lifecycle_hook::<R>("postinstall", script, &opts)?;
         ran_any = true;
     }
