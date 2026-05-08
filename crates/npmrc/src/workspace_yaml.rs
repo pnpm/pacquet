@@ -111,6 +111,9 @@ impl WorkspaceSettings {
         if let Some(v) = self.modules_dir {
             npmrc.modules_dir = resolve(base_dir, &v);
         }
+        if let Some(v) = self.virtual_store_dir {
+            npmrc.virtual_store_dir = resolve(base_dir, &v);
+        }
         if let Some(v) = self.store_dir {
             npmrc.store_dir = StoreDir::from(resolve(base_dir, &v));
         }
