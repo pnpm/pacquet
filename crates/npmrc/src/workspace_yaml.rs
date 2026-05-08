@@ -64,33 +64,23 @@ pub const WORKSPACE_MANIFEST_FILENAME: &str = "pnpm-workspace.yaml";
 /// Pnpm's
 /// [`workspace-manifest-reader`](https://github.com/pnpm/pnpm/blob/8eb1be4988/workspace/workspace-manifest-reader/src/index.ts)
 /// treats `ENOENT` as "no manifest" and propagates every other failure.
-/// Pacquet mirrors that split. The variants box their payload to keep
-/// the returned `Result` small.
+/// Pacquet mirrors that split. `serde_saphyr::Error` is boxed so the
+/// returned `Result` stays small.
 #[derive(Debug, Display, Error, Diagnostic)]
 #[non_exhaustive]
 pub enum LoadWorkspaceYamlError {
-    #[display("Failed to read pnpm-workspace.yaml at {}: {}", _0.path.display(), _0.error)]
-    ReadFile(#[error(source)] Box<ReadFileError>),
-    #[display("Failed to parse pnpm-workspace.yaml at {}: {}", _0.path.display(), _0.error)]
-    ParseYaml(#[error(source)] Box<ParseYamlError>),
-}
-
-/// Payload of [`LoadWorkspaceYamlError::ReadFile`].
-#[derive(Debug, Display, Error)]
-#[display("{}: {error}", path.display())]
-pub struct ReadFileError {
-    pub path: PathBuf,
-    #[error(source)]
-    pub error: io::Error,
-}
-
-/// Payload of [`LoadWorkspaceYamlError::ParseYaml`].
-#[derive(Debug, Display, Error)]
-#[display("{}: {error}", path.display())]
-pub struct ParseYamlError {
-    pub path: PathBuf,
-    #[error(source)]
-    pub error: serde_saphyr::Error,
+    #[display("Failed to read pnpm-workspace.yaml at {}: {source}", path.display())]
+    ReadFile {
+        path: PathBuf,
+        #[error(source)]
+        source: io::Error,
+    },
+    #[display("Failed to parse pnpm-workspace.yaml at {}: {source}", path.display())]
+    ParseYaml {
+        path: PathBuf,
+        #[error(source)]
+        source: Box<serde_saphyr::Error>,
+    },
 }
 
 impl WorkspaceSettings {
@@ -120,13 +110,10 @@ impl WorkspaceSettings {
         }
 
         let settings: WorkspaceSettings = read_result
-            .map_err(|error| ReadFileError { path: path.clone(), error })
-            .map_err(Box::new)
-            .map_err(LoadWorkspaceYamlError::ReadFile)?
+            .map_err(|source| LoadWorkspaceYamlError::ReadFile { path: path.clone(), source })?
             .pipe_as_ref(serde_saphyr::from_str)
-            .map_err(|error| ParseYamlError { path: path.clone(), error })
             .map_err(Box::new)
-            .map_err(LoadWorkspaceYamlError::ParseYaml)?;
+            .map_err(|source| LoadWorkspaceYamlError::ParseYaml { path: path.clone(), source })?;
 
         Ok(Some((path, settings)))
     }

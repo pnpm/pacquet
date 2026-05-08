@@ -574,7 +574,7 @@ mod tests {
             Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new);
         let err = result.expect_err("invalid yaml should error");
         assert!(
-            matches!(err, crate::LoadWorkspaceYamlError::ParseYaml(_)),
+            matches!(err, crate::LoadWorkspaceYamlError::ParseYaml { .. }),
             "expected ParseYaml, got {err:?}",
         );
     }
