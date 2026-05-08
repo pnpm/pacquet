@@ -260,11 +260,9 @@ impl Npmrc {
     /// The yaml wins over `.npmrc` on any key it sets.
     ///
     /// Returns [`LoadWorkspaceYamlError`] when an existing
-    /// `pnpm-workspace.yaml` cannot be read or parsed. A missing file is
-    /// not an error — it falls through to defaults / `.npmrc`. This
-    /// matches pnpm's
-    /// [`readWorkspaceManifest`](https://github.com/pnpm/pnpm/blob/8eb1be4988/workspace/workspace-manifest-reader/src/index.ts):
-    /// `ENOENT` is silent, every other error fails the process.
+    /// `pnpm-workspace.yaml` cannot be read or parsed, matching pnpm's
+    /// [`readWorkspaceManifest`](https://github.com/pnpm/pnpm/blob/8eb1be4988/workspace/workspace-manifest-reader/src/index.ts).
+    /// A missing file is not an error.
     pub fn current<Error, CurrentDir, HomeDir, Default>(
         current_dir: CurrentDir,
         home_dir: HomeDir,
@@ -288,9 +286,8 @@ impl Npmrc {
             crate::npmrc_auth::NpmrcAuth::from_ini(&text).apply_to(&mut npmrc);
         }
 
-        // Layer pnpm-workspace.yaml overrides on top. Missing file is
-        // silent (Ok(None)); read or parse errors propagate so the user
-        // sees the same hard failure pnpm itself raises.
+        // Layer pnpm-workspace.yaml overrides on top. A missing file is
+        // silent. Read or parse failures propagate to the caller.
         if let Some(start) = cwd
             && let Some((path, settings)) = WorkspaceSettings::find_and_load(&start)?
         {
@@ -563,17 +560,14 @@ mod tests {
         assert!(!config.symlink);
     }
 
-    /// pnpm's
+    /// Pnpm's
     /// [`workspace-manifest-reader`](https://github.com/pnpm/pnpm/blob/8eb1be4988/workspace/workspace-manifest-reader/src/index.ts)
-    /// throws on invalid yaml — only `ENOENT` is treated as "no manifest".
-    /// `Npmrc::current` must do the same so a typo in `pnpm-workspace.yaml`
-    /// surfaces as a hard failure instead of silently falling back to
-    /// defaults and confusing the user about which install settings are
-    /// actually in effect.
+    /// fails the process on invalid yaml. `Npmrc::current` must do the
+    /// same instead of silently falling back to defaults.
     #[test]
     pub fn invalid_workspace_yaml_propagates_error() {
         let tmp = tempdir().unwrap();
-        // `: : :` is unambiguously not valid yaml — saphyr rejects it.
+        // `: : :` is rejected by saphyr.
         fs::write(tmp.path().join("pnpm-workspace.yaml"), ": : :\n")
             .expect("write to pnpm-workspace.yaml");
         let result =

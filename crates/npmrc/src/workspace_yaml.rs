@@ -61,13 +61,9 @@ pub const WORKSPACE_MANIFEST_FILENAME: &str = "pnpm-workspace.yaml";
 ///
 /// Pnpm's
 /// [`workspace-manifest-reader`](https://github.com/pnpm/pnpm/blob/8eb1be4988/workspace/workspace-manifest-reader/src/index.ts)
-/// silently treats `ENOENT` as "no manifest" and propagates every other
-/// error (read failure, invalid yaml, …). Pacquet mirrors that split:
-/// [`WorkspaceSettings::find_and_load`] returns `Ok(None)` for the
-/// "no file" case and a [`LoadWorkspaceYamlError`] for everything else.
-///
-/// The variants box their payload so the `Result<_, _>` pacquet hands
-/// to call sites stays small (`serde_saphyr::Error` alone is ~128 B).
+/// treats `ENOENT` as "no manifest" and propagates every other failure.
+/// Pacquet mirrors that split. The variants box their payload to keep
+/// the returned `Result` small.
 #[derive(Debug, Display, Error, Diagnostic)]
 #[non_exhaustive]
 pub enum LoadWorkspaceYamlError {

@@ -19,11 +19,8 @@ pub enum StoreCommand {
 }
 
 impl StoreCommand {
-    /// Execute the subcommand.
-    ///
-    /// `config` is fallible so a malformed `pnpm-workspace.yaml` surfaces
-    /// as a hard error here too — only `store store` and `store add`
-    /// avoid loading config (they panic before it would be needed).
+    /// Execute the subcommand. `config` is fallible so a malformed
+    /// `pnpm-workspace.yaml` surfaces as a hard error here too.
     pub fn run<'a>(self, config: impl FnOnce() -> miette::Result<&'a Npmrc>) -> miette::Result<()> {
         match self {
             StoreCommand::Store => {
