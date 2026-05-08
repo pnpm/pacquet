@@ -5,7 +5,8 @@ use pacquet_store_dir::StoreDir;
 use pipe_trait::Pipe;
 use serde::Deserialize;
 use std::{
-    fs, io,
+    fs,
+    io::{self, ErrorKind},
     path::{Path, PathBuf},
 };
 
@@ -106,20 +107,27 @@ impl WorkspaceSettings {
         let Some(path) = find_workspace_manifest(start_dir) else {
             return Ok(None);
         };
-        let settings: WorkspaceSettings = match path.pipe_ref(fs::read_to_string) {
-            // TOCTOU: `find_workspace_manifest` checked `is_file()`, but
-            // the file may be removed before this read. Match pnpm and
-            // treat `ENOENT` during the read as "no manifest" too.
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            result => result
-                .map_err(|error| ReadFileError { path: path.clone(), error })
-                .map_err(Box::new)
-                .map_err(LoadWorkspaceYamlError::ReadFile)?
-                .pipe_as_ref(serde_saphyr::from_str)
-                .map_err(|error| ParseYamlError { path: path.clone(), error })
-                .map_err(Box::new)
-                .map_err(LoadWorkspaceYamlError::ParseYaml)?,
-        };
+
+        let read_result = fs::read_to_string(&path);
+
+        // TOCTOU: `find_workspace_manifest` checked `is_file()`, but
+        // the file may be removed before this read. Match pnpm and
+        // treat `ENOENT` during the read as "no manifest" too.
+        if let Err(error) = &read_result
+            && error.kind() == ErrorKind::NotFound
+        {
+            return Ok(None);
+        }
+
+        let settings: WorkspaceSettings = read_result
+            .map_err(|error| ReadFileError { path: path.clone(), error })
+            .map_err(Box::new)
+            .map_err(LoadWorkspaceYamlError::ReadFile)?
+            .pipe_as_ref(serde_saphyr::from_str)
+            .map_err(|error| ParseYamlError { path: path.clone(), error })
+            .map_err(Box::new)
+            .map_err(LoadWorkspaceYamlError::ParseYaml)?;
+
         Ok(Some((path, settings)))
     }
 
