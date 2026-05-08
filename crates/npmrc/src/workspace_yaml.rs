@@ -106,17 +106,15 @@ impl WorkspaceSettings {
         let Some(path) = find_workspace_manifest(start_dir) else {
             return Ok(None);
         };
-        let text = path
+        let settings: WorkspaceSettings = path
             .pipe_ref(fs::read_to_string)
             .map_err(|error| ReadFileError { path: path.clone(), error })
             .map_err(Box::new)
-            .map_err(LoadWorkspaceYamlError::ReadFile)?;
-        let settings: WorkspaceSettings = serde_saphyr::from_str(&text).map_err(|error| {
-            LoadWorkspaceYamlError::ParseYaml(Box::new(ParseYamlError {
-                path: path.clone(),
-                error,
-            }))
-        })?;
+            .map_err(LoadWorkspaceYamlError::ReadFile)?
+            .pipe_as_ref(serde_saphyr::from_str)
+            .map_err(|error| ParseYamlError { path: path.clone(), error })
+            .map_err(Box::new)
+            .map_err(LoadWorkspaceYamlError::ParseYaml)?;
         Ok(Some((path, settings)))
     }
 
