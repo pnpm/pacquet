@@ -91,20 +91,16 @@ impl WorkspaceSettings {
     /// where the yaml was found, which is what pnpm does.
     pub fn apply_to(self, npmrc: &mut Npmrc, base_dir: &Path) {
         macro_rules! apply {
-            ($($field:ident),* $(,)?) => {
-                $(
-                    if let Some(v) = self.$field {
-                        npmrc.$field = v;
-                    }
-                )*
-            };
-            (path: $($field:ident),* $(,)?) => {
-                $(
-                    if let Some(v) = self.$field {
-                        npmrc.$field = resolve(base_dir, &v);
-                    }
-                )*
-            };
+            ($($field:ident),* $(,)?) => {$(
+                if let Some(v) = self.$field {
+                    npmrc.$field = v;
+                }
+            )*};
+            (path: $($field:ident),* $(,)?) => {$(
+                if let Some(v) = self.$field {
+                    npmrc.$field = resolve(base_dir, &v);
+                }
+            )*};
         }
 
         apply! {
