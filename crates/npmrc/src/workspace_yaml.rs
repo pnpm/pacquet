@@ -2,6 +2,7 @@ use crate::{NodeLinker, Npmrc, PackageImportMethod};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_store_dir::StoreDir;
+use pipe_trait::Pipe;
 use serde::Deserialize;
 use std::{
     fs, io,
@@ -105,9 +106,11 @@ impl WorkspaceSettings {
         let Some(path) = find_workspace_manifest(start_dir) else {
             return Ok(None);
         };
-        let text = fs::read_to_string(&path).map_err(|error| {
-            LoadWorkspaceYamlError::ReadFile(Box::new(ReadFileError { path: path.clone(), error }))
-        })?;
+        let text = path
+            .pipe_ref(fs::read_to_string)
+            .map_err(|error| ReadFileError { path: path.clone(), error })
+            .map_err(Box::new)
+            .map_err(LoadWorkspaceYamlError::ReadFile)?;
         let settings: WorkspaceSettings = serde_saphyr::from_str(&text).map_err(|error| {
             LoadWorkspaceYamlError::ParseYaml(Box::new(ParseYamlError {
                 path: path.clone(),
