@@ -329,6 +329,7 @@ mod known_failures {
             "@pnpm.e2e+pre-and-postinstall-scripts-example@1.0.0\
              /node_modules/@pnpm.e2e/pre-and-postinstall-scripts-example",
         );
+        eprintln!("Checking denied package did NOT run scripts...");
         assert!(!denied_pkg.join("generated-by-preinstall.js").exists());
         assert!(!denied_pkg.join("generated-by-postinstall.js").exists());
 
@@ -336,6 +337,7 @@ mod known_failures {
             "@pnpm.e2e+install-script-example@1.0.0\
              /node_modules/@pnpm.e2e/install-script-example",
         );
+        eprintln!("Checking allowed package DID run scripts...");
         assert!(allowed_pkg.join("generated-by-install.js").exists());
 
         // TODO: assert the `pnpm:ignored-scripts` reporter event lists
@@ -412,6 +414,7 @@ mod known_failures {
             "@pnpm.e2e+pre-and-postinstall-scripts-example@1.0.0\
              /node_modules/@pnpm.e2e/pre-and-postinstall-scripts-example",
         );
+        eprintln!("Checking denied package did NOT run scripts...");
         assert!(!denied_pkg.join("generated-by-preinstall.js").exists());
         assert!(!denied_pkg.join("generated-by-postinstall.js").exists());
 
@@ -419,6 +422,7 @@ mod known_failures {
             "@pnpm.e2e+install-script-example@1.0.0\
              /node_modules/@pnpm.e2e/install-script-example",
         );
+        eprintln!("Checking allowed package DID run scripts...");
         assert!(allowed_pkg.join("generated-by-install.js").exists());
 
         drop((root, mock_instance));
@@ -495,12 +499,14 @@ mod known_failures {
             "@pnpm.e2e+install-script-example@1.0.0\
              /node_modules/@pnpm.e2e/install-script-example",
         );
+        eprintln!("Checking allowed package ran scripts...");
         assert!(install_pkg.join("generated-by-install.js").exists());
 
         let scripts_pkg = virtual_store.join(
             "@pnpm.e2e+pre-and-postinstall-scripts-example@1.0.0\
              /node_modules/@pnpm.e2e/pre-and-postinstall-scripts-example",
         );
+        eprintln!("Checking denied package did NOT run scripts...");
         assert!(!scripts_pkg.join("generated-by-preinstall.js").exists());
         assert!(!scripts_pkg.join("generated-by-postinstall.js").exists());
 
@@ -562,7 +568,9 @@ mod known_failures {
             "node_modules/.pnpm/@pnpm.e2e+pre-and-postinstall-scripts-example@1.0.0\
              /node_modules/@pnpm.e2e/pre-and-postinstall-scripts-example",
         );
+        eprintln!("Checking generated-by-preinstall.js exists...");
         assert!(pkg_dir.join("generated-by-preinstall.js").exists());
+        eprintln!("Checking generated-by-postinstall.js exists...");
         assert!(pkg_dir.join("generated-by-postinstall.js").exists());
 
         drop((root, mock_instance));
