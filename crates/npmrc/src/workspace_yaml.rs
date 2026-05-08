@@ -91,40 +91,32 @@ impl WorkspaceSettings {
     /// where the yaml was found, which is what pnpm does.
     pub fn apply_to(self, npmrc: &mut Npmrc, base_dir: &Path) {
         macro_rules! apply {
-            ($field:ident) => {
-                if let Some(v) = self.$field {
-                    npmrc.$field = v;
-                }
+            ($($field:ident),* $(,)?) => {
+                $(
+                    if let Some(v) = self.$field {
+                        npmrc.$field = v;
+                    }
+                )*
             };
-            (path: $field:ident) => {
-                if let Some(v) = self.$field {
-                    npmrc.$field = resolve(base_dir, &v);
-                }
+            (path: $($field:ident),* $(,)?) => {
+                $(
+                    if let Some(v) = self.$field {
+                        npmrc.$field = resolve(base_dir, &v);
+                    }
+                )*
             };
         }
 
-        apply!(hoist);
-        apply!(hoist_pattern);
-        apply!(public_hoist_pattern);
-        apply!(shamefully_hoist);
-        apply!(node_linker);
-        apply!(symlink);
-        apply!(package_import_method);
-        apply!(modules_cache_max_age);
-        apply!(lockfile);
-        apply!(prefer_frozen_lockfile);
-        apply!(lockfile_include_tarball_url);
-        apply!(auto_install_peers);
-        apply!(dedupe_peer_dependents);
-        apply!(strict_peer_dependencies);
-        apply!(resolve_peers_from_workspace_root);
-        apply!(verify_store_integrity);
-        apply!(fetch_retries);
-        apply!(fetch_retry_factor);
-        apply!(fetch_retry_mintimeout);
-        apply!(fetch_retry_maxtimeout);
-        apply!(path: modules_dir);
-        apply!(path: virtual_store_dir);
+        apply! {
+            hoist, hoist_pattern, public_hoist_pattern, shamefully_hoist,
+            node_linker, symlink, package_import_method, modules_cache_max_age,
+            lockfile, prefer_frozen_lockfile, lockfile_include_tarball_url,
+            auto_install_peers, dedupe_peer_dependents, strict_peer_dependencies,
+            resolve_peers_from_workspace_root, verify_store_integrity,
+            fetch_retries, fetch_retry_factor, fetch_retry_mintimeout,
+            fetch_retry_maxtimeout,
+        }
+        apply!(path: modules_dir, virtual_store_dir);
 
         if let Some(v) = self.store_dir {
             npmrc.store_dir = StoreDir::from(resolve(base_dir, &v));
