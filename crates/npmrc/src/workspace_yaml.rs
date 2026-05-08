@@ -96,11 +96,6 @@ impl WorkspaceSettings {
                     npmrc.$field = v;
                 }
             )*};
-            (path: $($field:ident),* $(,)?) => {$(
-                if let Some(v) = self.$field {
-                    npmrc.$field = resolve(base_dir, &v);
-                }
-            )*};
         }
 
         apply! {
@@ -112,8 +107,10 @@ impl WorkspaceSettings {
             fetch_retries, fetch_retry_factor, fetch_retry_mintimeout,
             fetch_retry_maxtimeout,
         }
-        apply!(path: modules_dir, virtual_store_dir);
 
+        if let Some(v) = self.modules_dir {
+            npmrc.modules_dir = resolve(base_dir, &v);
+        }
         if let Some(v) = self.store_dir {
             npmrc.store_dir = StoreDir::from(resolve(base_dir, &v));
         }
