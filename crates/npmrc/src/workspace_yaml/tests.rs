@@ -1,4 +1,4 @@
-use super::WorkspaceSettings;
+use super::{LoadWorkspaceYamlError, WORKSPACE_MANIFEST_FILENAME, WorkspaceSettings};
 use crate::{NodeLinker, Npmrc};
 use pacquet_store_dir::StoreDir;
 use pretty_assertions::assert_eq;
@@ -149,6 +149,23 @@ fn find_walks_up_to_parent_dir() {
     let (found, settings) = WorkspaceSettings::find_and_load(&nested).unwrap().unwrap();
     assert_eq!(found, tmp.path().join("pnpm-workspace.yaml"));
     assert_eq!(settings.store_dir.as_deref(), Some("/s"));
+}
+
+/// Pnpm's `readManifestRaw` only treats `ENOENT` as "no manifest" and
+/// propagates every other failure. A directory entry named
+/// `pnpm-workspace.yaml` is not a missing file, so `find_and_load`
+/// must surface it as `ReadFile` rather than silently walking up.
+#[test]
+fn find_propagates_when_manifest_path_is_a_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir(tmp.path().join(WORKSPACE_MANIFEST_FILENAME)).unwrap();
+
+    let err = WorkspaceSettings::find_and_load(tmp.path())
+        .expect_err("a directory at the manifest path is not a missing file");
+    assert!(
+        matches!(err, LoadWorkspaceYamlError::ReadFile { .. }),
+        "expected ReadFile, got {err:?}",
+    );
 }
 
 #[test]

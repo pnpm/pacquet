@@ -84,38 +84,41 @@ pub enum LoadWorkspaceYamlError {
 }
 
 impl WorkspaceSettings {
-    /// Walk up from `start_dir` looking for a `pnpm-workspace.yaml`. Returns
-    /// `Ok(None)` if none is found before reaching the filesystem root.
-    ///
-    /// Mirrors pnpm's behaviour in
-    /// [`loadNpmrcFiles.ts`](https://github.com/pnpm/pnpm/blob/1819226b51/config/reader/src/loadNpmrcFiles.ts)
-    /// — the first ancestor containing a `pnpm-workspace.yaml` is the
-    /// workspace root, and its config applies.
+    /// Walk up from `start_dir` looking for a readable `pnpm-workspace.yaml`.
+    /// Returns `Ok(None)` if no ancestor has one. Read or parse failures
+    /// other than `ENOENT` propagate, matching pnpm's
+    /// [`readManifestRaw`](https://github.com/pnpm/pnpm/blob/8eb1be4988/workspace/workspace-manifest-reader/src/index.ts).
     pub fn find_and_load(
         start_dir: &Path,
     ) -> Result<Option<(PathBuf, Self)>, LoadWorkspaceYamlError> {
-        let Some(path) = find_workspace_manifest(start_dir) else {
-            return Ok(None);
-        };
+        for dir in start_dir.ancestors() {
+            let path = dir.join(WORKSPACE_MANIFEST_FILENAME);
+            let read_result = fs::read_to_string(&path);
 
-        let read_result = fs::read_to_string(&path);
+            // Walk up only when the read failed because nothing exists at
+            // this level. Every other error (including `EISDIR` for a
+            // directory named `pnpm-workspace.yaml`, or permission denied)
+            // propagates, matching pnpm where `ENOENT` is the only silent
+            // case.
+            if let Err(error) = &read_result
+                && error.kind() == ErrorKind::NotFound
+            {
+                continue;
+            }
 
-        // TOCTOU: `find_workspace_manifest` checked `is_file()`, but
-        // the file may be removed before this read. Match pnpm and
-        // treat `ENOENT` during the read as "no manifest" too.
-        if let Err(error) = &read_result
-            && error.kind() == ErrorKind::NotFound
-        {
-            return Ok(None);
+            let settings: WorkspaceSettings = read_result
+                .map_err(|source| LoadWorkspaceYamlError::ReadFile { path: path.clone(), source })?
+                .pipe_as_ref(serde_saphyr::from_str)
+                .map_err(Box::new)
+                .map_err(|source| LoadWorkspaceYamlError::ParseYaml {
+                    path: path.clone(),
+                    source,
+                })?;
+
+            return Ok(Some((path, settings)));
         }
 
-        let settings: WorkspaceSettings = read_result
-            .map_err(|source| LoadWorkspaceYamlError::ReadFile { path: path.clone(), source })?
-            .pipe_as_ref(serde_saphyr::from_str)
-            .map_err(Box::new)
-            .map_err(|source| LoadWorkspaceYamlError::ParseYaml { path: path.clone(), source })?;
-
-        Ok(Some((path, settings)))
+        Ok(None)
     }
 
     /// Apply every set field onto `npmrc`, leaving unset ones untouched.
