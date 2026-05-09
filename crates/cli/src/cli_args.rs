@@ -30,17 +30,7 @@ pub struct CliArgs {
     #[clap(short = 'C', long, default_value = ".")]
     pub dir: PathBuf,
 
-    /// How install progress is rendered.
-    ///
-    /// `ndjson` writes pnpm-shaped log records as newline-delimited JSON
-    /// to stderr, suitable for piping into `@pnpm/cli.default-reporter`.
-    /// `silent` drops every event. The default is `silent` until the
-    /// in-process default renderer lands; the spawn-and-pipe wiring is
-    /// tracked separately (see #344).
-    ///
-    /// `global = true` makes the flag accepted on either side of the
-    /// subcommand (`pacquet --reporter=ndjson install` and
-    /// `pacquet install --reporter=ndjson` both work), matching pnpm.
+    /// Reporter output format.
     #[clap(long, value_enum, default_value_t = ReporterType::Silent, global = true)]
     pub reporter: ReporterType,
 }
@@ -50,7 +40,9 @@ pub struct CliArgs {
 /// Mirrors the names pnpm uses for `--reporter` (`default`, `ndjson`,
 /// `silent`, `append-only`). Only the variants pacquet currently supports
 /// are listed; the others land alongside the default-reporter spawn-and-
-/// pipe (tracked under #344).
+/// pipe (tracked under [#344]).
+///
+/// [#344]: https://github.com/pnpm/pacquet/issues/344
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ReporterType {
     /// Newline-delimited JSON in pnpm's wire format on stderr.
