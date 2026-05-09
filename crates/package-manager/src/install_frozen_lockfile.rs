@@ -8,7 +8,7 @@ use pacquet_lockfile::{PackageKey, PackageMetadata, ProjectSnapshot, SnapshotEnt
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::DependencyGroup;
-use pacquet_reporter::{IgnoredScriptsLog, LogEvent, LogLevel, Reporter};
+use pacquet_reporter::{IgnoredScriptsLog, LogEvent, LogLevel, Reporter, Stage, StageLog};
 use std::{collections::HashMap, path::Path, sync::atomic::AtomicU8};
 
 /// This subroutine installs dependencies from a frozen lockfile.
@@ -78,6 +78,17 @@ where
         SymlinkDirectDependencies { config, importers, dependency_groups, requester }
             .run::<R>()
             .map_err(InstallFrozenLockfileError::SymlinkDirectDependencies)?;
+
+        // Mirrors upstream `link.ts:167-170` — `importing_done` fires once
+        // extraction and symlink linking are complete, before any build
+        // phase. Reporters use it to close the import progress display so
+        // subsequent `pnpm:lifecycle` events render in their own section.
+        // <https://github.com/pnpm/pnpm/blob/80037699fb/installing/deps-installer/src/install/link.ts#L167>
+        R::emit(&LogEvent::Stage(StageLog {
+            level: LogLevel::Debug,
+            prefix: requester.to_string(),
+            stage: Stage::ImportingDone,
+        }));
 
         let manifest_dir = Path::new(requester);
         let allow_build_policy = AllowBuildPolicy::from_manifest(manifest_dir);

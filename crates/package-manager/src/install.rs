@@ -204,11 +204,12 @@ where
 
         tracing::info!(target: "pacquet::install", "Complete all");
 
-        R::emit(&LogEvent::Stage(StageLog {
-            level: LogLevel::Debug,
-            prefix: prefix.clone(),
-            stage: Stage::ImportingDone,
-        }));
+        // `Stage::ImportingDone` is emitted inside the install paths
+        // (`InstallFrozenLockfile` between symlink and build, and
+        // `InstallWithoutLockfile` after the writer task) so that any
+        // subsequent `pnpm:lifecycle` events render after the import
+        // progress display has closed. Mirrors upstream's emit point in
+        // <https://github.com/pnpm/pnpm/blob/80037699fb/installing/deps-installer/src/install/link.ts#L167>.
 
         // Write `node_modules/.modules.yaml`. Mirrors upstream's
         // `writeModulesManifest` call at
