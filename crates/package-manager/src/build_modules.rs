@@ -33,11 +33,26 @@ pub struct AllowBuildPolicy {
 }
 
 impl AllowBuildPolicy {
+    /// Build a policy from already-parsed `pnpm.allowBuilds` rules and
+    /// `pnpm.dangerouslyAllowAllBuilds`. Pure constructor — no IO — so
+    /// the policy logic is tested directly with in-memory inputs (mirrors
+    /// upstream's `createAllowBuildFunction(opts)` in
+    /// <https://github.com/pnpm/pnpm/blob/80037699fb/building/policy/src/index.ts>).
+    pub fn new(rules: HashMap<String, bool>, dangerously_allow_all: bool) -> Self {
+        Self { rules, dangerously_allow_all }
+    }
+
     /// Read `pnpm.allowBuilds` and `pnpm.dangerouslyAllowAllBuilds`
-    /// from a project's `package.json`.
+    /// from a project's `package.json` and build a policy.
     ///
     /// pnpm 11 denies lifecycle scripts by default. Packages must be
     /// explicitly listed in `allowBuilds` to run their scripts.
+    ///
+    /// IO and JSON parse errors are tolerated and surface as the empty
+    /// default policy (with a warning). Upstream sources these settings
+    /// from `Config` (npmrc/workspace), so there is no upstream behavior
+    /// to mirror for a manifest-read failure here. See pnpm/pacquet#397
+    /// item 5 for the longer-term config-source migration.
     pub fn from_manifest(manifest_dir: &Path) -> Self {
         let manifest_path = manifest_dir.join("package.json");
         let text = match fs::read_to_string(&manifest_path) {
@@ -83,7 +98,7 @@ impl AllowBuildPolicy {
             })
             .unwrap_or_default();
 
-        Self { rules, dangerously_allow_all }
+        Self::new(rules, dangerously_allow_all)
     }
 
     /// Check whether a package is allowed to run build scripts.

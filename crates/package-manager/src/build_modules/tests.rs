@@ -9,6 +9,11 @@ use ssri::Integrity;
 use std::{collections::HashMap, fs, sync::Mutex};
 use tempfile::tempdir;
 
+/// Build a rules map from a list of (name, allowed) pairs, for tests.
+fn rules<const N: usize>(entries: [(&str, bool); N]) -> HashMap<String, bool> {
+    entries.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
+}
+
 #[test]
 fn parse_scoped_key() {
     let (name, version) = parse_name_version_from_key("/@pnpm.e2e/install-script-example@1.0.0");
@@ -30,6 +35,13 @@ fn parse_key_without_leading_slash() {
     assert_eq!(version, "4.18.1");
 }
 
+// Policy-logic tests below mirror upstream `building/policy/test/index.ts`
+// (`https://github.com/pnpm/pnpm/blob/80037699fb/building/policy/test/index.ts`).
+// They drive `AllowBuildPolicy::new` directly with in-memory rule maps so the
+// policy logic stays decoupled from the manifest reader, exactly the way
+// upstream tests drive `createAllowBuildFunction(opts)` decoupled from
+// `Config` parsing.
+
 #[test]
 fn default_policy_denies_all() {
     let policy = AllowBuildPolicy::default();
@@ -38,69 +50,54 @@ fn default_policy_denies_all() {
 
 #[test]
 fn explicit_allow() {
-    let dir = tempdir().expect("create temp dir");
-    let manifest = serde_json::json!({
-        "pnpm": {
-            "allowBuilds": {
-                "@pnpm.e2e/install-script-example": true,
-            },
-        },
-    });
-    fs::write(dir.path().join("package.json"), manifest.to_string()).expect("write manifest");
-
-    let policy = AllowBuildPolicy::from_manifest(dir.path());
+    let policy = AllowBuildPolicy::new(rules([("@pnpm.e2e/install-script-example", true)]), false);
     assert_eq!(policy.check("@pnpm.e2e/install-script-example", "1.0.0"), Some(true));
 }
 
 #[test]
 fn explicit_deny() {
-    let dir = tempdir().expect("create temp dir");
-    let manifest = serde_json::json!({
-        "pnpm": {
-            "allowBuilds": {
-                "@pnpm.e2e/bad-package": false,
-            },
-        },
-    });
-    fs::write(dir.path().join("package.json"), manifest.to_string()).expect("write manifest");
-
-    let policy = AllowBuildPolicy::from_manifest(dir.path());
+    let policy = AllowBuildPolicy::new(rules([("@pnpm.e2e/bad-package", false)]), false);
     assert_eq!(policy.check("@pnpm.e2e/bad-package", "1.0.0"), Some(false));
 }
 
 #[test]
 fn unlisted_returns_none() {
-    let dir = tempdir().expect("create temp dir");
-    let manifest = serde_json::json!({
-        "pnpm": {
-            "allowBuilds": {
-                "@pnpm.e2e/allowed": true,
-            },
-        },
-    });
-    fs::write(dir.path().join("package.json"), manifest.to_string()).expect("write manifest");
-
-    let policy = AllowBuildPolicy::from_manifest(dir.path());
+    let policy = AllowBuildPolicy::new(rules([("@pnpm.e2e/allowed", true)]), false);
     assert_eq!(policy.check("@pnpm.e2e/not-listed", "1.0.0"), None);
 }
 
 #[test]
 fn exact_version_takes_precedence() {
-    let dir = tempdir().expect("create temp dir");
-    let manifest = serde_json::json!({
-        "pnpm": {
-            "allowBuilds": {
-                "@pnpm.e2e/pkg@1.0.0": true,
-                "@pnpm.e2e/pkg": false,
-            },
-        },
-    });
-    fs::write(dir.path().join("package.json"), manifest.to_string()).expect("write manifest");
-
-    let policy = AllowBuildPolicy::from_manifest(dir.path());
+    let policy = AllowBuildPolicy::new(
+        rules([("@pnpm.e2e/pkg@1.0.0", true), ("@pnpm.e2e/pkg", false)]),
+        false,
+    );
     assert_eq!(policy.check("@pnpm.e2e/pkg", "1.0.0"), Some(true));
     assert_eq!(policy.check("@pnpm.e2e/pkg", "2.0.0"), Some(false));
 }
+
+#[test]
+fn empty_rules_denies_all() {
+    let policy = AllowBuildPolicy::new(HashMap::new(), false);
+    assert_eq!(policy.check("any-package", "1.0.0"), None);
+}
+
+#[test]
+fn dangerously_allow_all_builds() {
+    let policy = AllowBuildPolicy::new(HashMap::new(), true);
+    assert_eq!(policy.check("any-package", "1.0.0"), Some(true));
+    assert_eq!(policy.check("other-package", "2.0.0"), Some(true));
+}
+
+#[test]
+fn dangerously_allow_all_overrides_deny() {
+    let policy = AllowBuildPolicy::new(rules([("@pnpm.e2e/pkg", false)]), true);
+    assert_eq!(policy.check("@pnpm.e2e/pkg", "1.0.0"), Some(true));
+}
+
+// The next two tests exercise `from_manifest` end-to-end: missing manifest
+// folds to the empty default, and a real `package.json` round-trips through
+// the parser into the same logic the in-memory tests above cover.
 
 #[test]
 fn missing_manifest_denies_all() {
@@ -110,49 +107,23 @@ fn missing_manifest_denies_all() {
 }
 
 #[test]
-fn empty_allow_builds_denies_all() {
+fn from_manifest_parses_pnpm_section() {
     let dir = tempdir().expect("create temp dir");
     let manifest = serde_json::json!({
         "pnpm": {
-            "allowBuilds": {},
-        },
-    });
-    fs::write(dir.path().join("package.json"), manifest.to_string()).expect("write manifest");
-
-    let policy = AllowBuildPolicy::from_manifest(dir.path());
-    assert_eq!(policy.check("any-package", "1.0.0"), None);
-}
-
-#[test]
-fn dangerously_allow_all_builds() {
-    let dir = tempdir().expect("create temp dir");
-    let manifest = serde_json::json!({
-        "pnpm": {
-            "dangerouslyAllowAllBuilds": true,
-        },
-    });
-    fs::write(dir.path().join("package.json"), manifest.to_string()).expect("write manifest");
-
-    let policy = AllowBuildPolicy::from_manifest(dir.path());
-    assert_eq!(policy.check("any-package", "1.0.0"), Some(true));
-    assert_eq!(policy.check("other-package", "2.0.0"), Some(true));
-}
-
-#[test]
-fn dangerously_allow_all_overrides_deny() {
-    let dir = tempdir().expect("create temp dir");
-    let manifest = serde_json::json!({
-        "pnpm": {
-            "dangerouslyAllowAllBuilds": true,
+            "dangerouslyAllowAllBuilds": false,
             "allowBuilds": {
-                "@pnpm.e2e/pkg": false,
+                "@pnpm.e2e/install-script-example": true,
+                "@pnpm.e2e/bad-package": false,
             },
         },
     });
     fs::write(dir.path().join("package.json"), manifest.to_string()).expect("write manifest");
 
     let policy = AllowBuildPolicy::from_manifest(dir.path());
-    assert_eq!(policy.check("@pnpm.e2e/pkg", "1.0.0"), Some(true));
+    assert_eq!(policy.check("@pnpm.e2e/install-script-example", "1.0.0"), Some(true));
+    assert_eq!(policy.check("@pnpm.e2e/bad-package", "1.0.0"), Some(false));
+    assert_eq!(policy.check("@pnpm.e2e/unrelated", "1.0.0"), None);
 }
 
 fn name(s: &str) -> PkgName {
@@ -260,21 +231,16 @@ fn build_modules_excludes_explicit_deny_from_ignored() {
     ]);
     let importers = root_importers(&[("denied", "1.0.0"), ("ignored", "1.0.0")]);
 
-    let manifest_dir = tempdir().expect("create temp dir");
-    let manifest = serde_json::json!({
-        "pnpm": { "allowBuilds": { "denied": false } },
-    });
-    fs::write(manifest_dir.path().join("package.json"), manifest.to_string())
-        .expect("write manifest");
-    let policy = AllowBuildPolicy::from_manifest(manifest_dir.path());
+    let policy = AllowBuildPolicy::new(rules([("denied", false)]), false);
 
     let virtual_store_dir = tempdir().expect("create temp dir");
     let modules_dir = tempdir().expect("create temp dir");
+    let lockfile_dir = tempdir().expect("create temp dir");
 
     let ignored = BuildModules {
         virtual_store_dir: virtual_store_dir.path(),
         modules_dir: modules_dir.path(),
-        lockfile_dir: manifest_dir.path(),
+        lockfile_dir: lockfile_dir.path(),
         packages: Some(&packages),
         snapshots: Some(&snapshots),
         importers: &importers,
