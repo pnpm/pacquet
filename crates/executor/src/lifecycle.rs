@@ -1,5 +1,6 @@
 use derive_more::{Display, Error};
 use miette::Diagnostic;
+use pacquet_package_manifest::{PackageManifestError, safe_read_package_json_from_dir};
 use pacquet_reporter::{
     LifecycleLog, LifecycleMessage, LifecycleStdio, LogEvent, LogLevel, Reporter,
 };
@@ -24,7 +25,7 @@ pub enum LifecycleScriptError {
     ReadManifest {
         path: String,
         #[error(source)]
-        source: std::io::Error,
+        source: PackageManifestError,
     },
 
     #[display("{dep_path} {stage}: `{script}` exited with {status}")]
@@ -74,20 +75,15 @@ pub struct RunPostinstallHooks<'a> {
 pub fn run_postinstall_hooks<R: Reporter>(
     opts: RunPostinstallHooks<'_>,
 ) -> Result<bool, LifecycleScriptError> {
-    let manifest_path = opts.pkg_root.join("package.json");
-    let manifest_text = match std::fs::read_to_string(&manifest_path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(err) => {
+    let manifest = match safe_read_package_json_from_dir(opts.pkg_root) {
+        Ok(Some(value)) => value,
+        Ok(None) => return Ok(false),
+        Err(source) => {
             return Err(LifecycleScriptError::ReadManifest {
-                path: manifest_path.display().to_string(),
-                source: err,
+                path: opts.pkg_root.join("package.json").display().to_string(),
+                source,
             });
         }
-    };
-    let manifest: serde_json::Value = match serde_json::from_str(&manifest_text) {
-        Ok(v) => v,
-        Err(_) => return Ok(false),
     };
 
     let scripts = manifest.get("scripts").and_then(|v| v.as_object());

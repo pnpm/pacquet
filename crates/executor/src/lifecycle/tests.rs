@@ -1,4 +1,5 @@
-use super::{RunPostinstallHooks, run_postinstall_hooks};
+use super::{LifecycleScriptError, RunPostinstallHooks, run_postinstall_hooks};
+use pacquet_package_manifest::PackageManifestError;
 use pacquet_reporter::{
     LifecycleMessage, LifecycleStdio, LogEvent, LogLevel, Reporter, SilentReporter,
 };
@@ -179,4 +180,66 @@ fn lifecycle_runs_under_silent_reporter() {
 
     let ran = run_postinstall_hooks::<SilentReporter>(opts).expect("postinstall");
     assert!(ran, "postinstall script should report executed: ran={ran}");
+}
+
+/// Missing `package.json` is treated as "no scripts to run" — mirrors
+/// upstream `safeReadPackageJsonFromDir` returning `null` on `ENOENT`
+/// and `runPostinstallHooks` returning `false` for `null` packages
+/// (`https://github.com/pnpm/pnpm/blob/80037699fb/exec/lifecycle/src/index.ts#L22-L23`).
+#[test]
+fn missing_manifest_returns_false() {
+    let dir = tempdir().expect("create temp dir");
+    let pkg_root = dir.path();
+    // No package.json written.
+
+    let extra_env: HashMap<String, String> = HashMap::new();
+    let extra_bin_paths: Vec<std::path::PathBuf> = vec![];
+    let opts = RunPostinstallHooks {
+        dep_path: "/missing@1.0.0",
+        pkg_root,
+        root_modules_dir: pkg_root,
+        init_cwd: pkg_root,
+        extra_bin_paths: &extra_bin_paths,
+        extra_env: &extra_env,
+    };
+
+    let ran = run_postinstall_hooks::<SilentReporter>(opts).expect("missing manifest is OK");
+    assert!(!ran, "missing manifest must report no scripts ran: ran={ran}");
+}
+
+/// Malformed `package.json` surfaces as a `ReadManifest` error wrapping
+/// `PackageManifestError::Serialization`. Mirrors upstream which throws
+/// `BAD_PACKAGE_JSON` from `readPackageJson` and lets it propagate
+/// through `safeReadPackageJsonFromDir` (only `ENOENT` is swallowed) at
+/// `https://github.com/pnpm/pnpm/blob/80037699fb/pkg-manifest/reader/src/index.ts#L20-L46`.
+#[test]
+fn malformed_manifest_propagates_error() {
+    let dir = tempdir().expect("create temp dir");
+    let pkg_root = dir.path();
+    fs::write(pkg_root.join("package.json"), "{ this is not valid json")
+        .expect("write malformed manifest");
+
+    let extra_env: HashMap<String, String> = HashMap::new();
+    let extra_bin_paths: Vec<std::path::PathBuf> = vec![];
+    let opts = RunPostinstallHooks {
+        dep_path: "/malformed@1.0.0",
+        pkg_root,
+        root_modules_dir: pkg_root,
+        init_cwd: pkg_root,
+        extra_bin_paths: &extra_bin_paths,
+        extra_env: &extra_env,
+    };
+
+    let err = run_postinstall_hooks::<SilentReporter>(opts).expect_err("malformed JSON must fail");
+    eprintln!("ERR: {err}");
+    assert!(
+        matches!(
+            err,
+            LifecycleScriptError::ReadManifest {
+                source: PackageManifestError::Serialization(_),
+                ..
+            },
+        ),
+        "expected ReadManifest(Serialization), got {err:?}",
+    );
 }
