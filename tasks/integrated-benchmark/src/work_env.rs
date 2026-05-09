@@ -1,7 +1,8 @@
 use crate::{
     cli_args::{BenchmarkScenario, HyperfineOptions},
-    fixtures::{LOCKFILE, PACKAGE_JSON, PNPM_WORKSPACE},
+    fixtures::{LOCKFILE, PACKAGE_JSON},
     verify::executor,
+    workspace_manifest::MinimalWorkspaceManifest,
 };
 use itertools::Itertools;
 use os_display::Quotable;
@@ -103,7 +104,7 @@ impl WorkEnv {
             let for_pnpm = matches!(id, BenchId::Static(_));
             fs::create_dir_all(&dir).expect("create directory for the revision");
             create_package_json(&dir, self.fixture_dir.as_deref());
-            create_pnpm_workspace(&dir, self.fixture_dir.as_deref());
+            create_pnpm_workspace(&dir, self.fixture_dir.as_deref(), self.registry(), scenario);
             create_install_script(&dir, scenario, for_pnpm);
             create_npmrc(&dir, self.registry(), scenario);
             may_create_lockfile(&dir, scenario, self.fixture_dir.as_deref());
@@ -270,12 +271,19 @@ fn create_package_json(dst_dir: &Path, src_dir: Option<&Path>) {
     }
 }
 
-/// Copy or write the fixture's `pnpm-workspace.yaml`. Pacquet's `.npmrc`
-/// sets `ignore-scripts=true` so no scripts actually run, but pnpm still
-/// warns about `ERR_PNPM_IGNORED_BUILDS` for packages whose postinstalls
-/// would have fired — the workspace file's `allowBuilds: {core-js: false,
-/// es5-ext: false}` silences those specific warnings and keeps pnpm's
-/// output clean so hyperfine doesn't see stderr noise.
+/// Synthesize the per-revision `pnpm-workspace.yaml` through a typed
+/// [`MinimalWorkspaceManifest`] and emit it via `serde_saphyr`, instead
+/// of formatting raw YAML strings. The typed round-trip rules out the
+/// `duplicated mapping key` failure modes a string-injection approach
+/// is prone to, and keeps the on-disk file in sync with the schema as
+/// new fields are added.
+///
+/// Pacquet's `.npmrc` sets `ignore-scripts=true` so no scripts actually
+/// run, but pnpm still warns about `ERR_PNPM_IGNORED_BUILDS` for
+/// packages whose postinstalls would have fired — the manifest's
+/// `allowBuilds: {core-js: false, es5-ext: false, fsevents: false}`
+/// silences those specific warnings and keeps pnpm's output clean so
+/// hyperfine doesn't see stderr noise.
 ///
 /// Always guarantees `storeDir: ./store-dir` ends up in the destination.
 /// Both pnpm and pacquet read the store path from this file (pacquet
@@ -290,54 +298,50 @@ fn create_package_json(dst_dir: &Path, src_dir: Option<&Path>) {
 /// trust it — that's the user opting into a different store layout
 /// (e.g. shared store across revisions to test a specific scenario).
 /// Only inject our default when the key is absent.
-fn create_pnpm_workspace(dst_dir: &Path, src_dir: Option<&Path>) {
+///
+/// Also mirrors the `.npmrc` settings (`registry`, `autoInstallPeers`,
+/// `ignoreScripts`, `lockfile`) into the workspace file as camelCase
+/// keys so pnpm 10 picks them up from either source. Per pnpm's reader
+/// (`config/reader/src/index.ts:802-808` at pnpm/pnpm@8eb1be4988),
+/// non-camelCase keys in `pnpm-workspace.yaml` are silently dropped, so
+/// the npmrc spelling can't be reused verbatim. Pacquet's npmrc parser
+/// is the only thing that reads `.npmrc` here; pnpm reads both.
+fn create_pnpm_workspace(
+    dst_dir: &Path,
+    src_dir: Option<&Path>,
+    registry: &str,
+    scenario: BenchmarkScenario,
+) {
     let dst = dst_dir.join("pnpm-workspace.yaml");
-    let base = if let Some(src_dir) = src_dir {
+    let mut manifest = if let Some(src_dir) = src_dir {
         let src = src_dir.join("pnpm-workspace.yaml");
         if src.is_file() {
             assert_ne!(src, dst);
-            fs::read_to_string(src).expect("read fixture pnpm-workspace.yaml")
+            let text = fs::read_to_string(&src).expect("read fixture pnpm-workspace.yaml");
+            let parsed: MinimalWorkspaceManifest =
+                serde_saphyr::from_str(&text).expect("parse fixture pnpm-workspace.yaml");
+            if parsed.store_dir.is_none() {
+                eprintln!(
+                    "warn: fixture's pnpm-workspace.yaml has no top-level `storeDir:` — \
+                     injecting `storeDir: ./store-dir` so per-revision store isolation works"
+                );
+            }
+            parsed
         } else {
-            String::new()
+            MinimalWorkspaceManifest::default_for_benchmark()
         }
     } else {
-        PNPM_WORKSPACE.to_string()
+        MinimalWorkspaceManifest::default_for_benchmark()
     };
-    let content = if has_top_level_store_dir(&base) {
-        base
-    } else {
-        if !base.is_empty() {
-            eprintln!(
-                "warn: fixture's pnpm-workspace.yaml has no top-level `storeDir:` — \
-                 prepending `storeDir: ./store-dir` so per-revision store isolation works"
-            );
-        }
-        if base.is_empty() {
-            "storeDir: ./store-dir\n".to_string()
-        } else {
-            format!("storeDir: ./store-dir\n{base}")
-        }
-    };
-    fs::write(dst, content).expect("write pnpm-workspace.yaml for the revision");
-}
-
-/// Detect a top-level `storeDir:` key in a YAML document. We only look
-/// at lines whose first byte is a non-whitespace, non-`#` character so
-/// nested keys (`foo:\n  storeDir: …`) and comments don't count. This
-/// is a deliberately tiny scan, not a real YAML parse — the workspace
-/// files we ship and accept are flat enough that line-level matching
-/// covers the practical cases.
-fn has_top_level_store_dir(yaml: &str) -> bool {
-    yaml.lines().any(|line| {
-        let first = match line.as_bytes().first() {
-            Some(&b) => b,
-            None => return false,
-        };
-        if first.is_ascii_whitespace() || first == b'#' {
-            return false;
-        }
-        line.starts_with("storeDir:")
-    })
+    if manifest.store_dir.is_none() {
+        manifest.store_dir = Some("./store-dir".to_string());
+    }
+    manifest.registry = Some(registry.to_string());
+    manifest.auto_install_peers = Some(true);
+    manifest.ignore_scripts = Some(true);
+    manifest.lockfile = Some(scenario.lockfile_enabled());
+    let yaml = serde_saphyr::to_string(&manifest).expect("serialize pnpm-workspace.yaml");
+    fs::write(dst, yaml).expect("write pnpm-workspace.yaml for the revision");
 }
 
 fn create_npmrc(dir: &Path, registry: &str, scenario: BenchmarkScenario) {
@@ -352,7 +356,7 @@ fn create_npmrc(dir: &Path, registry: &str, scenario: BenchmarkScenario) {
     // `storeDir: ./store-dir` already resolves to `{bench_dir}/store-dir`
     // under each per-revision CWD, which gives the same per-revision
     // isolation the redundant `.npmrc` line was supposedly providing.
-    writeln!(file, "auto-install-peers=false").unwrap();
+    writeln!(file, "auto-install-peers=true").unwrap();
     writeln!(file, "ignore-scripts=true").unwrap();
     writeln!(file, "{}", scenario.npmrc_lockfile_setting()).unwrap();
 }
