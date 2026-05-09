@@ -13,6 +13,7 @@ repository.workspace  = true
 [dependencies]
 pacquet-fs               = { workspace = true }
 pacquet-lockfile         = { workspace = true }
+pacquet-modules-yaml     = { workspace = true }
 pacquet-network          = { workspace = true }
 pacquet-npmrc            = { workspace = true }
 pacquet-package-manifest = { workspace = true }
@@ -25,6 +26,7 @@ async-recursion = { workspace = true }
 dashmap         = { workspace = true }
 derive_more     = { workspace = true }
 futures-util    = { workspace = true }
+httpdate        = { workspace = true }
 node-semver     = { workspace = true }
 pipe-trait      = { workspace = true }
 rayon           = { workspace = true }

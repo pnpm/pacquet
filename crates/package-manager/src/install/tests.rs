@@ -1,5 +1,9 @@
 use super::{Install, InstallError};
 use pacquet_lockfile::Lockfile;
+use pacquet_modules_yaml::{
+    DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH, LayoutVersion, Modules, NodeLinker, RealApi,
+    read_modules_manifest,
+};
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry_mock::AutoMockInstance;
@@ -8,6 +12,7 @@ use pacquet_reporter::{
     Stage, StageLog, StatsLog, StatsMessage, SummaryLog,
 };
 use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
+use pipe_trait::Pipe;
 use std::sync::Mutex;
 use tempfile::tempdir;
 use text_block_macros::text_block;
@@ -538,6 +543,98 @@ async fn install_emits_pnpm_event_sequence() {
         unreachable!("last event is summary, asserted above");
     };
     assert_eq!(summary_prefix, &expected_prefix);
+
+    drop(dir);
+}
+
+/// A successful install must persist `<modules_dir>/.modules.yaml`,
+/// matching pnpm's
+/// [`writeModulesManifest`](https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-installer/src/install/index.ts#L1608-L1630)
+/// call. Asserts the on-disk fields a follow-up install (or third-
+/// party tool) keys off: `layoutVersion`, `nodeLinker`, the
+/// `included` set derived from the dispatched dependency groups, the
+/// store and virtual-store directories, and the `default` registry.
+#[tokio::test]
+async fn install_writes_modules_yaml() {
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+    let mut config = Npmrc::new();
+    config.lockfile = false;
+    config.store_dir = store_dir.clone().into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    let config = config.leak();
+
+    // Empty v9 lockfile drives the cheapest successful install path,
+    // which is enough to prove `.modules.yaml` is written on success.
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies: {}"
+        "packages: {}"
+        "snapshots: {}"
+    })
+    .expect("parse minimal v9 lockfile");
+
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        // Drive a non-default `included`: prod + optional, no dev,
+        // so the assertion below pins the mapping of dispatched
+        // groups to the on-disk `included` field.
+        dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
+        frozen_lockfile: true,
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await
+    .expect("frozen-lockfile install should succeed");
+
+    let Modules {
+        layout_version,
+        node_linker,
+        included,
+        store_dir: emitted_store_dir,
+        virtual_store_dir: emitted_virtual_store_dir,
+        virtual_store_dir_max_length,
+        registries,
+        package_manager,
+        ..
+    } = modules_dir
+        .pipe_as_ref(read_modules_manifest::<RealApi>)
+        .expect("read .modules.yaml")
+        .expect("modules manifest exists");
+
+    assert_eq!(layout_version, Some(LayoutVersion));
+    assert_eq!(node_linker, Some(NodeLinker::Isolated));
+    assert!(included.dependencies);
+    assert!(!included.dev_dependencies);
+    assert!(included.optional_dependencies);
+    assert_eq!(emitted_store_dir, store_dir.display().to_string());
+    // `read_modules_manifest` resolves `virtualStoreDir` against
+    // `modules_dir`, so a relative on-disk value round-trips back
+    // to the absolute install-time path.
+    assert_eq!(emitted_virtual_store_dir, virtual_store_dir.to_string_lossy());
+    assert_eq!(virtual_store_dir_max_length, DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH);
+    assert_eq!(
+        registries.as_ref().and_then(|r| r.get("default")).map(String::as_str),
+        Some(config.registry.as_str()),
+    );
+    assert!(
+        package_manager.starts_with("pacquet@"),
+        "expected `pacquet@<version>`, got {package_manager:?}",
+    );
 
     drop(dir);
 }
