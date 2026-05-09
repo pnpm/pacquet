@@ -1,4 +1,4 @@
-use std::{path::Path, sync::atomic::AtomicU8};
+use std::{collections::BTreeMap, path::Path, sync::atomic::AtomicU8, time::SystemTime};
 
 use crate::{
     InstallFrozenLockfile, InstallFrozenLockfileError, InstallWithoutLockfile,
@@ -7,8 +7,12 @@ use crate::{
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_lockfile::Lockfile;
+use pacquet_modules_yaml::{
+    DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH, IncludedDependencies, LayoutVersion, Modules,
+    NodeLinker as ModulesNodeLinker, RealApi, WriteModulesError, write_modules_manifest,
+};
 use pacquet_network::ThrottledClient;
-use pacquet_npmrc::Npmrc;
+use pacquet_npmrc::{NodeLinker, Npmrc};
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_reporter::{
     ContextLog, LogEvent, LogLevel, PackageManifestLog, PackageManifestMessage, Reporter, Stage,
@@ -52,6 +56,9 @@ pub enum InstallError {
 
     #[diagnostic(transparent)]
     FrozenLockfile(#[error(source)] InstallFrozenLockfileError),
+
+    #[diagnostic(transparent)]
+    WriteModules(#[error(source)] WriteModulesError),
 }
 
 impl<'a, DependencyGroupList> Install<'a, DependencyGroupList>
@@ -70,6 +77,18 @@ where
             dependency_groups,
             frozen_lockfile,
         } = self;
+
+        // Collect once so the same set drives both the install dispatch
+        // and the `included` field of `.modules.yaml` written below.
+        // Mirrors upstream `ctx.include` at
+        // <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-installer/src/install/index.ts#L1612>,
+        // which is the same set the dependency-graph walker observes.
+        let dependency_groups: Vec<DependencyGroup> = dependency_groups.into_iter().collect();
+        let included = IncludedDependencies {
+            dependencies: dependency_groups.contains(&DependencyGroup::Prod),
+            dev_dependencies: dependency_groups.contains(&DependencyGroup::Dev),
+            optional_dependencies: dependency_groups.contains(&DependencyGroup::Optional),
+        };
 
         // Project root for the [bunyan]-envelope `prefix`. Upstream pnpm
         // emits this as `lockfileDir`, the directory containing
@@ -191,6 +210,20 @@ where
             stage: Stage::ImportingDone,
         }));
 
+        // Write `node_modules/.modules.yaml`. Mirrors upstream's
+        // `writeModulesManifest` call at
+        // <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-installer/src/install/index.ts#L1608-L1630>,
+        // which fires after `importing_done` and before the closing
+        // `pnpm:summary` emit. The manifest records the resolved
+        // directory layout, hoist patterns, included dependency groups,
+        // store dir, and registries so a later install (or another
+        // tool) can detect a layout change and prune accordingly.
+        write_modules_manifest::<RealApi>(
+            &config.modules_dir,
+            build_modules_manifest(config, included),
+        )
+        .map_err(InstallError::WriteModules)?;
+
         // `pnpm:summary` closes the install and lets the reporter render
         // the accumulated `pnpm:root` events as a "+N -M" block. Must
         // come after `importing_done`, matching pnpm's ordering at
@@ -198,6 +231,48 @@ where
         R::emit(&LogEvent::Summary(SummaryLog { level: LogLevel::Debug, prefix }));
 
         Ok(())
+    }
+}
+
+/// Translate pacquet's [`Npmrc::node_linker`] into the
+/// [`pacquet_modules_yaml::NodeLinker`] enum used on disk. The two
+/// enums share the same variant set (`isolated`, `hoisted`, `pnp`),
+/// matching upstream's `nodeLinker` string.
+fn map_node_linker(linker: &NodeLinker) -> ModulesNodeLinker {
+    match linker {
+        NodeLinker::Isolated => ModulesNodeLinker::Isolated,
+        NodeLinker::Hoisted => ModulesNodeLinker::Hoisted,
+        NodeLinker::Pnp => ModulesNodeLinker::Pnp,
+    }
+}
+
+/// Assemble the [`Modules`] payload for [`write_modules_manifest`].
+///
+/// Mirrors upstream's literal at
+/// <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-installer/src/install/index.ts#L1608-L1630>.
+/// Fields pacquet does not populate yet (`hoistedDependencies`,
+/// `pendingBuilds`, `skipped`, `injectedDeps`, `ignoredBuilds`,
+/// `allowBuilds`) default to empty / unset, which is exactly what
+/// upstream produces for a single-importer install with no skipped
+/// optional deps and no build allowlist.
+fn build_modules_manifest(config: &Npmrc, included: IncludedDependencies) -> Modules {
+    Modules {
+        hoist_pattern: Some(config.hoist_pattern.clone()),
+        included,
+        layout_version: Some(LayoutVersion),
+        node_linker: Some(map_node_linker(&config.node_linker)),
+        // `${name}@${version}` per upstream. `CARGO_PKG_VERSION`
+        // resolves at compile time to this crate's package version.
+        package_manager: concat!("pacquet@", env!("CARGO_PKG_VERSION")).to_string(),
+        public_hoist_pattern: Some(config.public_hoist_pattern.clone()),
+        // RFC 1123 / `toUTCString()` format, matching upstream's
+        // `new Date().toUTCString()` at line 1622.
+        pruned_at: httpdate::fmt_http_date(SystemTime::now()),
+        registries: Some(BTreeMap::from([("default".to_string(), config.registry.clone())])),
+        store_dir: config.store_dir.display().to_string(),
+        virtual_store_dir: config.virtual_store_dir.to_string_lossy().into_owned(),
+        virtual_store_dir_max_length: DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,
+        ..Default::default()
     }
 }
 
