@@ -1,6 +1,7 @@
 use super::{LoadWorkspaceYamlError, WORKSPACE_MANIFEST_FILENAME, WorkspaceSettings};
 use crate::{NodeLinker, Npmrc};
 use pacquet_store_dir::StoreDir;
+use pipe_trait::Pipe;
 use pretty_assertions::assert_eq;
 use std::{fs, path::Path};
 
@@ -158,14 +159,18 @@ fn find_walks_up_to_parent_dir() {
 #[test]
 fn find_propagates_when_manifest_path_is_a_directory() {
     let tmp = tempfile::tempdir().unwrap();
-    fs::create_dir(tmp.path().join(WORKSPACE_MANIFEST_FILENAME)).unwrap();
+    tmp.path().join(WORKSPACE_MANIFEST_FILENAME).pipe(fs::create_dir).unwrap();
 
-    let err = WorkspaceSettings::find_and_load(tmp.path())
+    let err = tmp
+        .path()
+        .pipe_as_ref(WorkspaceSettings::find_and_load)
         .expect_err("a directory at the manifest path is not a missing file");
     assert!(
         matches!(err, LoadWorkspaceYamlError::ReadFile { .. }),
         "expected ReadFile, got {err:?}",
     );
+
+    drop(tmp); // clean up
 }
 
 #[test]
