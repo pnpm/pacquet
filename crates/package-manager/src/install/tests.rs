@@ -12,6 +12,7 @@ use pacquet_reporter::{
     Stage, StageLog, StatsLog, StatsMessage, SummaryLog,
 };
 use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
+use pipe_trait::Pipe;
 use std::sync::Mutex;
 use tempfile::tempdir;
 use text_block_macros::text_block;
@@ -610,7 +611,8 @@ async fn install_writes_modules_yaml() {
         registries,
         package_manager,
         ..
-    } = read_modules_manifest::<RealApi>(&modules_dir)
+    } = modules_dir
+        .pipe_as_ref(read_modules_manifest::<RealApi>)
         .expect("read .modules.yaml")
         .expect("modules manifest exists");
 
