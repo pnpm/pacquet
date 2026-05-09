@@ -1938,7 +1938,9 @@ dependencies = [
 name = "pacquet-npmrc"
 version = "0.0.1"
 dependencies = [
+ "derive_more",
  "home",
+ "miette 7.6.0",
  "pacquet-store-dir",
  "pipe-trait",
  "pretty_assertions",

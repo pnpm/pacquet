@@ -96,7 +96,12 @@ impl CliArgs {
             .into_diagnostic()
             .wrap_err_with(|| format!("canonicalizing the `--dir` argument: {}", dir.display()))?;
         let manifest_path = || dir.join("package.json");
-        let npmrc = || Npmrc::current(env::current_dir, home::home_dir, Default::default).leak();
+        let npmrc = || -> miette::Result<&'static mut Npmrc> {
+            Npmrc::current(env::current_dir, home::home_dir, Default::default)
+                .map(Npmrc::leak)
+                .map_err(miette::Report::new)
+                .wrap_err("load configuration")
+        };
         // `require_lockfile` is the "this subcommand cannot run without a
         // lockfile loaded" signal, used by `State::init` to override
         // `config.lockfile=false`. Only `install --frozen-lockfile` needs
@@ -104,8 +109,9 @@ impl CliArgs {
         // pnpm's CLI: `--frozen-lockfile` is the strongest signal and
         // must not be silently dropped because `lockfile=false` was set
         // (or defaulted) in config.
-        let state = |require_lockfile: bool| {
-            State::init(manifest_path(), npmrc(), require_lockfile).wrap_err("initialize the state")
+        let state = |require_lockfile: bool| -> miette::Result<State> {
+            State::init(manifest_path(), npmrc()?, require_lockfile)
+                .wrap_err("initialize the state")
         };
 
         match command {
@@ -143,7 +149,7 @@ impl CliArgs {
                 let command = manifest.script("start", true)?.unwrap_or("node server.js");
                 execute_shell(command).wrap_err(format!("executing command: \"{0}\"", command))?;
             }
-            CliCommand::Store(command) => command.run(|| npmrc())?,
+            CliCommand::Store(command) => command.run(|| npmrc().map(|m| &*m))?,
         }
 
         Ok(())
