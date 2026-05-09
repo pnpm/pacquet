@@ -86,7 +86,6 @@ where
             virtual_store_dir: &config.virtual_store_dir,
             modules_dir: &config.modules_dir,
             lockfile_dir: manifest_dir,
-            packages,
             snapshots,
             importers,
             allow_build_policy: &allow_build_policy,

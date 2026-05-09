@@ -2,7 +2,8 @@ use crate::build_sequence::build_sequence;
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_executor::{LifecycleScriptError, RunPostinstallHooks, run_postinstall_hooks};
-use pacquet_lockfile::{PackageKey, PackageMetadata, ProjectSnapshot, SnapshotEntry};
+use pacquet_lockfile::{PackageKey, ProjectSnapshot, SnapshotEntry};
+use pacquet_package_manifest::pkg_requires_build;
 use pacquet_reporter::Reporter;
 use std::{
     collections::{BTreeSet, HashMap},
@@ -138,7 +139,6 @@ pub struct BuildModules<'a> {
     pub virtual_store_dir: &'a Path,
     pub modules_dir: &'a Path,
     pub lockfile_dir: &'a Path,
-    pub packages: Option<&'a HashMap<PackageKey, PackageMetadata>>,
     pub snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,
     pub importers: &'a HashMap<String, ProjectSnapshot>,
     pub allow_build_policy: &'a AllowBuildPolicy,
@@ -156,19 +156,33 @@ impl<'a> BuildModules<'a> {
             virtual_store_dir,
             modules_dir,
             lockfile_dir,
-            packages,
             snapshots,
             importers,
             allow_build_policy,
         } = self;
 
         let Some(snapshots) = snapshots else { return Ok(Vec::new()) };
-        let Some(packages) = packages else { return Ok(Vec::new()) };
 
         let extra_env = HashMap::new();
         let extra_bin_paths: Vec<PathBuf> = vec![];
 
-        let chunks = build_sequence(packages, snapshots, importers);
+        // Compute requires_build per snapshot from each extracted package
+        // directory. Mirrors upstream where the worker computes
+        // `node.requiresBuild` from the package's manifest scripts and the
+        // presence of `binding.gyp` / `.hooks/` after extraction
+        // (`https://github.com/pnpm/pnpm/blob/80037699fb/building/pkg-requires-build/src/index.ts`).
+        // Pacquet does this here rather than in a worker because the worker
+        // does not exist yet — it is the same per-package on-disk inspection,
+        // moved to the build entry point.
+        let requires_build_map: HashMap<PackageKey, bool> = snapshots
+            .keys()
+            .map(|key| {
+                let pkg_dir = virtual_store_dir_for_key(virtual_store_dir, key);
+                (key.clone(), pkg_requires_build(&pkg_dir))
+            })
+            .collect();
+
+        let chunks = build_sequence(&requires_build_map, snapshots, importers);
 
         // Collect peer-stripped keys so the final list is unique and
         // sorted lexicographically — matches `dedupePackageNamesFromIgnoredBuilds`.
@@ -176,15 +190,13 @@ impl<'a> BuildModules<'a> {
 
         for chunk in chunks {
             for snapshot_key in chunk {
-                let metadata_key = snapshot_key.without_peer();
-                let Some(metadata) = packages.get(&metadata_key) else { continue };
-
                 // Ancestors-of-build packages are included in the sequence
                 // but only run scripts when they themselves require a build.
-                if metadata.requires_build != Some(true) {
+                if !requires_build_map.get(&snapshot_key).copied().unwrap_or(false) {
                     continue;
                 }
 
+                let metadata_key = snapshot_key.without_peer();
                 let (name, version) = parse_name_version_from_key(&metadata_key.to_string());
                 match allow_build_policy.check(&name, &version) {
                     Some(false) => continue,

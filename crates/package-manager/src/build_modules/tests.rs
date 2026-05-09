@@ -1,12 +1,16 @@
 use super::{AllowBuildPolicy, BuildModules, parse_name_version_from_key};
 use pacquet_lockfile::{
-    LockfileResolution, PackageKey, PackageMetadata, PkgName, PkgVerPeer, ProjectSnapshot,
-    RegistryResolution, ResolvedDependencyMap, ResolvedDependencySpec, SnapshotEntry,
+    PackageKey, PkgName, PkgVerPeer, ProjectSnapshot, ResolvedDependencyMap,
+    ResolvedDependencySpec, SnapshotEntry,
 };
 use pacquet_reporter::{IgnoredScriptsLog, LogEvent, Reporter, SilentReporter};
 use pretty_assertions::assert_eq;
-use ssri::Integrity;
-use std::{collections::HashMap, fs, sync::Mutex};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 use tempfile::tempdir;
 
 /// Build a rules map from a list of (name, allowed) pairs, for tests.
@@ -138,23 +142,23 @@ fn key(n: &str, v: &str) -> PackageKey {
     PackageKey::new(name(n), ver(v))
 }
 
-fn pkg_meta(requires_build: Option<bool>) -> PackageMetadata {
-    PackageMetadata {
-        resolution: LockfileResolution::Registry(RegistryResolution {
-            integrity: "sha512-deadbeef".parse::<Integrity>().expect("parse integrity"),
-        }),
-        engines: None,
-        cpu: None,
-        os: None,
-        libc: None,
-        deprecated: None,
-        has_bin: None,
-        prepare: None,
-        requires_build,
-        bundled_dependencies: None,
-        peer_dependencies: None,
-        peer_dependencies_meta: None,
-    }
+/// Materialize a `<virtual_store_dir>/<store_name>/node_modules/<pkg_name>/package.json`
+/// fixture so `pkg_requires_build` returns true for `key`. The script body
+/// is harmless (`true`) — the existing tests rely on the policy gate to block
+/// execution, so the script never actually runs.
+fn create_buildable_pkg(virtual_store_dir: &Path, key: &PackageKey) -> PathBuf {
+    let key_str = key.without_peer().to_string();
+    let name_version = key_str.strip_prefix('/').unwrap_or(&key_str);
+    let at_idx = name_version.rfind('@').unwrap_or(name_version.len());
+    let pkg_name = &name_version[..at_idx];
+    let store_name = name_version.replace('/', "+");
+    let pkg_dir = virtual_store_dir.join(&store_name).join("node_modules").join(pkg_name);
+    fs::create_dir_all(&pkg_dir).expect("create pkg dir");
+    let manifest = serde_json::json!({
+        "scripts": { "postinstall": "true" },
+    });
+    fs::write(pkg_dir.join("package.json"), manifest.to_string()).expect("write manifest");
+    pkg_dir
 }
 
 fn root_importers(deps: &[(&str, &str)]) -> HashMap<String, ProjectSnapshot> {
@@ -177,17 +181,15 @@ fn root_importers(deps: &[(&str, &str)]) -> HashMap<String, ProjectSnapshot> {
     )])
 }
 
-/// Default-deny: a `requires_build: true` package not listed in
-/// `allowBuilds` lands in the returned ignored set, sorted lexically.
+/// Default-deny: a buildable package not listed in `allowBuilds` lands in
+/// the returned ignored set, sorted lexically. "Buildable" is computed from
+/// the extracted package directory (postinstall in package.json), matching
+/// upstream's `pkgRequiresBuild`.
 #[test]
 fn build_modules_collects_ignored_builds() {
     let snapshots = HashMap::from([
         (key("zzz", "1.0.0"), SnapshotEntry::default()),
         (key("aaa", "2.0.0"), SnapshotEntry::default()),
-    ]);
-    let packages = HashMap::from([
-        (key("zzz", "1.0.0"), pkg_meta(Some(true))),
-        (key("aaa", "2.0.0"), pkg_meta(Some(true))),
     ]);
     let importers = root_importers(&[("zzz", "1.0.0"), ("aaa", "2.0.0")]);
     let policy = AllowBuildPolicy::default(); // empty → default-deny
@@ -196,11 +198,13 @@ fn build_modules_collects_ignored_builds() {
     let modules_dir = tempdir().expect("create temp dir");
     let lockfile_dir = tempdir().expect("create temp dir");
 
+    create_buildable_pkg(virtual_store_dir.path(), &key("zzz", "1.0.0"));
+    create_buildable_pkg(virtual_store_dir.path(), &key("aaa", "2.0.0"));
+
     let ignored = BuildModules {
         virtual_store_dir: virtual_store_dir.path(),
         modules_dir: modules_dir.path(),
         lockfile_dir: lockfile_dir.path(),
-        packages: Some(&packages),
         snapshots: Some(&snapshots),
         importers: &importers,
         allow_build_policy: &policy,
@@ -225,10 +229,6 @@ fn build_modules_excludes_explicit_deny_from_ignored() {
         (key("denied", "1.0.0"), SnapshotEntry::default()),
         (key("ignored", "1.0.0"), SnapshotEntry::default()),
     ]);
-    let packages = HashMap::from([
-        (key("denied", "1.0.0"), pkg_meta(Some(true))),
-        (key("ignored", "1.0.0"), pkg_meta(Some(true))),
-    ]);
     let importers = root_importers(&[("denied", "1.0.0"), ("ignored", "1.0.0")]);
 
     let policy = AllowBuildPolicy::new(rules([("denied", false)]), false);
@@ -237,11 +237,13 @@ fn build_modules_excludes_explicit_deny_from_ignored() {
     let modules_dir = tempdir().expect("create temp dir");
     let lockfile_dir = tempdir().expect("create temp dir");
 
+    create_buildable_pkg(virtual_store_dir.path(), &key("denied", "1.0.0"));
+    create_buildable_pkg(virtual_store_dir.path(), &key("ignored", "1.0.0"));
+
     let ignored = BuildModules {
         virtual_store_dir: virtual_store_dir.path(),
         modules_dir: modules_dir.path(),
         lockfile_dir: lockfile_dir.path(),
-        packages: Some(&packages),
         snapshots: Some(&snapshots),
         importers: &importers,
         allow_build_policy: &policy,

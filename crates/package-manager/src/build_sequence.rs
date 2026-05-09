@@ -1,5 +1,5 @@
 use crate::graph_sequencer::{GraphSequencerResult, graph_sequencer};
-use pacquet_lockfile::{PackageKey, PackageMetadata, ProjectSnapshot, SnapshotEntry};
+use pacquet_lockfile::{PackageKey, ProjectSnapshot, SnapshotEntry};
 use std::collections::{HashMap, HashSet};
 
 /// Compute topologically ordered chunks of packages that need building.
@@ -12,11 +12,16 @@ use std::collections::{HashMap, HashSet};
 /// chunk are independent and could run concurrently (pacquet currently runs
 /// them sequentially).
 ///
-/// Only nodes whose subtree contains at least one `requires_build` package
-/// appear in the output. Snapshots not reachable from any importer are
-/// excluded — matching pnpm's `getSubgraphToBuild` walk.
+/// Only nodes whose subtree contains at least one build candidate appear in
+/// the output. Snapshots not reachable from any importer are excluded —
+/// matching pnpm's `getSubgraphToBuild` walk.
+///
+/// `requires_build` is the per-snapshot map computed by the caller after
+/// extraction (from each package's manifest scripts and presence of
+/// `binding.gyp` / `.hooks/`). Mirrors the role of `node.requiresBuild`
+/// upstream, which the worker computes from the extracted package contents.
 pub fn build_sequence(
-    packages: &HashMap<PackageKey, PackageMetadata>,
+    requires_build: &HashMap<PackageKey, bool>,
     snapshots: &HashMap<PackageKey, SnapshotEntry>,
     importers: &HashMap<String, ProjectSnapshot>,
 ) -> Vec<Vec<PackageKey>> {
@@ -29,7 +34,7 @@ pub fn build_sequence(
     get_subgraph_to_build(
         &root_dep_paths,
         &children,
-        packages,
+        requires_build,
         &mut nodes_to_build_set,
         &mut nodes_to_build,
         &mut walked,
@@ -125,8 +130,7 @@ fn collect_root_dep_paths(
 }
 
 /// Walk the dep graph from `entry_nodes`, filling `nodes_to_build` with
-/// packages whose subtree (including themselves) contains a `requires_build`
-/// node.
+/// packages whose subtree (including themselves) contains a build candidate.
 ///
 /// Ports `getSubgraphToBuild` from
 /// `https://github.com/pnpm/pnpm/blob/80037699fb/building/during-install/src/buildSequence.ts`.
@@ -135,7 +139,7 @@ fn collect_root_dep_paths(
 fn get_subgraph_to_build(
     entry_nodes: &[PackageKey],
     children: &HashMap<PackageKey, Vec<PackageKey>>,
-    packages: &HashMap<PackageKey, PackageMetadata>,
+    requires_build: &HashMap<PackageKey, bool>,
     nodes_to_build_set: &mut HashSet<PackageKey>,
     nodes_to_build: &mut Vec<PackageKey>,
     walked: &mut HashSet<PackageKey>,
@@ -154,19 +158,17 @@ fn get_subgraph_to_build(
         let child_should_be_built = get_subgraph_to_build(
             &child_paths,
             children,
-            packages,
+            requires_build,
             nodes_to_build_set,
             nodes_to_build,
             walked,
         );
 
-        let metadata_key = dep_path.without_peer();
-        let requires_build =
-            packages.get(&metadata_key).and_then(|m| m.requires_build).unwrap_or(false);
+        let needs_build = requires_build.get(dep_path).copied().unwrap_or(false);
         // TODO: also trigger on `patch != null` when pacquet supports
         // `patchedDependencies`.
 
-        if child_should_be_built || requires_build {
+        if child_should_be_built || needs_build {
             if nodes_to_build_set.insert(dep_path.clone()) {
                 nodes_to_build.push(dep_path.clone());
             }

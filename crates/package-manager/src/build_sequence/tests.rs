@@ -1,11 +1,9 @@
 use super::build_sequence;
 use pacquet_lockfile::{
-    LockfileResolution, PackageKey, PackageMetadata, PkgName, PkgVerPeer, ProjectSnapshot,
-    RegistryResolution, ResolvedDependencyMap, ResolvedDependencySpec, SnapshotDepRef,
-    SnapshotEntry,
+    PackageKey, PkgName, PkgVerPeer, ProjectSnapshot, ResolvedDependencyMap,
+    ResolvedDependencySpec, SnapshotDepRef, SnapshotEntry,
 };
 use pretty_assertions::assert_eq;
-use ssri::Integrity;
 use std::collections::HashMap;
 
 fn name(s: &str) -> PkgName {
@@ -20,23 +18,11 @@ fn key(n: &str, v: &str) -> PackageKey {
     PackageKey::new(name(n), ver(v))
 }
 
-fn pkg_meta(requires_build: Option<bool>) -> PackageMetadata {
-    PackageMetadata {
-        resolution: LockfileResolution::Registry(RegistryResolution {
-            integrity: "sha512-deadbeef".parse::<Integrity>().expect("parse integrity"),
-        }),
-        engines: None,
-        cpu: None,
-        os: None,
-        libc: None,
-        deprecated: None,
-        has_bin: None,
-        prepare: None,
-        requires_build,
-        bundled_dependencies: None,
-        peer_dependencies: None,
-        peer_dependencies_meta: None,
-    }
+/// Build a `requires_build` map for tests from a list of (key, requires_build)
+/// pairs. Mirrors the per-snapshot map the runtime computes from each
+/// extracted package's `pkg_requires_build`.
+fn requires<const N: usize>(entries: [(PackageKey, bool); N]) -> HashMap<PackageKey, bool> {
+    entries.into_iter().collect()
 }
 
 fn snap(deps: &[(&str, &str)]) -> SnapshotEntry {
@@ -85,11 +71,10 @@ fn no_requires_build_yields_empty() {
         (key("a", "1.0.0"), snap(&[("b", "1.0.0")])),
         (key("b", "1.0.0"), snap(&[])),
     ]);
-    let packages =
-        HashMap::from([(key("a", "1.0.0"), pkg_meta(None)), (key("b", "1.0.0"), pkg_meta(None))]);
+    let requires_build = requires([(key("a", "1.0.0"), false), (key("b", "1.0.0"), false)]);
     let importers = root_importers(&[("a", "1.0.0")]);
 
-    let chunks = build_sequence(&packages, &snapshots, &importers);
+    let chunks = build_sequence(&requires_build, &snapshots, &importers);
     dbg!(&chunks);
     assert!(chunks.is_empty(), "no requires_build ⇒ no chunks: {chunks:?}");
 }
@@ -103,13 +88,10 @@ fn leaf_with_requires_build_runs_first() {
         (key("a", "1.0.0"), snap(&[("b", "1.0.0")])),
         (key("b", "1.0.0"), snap(&[])),
     ]);
-    let packages = HashMap::from([
-        (key("a", "1.0.0"), pkg_meta(None)),
-        (key("b", "1.0.0"), pkg_meta(Some(true))),
-    ]);
+    let requires_build = requires([(key("a", "1.0.0"), false), (key("b", "1.0.0"), true)]);
     let importers = root_importers(&[("a", "1.0.0")]);
 
-    let chunks = build_sequence(&packages, &snapshots, &importers);
+    let chunks = build_sequence(&requires_build, &snapshots, &importers);
     assert_eq!(chunks, vec![vec![key("b", "1.0.0")], vec![key("a", "1.0.0")]]);
 }
 
@@ -121,14 +103,14 @@ fn deep_chain_orders_leaf_first() {
         (key("b", "1.0.0"), snap(&[("c", "1.0.0")])),
         (key("c", "1.0.0"), snap(&[])),
     ]);
-    let packages = HashMap::from([
-        (key("a", "1.0.0"), pkg_meta(None)),
-        (key("b", "1.0.0"), pkg_meta(None)),
-        (key("c", "1.0.0"), pkg_meta(Some(true))),
+    let requires_build = requires([
+        (key("a", "1.0.0"), false),
+        (key("b", "1.0.0"), false),
+        (key("c", "1.0.0"), true),
     ]);
     let importers = root_importers(&[("a", "1.0.0")]);
 
-    let chunks = build_sequence(&packages, &snapshots, &importers);
+    let chunks = build_sequence(&requires_build, &snapshots, &importers);
     assert_eq!(
         chunks,
         vec![vec![key("c", "1.0.0")], vec![key("b", "1.0.0")], vec![key("a", "1.0.0")]],
@@ -145,15 +127,15 @@ fn unrelated_subgraph_excluded() {
         (key("x", "1.0.0"), snap(&[("y", "1.0.0")])),
         (key("y", "1.0.0"), snap(&[])),
     ]);
-    let packages = HashMap::from([
-        (key("a", "1.0.0"), pkg_meta(None)),
-        (key("b", "1.0.0"), pkg_meta(Some(true))),
-        (key("x", "1.0.0"), pkg_meta(None)),
-        (key("y", "1.0.0"), pkg_meta(Some(true))),
+    let requires_build = requires([
+        (key("a", "1.0.0"), false),
+        (key("b", "1.0.0"), true),
+        (key("x", "1.0.0"), false),
+        (key("y", "1.0.0"), true),
     ]);
     let importers = root_importers(&[("a", "1.0.0")]);
 
-    let chunks = build_sequence(&packages, &snapshots, &importers);
+    let chunks = build_sequence(&requires_build, &snapshots, &importers);
     let flat: Vec<_> = chunks.into_iter().flatten().collect();
     dbg!(&flat);
     assert!(flat.contains(&key("a", "1.0.0")), "ancestor of build leaf must appear: {flat:?}");
@@ -175,14 +157,14 @@ fn parallel_build_leaves_share_chunk() {
         (key("a", "1.0.0"), snap(&[])),
         (key("b", "1.0.0"), snap(&[])),
     ]);
-    let packages = HashMap::from([
-        (key("root", "1.0.0"), pkg_meta(None)),
-        (key("a", "1.0.0"), pkg_meta(Some(true))),
-        (key("b", "1.0.0"), pkg_meta(Some(true))),
+    let requires_build = requires([
+        (key("root", "1.0.0"), false),
+        (key("a", "1.0.0"), true),
+        (key("b", "1.0.0"), true),
     ]);
     let importers = root_importers(&[("root", "1.0.0")]);
 
-    let chunks = build_sequence(&packages, &snapshots, &importers);
+    let chunks = build_sequence(&requires_build, &snapshots, &importers);
     assert_eq!(chunks.len(), 2);
     let mut leaves = chunks[0].clone();
     leaves.sort_by_key(|k| k.to_string());
