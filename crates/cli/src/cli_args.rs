@@ -35,6 +35,14 @@ pub struct CliArgs {
     pub reporter: ReporterType,
 }
 
+/// Selectable rendering strategy for log events.
+///
+/// Mirrors the names pnpm uses for `--reporter` (`default`, `ndjson`,
+/// `silent`, `append-only`). Only the variants pacquet currently supports
+/// are listed; the others land alongside the default-reporter spawn-and-
+/// pipe (tracked under [#344]).
+///
+/// [#344]: https://github.com/pnpm/pacquet/issues/344
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ReporterType {
     /// Newline-delimited JSON in pnpm's wire format on stderr.
