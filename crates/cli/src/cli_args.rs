@@ -30,7 +30,7 @@ pub struct CliArgs {
     #[clap(short = 'C', long, default_value = ".")]
     pub dir: PathBuf,
 
-    /// Output format.
+    /// Reporter output format.
     #[clap(long, value_enum, default_value_t = ReporterType::Silent, global = true)]
     pub reporter: ReporterType,
 }
