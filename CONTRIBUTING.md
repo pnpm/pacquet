@@ -2,6 +2,22 @@
 
 See also [`CODE_STYLE_GUIDE.md`](./CODE_STYLE_GUIDE.md) for the code style guide.
 
+## Scope and Roadmap
+
+pacquet's scope is defined by the roadmap in [#299](https://github.com/pnpm/pacquet/issues/299). The current focus is **Stage 1 — Headless installer**: making `pacquet install --frozen-lockfile` feature-complete with `pnpm install --frozen-lockfile`.
+
+Stage 1 focuses on `pacquet install` and the settings and behavior needed to match `pnpm install --frozen-lockfile`. Other top-level commands exist in the CLI today, but they are not part of Stage 1 and are not receiving feature work, and new top-level commands are out of scope. pacquet is intended to be executed by the pnpm CLI under the hood, so configuration arrives through pnpm settings (such as `.npmrc` and `pnpm-workspace.yaml`) rather than through new command-line flags.
+
+Before opening a pull request that adds a new setting or user-visible feature, **confirm the feature is listed under Stage 1 of the roadmap**. Work that does not appear under Stage 1 will not be reviewed or merged at this time, regardless of implementation quality. Stage 2 and later items are deferred until Stage 1 is complete.
+
+Opening an issue first is optional when the change is in Stage 1 *and* the implementation exactly mirrors how the pnpm CLI works: same behavior, same defaults, same error codes, same file formats. See [`AGENTS.md`](./AGENTS.md) for the parity rule. Open an issue first when the right approach is not obvious from upstream code, or to coordinate on in-flight work.
+
+Deviating from pnpm's behavior is not an option in pacquet. If you believe pnpm itself should change, raise it in the [pnpm repository](https://github.com/pnpm/pnpm) first. Once the change has landed in pnpm and shipped, the corresponding port can be made here.
+
+Bug fixes, performance improvements, tests, and documentation for behavior that already exists do not need a roadmap entry and may be sent directly as pull requests.
+
+Pull requests for new top-level commands, or for features outside the current Stage 1 scope, will be closed with a pointer to the roadmap.
+
 ## Commit Message Convention
 
 This project uses [Conventional Commits](https://www.conventionalcommits.org/).
