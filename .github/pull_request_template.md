@@ -2,10 +2,11 @@
 Thanks for contributing to pacquet!
 
 Before opening this PR, please read the "Scope and Roadmap" section of
-CONTRIBUTING.md. Stage 1 covers a single command, `install`. New top-level
-commands are out of scope. New settings or user-visible features must be
-listed under Stage 1 of the roadmap (https://github.com/pnpm/pacquet/issues/299)
-to be considered. PRs outside that scope will be closed.
+CONTRIBUTING.md. Stage 1 focuses on `pacquet install`. Other existing
+top-level commands are not part of Stage 1, and new top-level commands are
+out of scope. New settings or user-visible features must be listed under
+Stage 1 of the roadmap (https://github.com/pnpm/pacquet/issues/299) to be
+considered. PRs outside that scope will be closed.
 
 Bug fixes, performance work, tests, and documentation for existing behavior
 do not need a roadmap entry.
