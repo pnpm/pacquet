@@ -303,21 +303,40 @@ where
     let cmd_body = generate_cmd_shim(target_path, &cmd_path, runtime.as_ref());
     let ps1_body = generate_pwsh_shim(target_path, &ps1_path, runtime.as_ref());
 
-    // Idempotent skip only fires when **all three** flavors are already
-    // present and the canonical `.sh` shim points at the right target.
-    // Gating on the `.sh` flavor alone (an earlier version of this code)
-    // left the upgrade path broken: a previous install (e.g. older
-    // pacquet, partial-write crash) might have written `.sh` correctly
-    // but never written `.cmd`/`.ps1`, in which case the marker check
+    // Idempotent skip only fires when all three flavors are already
+    // present *and pointing at the right target*. Gating on the `.sh`
+    // flavor alone (an earlier version of this code) left the upgrade
+    // path broken: a previous install (e.g. older pacquet,
+    // partial-write crash) might have written `.sh` correctly but
+    // never written `.cmd`/`.ps1`, in which case the marker check
     // would short-circuit and the missing siblings would never be
     // repaired.
+    //
+    // The `.sh` flavor carries a `# cmd-shim-target=<path>` trailer
+    // that [`is_shim_pointing_at`] reads; the `.cmd` and `.ps1`
+    // flavors don't, so we compare them byte-for-byte against the
+    // freshly generated body. That catches stale/corrupted siblings
+    // that an existence-only check would let slip through (Copilot
+    // flagged this on
+    // <https://github.com/pnpm/pacquet/pull/333#discussion_r3222744353>):
+    // a manually-edited `.cmd` pointing at a stale target, or an
+    // earlier pacquet write with a different relative path, would
+    // bypass the rewrite under the prior `.is_ok()` gate. Generated
+    // bodies are stable across pacquet versions (only the `<target>`
+    // segment moves), so byte equality is a sound equivalence check.
     let sh_marker_ok = matches!(
         Api::read_to_string(shim_path),
         Ok(existing) if is_shim_pointing_at(&existing, target_path),
     );
-    let cmd_exists = Api::read_to_string(&cmd_path).is_ok();
-    let ps1_exists = Api::read_to_string(&ps1_path).is_ok();
-    let already_correct = sh_marker_ok && cmd_exists && ps1_exists;
+    let cmd_ok = matches!(
+        Api::read_to_string(&cmd_path),
+        Ok(existing) if existing == cmd_body,
+    );
+    let ps1_ok = matches!(
+        Api::read_to_string(&ps1_path),
+        Ok(existing) if existing == ps1_body,
+    );
+    let already_correct = sh_marker_ok && cmd_ok && ps1_ok;
 
     if !already_correct {
         Api::write(shim_path, sh_body.as_bytes())

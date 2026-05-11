@@ -98,9 +98,18 @@ pub fn read_head_filled<Api: FsReadHead>(path: &Path, buf: &mut [u8]) -> io::Res
 
 /// Parse the runtime out of the first line of a script's content. Pure
 /// function over bytes so the caller can plug in any I/O strategy.
+///
+/// Does **not** trim leading whitespace before looking for `#!`. The
+/// kernel and upstream cmd-shim both treat `#!` as a shebang only when
+/// it sits at byte 0 of the file; an earlier
+/// `String::from_utf8_lossy(bytes).trim_start()` accepted inputs like
+/// `" \n#!/usr/bin/env node"` as a valid shebang and could select the
+/// wrong runtime for files that just happen to mention `#!` after some
+/// whitespace. The first line is taken exactly as-is (`#!` is matched
+/// by [`parse_shebang`] at column 0 of that line via `strip_prefix`).
 pub fn parse_shebang_from_bytes(bytes: &[u8]) -> Option<ScriptRuntime> {
     let head = String::from_utf8_lossy(bytes);
-    let first_line = head.trim_start().split('\n').next().unwrap_or("").trim_end_matches('\r');
+    let first_line = head.split('\n').next().unwrap_or("").trim_end_matches('\r');
     parse_shebang(first_line)
 }
 
