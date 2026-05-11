@@ -1,5 +1,5 @@
-use super::{get_bins_from_package_manifest, lexical_normalize, pkg_owns_bin};
-use crate::capabilities::RealApi;
+use super::{get_bins_from_package_manifest, pkg_owns_bin};
+use crate::{capabilities::RealApi, path_util::lexical_normalize};
 use pipe_trait::Pipe;
 use serde_json::json;
 use std::{

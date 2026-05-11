@@ -1,7 +1,7 @@
-use crate::capabilities::FsReadHead;
+use crate::{capabilities::FsReadHead, path_util::lexical_normalize};
 use std::{
     io,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 /// Detected runtime for a target script.
@@ -383,22 +383,6 @@ fn relative_path_from(from: &Path, to: &Path) -> PathBuf {
         result.push(".");
     }
     result
-}
-
-fn lexical_normalize(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::ParentDir => {
-                if !out.pop() {
-                    out.push("..");
-                }
-            }
-            Component::CurDir => {}
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
 }
 
 #[cfg(test)]

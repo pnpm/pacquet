@@ -20,6 +20,7 @@
 mod bin_resolver;
 mod capabilities;
 mod link_bins;
+mod path_util;
 mod shim;
 
 pub use bin_resolver::*;

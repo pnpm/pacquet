@@ -1,6 +1,6 @@
-use crate::capabilities::FsWalkFiles;
+use crate::{capabilities::FsWalkFiles, path_util::lexical_normalize};
 use serde_json::Value;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 /// One bin entry resolved from a package's `package.json`.
 ///
@@ -192,22 +192,6 @@ fn is_subdir(parent: &Path, child: &Path) -> bool {
     let parent_norm = lexical_normalize(parent);
     let child_norm = lexical_normalize(child);
     child_norm.starts_with(&parent_norm)
-}
-
-fn lexical_normalize(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::ParentDir => {
-                if !out.pop() {
-                    out.push("..");
-                }
-            }
-            Component::CurDir => {}
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
 }
 
 #[cfg(test)]
