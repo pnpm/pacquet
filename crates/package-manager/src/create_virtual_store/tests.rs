@@ -35,8 +35,8 @@ fn emits_resolved_then_found_in_store_with_matching_identifiers() {
             ) && matches!(
                 &f.message,
                 ProgressMessage::FoundInStore { package_id, requester }
-                    if package_id == "react@18.0.0" && requester == "/proj"
-            )
+                    if package_id == "react@18.0.0" && requester == "/proj",
+            ),
         ),
         "warm-snapshot pair must be (Resolved, FoundInStore) with matching identifiers; got {captured:?}",
     );

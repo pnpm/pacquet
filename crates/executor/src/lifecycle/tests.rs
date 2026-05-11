@@ -60,7 +60,7 @@ fn lifecycle_emits_script_stdio_and_exit_in_order() {
             LifecycleMessage::Script { dep_path, stage, script, .. }
                 if dep_path == "/x@1.0.0"
                 && stage == "postinstall"
-                && script.contains("echo HELLO")
+                && script.contains("echo HELLO"),
         ),
         "first event must be Script(postinstall): {first:?}",
     );
@@ -73,7 +73,7 @@ fn lifecycle_emits_script_stdio_and_exit_in_order() {
         matches!(
             &last.message,
             LifecycleMessage::Exit { dep_path, exit_code, stage, .. }
-                if dep_path == "/x@1.0.0" && *exit_code == 0 && stage == "postinstall"
+                if dep_path == "/x@1.0.0" && *exit_code == 0 && stage == "postinstall",
         ),
         "last event must be Exit(0): {last:?}",
     );
