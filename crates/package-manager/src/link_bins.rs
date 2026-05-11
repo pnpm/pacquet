@@ -26,15 +26,34 @@ use std::{
 pub fn link_direct_dep_bins(modules_dir: &Path, dep_names: &[String]) -> Result<(), LinkBinsError> {
     let direct_dep_locations: Vec<PathBuf> =
         dep_names.iter().map(|name| modules_dir.join(name)).collect();
+    // Swallow only `NotFound`: a direct-dep symlink target can
+    // legitimately be missing right after a partial pacquet run, or
+    // be an in-progress install. Every other IO error (permission
+    // denied, EIO, etc.) and every JSON parse error must surface as
+    // `LinkBinsError::{ReadManifest, ParseManifest}` so the failure
+    // is diagnosable rather than hiding behind a missing `.bin`
+    // entry. Matches the read-side error policy in
+    // `pacquet_cmd_shim::link_bins`.
     let bin_sources: Vec<PackageBinSource> = direct_dep_locations
         .par_iter()
         .filter_map(|location| {
             let manifest_path = location.join("package.json");
-            let bytes = fs::read(&manifest_path).ok()?;
-            let manifest = serde_json::from_slice(&bytes).ok()?;
-            Some(PackageBinSource { location: location.clone(), manifest })
+            let bytes = match fs::read(&manifest_path) {
+                Ok(bytes) => bytes,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
+                Err(error) => {
+                    return Some(Err(LinkBinsError::ReadManifest { path: manifest_path, error }));
+                }
+            };
+            let manifest = match serde_json::from_slice(&bytes) {
+                Ok(manifest) => manifest,
+                Err(error) => {
+                    return Some(Err(LinkBinsError::ParseManifest { path: manifest_path, error }));
+                }
+            };
+            Some(Ok(PackageBinSource { location: location.clone(), manifest }))
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
     if bin_sources.is_empty() {
         return Ok(());
     }
