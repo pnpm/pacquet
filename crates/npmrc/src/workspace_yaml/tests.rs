@@ -136,7 +136,7 @@ fn apply_leaves_unset_fields_alone() {
 
     assert_eq!(
         (npmrc.hoist, npmrc.lockfile, npmrc.registry.clone(), npmrc.auto_install_peers),
-        before
+        before,
     );
 }
 
