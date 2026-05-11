@@ -1,6 +1,7 @@
-use super::WorkspaceSettings;
+use super::{LoadWorkspaceYamlError, WORKSPACE_MANIFEST_FILENAME, WorkspaceSettings};
 use crate::{NodeLinker, Npmrc};
 use pacquet_store_dir::StoreDir;
+use pipe_trait::Pipe;
 use pretty_assertions::assert_eq;
 use std::{fs, path::Path};
 
@@ -35,7 +36,7 @@ packages:
 "#;
     // `pnpm-workspace.yaml` commonly contains top-level keys we do not
     // model in `WorkspaceSettings` (packages list, catalogs, build
-    // allow-lists, …). This guards against regressions that would make
+    // allow-lists, ...). This guards against regressions that would make
     // serde reject those unknown keys during deserialization — i.e.
     // someone adding `deny_unknown_fields` to the struct.
     let _settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
@@ -135,7 +136,7 @@ fn apply_leaves_unset_fields_alone() {
 
     assert_eq!(
         (npmrc.hoist, npmrc.lockfile, npmrc.registry.clone(), npmrc.auto_install_peers),
-        before
+        before,
     );
 }
 
@@ -149,6 +150,27 @@ fn find_walks_up_to_parent_dir() {
     let (found, settings) = WorkspaceSettings::find_and_load(&nested).unwrap().unwrap();
     assert_eq!(found, tmp.path().join("pnpm-workspace.yaml"));
     assert_eq!(settings.store_dir.as_deref(), Some("/s"));
+}
+
+/// Pnpm's `readManifestRaw` only treats `ENOENT` as "no manifest" and
+/// propagates every other failure. A directory entry named
+/// `pnpm-workspace.yaml` is not a missing file, so `find_and_load`
+/// must surface it as `ReadFile` rather than silently walking up.
+#[test]
+fn find_propagates_when_manifest_path_is_a_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    tmp.path().join(WORKSPACE_MANIFEST_FILENAME).pipe(fs::create_dir).unwrap();
+
+    let err = tmp
+        .path()
+        .pipe_as_ref(WorkspaceSettings::find_and_load)
+        .expect_err("a directory at the manifest path is not a missing file");
+    assert!(
+        matches!(err, LoadWorkspaceYamlError::ReadFile { .. }),
+        "expected ReadFile, got {err:?}",
+    );
+
+    drop(tmp); // clean up
 }
 
 #[test]

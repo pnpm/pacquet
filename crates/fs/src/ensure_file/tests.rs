@@ -95,7 +95,7 @@ fn unix_mode_is_applied_on_new_files() {
     ensure_file(&path, b"#!/bin/sh\n", Some(0o755)).expect("mode-honouring write");
 
     let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o700;
-    assert_eq!(mode, 0o700, "owner rwx bits of 0o755 must survive any reasonable umask",);
+    assert_eq!(mode, 0o700, "owner rwx bits of 0o755 must survive any reasonable umask");
 }
 
 /// `-exec` suffix becomes `x` in the temp name (pnpm `removeSuffix`
@@ -162,7 +162,7 @@ fn transient_rename_error_classifier() {
     ] {
         assert!(
             !is_transient_rename_error(&io::Error::from(kind)),
-            "{kind:?} must not be classified as transient"
+            "{kind:?} must not be classified as transient",
         );
     }
 }

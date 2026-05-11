@@ -123,7 +123,7 @@ pub fn link_file<R: Reporter>(
     // `fs::metadata` follows symlinks and returns `Err(NotFound)` for
     // dangling ones — so only treat `NotFound` as the "might need
     // cleanup" case. For anything else (`PermissionDenied`, transient
-    // NFS errors, …) fall through to the import call below without
+    // NFS errors, ...) fall through to the import call below without
     // touching the existing dirent: deleting a potentially live
     // symlink on a stat error would be more destructive than letting
     // the real error surface.
@@ -167,7 +167,7 @@ pub fn link_file<R: Reporter>(
         // permitted) but propagates other errors. Match that: if the
         // user asks for hardlink and they've put their store on a
         // different device from `node_modules`, copy silently; anything
-        // else (missing source, permission denied, …) is a real error
+        // else (missing source, permission denied, ...) is a real error
         // and should surface. No caching — the `fs::hard_link` syscall
         // itself is already cheap; pnpm doesn't cache this path either.
         PackageImportMethod::Hardlink => match fs::hard_link(source_file, target_link) {
@@ -262,7 +262,7 @@ fn is_cross_device(err: &io::Error) -> bool {
 fn is_call_error(err: &io::Error) -> bool {
     matches!(
         err.kind(),
-        io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied | io::ErrorKind::AlreadyExists
+        io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied | io::ErrorKind::AlreadyExists,
     )
 }
 

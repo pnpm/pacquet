@@ -1,9 +1,12 @@
 mod add;
+mod build_modules;
+mod build_sequence;
 mod build_snapshot;
 mod create_cas_files;
 mod create_symlink_layout;
 mod create_virtual_dir_by_snapshot;
 mod create_virtual_store;
+mod graph_sequencer;
 mod install;
 mod install_frozen_lockfile;
 mod install_package_by_snapshot;
@@ -16,11 +19,14 @@ mod symlink_direct_dependencies;
 mod symlink_package;
 
 pub use add::*;
+pub use build_modules::*;
+pub use build_sequence::*;
 pub use build_snapshot::*;
 pub use create_cas_files::*;
 pub use create_symlink_layout::*;
 pub use create_virtual_dir_by_snapshot::*;
 pub use create_virtual_store::*;
+pub use graph_sequencer::*;
 pub use install::*;
 pub use install_frozen_lockfile::*;
 pub use install_package_by_snapshot::*;

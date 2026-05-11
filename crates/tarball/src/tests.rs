@@ -199,8 +199,8 @@ async fn packages_under_orgs_should_work() {
             "package.json",
             "test/index.test.js",
             "types/index.d.ts",
-            "types/index.test-d.ts"
-        ]
+            "types/index.test-d.ts",
+        ],
     );
 
     drop(store_dir);
@@ -591,7 +591,7 @@ async fn falls_through_when_cafs_file_missing() {
     .expect_err("stale index entry must not resolve to a cache hit");
     assert!(
         matches!(err, TarballError::FetchTarball(_)),
-        "expected fall-through to network fetch, got: {err:?}"
+        "expected fall-through to network fetch, got: {err:?}",
     );
 
     drop(store_dir);
@@ -650,7 +650,7 @@ async fn falls_through_when_digest_is_malformed() {
     .expect_err("corrupt digest must not resolve to a cache hit");
     assert!(
         matches!(err, TarballError::FetchTarball(_)),
-        "expected fall-through to network fetch, got: {err:?}"
+        "expected fall-through to network fetch, got: {err:?}",
     );
 
     drop(store_dir);
@@ -712,7 +712,7 @@ async fn falls_through_when_cafs_path_is_a_directory() {
     .expect_err("directory at CAFS path must not resolve to a cache hit");
     assert!(
         matches!(err, TarballError::FetchTarball(_)),
-        "expected fall-through to network fetch, got: {err:?}"
+        "expected fall-through to network fetch, got: {err:?}",
     );
 
     drop(store_dir);
@@ -784,7 +784,7 @@ async fn falls_through_when_cafs_path_is_a_symlink() {
     .expect_err("symlink at CAFS path must not resolve to a cache hit");
     assert!(
         matches!(err, TarballError::FetchTarball(_)),
-        "expected fall-through to network fetch, got: {err:?}"
+        "expected fall-through to network fetch, got: {err:?}",
     );
 
     drop(store_dir);
@@ -821,7 +821,7 @@ fn extract_propagates_malformed_tar_instead_of_panicking() {
 
     assert!(
         matches!(err, TarballError::ReadTarballEntries(_)),
-        "expected ReadTarballEntries, got: {err:?}"
+        "expected ReadTarballEntries, got: {err:?}",
     );
 
     drop(tempdir);
@@ -1046,7 +1046,7 @@ async fn retries_integrity_mismatch_until_exhausted() {
     )
     .await
     .expect_err("integrity mismatch should exhaust the retry budget");
-    assert!(matches!(err, TarballError::Checksum(_)), "expected Checksum error, got {err:?}",);
+    assert!(matches!(err, TarballError::Checksum(_)), "expected Checksum error, got {err:?}");
     mock.assert_async().await;
     drop(store_dir_keep);
 }
@@ -1494,7 +1494,7 @@ async fn mem_cache_hit_emits_found_in_store_for_second_requester() {
                 if matches!(
                     &log.message,
                     ProgressMessage::FoundInStore { package_id, requester }
-                        if package_id == "second@2.0.0" && requester == "/proj"
+                        if package_id == "second@2.0.0" && requester == "/proj",
                 )
         )),
         "found_in_store must fire for the second requester's package_id; got {captured:?}",
@@ -1615,8 +1615,10 @@ async fn run_with_mem_cache_recovers_from_owning_fetch_error() {
 /// tarball pipeline:
 ///
 /// * `pnpm:fetching-progress started` once per *attempt* — so a 503 +
-///   200 retry pattern emits twice with `attempt = 0` then
-///   `attempt = 1`. `size` carries the response's `Content-Length`
+///   200 retry pattern emits twice with `attempt = 1` then
+///   `attempt = 2` (one-indexed, matching pnpm's wire shape — the
+///   default reporter's `reportBigTarballsProgress` filters on
+///   `attempt === 1`). `size` carries the response's `Content-Length`
 ///   (mockito sends one for `with_body`).
 /// * `pnpm:fetching-progress in_progress` is throttled to ~200ms; the
 ///   tiny FASTIFY tarball used here downloads in well under that, so
@@ -1689,7 +1691,7 @@ async fn fetching_progress_and_fetched_events_fire_during_download() {
         })
         .collect();
     let attempts: Vec<u32> = started.iter().map(|(a, _)| *a).collect();
-    assert_eq!(attempts, vec![0, 1], "started must fire once per attempt; got {captured:?}");
+    assert_eq!(attempts, vec![1, 2], "started must fire once per attempt; got {captured:?}");
     // Both attempts have a response head (mockito sends Content-Length
     // for `with_body(...)` and `with_status(503)` likewise), so both
     // `started` events must carry a populated `size`. Pinning this
@@ -1706,7 +1708,7 @@ async fn fetching_progress_and_fetched_events_fire_during_download() {
             matches!(
                 e,
                 LogEvent::Progress(log)
-                    if matches!(&log.message, ProgressMessage::Fetched { .. })
+                    if matches!(&log.message, ProgressMessage::Fetched { .. }),
             )
         })
         .count();
@@ -1894,7 +1896,7 @@ async fn found_in_store_event_fires_on_cache_hit() {
                 if matches!(
                     &log.message,
                     ProgressMessage::FoundInStore { package_id, requester }
-                        if package_id == "@fastify/error@3.3.0" && requester == "/proj"
+                        if package_id == "@fastify/error@3.3.0" && requester == "/proj",
                 )
         )),
         "found_in_store must fire on cache hit; got {captured:?}",

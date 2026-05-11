@@ -1,8 +1,12 @@
 use crate::{NodeLinker, Npmrc, PackageImportMethod};
+use derive_more::{Display, Error};
+use miette::Diagnostic;
 use pacquet_store_dir::StoreDir;
+use pipe_trait::Pipe;
 use serde::Deserialize;
 use std::{
-    fs, io,
+    fs,
+    io::{self, ErrorKind},
     path::{Path, PathBuf},
 };
 
@@ -56,31 +60,65 @@ pub struct WorkspaceSettings {
 pub const WORKSPACE_MANIFEST_FILENAME: &str = "pnpm-workspace.yaml";
 
 /// Error when reading `pnpm-workspace.yaml`.
-#[derive(Debug)]
+///
+/// Pnpm's
+/// [`workspace-manifest-reader`](https://github.com/pnpm/pnpm/blob/8eb1be4988/workspace/workspace-manifest-reader/src/index.ts)
+/// treats `ENOENT` as "no manifest" and propagates every other failure.
+/// Pacquet mirrors that split. `serde_saphyr::Error` is boxed so the
+/// returned `Result` stays small.
+#[derive(Debug, Display, Error, Diagnostic)]
 #[non_exhaustive]
 pub enum LoadWorkspaceYamlError {
-    ReadFile(io::Error),
-    ParseYaml(serde_saphyr::Error),
+    #[display("Failed to read pnpm-workspace.yaml at {}: {source}", path.display())]
+    ReadFile {
+        path: PathBuf,
+        #[error(source)]
+        source: io::Error,
+    },
+    #[display("Failed to parse pnpm-workspace.yaml at {}: {source}", path.display())]
+    ParseYaml {
+        path: PathBuf,
+        #[error(source)]
+        source: Box<serde_saphyr::Error>,
+    },
 }
 
 impl WorkspaceSettings {
-    /// Walk up from `start_dir` looking for a `pnpm-workspace.yaml`. Returns
-    /// `Ok(None)` if none is found before reaching the filesystem root.
-    ///
-    /// Mirrors pnpm's behaviour in
-    /// [`loadNpmrcFiles.ts`](https://github.com/pnpm/pnpm/blob/1819226b51/config/reader/src/loadNpmrcFiles.ts)
-    /// — the first ancestor containing a `pnpm-workspace.yaml` is the
-    /// workspace root, and its config applies.
+    /// Walk up from `start_dir` looking for a readable `pnpm-workspace.yaml`.
+    /// Returns `Ok(None)` if no ancestor has one. Read or parse failures
+    /// other than `ENOENT` propagate, matching pnpm's
+    /// [`readManifestRaw`](https://github.com/pnpm/pnpm/blob/8eb1be4988/workspace/workspace-manifest-reader/src/index.ts).
     pub fn find_and_load(
         start_dir: &Path,
     ) -> Result<Option<(PathBuf, Self)>, LoadWorkspaceYamlError> {
-        let Some(path) = find_workspace_manifest(start_dir) else {
-            return Ok(None);
-        };
-        let text = fs::read_to_string(&path).map_err(LoadWorkspaceYamlError::ReadFile)?;
-        let settings: WorkspaceSettings =
-            serde_saphyr::from_str(&text).map_err(LoadWorkspaceYamlError::ParseYaml)?;
-        Ok(Some((path, settings)))
+        for dir in start_dir.ancestors() {
+            let path = dir.join(WORKSPACE_MANIFEST_FILENAME);
+            let read_result = fs::read_to_string(&path);
+
+            // Walk up only when the read failed because nothing exists at
+            // this level. Every other error (including `EISDIR` for a
+            // directory named `pnpm-workspace.yaml`, or permission denied)
+            // propagates, matching pnpm where `ENOENT` is the only silent
+            // case.
+            if let Err(error) = &read_result
+                && error.kind() == ErrorKind::NotFound
+            {
+                continue;
+            }
+
+            let settings: WorkspaceSettings = read_result
+                .map_err(|source| LoadWorkspaceYamlError::ReadFile { path: path.clone(), source })?
+                .pipe_as_ref(serde_saphyr::from_str)
+                .map_err(Box::new)
+                .map_err(|source| LoadWorkspaceYamlError::ParseYaml {
+                    path: path.clone(),
+                    source,
+                })?;
+
+            return Ok(Some((path, settings)));
+        }
+
+        Ok(None)
     }
 
     /// Apply every set field onto `npmrc`, leaving unset ones untouched.
@@ -90,77 +128,35 @@ impl WorkspaceSettings {
     /// resolve-against-cwd behaviour but anchored at the workspace root
     /// where the yaml was found, which is what pnpm does.
     pub fn apply_to(self, npmrc: &mut Npmrc, base_dir: &Path) {
-        if let Some(v) = self.hoist {
-            npmrc.hoist = v;
+        macro_rules! apply {
+            ($($field:ident),* $(,)?) => {$(
+                if let Some(v) = self.$field {
+                    npmrc.$field = v;
+                }
+            )*};
         }
-        if let Some(v) = self.hoist_pattern {
-            npmrc.hoist_pattern = v;
+
+        apply! {
+            hoist, hoist_pattern, public_hoist_pattern, shamefully_hoist,
+            node_linker, symlink, package_import_method, modules_cache_max_age,
+            lockfile, prefer_frozen_lockfile, lockfile_include_tarball_url,
+            auto_install_peers, dedupe_peer_dependents, strict_peer_dependencies,
+            resolve_peers_from_workspace_root, verify_store_integrity,
+            fetch_retries, fetch_retry_factor, fetch_retry_mintimeout,
+            fetch_retry_maxtimeout,
         }
-        if let Some(v) = self.public_hoist_pattern {
-            npmrc.public_hoist_pattern = v;
-        }
-        if let Some(v) = self.shamefully_hoist {
-            npmrc.shamefully_hoist = v;
-        }
-        if let Some(v) = self.store_dir {
-            npmrc.store_dir = StoreDir::from(resolve(base_dir, &v));
-        }
+
         if let Some(v) = self.modules_dir {
             npmrc.modules_dir = resolve(base_dir, &v);
-        }
-        if let Some(v) = self.node_linker {
-            npmrc.node_linker = v;
-        }
-        if let Some(v) = self.symlink {
-            npmrc.symlink = v;
         }
         if let Some(v) = self.virtual_store_dir {
             npmrc.virtual_store_dir = resolve(base_dir, &v);
         }
-        if let Some(v) = self.package_import_method {
-            npmrc.package_import_method = v;
-        }
-        if let Some(v) = self.modules_cache_max_age {
-            npmrc.modules_cache_max_age = v;
-        }
-        if let Some(v) = self.lockfile {
-            npmrc.lockfile = v;
-        }
-        if let Some(v) = self.prefer_frozen_lockfile {
-            npmrc.prefer_frozen_lockfile = v;
-        }
-        if let Some(v) = self.lockfile_include_tarball_url {
-            npmrc.lockfile_include_tarball_url = v;
+        if let Some(v) = self.store_dir {
+            npmrc.store_dir = StoreDir::from(resolve(base_dir, &v));
         }
         if let Some(v) = self.registry {
             npmrc.registry = if v.ends_with('/') { v } else { format!("{v}/") };
-        }
-        if let Some(v) = self.auto_install_peers {
-            npmrc.auto_install_peers = v;
-        }
-        if let Some(v) = self.dedupe_peer_dependents {
-            npmrc.dedupe_peer_dependents = v;
-        }
-        if let Some(v) = self.strict_peer_dependencies {
-            npmrc.strict_peer_dependencies = v;
-        }
-        if let Some(v) = self.resolve_peers_from_workspace_root {
-            npmrc.resolve_peers_from_workspace_root = v;
-        }
-        if let Some(v) = self.verify_store_integrity {
-            npmrc.verify_store_integrity = v;
-        }
-        if let Some(v) = self.fetch_retries {
-            npmrc.fetch_retries = v;
-        }
-        if let Some(v) = self.fetch_retry_factor {
-            npmrc.fetch_retry_factor = v;
-        }
-        if let Some(v) = self.fetch_retry_mintimeout {
-            npmrc.fetch_retry_mintimeout = v;
-        }
-        if let Some(v) = self.fetch_retry_maxtimeout {
-            npmrc.fetch_retry_maxtimeout = v;
         }
     }
 }

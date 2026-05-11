@@ -19,8 +19,9 @@ pub enum StoreCommand {
 }
 
 impl StoreCommand {
-    /// Execute the subcommand.
-    pub fn run<'a>(self, config: impl FnOnce() -> &'a Npmrc) -> miette::Result<()> {
+    /// Execute the subcommand. `config` is fallible so a malformed
+    /// `pnpm-workspace.yaml` surfaces as a hard error here too.
+    pub fn run<'a>(self, config: impl FnOnce() -> miette::Result<&'a Npmrc>) -> miette::Result<()> {
         match self {
             StoreCommand::Store => {
                 panic!("Not implemented")
@@ -29,10 +30,10 @@ impl StoreCommand {
                 panic!("Not implemented")
             }
             StoreCommand::Prune => {
-                config().store_dir.prune().wrap_err("pruning store")?;
+                config()?.store_dir.prune().wrap_err("pruning store")?;
             }
             StoreCommand::Path => {
-                println!("{}", config().store_dir.display());
+                println!("{}", config()?.store_dir.display());
             }
         }
 

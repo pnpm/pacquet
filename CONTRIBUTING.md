@@ -2,6 +2,22 @@
 
 See also [`CODE_STYLE_GUIDE.md`](./CODE_STYLE_GUIDE.md) for the code style guide.
 
+## Scope and Roadmap
+
+pacquet's scope is defined by the roadmap in [#299](https://github.com/pnpm/pacquet/issues/299). The current focus is **Stage 1 — Headless installer**: making `pacquet install --frozen-lockfile` feature-complete with `pnpm install --frozen-lockfile`.
+
+Stage 1 focuses on `pacquet install` and the settings and behavior needed to match `pnpm install --frozen-lockfile`. Other top-level commands exist in the CLI today, but they are not part of Stage 1 and are not receiving feature work, and new top-level commands are out of scope. pacquet is intended to be executed by the pnpm CLI under the hood, so configuration arrives through pnpm settings (such as `.npmrc` and `pnpm-workspace.yaml`) rather than through new command-line flags.
+
+Before opening a pull request that adds a new setting or user-visible feature, **confirm the feature is listed under Stage 1 of the roadmap**. Work that does not appear under Stage 1 will not be reviewed or merged at this time, regardless of implementation quality. Stage 2 and later items are deferred until Stage 1 is complete.
+
+Opening an issue first is optional when the change is in Stage 1 *and* the implementation exactly mirrors how the pnpm CLI works: same behavior, same defaults, same error codes, same file formats. See [`AGENTS.md`](./AGENTS.md) for the parity rule. Open an issue first when the right approach is not obvious from upstream code, or to coordinate on in-flight work.
+
+Deviating from pnpm's behavior is not an option in pacquet. If you believe pnpm itself should change, raise it in the [pnpm repository](https://github.com/pnpm/pnpm) first. Once the change has landed in pnpm and shipped, the corresponding port can be made here.
+
+Bug fixes, performance improvements, tests, and documentation for behavior that already exists do not need a roadmap entry and may be sent directly as pull requests.
+
+Pull requests for new top-level commands, or for features outside the current Stage 1 scope, will be closed with a pointer to the roadmap.
+
 ## Commit Message Convention
 
 This project uses [Conventional Commits](https://www.conventionalcommits.org/).
@@ -30,15 +46,41 @@ Write documentation, comments, and other prose for ease of understanding first. 
 
 See [`CODE_STYLE_GUIDE.md`](./CODE_STYLE_GUIDE.md). Formatting and lint-level rules are enforced by `cargo fmt`, `taplo format`, and `cargo clippy`; the style guide covers everything those tools cannot enforce.
 
+## Dylint / perfectionist
+
+A separate CI job (`Dylint`) runs [perfectionist](https://github.com/KSXGitHub/perfectionist) over the workspace. perfectionist is early, unstable software and is not yet battle-tested, so it can produce false positives and false negatives.
+
+If perfectionist flags code that is actually correct, or fails to flag code its rule description says it should, do not work around the lint silently:
+
+1. Silence the specific finding at the affected site with `#[expect(perfectionist::rule_name, reason = "...")]`. Always include a `reason`, and write it as a sentence explaining why the lint is wrong here. Do not use `#[allow(...)]`; `#[expect]` errors when the suppression is no longer needed, so the workaround disappears once perfectionist is fixed.
+2. Open a new issue on [`KSXGitHub/perfectionist`](https://github.com/KSXGitHub/perfectionist/issues/new) describing the false positive or false negative, with a minimal repro, and tag `/cc @KSXGitHub` in the issue body.
+
+The same procedure applies when a perfectionist rule itself is wrong — for example, a rule that flags an idiom the rule's documentation says it should permit. Silence the site with `#[expect(..., reason = "...")]`, link the upstream issue from the `reason` if one already exists, and file the issue if it does not. Do not edit `dylint.toml` to globally disable a rule, and do not pin perfectionist to an older `tag` to dodge a finding.
+
+You can run the same check locally with `just dylint` (requires `cargo-dylint` and `dylint-link`; install with `cargo binstall cargo-dylint dylint-link`).
+
 ## Setup
 
-Install the Rust toolchain pinned in [`rust-toolchain.toml`](./rust-toolchain.toml). Then install the project's task tools and the git pre-push hook:
+### Prerequisites
+
+Install these first:
+
+- [`rustup`](https://rustup.rs)
+- [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall)
+- [`just`](https://just.systems)
+- Node.js
+- [`pnpm`](https://pnpm.io)
+- `git`
+
+### Install
+
+Install the project's task tools and the git pre-push hook:
 
 ```sh
 just init
 ```
 
-`just init` requires [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall). It installs `cargo-nextest`, `cargo-watch`, `cargo-insta`, `typos-cli`, `taplo-cli`, `wasm-pack`, and `cargo-llvm-cov`, then points `git` at the tracked `.githooks/` directory so the pre-push format check runs on `git push`.
+`just init` invokes `cargo-binstall` to install `cargo-nextest`, `cargo-watch`, `cargo-insta`, `typos-cli`, `taplo-cli`, `wasm-pack`, and `cargo-llvm-cov`, then points `git` at the tracked `.githooks/` directory so the pre-push format check runs on `git push`.
 
 Install the test dependencies:
 

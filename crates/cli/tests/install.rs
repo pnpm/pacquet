@@ -170,6 +170,62 @@ fn frozen_lockfile_should_be_able_to_handle_big_lockfile() {
     drop((root, mock_instance)); // cleanup
 }
 
+/// Regression test for the NDJSON `prefix` field. `--reporter=ndjson`
+/// must emit each bunyan envelope with the canonicalized install root
+/// — not the relative `"."` that `dir.join("package.json").parent()`
+/// produced when `--dir` defaulted to `.`. The downstream consumer
+/// (`@pnpm/cli.default-reporter` running in a separate process) compares
+/// every event's `prefix` to its own `process.cwd()` and prepends a
+/// redundant `<prefix> | ` adornment whenever they disagree, so a `"."`
+/// prefix made every progress / stats line render with `.   |   `.
+#[test]
+fn install_emits_canonical_prefix_in_ndjson_events() {
+    let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =
+        CommandTempCwd::init().add_mocked_registry();
+    let AddMockedRegistry { mock_instance, .. } = npmrc_info;
+
+    eprintln!("Creating package.json...");
+    let manifest_path = workspace.join("package.json");
+    let package_json = serde_json::json!({
+        "dependencies": {
+            "@pnpm.e2e/hello-world-js-bin-parent": "1.0.0",
+        },
+    });
+    fs::write(&manifest_path, package_json.to_string()).expect("write to package.json");
+
+    eprintln!("Executing command with --reporter=ndjson...");
+    let output =
+        pacquet.with_args(["--reporter=ndjson", "install"]).output().expect("run pacquet install");
+    assert!(
+        output.status.success(),
+        "pacquet install exited non-zero: stderr={}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    eprintln!("Collecting `prefix` values from NDJSON stderr...");
+    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
+    let prefixes: Vec<String> = stderr
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|val| val.get("prefix").and_then(|p| p.as_str()).map(str::to_owned))
+        .collect();
+    assert!(
+        !prefixes.is_empty(),
+        "expected at least one event with a `prefix` field; stderr was:\n{stderr}",
+    );
+
+    let expected = dunce::canonicalize(&workspace).expect("canonicalize workspace");
+    let expected = expected.to_str().expect("workspace path is UTF-8");
+    for prefix in &prefixes {
+        assert_eq!(
+            prefix, expected,
+            "every event's prefix must be the canonicalized install root, not relative",
+        );
+    }
+
+    drop((root, mock_instance)); // cleanup
+}
+
 #[test]
 fn should_install_circular_dependencies() {
     let CommandTempCwd { pacquet, root, workspace, npmrc_info, .. } =

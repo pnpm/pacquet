@@ -276,6 +276,11 @@ impl Npmrc {
     /// come from `pnpm-workspace.yaml` or CLI flags, matching pnpm 11.
     ///
     /// The yaml wins over `.npmrc` on any key it sets.
+    ///
+    /// Returns [`LoadWorkspaceYamlError`] when an existing
+    /// `pnpm-workspace.yaml` cannot be read or parsed, matching pnpm's
+    /// [`readWorkspaceManifest`](https://github.com/pnpm/pnpm/blob/8eb1be4988/workspace/workspace-manifest-reader/src/index.ts).
+    /// A missing file is not an error.
     //
     // TODO: lift `current_dir`, `home_dir`, and `default` into
     // capability traits on `Api` once the wider DI sweep tracked in
@@ -286,7 +291,7 @@ impl Npmrc {
         current_dir: CurrentDir,
         home_dir: HomeDir,
         default: Default,
-    ) -> Self
+    ) -> Result<Self, LoadWorkspaceYamlError>
     where
         Api: EnvVar,
         CurrentDir: FnOnce() -> Result<PathBuf, Error>,
@@ -312,11 +317,10 @@ impl Npmrc {
         // creds end up keyed at whatever URL pnpm would use to fetch.
         auth.apply_registry_and_warn(&mut npmrc);
 
-        // Layer pnpm-workspace.yaml overrides on top. Missing file or
-        // unreadable yaml is silently ignored, matching .npmrc's
-        // best-effort behaviour above.
+        // Layer pnpm-workspace.yaml overrides on top. A missing file is
+        // silent. Read or parse failures propagate to the caller.
         if let Some(start) = cwd
-            && let Ok(Some((path, settings))) = WorkspaceSettings::find_and_load(&start)
+            && let Some((path, settings)) = WorkspaceSettings::find_and_load(&start)?
         {
             let base_dir = path.parent().unwrap_or(&start).to_path_buf();
             settings.apply_to(&mut npmrc, &base_dir);
@@ -328,7 +332,7 @@ impl Npmrc {
         // `for_url()` lookups never panic.
         auth.build_auth_headers(&mut npmrc);
 
-        npmrc
+        Ok(npmrc)
     }
 
     /// Persist the config data until the program terminates.
@@ -448,7 +452,7 @@ mod tests {
         let value: Npmrc = serde_ini::from_str("virtual-store-dir=node_modules/.pacquet").unwrap();
         assert_eq!(
             value.virtual_store_dir,
-            env::current_dir().unwrap().join("node_modules/.pacquet")
+            env::current_dir().unwrap().join("node_modules/.pacquet"),
         );
     }
 
@@ -490,7 +494,8 @@ mod tests {
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || unreachable!("shouldn't reach home dir"),
             Npmrc::new,
-        );
+        )
+        .expect("workspace yaml absent => no error");
         assert_eq!(config.registry, "https://cwd.example/");
     }
 
@@ -507,7 +512,8 @@ mod tests {
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || None,
             Npmrc::new,
-        );
+        )
+        .expect("workspace yaml absent => no error");
         assert_eq!(config.symlink, defaults.symlink);
         assert_eq!(config.lockfile, defaults.lockfile);
         assert_eq!(config.hoist, defaults.hoist);
@@ -530,7 +536,8 @@ mod tests {
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || None,
             Npmrc::new,
-        );
+        )
+        .expect("workspace yaml absent => no error");
         assert_eq!(config.fetch_retries, defaults.fetch_retries);
         assert_eq!(config.fetch_retry_factor, defaults.fetch_retry_factor);
         assert_eq!(config.fetch_retry_mintimeout, defaults.fetch_retry_mintimeout);
@@ -546,7 +553,8 @@ mod tests {
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || None,
             Npmrc::new,
-        );
+        )
+        .expect("workspace yaml absent => no error");
         assert!(config.symlink); // default — invalid .npmrc is silently ignored
     }
 
@@ -560,7 +568,8 @@ mod tests {
             || current_dir.path().to_path_buf().pipe(Ok::<_, ()>),
             || home_dir.path().to_path_buf().pipe(Some),
             Npmrc::new,
-        );
+        )
+        .expect("workspace yaml absent => no error");
         assert_eq!(config.registry, "https://home.example/");
     }
 
@@ -612,7 +621,8 @@ mod tests {
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || unreachable!("shouldn't reach home dir"),
             Npmrc::new,
-        );
+        )
+        .expect("yaml is valid");
         assert_eq!(config.registry, "https://from-yaml.test/");
     }
 
@@ -629,7 +639,8 @@ mod tests {
             || nested.clone().pipe(Ok::<_, ()>),
             || None,
             Npmrc::new,
-        );
+        )
+        .expect("workspace yaml absent => no error");
         assert!(!config.symlink);
     }
 
@@ -641,7 +652,8 @@ mod tests {
             || current_dir.path().to_path_buf().pipe(Ok::<_, ()>),
             || home_dir.path().to_path_buf().pipe(Some),
             || serde_ini::from_str("symlink=false").unwrap(),
-        );
+        )
+        .expect("workspace yaml absent => no error");
         assert!(!config.symlink);
     }
 
@@ -671,6 +683,7 @@ mod tests {
         assert_eq!(
             config.auth_headers.for_url("https://reg.com/foo").as_deref(),
             Some("Bearer ${MISSING_TOKEN}"),
+        .expect("workspace yaml absent => no error");
         );
     }
 }

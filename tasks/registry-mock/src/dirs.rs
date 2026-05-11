@@ -17,7 +17,7 @@ pub fn workspace_root() -> &'static Path {
             .expect("cargo locate-project");
         assert!(
             output.status.success(),
-            "Command `cargo locate-project` exits with non-zero status code"
+            "Command `cargo locate-project` exits with non-zero status code",
         );
         output
             .stdout
