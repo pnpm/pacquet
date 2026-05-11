@@ -27,8 +27,6 @@ pub struct PackageMetadata {
     pub has_bin: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prepare: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub requires_build: Option<bool>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bundled_dependencies: Option<Vec<String>>,

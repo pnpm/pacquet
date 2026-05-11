@@ -11,5 +11,14 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
+pacquet-package-manifest = { workspace = true }
+pacquet-reporter         = { workspace = true }
+
 derive_more = { workspace = true }
 miette      = { workspace = true }
+serde_json  = { workspace = true }
+tracing     = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile          = { workspace = true }

@@ -96,7 +96,6 @@ pub fn build_package_snapshot(
         deprecated: None,
         has_bin: None,
         prepare: None,
-        requires_build: None,
         bundled_dependencies: None,
         peer_dependencies: None,
         peer_dependencies_meta: None,

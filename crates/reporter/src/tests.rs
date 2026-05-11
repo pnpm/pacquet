@@ -6,10 +6,11 @@ use serde_json::Value;
 
 use crate::{
     AddedRoot, ContextLog, DependencyType, Envelope, FetchingProgressLog, FetchingProgressMessage,
-    GetHostName, LogEvent, LogLevel, PackageImportMethod, PackageImportMethodLog,
-    PackageManifestLog, PackageManifestMessage, ProgressLog, ProgressMessage, RealApi, RemovedRoot,
-    Reporter, RequestRetryError, RequestRetryLog, RootLog, RootMessage, SilentReporter, Stage,
-    StageLog, StatsLog, StatsMessage, SummaryLog,
+    GetHostName, IgnoredScriptsLog, LifecycleLog, LifecycleMessage, LifecycleStdio, LogEvent,
+    LogLevel, PackageImportMethod, PackageImportMethodLog, PackageManifestLog,
+    PackageManifestMessage, ProgressLog, ProgressMessage, RealApi, RemovedRoot, Reporter,
+    RequestRetryError, RequestRetryLog, RootLog, RootMessage, SilentReporter, Stage, StageLog,
+    StatsLog, StatsMessage, SummaryLog,
 };
 
 /// Context log serializes with the camelCase field names
@@ -462,6 +463,117 @@ fn request_retry_event_matches_pnpm_wire_shape() {
     for k in ["status", "errno", "code"] {
         assert!(json["error"].get(k).is_none(), "error.{k} should be absent, got {json:?}");
     }
+}
+
+/// `pnpm:lifecycle` is presence-tagged on `script` / `line` / `exitCode`.
+/// pnpm's reporter dispatches on which of those is present rather than
+/// on a `status` discriminator. The shared fields (`depPath`, `stage`,
+/// `wd`) appear on every record. Field names use camelCase
+/// (`depPath`, `exitCode`) so `@pnpm/cli.default-reporter` parses them.
+#[test]
+fn lifecycle_event_matches_pnpm_wire_shape() {
+    eprintln!("CASE: Script");
+    let event = LogEvent::Lifecycle(LifecycleLog {
+        level: LogLevel::Debug,
+        message: LifecycleMessage::Script {
+            dep_path: "/x@1.0.0".to_string(),
+            optional: false,
+            script: "node build.js".to_string(),
+            stage: "postinstall".to_string(),
+            wd: "/proj/node_modules/.pacquet/x@1.0.0/node_modules/x".to_string(),
+        },
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+    dbg!(&json);
+    assert_eq!(json["name"], "pnpm:lifecycle");
+    assert_eq!(json["level"], "debug");
+    assert_eq!(json["depPath"], "/x@1.0.0");
+    assert_eq!(json["optional"], false);
+    assert_eq!(json["script"], "node build.js");
+    assert_eq!(json["stage"], "postinstall");
+    assert_eq!(json["wd"], "/proj/node_modules/.pacquet/x@1.0.0/node_modules/x");
+    for k in ["line", "stdio", "exitCode"] {
+        assert!(json.get(k).is_none(), "Script must not carry {k}, got {json:?}");
+    }
+
+    eprintln!("CASE: Stdio");
+    let event = LogEvent::Lifecycle(LifecycleLog {
+        level: LogLevel::Debug,
+        message: LifecycleMessage::Stdio {
+            dep_path: "/x@1.0.0".to_string(),
+            line: "hello world".to_string(),
+            stage: "postinstall".to_string(),
+            stdio: LifecycleStdio::Stdout,
+            wd: "/wd".to_string(),
+        },
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+    dbg!(&json);
+    assert_eq!(json["depPath"], "/x@1.0.0");
+    assert_eq!(json["line"], "hello world");
+    assert_eq!(json["stdio"], "stdout");
+    assert_eq!(json["stage"], "postinstall");
+    assert_eq!(json["wd"], "/wd");
+    for k in ["script", "exitCode", "optional"] {
+        assert!(json.get(k).is_none(), "Stdio must not carry {k}, got {json:?}");
+    }
+
+    eprintln!("CASE: Exit");
+    let event = LogEvent::Lifecycle(LifecycleLog {
+        level: LogLevel::Debug,
+        message: LifecycleMessage::Exit {
+            dep_path: "/x@1.0.0".to_string(),
+            exit_code: 0,
+            optional: false,
+            stage: "postinstall".to_string(),
+            wd: "/wd".to_string(),
+        },
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+    dbg!(&json);
+    assert_eq!(json["depPath"], "/x@1.0.0");
+    assert_eq!(json["exitCode"], 0);
+    assert_eq!(json["optional"], false);
+    assert_eq!(json["stage"], "postinstall");
+    assert_eq!(json["wd"], "/wd");
+    for k in ["script", "line", "stdio"] {
+        assert!(json.get(k).is_none(), "Exit must not carry {k}, got {json:?}");
+    }
+}
+
+/// `pnpm:ignored-scripts` carries a single field: `packageNames` (camelCase).
+/// Default-reporter needs the camelCase spelling.
+#[test]
+fn ignored_scripts_event_matches_pnpm_wire_shape() {
+    let event = LogEvent::IgnoredScripts(IgnoredScriptsLog {
+        level: LogLevel::Debug,
+        package_names: vec!["foo@1.0.0".to_string(), "bar@2.0.0".to_string()],
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+    dbg!(&json);
+    assert_eq!(json["name"], "pnpm:ignored-scripts");
+    assert_eq!(json["level"], "debug");
+    assert_eq!(json["packageNames"], serde_json::json!(["foo@1.0.0", "bar@2.0.0"]));
 }
 
 /// Phase markers serialize as the snake_case strings pnpm uses.

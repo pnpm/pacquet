@@ -1,3 +1,7 @@
+mod lifecycle;
+
+pub use lifecycle::{LifecycleScriptError, RunPostinstallHooks, run_postinstall_hooks};
+
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use std::process::Command;
