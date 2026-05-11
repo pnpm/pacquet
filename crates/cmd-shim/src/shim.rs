@@ -106,7 +106,7 @@ pub fn read_head_filled<Api: FsReadHead>(path: &Path, buf: &mut [u8]) -> io::Res
 /// `" \n#!/usr/bin/env node"` as a valid shebang and could select the
 /// wrong runtime for files that just happen to mention `#!` after some
 /// whitespace. The first line is taken exactly as-is (`#!` is matched
-/// by [`parse_shebang`] at column 0 of that line via `strip_prefix`).
+/// at column 0 of that line via `strip_prefix` in `parse_shebang`).
 pub fn parse_shebang_from_bytes(bytes: &[u8]) -> Option<ScriptRuntime> {
     let head = String::from_utf8_lossy(bytes);
     let first_line = head.split('\n').next().unwrap_or("").trim_end_matches('\r');
