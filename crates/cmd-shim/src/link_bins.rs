@@ -152,11 +152,19 @@ where
         }
 
         if name_str.starts_with('@') {
-            // Scoped: walk one level deeper. Missing or unreadable scope
-            // dirs are silently skipped, same as the previous
-            // `let Ok(...) else continue` shape.
-            let Ok(scope_entries) = Api::read_dir(&path) else {
-                continue;
+            // Scoped: walk one level deeper. Only `NotFound` is
+            // plausibly skippable (a concurrent scope-dir delete);
+            // other errors — `PermissionDenied`, `EIO`, AppArmor
+            // deny — would silently drop every bin under this
+            // scope, so surface them as `ReadModulesDir`. Matches
+            // the policy the per-`modules_dir` read above already
+            // uses.
+            let scope_entries = match Api::read_dir(&path) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(LinkBinsError::ReadModulesDir { dir: path.clone(), error });
+                }
             };
             for sub_path in scope_entries {
                 if let Some(pkg) = read_package::<Api>(&sub_path)? {
