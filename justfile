@@ -72,7 +72,7 @@ lint:
 # (install with `cargo binstall cargo-dylint dylint-link`). The lint library
 # is pinned in `dylint.toml`.
 dylint:
-  cargo dylint --all -- --all-targets --workspace
+  cargo dylint --all -- --all-targets --workspace -- -D warnings
 
 # Get code coverage
 codecov:

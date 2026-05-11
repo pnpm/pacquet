@@ -85,4 +85,4 @@ jobs:
           packages: cargo-dylint dylint-link
 
       - name: Run dylint
-        run: cargo dylint --all -- --all-targets --workspace
+        run: cargo dylint --all -- --all-targets --workspace -- -D warnings

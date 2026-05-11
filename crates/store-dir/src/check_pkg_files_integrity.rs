@@ -323,7 +323,7 @@ fn verify_file_integrity(path: &Path, digest: &str, algo: &str) -> bool {
             Ok(n) => hasher.update(&buf[..n]),
             // `Interrupted` is the one error we retry — it's a signal,
             // not a real IO failure. Everything else (NotFound, EIO,
-            // PermissionDenied, …) short-circuits to `false` so the
+            // PermissionDenied, ...) short-circuits to `false` so the
             // caller re-fetches.
             Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
             Err(_) => return false,
