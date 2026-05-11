@@ -20,6 +20,7 @@ use pacquet_store_dir::{
     StoreIndexError, StoreIndexWriter, WriteCasFileError, store_index_key,
 };
 use pipe_trait::Pipe;
+use rayon::prelude::*;
 use smart_default::SmartDefault;
 use ssri::Integrity;
 use tar::Archive;
@@ -658,13 +659,22 @@ pub async fn prefetch_cas_paths(
         return PrefetchResult::default();
     }
     let result = tokio::task::spawn_blocking(move || -> PrefetchResult {
-        // Phase 1: read every row under the mutex; drop the guard
-        // before running any filesystem work. One batched
-        // `SELECT ... WHERE key IN (?, ?, ...)` per `GET_MANY_CHUNK`
-        // (see `StoreIndex::get_many`) collapses what used to be N
-        // round-trips into one — see #294 for the cold-cache regression
-        // the per-key loop introduced when every key missed.
-        let entries: HashMap<String, PackageFilesIndex> = {
+        // Phase 1: read every row's *raw bytes* under the mutex.
+        // Splitting raw-read from decode means the
+        // `SharedReadonlyStoreIndex` lock is held only for the
+        // SELECT loop, not for the per-row msgpackr decode — which
+        // is the dominant CPU cost once rows carry a `manifest`
+        // field (transcode + `rmp_serde::from_slice` of a nested
+        // JSON tree per row, times ~1k rows on a real lockfile).
+        // Doing the decode after the guard drops lets it fan out
+        // across rayon below.
+        //
+        // One batched `SELECT ... WHERE key IN (?, ?, ...)` per
+        // `GET_MANY_CHUNK` (see `StoreIndex::get_many_raw`)
+        // collapses what used to be N round-trips into one — see
+        // #294 for the cold-cache regression the per-key loop
+        // introduced when every key missed.
+        let raw: Vec<(String, Vec<u8>)> = {
             let Ok(guard) = index.lock() else {
                 tracing::debug!(
                     target: "pacquet::download",
@@ -672,8 +682,8 @@ pub async fn prefetch_cas_paths(
                 );
                 return PrefetchResult::default();
             };
-            match guard.get_many(&cache_keys) {
-                Ok(map) => map,
+            match guard.get_many_raw(&cache_keys) {
+                Ok(rows) => rows,
                 Err(error) => {
                     tracing::debug!(
                         target: "pacquet::download",
@@ -684,27 +694,51 @@ pub async fn prefetch_cas_paths(
                 }
             }
         };
-        // Phase 2: integrity-check each entry without holding the lock.
-        // The bundled manifest is split off the entry up-front via
-        // `Option::take` so we can hand it back alongside the
-        // filesystem map without an intermediate clone of the JSON
-        // tree (manifests for a real package can run to dozens of
-        // KB once `dependencies` etc. are included). The verify
-        // function consumes the rest of `entry` and only cares about
-        // the `files` map.
-        let mut cas_paths = HashMap::with_capacity(entries.len());
+        // Phase 2: decode each row's msgpackr-records bytes into a
+        // `PackageFilesIndex`, then run the integrity check. Both
+        // steps are per-row CPU work with no shared state, so we
+        // fan out across rayon. With manifests included in the
+        // payload, decoding 1k+ rows serially had become the
+        // dominant chunk of the prefetch wall (single-threaded
+        // `spawn_blocking`); the par-iter recovers the per-row
+        // parallelism the warm-batch link phase already uses.
+        //
+        // The bundled manifest is split off the decoded entry via
+        // `Option::take` so it travels back to the caller without
+        // an intermediate `Value::clone` of the JSON tree — the
+        // verify function only inspects `files`, never `manifest`.
+        let decoded: Vec<(String, Option<Arc<serde_json::Value>>, pacquet_store_dir::VerifyResult)> = raw
+            .into_par_iter()
+            .filter_map(|(cache_key, bytes)| {
+                let mut entry: PackageFilesIndex = match pacquet_store_dir::decode_package_files_index(&bytes) {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        tracing::debug!(
+                            target: "pacquet::download",
+                            ?cache_key,
+                            ?error,
+                            "skipping undecodable package_index row at prefetch",
+                        );
+                        return None;
+                    }
+                };
+                let manifest = entry.manifest.take().map(Arc::new);
+                let verify_result = if verify_store_integrity {
+                    pacquet_store_dir::check_pkg_files_integrity(
+                        store_dir,
+                        entry,
+                        &verified_files_cache,
+                    )
+                } else {
+                    pacquet_store_dir::build_file_maps_from_index(store_dir, entry)
+                };
+                Some((cache_key, manifest, verify_result))
+            })
+            .collect();
+
+        let mut cas_paths = HashMap::with_capacity(decoded.len());
         let mut manifests = HashMap::new();
-        for (cache_key, mut entry) in entries {
-            let manifest = entry.manifest.take().map(Arc::new);
-            let verify_result = if verify_store_integrity {
-                pacquet_store_dir::check_pkg_files_integrity(
-                    store_dir,
-                    entry,
-                    &verified_files_cache,
-                )
-            } else {
-                pacquet_store_dir::build_file_maps_from_index(store_dir, entry)
-            };
+        for (cache_key, manifest, verify_result) in decoded {
             if verify_result.passed {
                 if let Some(manifest) = manifest {
                     manifests.insert(cache_key.clone(), manifest);
