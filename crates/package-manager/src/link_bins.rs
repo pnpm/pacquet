@@ -216,7 +216,7 @@ fn find_slot_own_package_dir<Api: FsReadDir>(
     let name_part = &slot_name[..at];
 
     // `+` separates `<scope>+<name>` for scoped packages, and *only*
-    // for scoped packages. Gating on `scoped` avoids mis-parsing a
+    // for scoped packages. Gating on `scoped` avoids misparsing a
     // hypothetical unscoped name that contains `+`: `PkgName::parse`
     // does not reject non-URL-safe characters (only npm's
     // `validate-npm-package-name` warns about them), so an unscoped
