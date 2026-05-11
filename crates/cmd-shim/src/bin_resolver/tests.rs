@@ -375,6 +375,49 @@ fn lexical_normalize_drops_curdir_segments_directly() {
     assert_eq!(lexical_normalize(Path::new("./.")), PathBuf::new());
 }
 
+/// On an absolute path, a `..` that would escape the root is dropped
+/// instead of being materialised as a literal `..` segment. Mirrors
+/// Node's `path.resolve` (and therefore pnpm's `is-subdir`), where
+/// `path.resolve("/a/../../a/bin.js") === "/a/bin.js"`.
+///
+/// Without this guard, `is_subdir("/a", "/a/../../a/bin.js")` would
+/// reject the path as outside `/a` even though it resolves back
+/// inside: `lexical_normalize` would have produced `/../a/bin.js`,
+/// which fails `starts_with("/a")`.
+#[test]
+fn lexical_normalize_drops_excess_parent_dirs_on_absolute_paths() {
+    assert_eq!(lexical_normalize(Path::new("/a/../../a/bin.js")), PathBuf::from("/a/bin.js"));
+    assert_eq!(lexical_normalize(Path::new("/..")), PathBuf::from("/"));
+    assert_eq!(lexical_normalize(Path::new("/../..")), PathBuf::from("/"));
+}
+
+/// `is_subdir` accepts a path that goes outside the package root and
+/// comes back inside via `..`. Regression coverage for the lexical
+/// normalisation bug where `/<pkg>/x/../../<pkg>/bin.js` was rejected
+/// because the `..` past the root was materialised as a literal
+/// `/..` segment. Mirrors pnpm's `path.resolve`-based `is-subdir`.
+#[test]
+fn directories_bin_accepts_excess_parent_dirs_that_resolve_inside_pkg() {
+    let tmp = tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    let bin_dir = pkg.join("bin-dir");
+    create_dir_all(&bin_dir).unwrap();
+    // `x` must exist on disk so the walker can follow the literal
+    // `<pkg>/x/../../pkg/bin-dir` path the resolver builds.
+    create_dir_all(pkg.join("x")).unwrap();
+    write_file(bin_dir.join("cli"), "").unwrap();
+
+    // `<pkg>/x/../../<pkg-name>/bin-dir` resolves back inside `<pkg>`.
+    let manifest = json!({
+        "name": "tool",
+        "version": "1.0.0",
+        "directories": {"bin": "x/../../pkg/bin-dir"},
+    });
+    let commands = get_bins_from_package_manifest::<RealApi>(&manifest, &pkg);
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].name, "cli");
+}
+
 /// [`lexical_normalize`] `CurDir` branch drops `.` segments. Visible
 /// via [`super::is_subdir`] accepting a target with embedded `./`
 /// that resolves inside the package root.
