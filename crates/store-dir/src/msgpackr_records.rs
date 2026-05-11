@@ -737,22 +737,70 @@ fn side_effects_shape(diff: &SideEffectsDiff) -> u8 {
     u8::from(diff.added.is_some()) | (u8::from(diff.deleted.is_some()) << 1)
 }
 
+/// Encode a single [`serde_json::Value`] as a standalone
+/// msgpackr-records byte stream, suitable for the
+/// `package_manifests` table where each row is one bundled
+/// manifest with no surrounding container.
+///
+/// The top-level value is record-encoded when it's an object — the
+/// shape pnpm's `useRecords: true` reader decodes back as a JS
+/// `Object`. Without that wrapping, msgpackr would decode a plain
+/// `fixmap` as a JS `Map`, and `manifest.bin` / `manifest.directories?.bin`
+/// (property accesses pnpm's bin linker performs) would resolve to
+/// `undefined`. Non-object top-level values (rare in practice for
+/// a package manifest) pass through plain msgpack.
+pub fn encode_bundled_manifest(value: &Value) -> Result<Vec<u8>, EncodeError> {
+    let mut state = EncodeState::default();
+    let mut out = Vec::with_capacity(256);
+    encode_json_value(&mut out, &mut state, value)?;
+    Ok(out)
+}
+
+/// Decode bytes written by [`encode_bundled_manifest`] (or by the
+/// equivalent msgpackr `Packr({useRecords: true, ...}).pack(obj)` on
+/// the pnpm side) back into a [`serde_json::Value`]. Goes through
+/// the shared records-mode transcoder so a row whose top-level is a
+/// record decodes as a JSON object (not a JS-Map-shaped plain
+/// msgpack map).
+pub fn decode_bundled_manifest(bytes: &[u8]) -> Result<Value, BundledManifestDecodeError> {
+    let plain = transcode_to_plain_msgpack(bytes).map_err(BundledManifestDecodeError::Transcode)?;
+    rmp_serde::from_slice(&plain).map_err(BundledManifestDecodeError::Decode)
+}
+
+/// Error type for [`decode_bundled_manifest`].
+#[derive(Debug, Display, Error, Diagnostic)]
+pub enum BundledManifestDecodeError {
+    #[display("Failed to transcode msgpackr records to plain msgpack: {_0}")]
+    #[diagnostic(code(pacquet_store_dir::bundled_manifest::transcode))]
+    Transcode(#[error(source)] DecodeError),
+
+    #[display("Failed to deserialize plain msgpack into a JSON value: {_0}")]
+    #[diagnostic(code(pacquet_store_dir::bundled_manifest::decode))]
+    Decode(#[error(source)] rmp_serde::decode::Error),
+}
+
 fn encode_pkg_files_index_value(
     w: &mut Vec<u8>,
     state: &mut EncodeState,
     idx: &PackageFilesIndex,
 ) -> Result<(), EncodeError> {
-    // Field order `[algo, requiresBuild?, manifest?, files, sideEffects?]`.
-    // Optional fields are omitted from the schema when `None`, matching
-    // msgpackr's field-omit-when-absent shape so a pnpm reader sees the
-    // same JS object regardless of whether pacquet or pnpm wrote the row.
-    let mut fields: Vec<&str> = Vec::with_capacity(5);
+    // Field order `[algo, requiresBuild?, files, sideEffects?]`. The
+    // `manifest` field on the input struct is *not* emitted here:
+    // bundled manifests live in their own `package_manifests`
+    // SQLite table now ([`encode_bundled_manifest`] +
+    // [`crate::store_index::StoreIndex::get_many_manifests`]), so
+    // the cas-paths-only prefetch on the install hot path doesn't
+    // pay the JSON-tree decode for every package. Callers that still
+    // want a manifest in a `PackageFilesIndex` value (e.g. for the
+    // wire-compat tests, or for reading pnpm-written rows that
+    // bundle the manifest into `package_index`) handle it
+    // explicitly via the standalone encoder/decoder. Optional
+    // fields are omitted from the record schema when `None`,
+    // matching msgpackr's field-omit-when-absent shape.
+    let mut fields: Vec<&str> = Vec::with_capacity(4);
     fields.push("algo");
     if idx.requires_build.is_some() {
         fields.push("requiresBuild");
-    }
-    if idx.manifest.is_some() {
-        fields.push("manifest");
     }
     fields.push("files");
     if idx.side_effects.is_some() {
@@ -765,9 +813,6 @@ fn encode_pkg_files_index_value(
     write_str(w, &idx.algo);
     if let Some(rb) = idx.requires_build {
         write_bool(w, rb);
-    }
-    if let Some(manifest) = &idx.manifest {
-        encode_json_value(w, state, manifest)?;
     }
     write_map_header(w, idx.files.len());
     for (name, info) in &idx.files {

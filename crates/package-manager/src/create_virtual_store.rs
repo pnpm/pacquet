@@ -246,15 +246,51 @@ impl<'a> CreateVirtualStore<'a> {
         cache_key_refs.sort_unstable();
         cache_key_refs.dedup();
         let cache_keys: Vec<String> = cache_key_refs.into_iter().map(String::from).collect();
-        let PrefetchResult { cas_paths: prefetched, manifests: prefetched_manifests } =
+
+        // Pick out only the cache keys whose lockfile metadata sets
+        // `hasBin: true` — those are the packages we'll actually
+        // need a manifest for at bin-link time. ~5% of a real
+        // lockfile in practice, so the `package_manifests` SELECT
+        // moves from ~1k rows down to a few dozen. Mirrors pnpm's
+        // `hasBin` filter at `building/during-install/src/index.ts:283`
+        // (4750fd370c). Packages without a hasBin tag in the
+        // lockfile fall through to the bin linker's disk-read
+        // fallback.
+        let mut has_bin_cache_keys: Vec<String> = snapshot_entries
+            .iter()
+            .filter_map(|(snapshot_key, _, cache_key)| {
+                let metadata_key = snapshot_key.without_peer();
+                let meta = packages.get(&metadata_key)?;
+                if meta.has_bin == Some(true) {
+                    cache_key.as_deref().map(String::from)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        has_bin_cache_keys.sort_unstable();
+        has_bin_cache_keys.dedup();
+
+        // Fire the two prefetches concurrently — both are
+        // independent SQLite queries that end with a
+        // rayon-parallel decode pass.
+        // [`pacquet_tarball::prefetch_cas_paths`] reads the
+        // `package_index` table (cas-paths-only, large key set);
+        // [`pacquet_tarball::prefetch_manifests`] reads the
+        // `package_manifests` table (small `hasBin`-filtered key
+        // set).
+        let (prefetched, has_bin_manifests) = tokio::join!(
             prefetch_cas_paths(
                 store_index.clone(),
                 store_dir,
                 cache_keys,
                 config.verify_store_integrity,
                 SharedVerifiedFilesCache::clone(&verified_files_cache),
-            )
-            .await;
+            ),
+            pacquet_tarball::prefetch_manifests(store_index.clone(), has_bin_cache_keys),
+        );
+        let PrefetchResult { cas_paths: prefetched, manifests: _ } = prefetched;
+        let prefetched_manifests = has_bin_manifests;
 
         // Partition snapshots by whether the prefetch covered them. The
         // warm batch — every snapshot whose tarball is already in the

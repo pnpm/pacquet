@@ -662,6 +662,77 @@ pub struct PrefetchResult {
 /// just don't appear in the result. The caller then falls through
 /// to [`DownloadTarballToStore::run_without_mem_cache`] for those
 /// keys, which still has its own cache check as a backstop.
+/// Targeted batched read of bundled manifests from
+/// `package_manifests`. Called *after* the lockfile-driven bin-link
+/// filter has narrowed the snapshot set down to the ~5% of packages
+/// that declare a `bin` field (via the `hasBin` flag in the
+/// lockfile's `packages:` section); reading the manifest for every
+/// package in the lockfile would defeat the entire reason
+/// `package_manifests` is a separate table.
+///
+/// Locking and parallelism mirror [`prefetch_cas_paths`]: the
+/// SQLite mutex is held only for the SELECT loop; the msgpackr
+/// decode of each row fans out across rayon after the guard
+/// drops. A poisoned mutex or batched-read error degrades to an
+/// empty result so the bin linker falls back to disk reads —
+/// behavior matches the cas-paths prefetch.
+pub async fn prefetch_manifests(
+    index: Option<SharedReadonlyStoreIndex>,
+    cache_keys: Vec<String>,
+) -> PrefetchedManifests {
+    let Some(index) = index else { return HashMap::new() };
+    if cache_keys.is_empty() {
+        return HashMap::new();
+    }
+    let result = tokio::task::spawn_blocking(move || -> PrefetchedManifests {
+        let raw: Vec<(String, Vec<u8>)> = {
+            let Ok(guard) = index.lock() else {
+                tracing::debug!(
+                    target: "pacquet::download",
+                    "store-index mutex poisoned at manifest prefetch start; falling back to disk reads",
+                );
+                return HashMap::new();
+            };
+            match guard.get_many_manifests(&cache_keys) {
+                Ok(rows) => rows,
+                Err(error) => {
+                    tracing::debug!(
+                        target: "pacquet::download",
+                        ?error,
+                        "store-index manifest batched read failed; falling back to disk reads",
+                    );
+                    return HashMap::new();
+                }
+            }
+        };
+        raw.into_par_iter()
+            .filter_map(|(cache_key, bytes)| {
+                match pacquet_store_dir::decode_bundled_manifest(&bytes) {
+                    Ok(value) => Some((cache_key, Arc::new(value))),
+                    Err(error) => {
+                        tracing::debug!(
+                            target: "pacquet::download",
+                            ?cache_key,
+                            ?error,
+                            "skipping undecodable package_manifests row at prefetch",
+                        );
+                        None
+                    }
+                }
+            })
+            .collect()
+    })
+    .await;
+    result.unwrap_or_else(|error| {
+        tracing::warn!(
+            target: "pacquet::download",
+            ?error,
+            "store-index manifest prefetch task failed; falling back to disk reads",
+        );
+        HashMap::new()
+    })
+}
+
 pub async fn prefetch_cas_paths(
     index: Option<SharedReadonlyStoreIndex>,
     store_dir: &'static StoreDir,
@@ -677,12 +748,8 @@ pub async fn prefetch_cas_paths(
         // Phase 1: read every row's *raw bytes* under the mutex.
         // Splitting raw-read from decode means the
         // `SharedReadonlyStoreIndex` lock is held only for the
-        // SELECT loop, not for the per-row msgpackr decode — which
-        // is the dominant CPU cost once rows carry a `manifest`
-        // field (transcode + `rmp_serde::from_slice` of a nested
-        // JSON tree per row, times ~1k rows on a real lockfile).
-        // Doing the decode after the guard drops lets it fan out
-        // across rayon below.
+        // SELECT loop, not for the per-row decode + integrity check
+        // — both happen across rayon after the guard drops.
         //
         // One batched `SELECT ... WHERE key IN (?, ?, ...)` per
         // `GET_MANY_CHUNK` (see `StoreIndex::get_many_raw`)
@@ -709,23 +776,17 @@ pub async fn prefetch_cas_paths(
                 }
             }
         };
-        // Phase 2: decode each row's msgpackr-records bytes into a
-        // `PackageFilesIndex`, then run the integrity check. Both
-        // steps are per-row CPU work with no shared state, so we
-        // fan out across rayon. With manifests included in the
-        // payload, decoding 1k+ rows serially had become the
-        // dominant chunk of the prefetch wall (single-threaded
-        // `spawn_blocking`); the par-iter recovers the per-row
-        // parallelism the warm-batch link phase already uses.
-        //
-        // The bundled manifest is split off the decoded entry via
-        // `Option::take` so it travels back to the caller without
-        // an intermediate `Value::clone` of the JSON tree — the
-        // verify function only inspects `files`, never `manifest`.
-        let decoded: Vec<(String, Option<Arc<serde_json::Value>>, pacquet_store_dir::VerifyResult)> = raw
+        // Phase 2: decode each row's msgpackr-records bytes and run
+        // the integrity check, in parallel. Bundled manifests live
+        // in a separate `package_manifests` SQLite table now (see
+        // [`pacquet_store_dir::StoreIndex::get_many_manifests`]),
+        // so each row here is just `algo` + `requiresBuild?` +
+        // `files` + `sideEffects?` — much smaller than the old
+        // payload that bundled the manifest in.
+        let decoded: Vec<(String, pacquet_store_dir::VerifyResult)> = raw
             .into_par_iter()
             .filter_map(|(cache_key, bytes)| {
-                let mut entry: PackageFilesIndex = match pacquet_store_dir::decode_package_files_index(&bytes) {
+                let entry: PackageFilesIndex = match pacquet_store_dir::decode_package_files_index(&bytes) {
                     Ok(entry) => entry,
                     Err(error) => {
                         tracing::debug!(
@@ -737,7 +798,6 @@ pub async fn prefetch_cas_paths(
                         return None;
                     }
                 };
-                let manifest = entry.manifest.take().map(Arc::new);
                 let verify_result = if verify_store_integrity {
                     pacquet_store_dir::check_pkg_files_integrity(
                         store_dir,
@@ -747,21 +807,17 @@ pub async fn prefetch_cas_paths(
                 } else {
                     pacquet_store_dir::build_file_maps_from_index(store_dir, entry)
                 };
-                Some((cache_key, manifest, verify_result))
+                Some((cache_key, verify_result))
             })
             .collect();
 
         let mut cas_paths = HashMap::with_capacity(decoded.len());
-        let mut manifests = HashMap::new();
-        for (cache_key, manifest, verify_result) in decoded {
+        for (cache_key, verify_result) in decoded {
             if verify_result.passed {
-                if let Some(manifest) = manifest {
-                    manifests.insert(cache_key.clone(), manifest);
-                }
                 cas_paths.insert(cache_key, Arc::new(verify_result.files_map));
             }
         }
-        PrefetchResult { cas_paths, manifests }
+        PrefetchResult { cas_paths, manifests: HashMap::new() }
     })
     .await;
     result.unwrap_or_else(|error| {

@@ -246,6 +246,10 @@ impl StoreIndex {
               key TEXT PRIMARY KEY,
               data BLOB NOT NULL
             ) WITHOUT ROWID;
+            CREATE TABLE IF NOT EXISTS package_manifests (
+              key TEXT PRIMARY KEY,
+              data BLOB NOT NULL
+            ) WITHOUT ROWID;
             ",
         )
         .map_err(|source| StoreIndexError::InitSchema { source })?;
@@ -375,6 +379,52 @@ impl StoreIndex {
         Ok(out)
     }
 
+    /// Batched read of the standalone `package_manifests` rows for
+    /// the given keys. Returns each hit as `(key, raw bytes)`;
+    /// callers decode via
+    /// [`crate::msgpackr_records::transcode_to_plain_msgpack`] +
+    /// `rmp_serde::from_slice`, typically across a rayon pool after
+    /// the mutex releases.
+    ///
+    /// Only the keys whose `hasBin` flag is `true` (from the
+    /// lockfile's `packages:` section) need their manifest at
+    /// bin-link time, so this is called with a much smaller key list
+    /// than [`Self::get_many_raw`] — ~5% of a real lockfile, not the
+    /// whole snapshot set. Splitting the manifest out of
+    /// [`Self::get_many`]'s payload is what makes the unfiltered
+    /// `package_index` read cheap again.
+    pub fn get_many_manifests(
+        &self,
+        keys: &[String],
+    ) -> Result<Vec<(String, Vec<u8>)>, StoreIndexError> {
+        let mut out = Vec::with_capacity(keys.len());
+        if keys.is_empty() {
+            return Ok(out);
+        }
+        for chunk in keys.chunks(GET_MANY_CHUNK) {
+            // Same placeholder-list shape as `get_many_raw`. The
+            // only thing interpolated into `sql` is the fixed
+            // `?,?,...` placeholder string; keys reach SQLite
+            // through `rusqlite::params_from_iter`'s parameter
+            // binding. Keep the placeholder count and the params
+            // iterator in lock-step.
+            let placeholders = std::iter::repeat_n("?", chunk.len()).collect::<Vec<_>>().join(",");
+            let sql =
+                format!("SELECT key, data FROM package_manifests WHERE key IN ({placeholders})");
+            let mut stmt =
+                self.conn.prepare(&sql).map_err(|source| StoreIndexError::Read { source })?;
+            let params = rusqlite::params_from_iter(chunk.iter().map(String::as_str));
+            let rows = stmt
+                .query_map(params, |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)))
+                .map_err(|source| StoreIndexError::Read { source })?;
+            for row in rows {
+                let row = row.map_err(|source| StoreIndexError::Read { source })?;
+                out.push(row);
+            }
+        }
+        Ok(out)
+    }
+
     /// Batched read that returns the **undecoded** value bytes for each
     /// hit. Callers run `decode_index_value` themselves — either inline
     /// (matching the old [`Self::get_many`] shape) or, more usefully,
@@ -431,15 +481,43 @@ impl StoreIndex {
     /// property-access miss and crashing with `files is not iterable`
     /// inside pnpm's CAFS layer.
     pub fn set(&self, key: &str, value: &PackageFilesIndex) -> Result<(), StoreIndexError> {
-        let buf = crate::msgpackr_records::encode_package_files_index(value)
+        // The manifest blob lives in `package_manifests`, not in the
+        // `package_index` row, so the cas-paths-only prefetch hot
+        // path doesn't have to drag a few KB of JSON tree through
+        // SQLite, the msgpackr-records transcoder, and `rmp_serde`
+        // for every package on every install. The bin-link path
+        // does a targeted `get_many_manifests` for the
+        // `hasBin: true` subset later, which is ~5% of a real
+        // lockfile.
+        //
+        // `encode_package_files_index` always skips the `manifest`
+        // field regardless of whether it's `Some`, so we don't have
+        // to split the struct here. The bundled manifest is encoded
+        // separately and inserted into its own table.
+        let files_buf = crate::msgpackr_records::encode_package_files_index(value)
             .map_err(|source| StoreIndexError::Encode { source })?;
+        let manifest_buf = match &value.manifest {
+            Some(manifest) => Some(
+                crate::msgpackr_records::encode_bundled_manifest(manifest)
+                    .map_err(|source| StoreIndexError::Encode { source })?,
+            ),
+            None => None,
+        };
         self.conn
             .execute(
                 "INSERT OR REPLACE INTO package_index (key, data) VALUES (?1, ?2)",
-                rusqlite::params![key, buf],
+                rusqlite::params![key, files_buf],
             )
-            .map(|_| ())
-            .map_err(|source| StoreIndexError::Write { source })
+            .map_err(|source| StoreIndexError::Write { source })?;
+        if let Some(manifest_buf) = manifest_buf {
+            self.conn
+                .execute(
+                    "INSERT OR REPLACE INTO package_manifests (key, data) VALUES (?1, ?2)",
+                    rusqlite::params![key, manifest_buf],
+                )
+                .map_err(|source| StoreIndexError::Write { source })?;
+        }
+        Ok(())
     }
 
     /// Insert-or-replace a batch of rows in a single transaction.
@@ -463,23 +541,46 @@ impl StoreIndex {
         &mut self,
         entries: impl IntoIterator<Item = (String, PackageFilesIndex)>,
     ) -> Result<(), StoreIndexError> {
-        // Encode outside the transaction so a single malformed row can't
-        // hold `BEGIN IMMEDIATE`'s write lock while we serialize msgpack,
-        // and skip individual encoding failures with a log so one bad
-        // entry doesn't drop the rest of the batch on the floor.
-        let mut encoded: Vec<(String, Vec<u8>)> = Vec::new();
+        // Encode outside the transaction so a single malformed row
+        // can't hold `BEGIN IMMEDIATE`'s write lock while we
+        // serialise msgpack, and skip individual encoding failures
+        // with a log so one bad entry doesn't drop the rest of the
+        // batch on the floor.
+        //
+        // The manifest blob ships in its own row (in
+        // `package_manifests`) so the cas-paths-only prefetch on
+        // the install hot path doesn't have to drag a few KB of
+        // JSON tree through SQLite + msgpackr per package. See
+        // [`Self::set`] for the rationale and
+        // [`Self::get_many_manifests`] for the read counterpart.
+        let mut encoded_files: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut encoded_manifests: Vec<(String, Vec<u8>)> = Vec::new();
         for (key, value) in entries {
             match crate::msgpackr_records::encode_package_files_index(&value) {
-                Ok(buf) => encoded.push((key, buf)),
-                Err(source) => tracing::warn!(
-                    target: "pacquet::store_index",
-                    ?key,
-                    error = ?source,
-                    "failed to encode package_index row; skipping",
-                ),
+                Ok(buf) => encoded_files.push((key.clone(), buf)),
+                Err(source) => {
+                    tracing::warn!(
+                        target: "pacquet::store_index",
+                        ?key,
+                        error = ?source,
+                        "failed to encode package_index row; skipping",
+                    );
+                    continue;
+                }
+            }
+            if let Some(manifest) = value.manifest {
+                match crate::msgpackr_records::encode_bundled_manifest(&manifest) {
+                    Ok(buf) => encoded_manifests.push((key, buf)),
+                    Err(source) => tracing::warn!(
+                        target: "pacquet::store_index",
+                        ?key,
+                        error = ?source,
+                        "failed to encode package_manifests row; skipping",
+                    ),
+                }
             }
         }
-        if encoded.is_empty() {
+        if encoded_files.is_empty() && encoded_manifests.is_empty() {
             return Ok(());
         }
 
@@ -491,7 +592,18 @@ impl StoreIndex {
             let mut stmt = tx
                 .prepare_cached("INSERT OR REPLACE INTO package_index (key, data) VALUES (?1, ?2)")
                 .map_err(|source| StoreIndexError::Write { source })?;
-            for (key, buf) in &encoded {
+            for (key, buf) in &encoded_files {
+                stmt.execute(rusqlite::params![key, buf])
+                    .map_err(|source| StoreIndexError::Write { source })?;
+            }
+        }
+        if !encoded_manifests.is_empty() {
+            let mut stmt = tx
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO package_manifests (key, data) VALUES (?1, ?2)",
+                )
+                .map_err(|source| StoreIndexError::Write { source })?;
+            for (key, buf) in &encoded_manifests {
                 stmt.execute(rusqlite::params![key, buf])
                     .map_err(|source| StoreIndexError::Write { source })?;
             }
