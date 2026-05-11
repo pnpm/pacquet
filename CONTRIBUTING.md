@@ -52,10 +52,10 @@ A separate CI job (`Dylint`) runs [perfectionist](https://github.com/KSXGitHub/p
 
 If perfectionist flags code that is actually correct, or fails to flag code its rule description says it should, do not work around the lint silently:
 
-1. Silence the specific finding at the affected site with `#[expect(perfectionist::rule_name, reason = "…")]`. Always include a `reason`, and write it as a sentence explaining why the lint is wrong here. Do not use `#[allow(...)]`; `#[expect]` errors when the suppression is no longer needed, so the workaround disappears once perfectionist is fixed.
+1. Silence the specific finding at the affected site with `#[expect(perfectionist::rule_name, reason = "...")]`. Always include a `reason`, and write it as a sentence explaining why the lint is wrong here. Do not use `#[allow(...)]`; `#[expect]` errors when the suppression is no longer needed, so the workaround disappears once perfectionist is fixed.
 2. Open a new issue on [`KSXGitHub/perfectionist`](https://github.com/KSXGitHub/perfectionist/issues/new) describing the false positive or false negative, with a minimal repro, and tag `/cc @KSXGitHub` in the issue body.
 
-The same procedure applies when a perfectionist rule itself is wrong — for example, a rule that flags an idiom the rule's documentation says it should permit. Silence the site with `#[expect(..., reason = "…")]`, link the upstream issue from the `reason` if one already exists, and file the issue if it does not. Do not edit `dylint.toml` to globally disable a rule, and do not pin perfectionist to an older `tag` to dodge a finding.
+The same procedure applies when a perfectionist rule itself is wrong — for example, a rule that flags an idiom the rule's documentation says it should permit. Silence the site with `#[expect(..., reason = "...")]`, link the upstream issue from the `reason` if one already exists, and file the issue if it does not. Do not edit `dylint.toml` to globally disable a rule, and do not pin perfectionist to an older `tag` to dodge a finding.
 
 You can run the same check locally with `just dylint` (requires `cargo-dylint` and `dylint-link`; install with `cargo binstall cargo-dylint dylint-link`).
 
