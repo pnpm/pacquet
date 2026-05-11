@@ -388,10 +388,7 @@ impl StoreIndex {
     /// `SharedReadonlyStoreIndex` lock serialises N installs back to
     /// one thread; doing it after the lock releases lets each prefetch
     /// fan out across the rayon pool.
-    pub fn get_many_raw(
-        &self,
-        keys: &[String],
-    ) -> Result<Vec<(String, Vec<u8>)>, StoreIndexError> {
+    pub fn get_many_raw(&self, keys: &[String]) -> Result<Vec<(String, Vec<u8>)>, StoreIndexError> {
         let mut out = Vec::with_capacity(keys.len());
         if keys.is_empty() {
             return Ok(out);

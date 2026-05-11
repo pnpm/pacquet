@@ -159,8 +159,11 @@ fn link_bins_of_packages_no_op_when_no_bins() {
     let bins = tmp.path().join(".bin");
     let manifest: Value =
         serde_json::from_slice(&read_file(pkg.join("package.json")).unwrap()).unwrap();
-    link_bins_of_packages::<RealApi>(&[PackageBinSource { location: pkg, manifest: Arc::new(manifest) }], &bins)
-        .unwrap();
+    link_bins_of_packages::<RealApi>(
+        &[PackageBinSource { location: pkg, manifest: Arc::new(manifest) }],
+        &bins,
+    )
+    .unwrap();
     assert!(!bins.exists(), "bins dir must not be created when nothing to link");
 }
 

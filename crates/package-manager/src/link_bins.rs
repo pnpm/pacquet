@@ -55,10 +55,7 @@ pub fn link_direct_dep_bins(modules_dir: &Path, dep_names: &[String]) -> Result<
                     return Some(Err(LinkBinsError::ParseManifest { path: manifest_path, error }));
                 }
             };
-            Some(Ok(PackageBinSource {
-                location: location.clone(),
-                manifest: Arc::new(manifest),
-            }))
+            Some(Ok(PackageBinSource { location: location.clone(), manifest: Arc::new(manifest) }))
         })
         .collect::<Result<_, _>>()?;
     if bin_sources.is_empty() {
@@ -165,12 +162,8 @@ impl<'a> LinkVirtualStoreBins<'a> {
             + FsSetExecutable
             + FsEnsureExecutableBits,
     {
-        let LinkVirtualStoreBins {
-            virtual_store_dir,
-            snapshots,
-            packages,
-            package_manifests,
-        } = self;
+        let LinkVirtualStoreBins { virtual_store_dir, snapshots, packages, package_manifests } =
+            self;
         if let Some(snapshots) = snapshots {
             let has_bin_set = build_has_bin_set(packages);
             run_lockfile_driven::<Api>(
@@ -507,10 +500,7 @@ fn read_package<Api: FsReadFile>(
     };
     let manifest: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|error| LinkBinsError::ParseManifest { path: manifest_path, error })?;
-    Ok(Some(PackageBinSource {
-        location: location.to_path_buf(),
-        manifest: Arc::new(manifest),
-    }))
+    Ok(Some(PackageBinSource { location: location.to_path_buf(), manifest: Arc::new(manifest) }))
 }
 
 fn paths_eq(a: &Path, b: &Path) -> bool {

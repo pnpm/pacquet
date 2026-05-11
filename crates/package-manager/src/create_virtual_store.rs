@@ -301,12 +301,12 @@ impl<'a> CreateVirtualStore<'a> {
         let mut package_manifests: PackageManifests =
             HashMap::with_capacity(prefetched_manifests.len());
         for (snapshot_key, snapshot, cache_key) in &snapshot_entries {
-            if let Some(cache_key) = cache_key.as_deref() {
-                if let Some(manifest) = prefetched_manifests.get(cache_key) {
-                    package_manifests
-                        .entry(snapshot_key.without_peer())
-                        .or_insert_with(|| std::sync::Arc::clone(manifest));
-                }
+            if let Some(cache_key) = cache_key.as_deref()
+                && let Some(manifest) = prefetched_manifests.get(cache_key)
+            {
+                package_manifests
+                    .entry(snapshot_key.without_peer())
+                    .or_insert_with(|| std::sync::Arc::clone(manifest));
             }
             match cache_key.as_deref().and_then(|k| prefetched.get(k)) {
                 Some(cas_paths) => warm.push((snapshot_key, snapshot, cas_paths)),

@@ -357,27 +357,27 @@ fn normalize_bundled_manifest(value: &serde_json::Value) -> Option<serde_json::V
     // and pulling `node-semver` into `pacquet-tarball` purely for
     // this normalization would carry more risk than the deviation it
     // closes.
-    if let Some(v) = map.get("version") {
-        if !v.is_null() {
-            picked.insert("version".to_string(), v.clone());
-        }
+    if let Some(v) = map.get("version")
+        && !v.is_null()
+    {
+        picked.insert("version".to_string(), v.clone());
     }
 
     for &key in BUNDLED_MANIFEST_FIELDS {
-        if let Some(v) = map.get(key) {
-            if !v.is_null() {
-                picked.insert(key.to_string(), v.clone());
-            }
+        if let Some(v) = map.get(key)
+            && !v.is_null()
+        {
+            picked.insert(key.to_string(), v.clone());
         }
     }
 
     if let Some(serde_json::Value::Object(scripts)) = map.get("scripts") {
         let mut sub = serde_json::Map::new();
         for &key in LIFECYCLE_SCRIPTS {
-            if let Some(s) = scripts.get(key) {
-                if !s.is_null() {
-                    sub.insert(key.to_string(), s.clone());
-                }
+            if let Some(s) = scripts.get(key)
+                && !s.is_null()
+            {
+                sub.insert(key.to_string(), s.clone());
             }
         }
         if !sub.is_empty() {

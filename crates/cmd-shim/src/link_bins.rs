@@ -185,10 +185,7 @@ fn read_package<Api: FsReadFile>(
     };
     let manifest: Value = serde_json::from_slice(&bytes)
         .map_err(|error| LinkBinsError::ParseManifest { path: manifest_path, error })?;
-    Ok(Some(PackageBinSource {
-        location: location.to_path_buf(),
-        manifest: Arc::new(manifest),
-    }))
+    Ok(Some(PackageBinSource { location: location.to_path_buf(), manifest: Arc::new(manifest) }))
 }
 
 /// Link every bin declared by `packages` into `bins_dir`, applying the same
