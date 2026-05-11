@@ -68,6 +68,9 @@ pub enum CliCommand {
     /// Managing the package store.
     #[clap(subcommand)]
     Store(StoreCommand),
+    /// Fallback command if the first argument is not a valid command
+    #[clap(external_subcommand)]
+    Fallback(Vec<String>),
 }
 
 impl CliArgs {
@@ -142,6 +145,24 @@ impl CliArgs {
                 execute_shell(command).wrap_err(format!("executing command: \"{0}\"", command))?;
             }
             CliCommand::Store(command) => command.run(|| npmrc().map(|m| &*m))?,
+            CliCommand::Fallback(mut args) => {
+                // Since the top-level flags have already been parsed,
+                // re-parse the rest of the arguments as if they were just passed to the "run" command
+                let fallback_command = String::from("run");
+                let binary_name = String::from("pacquet");
+
+                args.insert(0, fallback_command);
+                args.insert(0, binary_name);
+
+                let cli_args = CliArgs::parse_from(args);
+
+                match cli_args.command {
+                    CliCommand::Run(args) => args.run(manifest_path())?,
+                    _ => {
+                        return Err(miette::Error::msg("Invalid fallback command provided"));
+                    }
+                }
+            }
         }
 
         Ok(())
