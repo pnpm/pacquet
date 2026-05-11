@@ -262,7 +262,7 @@ fn is_cross_device(err: &io::Error) -> bool {
 fn is_call_error(err: &io::Error) -> bool {
     matches!(
         err.kind(),
-        io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied | io::ErrorKind::AlreadyExists
+        io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied | io::ErrorKind::AlreadyExists,
     )
 }
 

@@ -41,7 +41,7 @@ fn cas_file_path_by_mode_suffix_matches_write_side() {
             .unwrap_or_else(|| panic!("mode {mode:o} should produce a path"));
         assert!(
             path.to_string_lossy().ends_with("-exec"),
-            "mode {mode:o} should resolve to an `-exec` path, got {path:?}"
+            "mode {mode:o} should resolve to an `-exec` path, got {path:?}",
         );
     }
     for mode in [0o644, 0o600, 0o444, 0o000] {
@@ -50,7 +50,7 @@ fn cas_file_path_by_mode_suffix_matches_write_side() {
             .unwrap_or_else(|| panic!("mode {mode:o} should produce a path"));
         assert!(
             !path.to_string_lossy().ends_with("-exec"),
-            "mode {mode:o} should NOT resolve to an `-exec` path, got {path:?}"
+            "mode {mode:o} should NOT resolve to an `-exec` path, got {path:?}",
         );
     }
 }

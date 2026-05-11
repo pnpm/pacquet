@@ -290,6 +290,6 @@ fn ignored_scripts_event_carries_returned_names() {
             [LogEvent::IgnoredScripts(IgnoredScriptsLog { package_names, .. })]
                 if package_names == &names
         ),
-        "captured: {captured:?}"
+        "captured: {captured:?}",
     );
 }

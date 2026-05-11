@@ -162,7 +162,7 @@ fn transient_rename_error_classifier() {
     ] {
         assert!(
             !is_transient_rename_error(&io::Error::from(kind)),
-            "{kind:?} must not be classified as transient"
+            "{kind:?} must not be classified as transient",
         );
     }
 }

@@ -143,7 +143,7 @@ fn unrelated_subgraph_excluded() {
     assert!(!flat.contains(&key("x", "1.0.0")), "unreachable ancestor must be excluded: {flat:?}");
     assert!(
         !flat.contains(&key("y", "1.0.0")),
-        "unreachable build leaf must be excluded: {flat:?}"
+        "unreachable build leaf must be excluded: {flat:?}",
     );
 }
 

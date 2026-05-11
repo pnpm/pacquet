@@ -334,7 +334,7 @@ fn encode_roundtrips_many_files_sharing_one_slot() {
     // `CafsFileInfo` instances must reference that slot.
     assert_eq!(
         record_def_headers, 2,
-        "expected one def per distinct shape, got bytes {bytes:02x?}"
+        "expected one def per distinct shape, got bytes {bytes:02x?}",
     );
     assert_eq!(roundtrip(&original), original);
 }
@@ -384,7 +384,7 @@ fn encode_omits_checked_at_when_none() {
     let needle = b"checkedAt";
     assert!(
         bytes.windows(needle.len()).all(|w| w != needle),
-        "checkedAt leaked into output when the field was None: {bytes:02x?}"
+        "checkedAt leaked into output when the field was None: {bytes:02x?}",
     );
     assert_eq!(roundtrip(&original).files.get("f").unwrap().checked_at, None);
 }
@@ -415,7 +415,7 @@ fn encode_allocates_separate_slots_for_distinct_cafs_shapes() {
     // def.
     assert_eq!(
         record_def_headers, 3,
-        "expected three defs (outer + two CafsFileInfo shapes), got bytes {bytes:02x?}"
+        "expected three defs (outer + two CafsFileInfo shapes), got bytes {bytes:02x?}",
     );
     assert_eq!(roundtrip(&original), original);
 }
@@ -491,7 +491,7 @@ fn encode_omits_requires_build_when_none() {
     let needle = b"requiresBuild";
     assert!(
         bytes.windows(needle.len()).all(|w| w != needle),
-        "requiresBuild leaked into output when the field was None: {bytes:02x?}"
+        "requiresBuild leaked into output when the field was None: {bytes:02x?}",
     );
 }
 
@@ -538,7 +538,7 @@ fn encode_side_effects_with_only_added_omits_deleted_field() {
     let bytes = encode_package_files_index(&original).unwrap();
     assert!(
         bytes.windows(7).all(|w| w != b"deleted"),
-        "`deleted` field name appeared in output when the field was None: {bytes:02x?}"
+        "`deleted` field name appeared in output when the field was None: {bytes:02x?}",
     );
     assert_eq!(roundtrip(&original), original);
 }
@@ -572,7 +572,7 @@ fn encode_allocates_separate_slots_for_distinct_side_effects_shapes() {
     // `CafsFileInfo` adds a fourth.
     assert_eq!(
         record_def_headers, 4,
-        "expected defs for outer + two distinct side-effects shapes + CafsFileInfo, got bytes {bytes:02x?}"
+        "expected defs for outer + two distinct side-effects shapes + CafsFileInfo, got bytes {bytes:02x?}",
     );
     assert_eq!(roundtrip(&original), original);
 }

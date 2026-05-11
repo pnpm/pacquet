@@ -323,7 +323,7 @@ fn create_pnpm_workspace(
             if parsed.store_dir.is_none() {
                 eprintln!(
                     "warn: fixture's pnpm-workspace.yaml has no top-level `storeDir:` — \
-                     injecting `storeDir: ./store-dir` so per-revision store isolation works"
+                     injecting `storeDir: ./store-dir` so per-revision store isolation works",
                 );
             }
             parsed
