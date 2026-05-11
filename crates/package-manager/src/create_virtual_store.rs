@@ -289,13 +289,13 @@ impl<'a> CreateVirtualStore<'a> {
         // local alias drifting (Copilot review on #292).
         let mut warm = Vec::with_capacity(snapshot_entries.len());
         let mut cold: Vec<(&PackageKey, &SnapshotEntry)> = Vec::new();
-        // Build a `metadata_key → manifest` lookup from the prefetched
+        // Build a `metadata_key -> manifest` lookup from the prefetched
         // index rows. Snapshot keys differ across peer-resolved
-        // variants of the same package (`react-dom@17.0.2(react@…)`),
+        // variants of the same package (`react-dom@17.0.2(react@...)`),
         // but the bundled manifest is identical across variants
         // because every variant resolves to the same tarball. Keying
         // by [`PkgNameVerPeer::without_peer`] collapses the variants
-        // to one entry — same shape as
+        // to one entry: same shape as
         // [`pacquet_lockfile::Lockfile::packages`], which is what the
         // bin linker already looks up by.
         let mut package_manifests: PackageManifests =
