@@ -309,14 +309,16 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
 /// Other script keys (test, build, lint, etc.) are dev ergonomics
 /// that the installer never invokes.
 ///
-/// Returns `None` when nothing survives the pick — typical for a
-/// manifest that's just `{ name, version }`-shaped, since those two
-/// fields are intentionally NOT in the pick list (`name` *is*
-/// included, but a manifest with only `name` would still surface).
-/// Matches upstream's `if (!result && !scripts) return undefined`
-/// shape: empty inputs degrade to `None` rather than a
-/// `Some(Object({}))` that would round-trip as a zero-field record
-/// def.
+/// Returns `None` when nothing survives the pick. In practice this
+/// only happens for inputs that aren't a JSON object at all (the
+/// type guard at the top of the function), or for objects whose
+/// every field is either absent or `null`. A real `package.json`
+/// from an npm tarball always carries at least `name` and `version`
+/// (both kept by the pick), so the typical npm-published manifest
+/// surfaces as `Some(...)`. Matches upstream's
+/// `if (!result && !scripts) return undefined` shape: empty inputs
+/// degrade to `None` rather than a `Some(Object({}))` that would
+/// round-trip as a zero-field record def.
 fn normalize_bundled_manifest(value: &serde_json::Value) -> Option<serde_json::Value> {
     /// Fields kept verbatim from the source manifest.
     ///
@@ -600,11 +602,12 @@ pub type PrefetchedCasPaths = HashMap<String, Arc<HashMap<String, PathBuf>>>;
 /// bin-link consumers can hold the same parsed manifest without
 /// deep-cloning.
 ///
-/// `None` entries are intentional: a row whose `manifest` field was
-/// never populated (older pacquet write, or a tarball whose
-/// `package.json` failed to parse) surfaces here so callers can
-/// distinguish "no manifest stored" from "package wasn't prefetched
-/// at all".
+/// Only keys whose row carried a manifest blob appear in the map —
+/// a missing key means either "row exists but has no manifest" (old
+/// pacquet write, or a tarball whose `package.json` failed to
+/// parse) or "package wasn't prefetched at all". Callers that need
+/// to tell those apart cross-reference with [`PrefetchedCasPaths`]
+/// from the same [`PrefetchResult`].
 pub type PrefetchedManifests = HashMap<String, Arc<serde_json::Value>>;
 
 /// Output of [`prefetch_cas_paths`]: the warm-cache filesystem map
