@@ -7,7 +7,7 @@ use crate::State;
 use add::AddArgs;
 use clap::{Parser, Subcommand, ValueEnum};
 use install::InstallArgs;
-use miette::Context;
+use miette::{Context, IntoDiagnostic};
 use pacquet_executor::execute_shell;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::PackageManifest;
@@ -30,17 +30,7 @@ pub struct CliArgs {
     #[clap(short = 'C', long, default_value = ".")]
     pub dir: PathBuf,
 
-    /// How install progress is rendered.
-    ///
-    /// `ndjson` writes pnpm-shaped log records as newline-delimited JSON
-    /// to stderr, suitable for piping into `@pnpm/cli.default-reporter`.
-    /// `silent` drops every event. The default is `silent` until the
-    /// in-process default renderer lands; the spawn-and-pipe wiring is
-    /// tracked separately (see #344).
-    ///
-    /// `global = true` makes the flag accepted on either side of the
-    /// subcommand (`pacquet --reporter=ndjson install` and
-    /// `pacquet install --reporter=ndjson` both work), matching pnpm.
+    /// Reporter output format.
     #[clap(long, value_enum, default_value_t = ReporterType::Silent, global = true)]
     pub reporter: ReporterType,
 }
@@ -50,7 +40,9 @@ pub struct CliArgs {
 /// Mirrors the names pnpm uses for `--reporter` (`default`, `ndjson`,
 /// `silent`, `append-only`). Only the variants pacquet currently supports
 /// are listed; the others land alongside the default-reporter spawn-and-
-/// pipe (tracked under #344).
+/// pipe (tracked under [#344]).
+///
+/// [#344]: https://github.com/pnpm/pacquet/issues/344
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ReporterType {
     /// Newline-delimited JSON in pnpm's wire format on stderr.
@@ -82,8 +74,26 @@ impl CliArgs {
     /// Execute the command
     pub async fn run(self) -> miette::Result<()> {
         let CliArgs { command, dir, reporter } = self;
+        // Canonicalize `--dir` so the bunyan-envelope `prefix` emitted by
+        // the reporter is the same absolute, symlink-resolved path that
+        // `@pnpm/cli.default-reporter` derives via `process.cwd()`. Without
+        // this, a default `--dir=.` leaves `prefix` as `"."`, the reporter
+        // never matches it against its `cwd`, and every progress / stats
+        // line gets a redundant `.` path prefix prepended. Mirrors pnpm's
+        // <https://github.com/pnpm/pnpm/blob/8eb1be4988/config/reader/src/index.ts#L270>
+        // `cwd = fs.realpathSync(betterPathResolve(cliOptions.dir ...))`,
+        // later assigned to `pnpmConfig.dir` (used as the install
+        // `lockfileDir`, threaded into every event's `prefix`).
+        let dir = dunce::canonicalize(&dir)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("canonicalizing the `--dir` argument: {}", dir.display()))?;
         let manifest_path = || dir.join("package.json");
-        let npmrc = || Npmrc::current(env::current_dir, home::home_dir, Default::default).leak();
+        let npmrc = || -> miette::Result<&'static mut Npmrc> {
+            Npmrc::current(env::current_dir, home::home_dir, Default::default)
+                .map(Npmrc::leak)
+                .map_err(miette::Report::new)
+                .wrap_err("load configuration")
+        };
         // `require_lockfile` is the "this subcommand cannot run without a
         // lockfile loaded" signal, used by `State::init` to override
         // `config.lockfile=false`. Only `install --frozen-lockfile` needs
@@ -91,8 +101,9 @@ impl CliArgs {
         // pnpm's CLI: `--frozen-lockfile` is the strongest signal and
         // must not be silently dropped because `lockfile=false` was set
         // (or defaulted) in config.
-        let state = |require_lockfile: bool| {
-            State::init(manifest_path(), npmrc(), require_lockfile).wrap_err("initialize the state")
+        let state = |require_lockfile: bool| -> miette::Result<State> {
+            State::init(manifest_path(), npmrc()?, require_lockfile)
+                .wrap_err("initialize the state")
         };
 
         match command {
@@ -130,7 +141,7 @@ impl CliArgs {
                 let command = manifest.script("start", true)?.unwrap_or("node server.js");
                 execute_shell(command).wrap_err(format!("executing command: \"{0}\"", command))?;
             }
-            CliCommand::Store(command) => command.run(|| npmrc())?,
+            CliCommand::Store(command) => command.run(|| npmrc().map(|m| &*m))?,
         }
 
         Ok(())

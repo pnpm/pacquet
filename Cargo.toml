@@ -42,6 +42,8 @@ dashmap = { version = "6.1.0" }
 derive_more = { version = "2.1.1", features = ["full"] }
 dunce = { version = "1.0.5" }
 home = { version = "0.5.12" }
+httpdate = { version = "1.0.3" }
+indexmap = { version = "2.14.0", features = ["serde"] }
 insta = { version = "1.47.2", features = ["yaml", "glob", "walkdir"] }
 itertools = { version = "0.14.0" }
 futures-util = { version = "0.3.32" }
@@ -58,6 +60,7 @@ reqwest = { version = "0.13", default-features = false, features = [
   "stream",
 ] }
 node-semver = { version = "2.2.0" }
+pathdiff = { version = "0.2.3" }
 pipe-trait = { version = "0.4.0" }
 rayon = { version = "1.12.0" }
 rmp-serde = { version = "1.3.0" }
@@ -65,14 +68,14 @@ rusqlite = { version = "0.39.0", features = ["bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_ini = { version = "0.2.0" }
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
-serde-saphyr = { version = "0.0.25" }
+serde-saphyr = { version = "0.0.26" }
 # 0.11 removes the LowerHex impl on Output; revisit after upstream/consumers catch up
 sha2               = { version = "0.10.9" }
 smart-default      = { version = "0.7.1" }
 split-first-char   = { version = "2.0.1" }
 ssri               = { version = "9.2.0" }
 strum              = { version = "0.28.0", features = ["derive"] }
-sysinfo            = { version = "0.38.4" }
+sysinfo            = { version = "0.39.1" }
 tar                = { version = "0.4.45" }
 text-block-macros  = { version = "0.2.0" }
 tracing            = { version = "0.1.44" }
@@ -84,6 +87,7 @@ zune-inflate       = { version = "0.2.54" }
 
 # Dev dependencies
 assert_cmd        = { version = "2.2.1" }
+chrono            = { version = "0.4.44", default-features = false, features = ["clock"] }
 criterion         = { version = "0.8.2", features = ["async_tokio"] }
 pretty_assertions = { version = "1.4.1" }
 project-root      = { version = "0.2.2" }

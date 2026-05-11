@@ -128,6 +128,27 @@ pub enum LogEvent {
     /// Emit site: <https://github.com/pnpm/pnpm/blob/086c5e91e8/fetching/tarball-fetcher/src/remoteTarballFetcher.ts#L91>.
     #[serde(rename = "pnpm:request-retry")]
     RequestRetry(RequestRetryLog),
+
+    /// Per-script lifecycle output (`pnpm:lifecycle`). Three flavors,
+    /// distinguished by which optional fields the record carries:
+    /// `Script` fires once before the script spawns, `Stdio` fires per
+    /// stdout/stderr line, and `Exit` fires once after the script
+    /// returns. All three carry `depPath`, `stage`, and `wd`.
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/80037699fb/core/core-loggers/src/lifecycleLogger.ts>.
+    /// Emit site: <https://github.com/pnpm/pnpm/blob/80037699fb/exec/lifecycle/src/runLifecycleHook.ts>.
+    #[serde(rename = "pnpm:lifecycle")]
+    Lifecycle(LifecycleLog),
+
+    /// One per install run, listing every package whose lifecycle
+    /// scripts were skipped because the package was not in
+    /// `allowBuilds` (`pnpm:ignored-scripts`). pnpm's reporter renders
+    /// the list to remind the user they can opt in.
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/80037699fb/core/core-loggers/src/ignoredScriptsLogger.ts>.
+    /// Emit site: <https://github.com/pnpm/pnpm/blob/80037699fb/installing/deps-installer/src/install/index.ts#L414>.
+    #[serde(rename = "pnpm:ignored-scripts")]
+    IgnoredScripts(IgnoredScriptsLog),
 }
 
 /// `pnpm:context` payload.
@@ -422,6 +443,78 @@ pub struct RequestRetryError {
     pub errno: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
+}
+
+/// `pnpm:lifecycle` payload. Same flatten-on-presence pattern as
+/// [`PackageManifestLog`] / [`RootLog`].
+#[derive(Debug, Clone, Serialize)]
+pub struct LifecycleLog {
+    pub level: LogLevel,
+    #[serde(flatten)]
+    pub message: LifecycleMessage,
+}
+
+/// `pnpm:lifecycle` discriminated payload. pnpm's
+/// [`LifecycleMessage`](https://github.com/pnpm/pnpm/blob/80037699fb/core/core-loggers/src/lifecycleLogger.ts)
+/// is a TypeScript union of three shapes that pnpm's reporter
+/// dispatches on by presence of `script`, `line`, or `exitCode`.
+/// `#[serde(untagged)]` matches that shape so consumers
+/// (notably `@pnpm/cli.default-reporter`) accept the record unchanged.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum LifecycleMessage {
+    /// `ScriptLifecycleMessage` upstream: emitted once before each
+    /// hook spawns.
+    Script {
+        #[serde(rename = "depPath")]
+        dep_path: String,
+        optional: bool,
+        script: String,
+        stage: String,
+        wd: String,
+    },
+    /// `StdioLifecycleMessage` upstream: one event per stdout/stderr
+    /// line read from the spawned script. `line` is the raw text of
+    /// the output line.
+    Stdio {
+        #[serde(rename = "depPath")]
+        dep_path: String,
+        line: String,
+        stage: String,
+        stdio: LifecycleStdio,
+        wd: String,
+    },
+    /// `ExitLifecycleMessage` upstream: emitted once after the script
+    /// exits with the resolved exit code.
+    Exit {
+        #[serde(rename = "depPath")]
+        dep_path: String,
+        #[serde(rename = "exitCode")]
+        exit_code: i32,
+        optional: bool,
+        stage: String,
+        wd: String,
+    },
+}
+
+/// Stdio channel discriminator on a [`LifecycleMessage::Stdio`] event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LifecycleStdio {
+    Stdout,
+    Stderr,
+}
+
+/// `pnpm:ignored-scripts` payload. Emitted once per install with the
+/// names of every package whose lifecycle scripts were skipped because
+/// the package was not in `allowBuilds`. Names are in `name@version`
+/// form, matching upstream's `dedupePackageNamesFromIgnoredBuilds`
+/// output.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IgnoredScriptsLog {
+    pub level: LogLevel,
+    pub package_names: Vec<String>,
 }
 
 /// Severity level on the [bunyan]-shaped envelope.

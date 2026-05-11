@@ -12,7 +12,7 @@ use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::PackageVersion;
-use pacquet_reporter::Reporter;
+use pacquet_reporter::{LogEvent, LogLevel, Reporter, Stage, StageLog};
 use pacquet_store_dir::{SharedVerifiedFilesCache, StoreIndex, StoreIndexWriter};
 use pacquet_tarball::MemCache;
 use pipe_trait::Pipe;
@@ -203,6 +203,17 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
         LinkVirtualStoreBins { virtual_store_dir: &config.virtual_store_dir }
             .run()
             .map_err(InstallWithoutLockfileError::LinkVirtualStoreBins)?;
+
+        // Mirrors upstream `link.ts:167-170`: `importing_done` fires once
+        // extraction and symlink linking are complete. The without-lockfile
+        // path does not run lifecycle scripts today, so emitting here also
+        // marks end-of-install for reporters.
+        // <https://github.com/pnpm/pnpm/blob/80037699fb/installing/deps-installer/src/install/link.ts#L167>
+        R::emit(&LogEvent::Stage(StageLog {
+            level: LogLevel::Debug,
+            prefix: requester.to_string(),
+            stage: Stage::ImportingDone,
+        }));
 
         Ok(())
     }

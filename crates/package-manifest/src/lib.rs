@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::Write,
+    io::{self, Write},
     path::{Path, PathBuf},
 };
 
@@ -234,6 +234,51 @@ impl PackageManifest {
 
         if if_present { Ok(None) } else { Err(PackageManifestError::NoScript(command.to_string())) }
     }
+}
+
+/// Read `<dir>/package.json` if it exists, returning `Ok(None)` when the file
+/// is absent. Other IO errors and JSON parse errors propagate.
+///
+/// Mirrors upstream `safeReadPackageJsonFromDir` from
+/// <https://github.com/pnpm/pnpm/blob/80037699fb/pkg-manifest/reader/src/index.ts#L48>.
+/// Upstream returns `null` only on `ENOENT`; malformed JSON surfaces as a
+/// `BAD_PACKAGE_JSON` error and other IO errors propagate.
+pub fn safe_read_package_json_from_dir(dir: &Path) -> Result<Option<Value>, PackageManifestError> {
+    let path = dir.join("package.json");
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(PackageManifestError::Io(err)),
+    };
+    serde_json::from_str(&text).map(Some).map_err(PackageManifestError::Serialization)
+}
+
+/// Decide whether a package directory needs a build pass.
+///
+/// Mirrors upstream `pkgRequiresBuild` from
+/// <https://github.com/pnpm/pnpm/blob/80037699fb/building/pkg-requires-build/src/index.ts>:
+/// true when the package's manifest declares any of `preinstall`, `install`,
+/// or `postinstall`, or when the package contains `binding.gyp` or a `.hooks/`
+/// directory. Missing manifests, IO errors, and parse errors all collapse to
+/// `false` — pacquet cannot meaningfully build a package whose extracted
+/// content cannot be inspected.
+pub fn pkg_requires_build(pkg_root: &Path) -> bool {
+    if pkg_root.join("binding.gyp").exists() || pkg_root.join(".hooks").is_dir() {
+        return true;
+    }
+    let manifest = match safe_read_package_json_from_dir(pkg_root) {
+        Ok(Some(value)) => value,
+        _ => return false,
+    };
+    manifest
+        .get("scripts")
+        .and_then(Value::as_object)
+        .map(|scripts| {
+            scripts.contains_key("preinstall")
+                || scripts.contains_key("install")
+                || scripts.contains_key("postinstall")
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

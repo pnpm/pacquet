@@ -1548,8 +1548,10 @@ async fn run_with_mem_cache_recovers_from_owning_fetch_error() {
 /// tarball pipeline:
 ///
 /// * `pnpm:fetching-progress started` once per *attempt* — so a 503 +
-///   200 retry pattern emits twice with `attempt = 0` then
-///   `attempt = 1`. `size` carries the response's `Content-Length`
+///   200 retry pattern emits twice with `attempt = 1` then
+///   `attempt = 2` (one-indexed, matching pnpm's wire shape — the
+///   default reporter's `reportBigTarballsProgress` filters on
+///   `attempt === 1`). `size` carries the response's `Content-Length`
 ///   (mockito sends one for `with_body`).
 /// * `pnpm:fetching-progress in_progress` is throttled to ~200ms; the
 ///   tiny FASTIFY tarball used here downloads in well under that, so
@@ -1621,7 +1623,7 @@ async fn fetching_progress_and_fetched_events_fire_during_download() {
         })
         .collect();
     let attempts: Vec<u32> = started.iter().map(|(a, _)| *a).collect();
-    assert_eq!(attempts, vec![0, 1], "started must fire once per attempt; got {captured:?}");
+    assert_eq!(attempts, vec![1, 2], "started must fire once per attempt; got {captured:?}");
     // Both attempts have a response head (mockito sends Content-Length
     // for `with_body(...)` and `with_status(503)` likewise), so both
     // `started` events must carry a populated `size`. Pinning this
