@@ -149,9 +149,6 @@ impl<'a> LinkVirtualStoreBins<'a> {
         let slots: Vec<PathBuf> = slots.collect();
         slots.par_iter().try_for_each(|slot_dir| {
             let modules_dir = slot_dir.join("node_modules");
-            if !modules_dir.is_dir() {
-                return Ok(());
-            }
 
             // Identify the slot's own package by walking `node_modules` and
             // recovering the directory that matches the slot name. Since
@@ -161,7 +158,16 @@ impl<'a> LinkVirtualStoreBins<'a> {
             // `<slot>/node_modules/<pkg>/node_modules/.bin`. There's
             // exactly one such candidate per slot. The others are
             // `node_modules/<dep>` symlinks pointing at sibling slots.
-            let Some(self_pkg_dir) = find_slot_own_package_dir(slot_dir, &modules_dir) else {
+            //
+            // `find_slot_own_package_dir` probes the candidate via
+            // `Api::read_dir`, so a missing `<slot>/node_modules` (e.g.
+            // freshly created slot, partial install) short-circuits to
+            // `None` without touching the real filesystem when a fake
+            // `Api` is injected. The outer existence check on
+            // `modules_dir` would be redundant; `link_bins_excluding`
+            // also handles `NotFound` from `Api::read_dir`.
+            let Some(self_pkg_dir) = find_slot_own_package_dir::<Api>(slot_dir, &modules_dir)
+            else {
                 return Ok(());
             };
             let bins_dir = self_pkg_dir.join("node_modules/.bin");
@@ -187,7 +193,16 @@ impl<'a> LinkVirtualStoreBins<'a> {
 /// boundary. Parsing from the right (`rfind('@')`) would split there
 /// and silently break peer-resolved slots; parse from the left
 /// instead, skipping a leading `@` that belongs to a scoped package.
-fn find_slot_own_package_dir(slot_dir: &Path, modules_dir: &Path) -> Option<PathBuf> {
+///
+/// Existence of the resolved candidate is probed via `Api::read_dir`
+/// rather than `Path::is_dir`, so tests injecting a fake `Api` see the
+/// fake's view of the world. A path that is not a directory (or that
+/// does not exist) yields `Err` from the trait, which we map to
+/// `None`.
+fn find_slot_own_package_dir<Api: FsReadDir>(
+    slot_dir: &Path,
+    modules_dir: &Path,
+) -> Option<PathBuf> {
     let slot_name = slot_dir.file_name()?.to_str()?;
 
     // The package-name half is everything before the **first** `@`,
@@ -205,7 +220,12 @@ fn find_slot_own_package_dir(slot_dir: &Path, modules_dir: &Path) -> Option<Path
         Some((scope, name)) => modules_dir.join(scope).join(name),
         None => modules_dir.join(name_part),
     };
-    pkg_dir.is_dir().then_some(pkg_dir)
+    // `Api::read_dir` returns `impl Iterator<Item = PathBuf>` that may
+    // borrow from `&pkg_dir`. Drop the iterator before moving
+    // `pkg_dir` out; turn the `Ok`/`Err` into a `bool` first so the
+    // borrow ends with the temporary.
+    let exists = Api::read_dir(&pkg_dir).is_ok();
+    exists.then_some(pkg_dir)
 }
 
 /// Like [`pacquet_cmd_shim::link_bins`] but skipping the slot's own package
