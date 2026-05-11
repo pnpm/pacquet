@@ -18,7 +18,7 @@ use std::path::{Component, Path, PathBuf};
 ///   `<pkg>` even when it resolves back inside.
 /// - Unanchored: push `..` so a leading `..` survives. Relative
 ///   targets like `../shared/cli` need this for
-///   [`crate::shim::relative_path_from`].
+///   `shim::relative_path_from`.
 ///
 /// Filesystem-free is the whole point: callers in `bin_resolver::is_subdir`
 /// and `shim::relative_path_from` run the check before the target files
