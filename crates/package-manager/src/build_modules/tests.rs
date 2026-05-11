@@ -288,8 +288,8 @@ fn ignored_scripts_event_carries_returned_names() {
         matches!(
             captured.as_slice(),
             [LogEvent::IgnoredScripts(IgnoredScriptsLog { package_names, .. })]
-                if package_names == &names
+                if package_names == &names,
         ),
-        "captured: {captured:?}"
+        "captured: {captured:?}",
     );
 }

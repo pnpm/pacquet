@@ -68,6 +68,12 @@ known-failures:
 lint:
   cargo clippy --locked -- --deny warnings
 
+# Run perfectionist dylint rules. Requires `cargo-dylint` and `dylint-link`
+# (install with `cargo binstall cargo-dylint dylint-link`). The lint library
+# is pinned in `dylint.toml`.
+dylint:
+  env RUSTFLAGS="-D warnings" cargo dylint --all -- --all-targets --workspace
+
 # Get code coverage
 codecov:
   cargo codecov --html

@@ -36,7 +36,7 @@ packages:
 "#;
     // `pnpm-workspace.yaml` commonly contains top-level keys we do not
     // model in `WorkspaceSettings` (packages list, catalogs, build
-    // allow-lists, …). This guards against regressions that would make
+    // allow-lists, ...). This guards against regressions that would make
     // serde reject those unknown keys during deserialization — i.e.
     // someone adding `deny_unknown_fields` to the struct.
     let _settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
@@ -136,7 +136,7 @@ fn apply_leaves_unset_fields_alone() {
 
     assert_eq!(
         (npmrc.hoist, npmrc.lockfile, npmrc.registry.clone(), npmrc.auto_install_peers),
-        before
+        before,
     );
 }
 

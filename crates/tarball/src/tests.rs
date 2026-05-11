@@ -198,8 +198,8 @@ async fn packages_under_orgs_should_work() {
             "package.json",
             "test/index.test.js",
             "types/index.d.ts",
-            "types/index.test-d.ts"
-        ]
+            "types/index.test-d.ts",
+        ],
     );
 
     drop(store_dir);
@@ -586,7 +586,7 @@ async fn falls_through_when_cafs_file_missing() {
     .expect_err("stale index entry must not resolve to a cache hit");
     assert!(
         matches!(err, TarballError::FetchTarball(_)),
-        "expected fall-through to network fetch, got: {err:?}"
+        "expected fall-through to network fetch, got: {err:?}",
     );
 
     drop(store_dir);
@@ -644,7 +644,7 @@ async fn falls_through_when_digest_is_malformed() {
     .expect_err("corrupt digest must not resolve to a cache hit");
     assert!(
         matches!(err, TarballError::FetchTarball(_)),
-        "expected fall-through to network fetch, got: {err:?}"
+        "expected fall-through to network fetch, got: {err:?}",
     );
 
     drop(store_dir);
@@ -705,7 +705,7 @@ async fn falls_through_when_cafs_path_is_a_directory() {
     .expect_err("directory at CAFS path must not resolve to a cache hit");
     assert!(
         matches!(err, TarballError::FetchTarball(_)),
-        "expected fall-through to network fetch, got: {err:?}"
+        "expected fall-through to network fetch, got: {err:?}",
     );
 
     drop(store_dir);
@@ -776,7 +776,7 @@ async fn falls_through_when_cafs_path_is_a_symlink() {
     .expect_err("symlink at CAFS path must not resolve to a cache hit");
     assert!(
         matches!(err, TarballError::FetchTarball(_)),
-        "expected fall-through to network fetch, got: {err:?}"
+        "expected fall-through to network fetch, got: {err:?}",
     );
 
     drop(store_dir);
@@ -813,7 +813,7 @@ fn extract_propagates_malformed_tar_instead_of_panicking() {
 
     assert!(
         matches!(err, TarballError::ReadTarballEntries(_)),
-        "expected ReadTarballEntries, got: {err:?}"
+        "expected ReadTarballEntries, got: {err:?}",
     );
 
     drop(tempdir);
@@ -1036,7 +1036,7 @@ async fn retries_integrity_mismatch_until_exhausted() {
     )
     .await
     .expect_err("integrity mismatch should exhaust the retry budget");
-    assert!(matches!(err, TarballError::Checksum(_)), "expected Checksum error, got {err:?}",);
+    assert!(matches!(err, TarballError::Checksum(_)), "expected Checksum error, got {err:?}");
     mock.assert_async().await;
     drop(store_dir_keep);
 }
@@ -1429,7 +1429,7 @@ async fn mem_cache_hit_emits_found_in_store_for_second_requester() {
                 if matches!(
                     &log.message,
                     ProgressMessage::FoundInStore { package_id, requester }
-                        if package_id == "second@2.0.0" && requester == "/proj"
+                        if package_id == "second@2.0.0" && requester == "/proj",
                 )
         )),
         "found_in_store must fire for the second requester's package_id; got {captured:?}",
@@ -1640,7 +1640,7 @@ async fn fetching_progress_and_fetched_events_fire_during_download() {
             matches!(
                 e,
                 LogEvent::Progress(log)
-                    if matches!(&log.message, ProgressMessage::Fetched { .. })
+                    if matches!(&log.message, ProgressMessage::Fetched { .. }),
             )
         })
         .count();
@@ -1825,7 +1825,7 @@ async fn found_in_store_event_fires_on_cache_hit() {
                 if matches!(
                     &log.message,
                     ProgressMessage::FoundInStore { package_id, requester }
-                        if package_id == "@fastify/error@3.3.0" && requester == "/proj"
+                        if package_id == "@fastify/error@3.3.0" && requester == "/proj",
                 )
         )),
         "found_in_store must fire on cache hit; got {captured:?}",

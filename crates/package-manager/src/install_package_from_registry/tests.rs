@@ -75,7 +75,7 @@ pub async fn should_find_package_version_from_registry() {
     assert_eq!(package.name, "fast-querystring");
     assert_eq!(
         package.version,
-        Version { major: 1, minor: 0, patch: 0, build: vec![], pre_release: vec![] }
+        Version { major: 1, minor: 0, patch: 0, build: vec![], pre_release: vec![] },
     );
 
     let virtual_store_path = virtual_store_dir

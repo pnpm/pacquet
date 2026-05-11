@@ -26,8 +26,8 @@ fn emits_resolved_with_supplied_identifiers() {
             [LogEvent::Progress(log)] if matches!(
                 &log.message,
                 ProgressMessage::Resolved { package_id, requester }
-                    if package_id == "react@18.0.0" && requester == "/proj"
-            )
+                    if package_id == "react@18.0.0" && requester == "/proj",
+            ),
         ),
         "expected a single Resolved event with matching identifiers; got {captured:?}",
     );

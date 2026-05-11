@@ -225,7 +225,7 @@ fn careful_path_dedups_per_resolved_path_not_per_digest() {
     let exec_path = store_dir.cas_file_path_by_mode(&digest, 0o755).unwrap();
     eprintln!(
         "non_exec_path={non_exec_path:?} exec_path={exec_path:?} exec_exists={}",
-        exec_path.exists()
+        exec_path.exists(),
     );
     assert!(!exec_path.exists());
     assert_ne!(non_exec_path, exec_path);

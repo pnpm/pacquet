@@ -1,0 +1,12 @@
+# Dylint configuration. cargo-dylint reads `[workspace.metadata.dylint]`
+# from this file (or, equivalently, from `Cargo.toml`). Keeping the table
+# here keeps the workspace `Cargo.toml` focused on cargo-native metadata
+# and makes the cache key for CI easy to compute (see the `dylint` job
+# in `.github/workflows/ci.yml`).
+#
+# Run with: `cargo dylint --all -- --all-targets --workspace`
+# or via the `just dylint` recipe.
+[workspace.metadata.dylint]
+libraries = [
+    { git = "https://github.com/KSXGitHub/perfectionist", tag = "0.0.0-rc.7" },
+]

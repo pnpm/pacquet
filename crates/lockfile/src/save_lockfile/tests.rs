@@ -67,7 +67,7 @@ fn round_trip_parse_save_parse_preserves_lockfile() {
 
     let saved_bytes = std::fs::read_to_string(&path).expect("read saved lockfile");
 
-    // Long single-line scalars (notably `integrity: sha512-…`) must stay plain;
+    // Long single-line scalars (notably `integrity: sha512-...`) must stay plain;
     // pnpm-lock.yaml never uses folded block scalars (`>-`) for them. Guard the
     // formatting invariant that `serialize_yaml` exists to enforce.
     assert!(

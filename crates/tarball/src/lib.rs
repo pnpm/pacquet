@@ -323,7 +323,7 @@ fn extract_tarball_entries(
         .map_err(TarballError::ReadTarballEntries)?
         // Keep only regular-file `Ok` entries; anything else in the
         // `Ok` arm (directories, symlinks, hardlinks, pax/gnu
-        // extension headers, …) is dropped. `Err` entries fall
+        // extension headers, ...) is dropped. `Err` entries fall
         // through so the `?` inside the loop below propagates them —
         // previously this branch did `entry.as_ref().unwrap()` which
         // panicked on any iterator-level error.
@@ -513,7 +513,7 @@ pub async fn prefetch_cas_paths(
     let result = tokio::task::spawn_blocking(move || -> PrefetchedCasPaths {
         // Phase 1: read every row under the mutex; drop the guard
         // before running any filesystem work. One batched
-        // `SELECT … WHERE key IN (?, ?, …)` per `GET_MANY_CHUNK`
+        // `SELECT ... WHERE key IN (?, ?, ...)` per `GET_MANY_CHUNK`
         // (see `StoreIndex::get_many`) collapses what used to be N
         // round-trips into one — see #294 for the cold-cache regression
         // the per-key loop introduced when every key missed.
@@ -606,7 +606,7 @@ async fn load_cached_cas_paths(
         };
         if !verify_result.passed {
             // Per-file reason (filename, CAS path, size mismatch, hash
-            // mismatch, …) is logged at `debug!` inside
+            // mismatch, ...) is logged at `debug!` inside
             // `check_pkg_files_integrity` / `build_file_maps_from_index`
             // where the failure actually happens — this caller-side log
             // just summarises "the row as a whole didn't verify" so log
@@ -846,7 +846,7 @@ async fn fetch_and_extract_once<R: Reporter>(
     // counter is zero-indexed, so emit `attempt + 1`. The default
     // reporter's `reportBigTarballsProgress` filters on
     // `log.attempt === 1` (so retries don't reset the progress
-    // line), so a zero would silence every "Downloading …" line.
+    // line), so a zero would silence every "Downloading ..." line.
     let send_result = client.get(package_url).send().await;
     let size = send_result.as_ref().ok().and_then(|r| r.content_length());
     R::emit(&LogEvent::FetchingProgress(FetchingProgressLog {
@@ -1271,7 +1271,7 @@ impl<'a> DownloadTarballToStore<'a> {
         // and the per-file stat work.
         //
         // We still deep-clone the inner per-file `HashMap` here because
-        // `run_without_mem_cache` returns an owned `HashMap<…, …>`;
+        // `run_without_mem_cache` returns an owned `HashMap<..., ...>`;
         // `(**cas_paths).clone()` walks every entry and clones each
         // `String`/`PathBuf`, not the `Arc`. The Arc wrapping in
         // `PrefetchedCasPaths` is what saves the deep clone on the *new*
@@ -1337,7 +1337,7 @@ impl<'a> DownloadTarballToStore<'a> {
         // don't queue a half-built row that a successful retry would
         // duplicate. `queue` is a non-blocking `UnboundedSender::send`;
         // the writer task owns one connection and batches whatever it
-        // drains in one `BEGIN IMMEDIATE; … ; COMMIT`. `None` means the
+        // drains in one `BEGIN IMMEDIATE; ... ; COMMIT`. `None` means the
         // writer failed to open or the caller handed us none — the row
         // is dropped with a `warn!` and the next install misses on this
         // cache key, matching the read path's stance.
