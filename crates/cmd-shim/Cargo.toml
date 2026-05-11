@@ -13,7 +13,6 @@ repository.workspace = true
 [dependencies]
 derive_more = { workspace = true }
 miette      = { workspace = true }
-pacquet-fs  = { workspace = true }
 pipe-trait  = { workspace = true }
 rayon       = { workspace = true }
 serde_json  = { workspace = true }
