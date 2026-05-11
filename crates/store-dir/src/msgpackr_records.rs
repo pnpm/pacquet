@@ -77,6 +77,7 @@
 use crate::{CafsFileInfo, PackageFilesIndex, SideEffectsDiff};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
+use serde_json::Value;
 use smart_default::SmartDefault;
 use std::{collections::HashMap, rc::Rc};
 
@@ -611,11 +612,14 @@ fn write_str(w: &mut Vec<u8>, s: &str) {
 /// ## Optional-field handling
 ///
 /// - **`PackageFilesIndex`**: `algo` and `files` are always emitted;
-///   `requires_build` and `side_effects` are included in the record
-///   schema only when `Some`. `manifest` is always `None` in pacquet
-///   today and not yet wired through; the encoder returns
-///   [`EncodeError::ManifestNotSupported`] if it ever gets a `Some`,
-///   which is louder than silently dropping it.
+///   `requires_build`, `manifest`, and `side_effects` are included
+///   in the record schema only when `Some`. The `manifest`
+///   ([`serde_json::Value`]) is encoded recursively, with every
+///   nested JSON object record-encoded so a pnpm reader sees them as
+///   JS `Object`s (which `manifest.bin` / `manifest.directories?.bin`
+///   property access can reach) rather than plain msgpack maps
+///   (which msgpackr decodes as JS `Map`s, leaving those property
+///   reads `undefined`).
 /// - **`CafsFileInfo`**: optional `checkedAt` is omitted from the
 ///   record schema entirely when `None` rather than written as `nil`,
 ///   so the presence of `checkedAt` determines the shape and thus
@@ -644,24 +648,15 @@ pub fn encode_package_files_index(index: &PackageFilesIndex) -> Result<Vec<u8>, 
 #[non_exhaustive]
 pub enum EncodeError {
     #[display(
-        "PackageFilesIndex.manifest is Some, but the msgpackr-records \
-         encoder doesn't yet know how to serialize `serde_json::Value` \
-         — pacquet doesn't populate this field today, so the code path \
-         is unimplemented. Add manifest encoding if/when pacquet starts \
-         writing bundled manifests."
-    )]
-    #[diagnostic(code(pacquet_store_dir::msgpackr_records::manifest_not_supported))]
-    ManifestNotSupported,
-
-    #[display(
         "Ran out of msgpackr record slots: encountered more than \
          {max} distinct record shapes (slot range is 0x41..=0x7f). \
-         This shouldn't happen for current pacquet payloads — \
-         `CafsFileInfo` has at most 2 shapes and `SideEffectsDiff` \
-         at most 4. Reaching this error likely means a new record \
-         type was added to the encoder without bumping the shape \
-         accounting, or the encoder is being reused for a schema \
-         it wasn't designed for."
+         `CafsFileInfo` contributes at most 2 shapes and \
+         `SideEffectsDiff` at most 4; the rest are allocated lazily \
+         from `PackageFilesIndex.manifest`'s nested object shapes, \
+         which in practice fit comfortably inside the remaining \
+         range for a single tarball's manifest. Reaching this error \
+         likely means the encoder is being reused for a payload it \
+         wasn't designed for."
     )]
     #[diagnostic(code(pacquet_store_dir::msgpackr_records::out_of_record_slots))]
     OutOfRecordSlots { max: usize },
@@ -698,6 +693,17 @@ struct EncodeState {
     /// Same for `SideEffectsDiff`, indexed by [`side_effects_shape`]
     /// (4 possible values).
     side_effects_slots: [Option<u8>; 4],
+    /// Field-name vector → slot for every JSON-object shape seen so
+    /// far inside a manifest value. Shape keys are owned `Vec<String>`
+    /// because the field names are read from a borrowed
+    /// `serde_json::Map` whose lifetime ends before the next encode
+    /// call wants the lookup. msgpackr does the equivalent thing for
+    /// arbitrary JS objects under `useRecords: true`; pacquet has to
+    /// match so a pnpm reader sees the manifest's nested objects as JS
+    /// `Object`s (record-decoded) rather than `Map`s (plain-msgpack-
+    /// decoded), which is what pnpm's bin linker reads with
+    /// `manifest.bin` / `manifest.directories?.bin` property access.
+    json_object_slots: HashMap<Vec<String>, u8>,
     /// Next unused slot in the 0x41..=0x7f range. Starts above
     /// `PKG_FILES_INDEX_SLOT` because the top-level record always
     /// takes slot 0x40.
@@ -736,22 +742,17 @@ fn encode_pkg_files_index_value(
     state: &mut EncodeState,
     idx: &PackageFilesIndex,
 ) -> Result<(), EncodeError> {
-    if idx.manifest.is_some() {
-        return Err(EncodeError::ManifestNotSupported);
-    }
-
-    // Field order `[algo, requiresBuild?, files, sideEffects?]`
-    // matches what pnpm's msgpackr emits, as verified by the
-    // `decodes_requires_build_true` and `decodes_side_effects`
-    // fixtures captured from msgpackr 1.11.8 right here in this
-    // module. Optional fields are omitted from the schema when
-    // `None`. `manifest` stays out of the schema entirely until
-    // pacquet starts populating it (the `Some` check above bails
-    // before we get here).
-    let mut fields: Vec<&str> = Vec::with_capacity(4);
+    // Field order `[algo, requiresBuild?, manifest?, files, sideEffects?]`.
+    // Optional fields are omitted from the schema when `None`, matching
+    // msgpackr's field-omit-when-absent shape so a pnpm reader sees the
+    // same JS object regardless of whether pacquet or pnpm wrote the row.
+    let mut fields: Vec<&str> = Vec::with_capacity(5);
     fields.push("algo");
     if idx.requires_build.is_some() {
         fields.push("requiresBuild");
+    }
+    if idx.manifest.is_some() {
+        fields.push("manifest");
     }
     fields.push("files");
     if idx.side_effects.is_some() {
@@ -764,6 +765,9 @@ fn encode_pkg_files_index_value(
     write_str(w, &idx.algo);
     if let Some(rb) = idx.requires_build {
         write_bool(w, rb);
+    }
+    if let Some(manifest) = &idx.manifest {
+        encode_json_value(w, state, manifest)?;
     }
     write_map_header(w, idx.files.len());
     for (name, info) in &idx.files {
@@ -779,6 +783,94 @@ fn encode_pkg_files_index_value(
     }
 
     Ok(())
+}
+
+/// Emit one JSON value as msgpack inside an active records stream.
+/// Scalars use the smallest slot-safe encoding (no bare positive
+/// fixints in `0x40..=0x7f`, which would otherwise be misread as
+/// record-slot references — see [`write_uint`]). Arrays are plain
+/// msgpack `fixarray` / `array16` / `array32`. Objects are
+/// **record-encoded** via [`encode_json_object`] so that
+/// `useRecords: true` decoders see them as JS `Object` rather than
+/// JS `Map` — necessary for pnpm's bin linker to find
+/// `manifest.bin` / `manifest.directories?.bin` via property
+/// access.
+fn encode_json_value(
+    w: &mut Vec<u8>,
+    state: &mut EncodeState,
+    value: &Value,
+) -> Result<(), EncodeError> {
+    match value {
+        Value::Null => w.push(0xc0),
+        Value::Bool(b) => write_bool(w, *b),
+        Value::Number(n) => encode_json_number(w, n),
+        Value::String(s) => write_str(w, s),
+        Value::Array(arr) => {
+            write_array_header(w, arr.len());
+            for item in arr {
+                encode_json_value(w, state, item)?;
+            }
+        }
+        Value::Object(obj) => encode_json_object(w, state, obj)?,
+    }
+    Ok(())
+}
+
+/// Record-encode a JSON object: allocate one slot per distinct key
+/// set seen in the current stream, emit a record def the first time
+/// each shape appears, and emit a bare slot byte on subsequent
+/// instances of the same shape. The slot table lives on
+/// [`EncodeState::json_object_slots`] so reuse compresses repeated
+/// nested-object shapes (e.g. multiple `bin: { command: path }`
+/// objects with the same single command name) the same way
+/// msgpackr's records mode does.
+///
+/// Field iteration order is the [`serde_json::Map`]'s own order;
+/// pacquet builds with `serde_json/preserve_order`, so that's the
+/// insertion order from parsing the original `package.json` — the
+/// same order pnpm itself observes when packing the manifest.
+fn encode_json_object(
+    w: &mut Vec<u8>,
+    state: &mut EncodeState,
+    obj: &serde_json::Map<String, Value>,
+) -> Result<(), EncodeError> {
+    let fields: Vec<String> = obj.keys().cloned().collect();
+    if let Some(&slot) = state.json_object_slots.get(&fields) {
+        w.push(slot);
+    } else {
+        let slot = state.allocate_slot()?;
+        let field_refs: Vec<&str> = fields.iter().map(String::as_str).collect();
+        write_record_def_header(w, slot, &field_refs);
+        state.json_object_slots.insert(fields, slot);
+    }
+    for value in obj.values() {
+        encode_json_value(w, state, value)?;
+    }
+    Ok(())
+}
+
+/// Encode a [`serde_json::Number`] using the smallest slot-safe
+/// MessagePack form. The branch order matches what pnpm's msgpackr
+/// itself picks: any integer value first (so a JSON `1.0` parsed as
+/// `Number(1)` stays an integer on the wire), falling through to
+/// `float 64` only when the number genuinely needs the precision.
+fn encode_json_number(w: &mut Vec<u8>, n: &serde_json::Number) {
+    if let Some(u) = n.as_u64() {
+        write_uint(w, u);
+        return;
+    }
+    if let Some(i) = n.as_i64() {
+        write_int(w, i);
+        return;
+    }
+    if let Some(f) = n.as_f64() {
+        write_float64(w, f);
+    }
+    // Unreachable: a `serde_json::Number` is always one of the three
+    // cases above. If it isn't (a future serde_json release adds a
+    // new representation), the wire output would be missing a value
+    // for this field, which would surface as a deserialize error on
+    // round-trip — louder than silent corruption.
 }
 
 fn encode_cafs_file_info(
@@ -922,6 +1014,32 @@ fn write_uint(w: &mut Vec<u8>, v: u64) {
 fn write_float64(w: &mut Vec<u8>, v: f64) {
     w.push(0xcb);
     w.extend_from_slice(&v.to_be_bytes());
+}
+
+/// Write a signed integer in the smallest MessagePack encoding.
+/// Negative values use the int 8/16/32/64 family (`0xd0..=0xd3`),
+/// whose header bytes are outside the records-mode slot range so
+/// they're always safe to emit. Non-negative values delegate to
+/// [`write_uint`] which handles the slot-byte fixint promotion.
+fn write_int(w: &mut Vec<u8>, v: i64) {
+    if v >= 0 {
+        write_uint(w, v as u64);
+    } else if v >= -32 {
+        // Negative fixint `0xe0..=0xff`; outside slot range.
+        w.push(v as i8 as u8);
+    } else if v >= i8::MIN as i64 {
+        w.push(0xd0);
+        w.push(v as i8 as u8);
+    } else if v >= i16::MIN as i64 {
+        w.push(0xd1);
+        w.extend_from_slice(&(v as i16).to_be_bytes());
+    } else if v >= i32::MIN as i64 {
+        w.push(0xd2);
+        w.extend_from_slice(&(v as i32).to_be_bytes());
+    } else {
+        w.push(0xd3);
+        w.extend_from_slice(&v.to_be_bytes());
+    }
 }
 
 fn write_bool(w: &mut Vec<u8>, b: bool) {
