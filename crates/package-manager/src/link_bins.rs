@@ -365,6 +365,20 @@ where
         let Some(self_pkg_dir) = find_slot_own_package_dir(slot_dir, &modules_dir) else {
             return Ok(());
         };
+        // Probe the slot's own package directory before walking its
+        // children. Without the probe, an incomplete slot whose
+        // `node_modules/<pkg>` is missing but whose sibling deps are
+        // still present would have `link_bins_excluding` collect the
+        // siblings and `create_dir_all` the missing `<pkg>` chain to
+        // hold the shims, leaving an orphan package directory on
+        // disk. This path runs only for [`crate::InstallWithoutLockfile`]
+        // and visits ~direct-deps slots (small N), so the probe cost
+        // is trivial; the lockfile-driven path bypasses this by
+        // treating the slot's own pkg dir as an invariant of
+        // [`crate::create_virtual_dir_by_snapshot`].
+        if Api::read_dir(&self_pkg_dir).is_err() {
+            return Ok(());
+        }
         let bins_dir = self_pkg_dir.join("node_modules/.bin");
         link_bins_excluding::<Api>(&modules_dir, &bins_dir, &self_pkg_dir)
             .map_err(LinkVirtualStoreBinsError::LinkBins)
@@ -460,8 +474,18 @@ where
         }
 
         if name_str.starts_with('@') {
-            let Ok(scope_entries) = Api::read_dir(&path) else {
-                continue;
+            // Only `NotFound` is plausibly skippable here (a
+            // concurrent scope-dir delete). Other errors —
+            // permission denied, EIO, AppArmor deny — would mean
+            // the bins for every package under this scope silently
+            // disappear, so surface them instead of letting them
+            // hide.
+            let scope_entries = match Api::read_dir(&path) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(LinkBinsError::ReadModulesDir { dir: path.clone(), error });
+                }
             };
             for sub_path in scope_entries {
                 if paths_eq(&sub_path, exclude) {
