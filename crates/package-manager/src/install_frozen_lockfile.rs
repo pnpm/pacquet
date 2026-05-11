@@ -74,10 +74,17 @@ where
 
         // TODO: check if the lockfile is out-of-date
 
-        CreateVirtualStore { http_client, config, packages, snapshots, logged_methods, requester }
-            .run::<R>()
-            .await
-            .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
+        let package_manifests = CreateVirtualStore {
+            http_client,
+            config,
+            packages,
+            snapshots,
+            logged_methods,
+            requester,
+        }
+        .run::<R>()
+        .await
+        .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
 
         SymlinkDirectDependencies { config, importers, dependency_groups, requester }
             .run::<R>()
@@ -89,10 +96,17 @@ where
         // <https://github.com/pnpm/pnpm/blob/4750fd370c/building/during-install/src/index.ts#L258-L309>.
         // Done before `importing_done` so reporters see the import phase
         // close only after every link (including per-slot bins) is in
-        // place.
-        LinkVirtualStoreBins { virtual_store_dir: &config.virtual_store_dir }
-            .run()
-            .map_err(InstallFrozenLockfileError::LinkVirtualStoreBins)?;
+        // place. The manifest map threaded from `CreateVirtualStore`
+        // lets the linker hit `pkgFilesIndex.manifest` directly
+        // (matching pnpm's `bundledManifest`-from-CAFS path) instead
+        // of re-reading every child's `package.json` from disk.
+        LinkVirtualStoreBins {
+            virtual_store_dir: &config.virtual_store_dir,
+            snapshots,
+            package_manifests: &package_manifests,
+        }
+        .run()
+        .map_err(InstallFrozenLockfileError::LinkVirtualStoreBins)?;
 
         // Mirrors upstream `link.ts:167-170`: `importing_done` fires once
         // extraction and symlink linking are complete, before any build

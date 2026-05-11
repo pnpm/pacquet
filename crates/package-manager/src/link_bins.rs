@@ -1,3 +1,4 @@
+use crate::PackageManifests;
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_cmd_shim::{
@@ -5,8 +6,11 @@ use pacquet_cmd_shim::{
     FsSetExecutable, FsWalkFiles, FsWrite, LinkBinsError, PackageBinSource, RealApi,
     link_bins_of_packages,
 };
+use pacquet_lockfile::{PackageKey, PkgName, SnapshotEntry};
 use rayon::prelude::*;
+use serde_json::Value;
 use std::{
+    collections::HashMap,
     fs, io,
     path::{Path, PathBuf},
 };
@@ -98,9 +102,33 @@ pub enum LinkVirtualStoreBinsError {
 /// ```text
 /// <virtual>/A@1.0.0/node_modules/A/node_modules/.bin/<bin>
 /// ```
+///
+/// When `snapshots` is `Some` (the frozen-lockfile case), the slot
+/// set is taken from the lockfile and each child's manifest is
+/// looked up in `package_manifests` rather than read off disk —
+/// matching pnpm's `linkBinsOfDependencies` which consumes
+/// `bundledManifest` straight out of the SQLite store index (see
+/// <https://github.com/pnpm/pnpm/blob/4750fd370c/building/during-install/src/index.ts#L289>).
+/// When `snapshots` is `None` (install without a lockfile), the
+/// linker falls back to enumerating slots and reading manifests via
+/// the filesystem, the shape this code had before the
+/// lockfile-driven path landed.
 #[must_use]
 pub struct LinkVirtualStoreBins<'a> {
     pub virtual_store_dir: &'a Path,
+    /// `Some` when the install is lockfile-driven. Iterating the
+    /// snapshot map (instead of `read_dir(virtual_store_dir)`)
+    /// removes the per-slot directory enumeration and lets us walk
+    /// each slot's children from its `dependencies` /
+    /// `optionalDependencies` lists without touching the filesystem.
+    pub snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,
+    /// Bundled manifests recovered from the warm-cache prefetch of
+    /// `index.db` ([`crate::PackageManifests`]). A hit lets the
+    /// linker skip the `package.json` read for that child entirely;
+    /// a miss falls back to a disk read so cold-batch packages
+    /// installed earlier in the same run still get their bins
+    /// linked.
+    pub package_manifests: &'a PackageManifests,
 }
 
 impl<'a> LinkVirtualStoreBins<'a> {
@@ -125,60 +153,150 @@ impl<'a> LinkVirtualStoreBins<'a> {
             + FsSetExecutable
             + FsEnsureExecutableBits,
     {
-        let LinkVirtualStoreBins { virtual_store_dir } = self;
-
-        let slots = match Api::read_dir(virtual_store_dir) {
-            Ok(slots) => slots,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => {
-                return Err(LinkVirtualStoreBinsError::ReadVirtualStore {
-                    dir: virtual_store_dir.to_path_buf(),
-                    error,
-                });
-            }
-        };
-
-        // Per-slot work is independent: each writes shims under the slot's
-        // own `<pkg>/node_modules/.bin` directory and reads only the slot's
-        // own children. With ~1300 slots in a real lockfile (the integrated
-        // benchmark fixture), the serial loop was the dominant chunk of
-        // the bin-linking pass. Driving it on rayon brings that cost down
-        // to roughly `total_work / num_cpus`. `Api::read_dir` is now a
-        // streaming iterator and rayon needs a slice to split work, so we
-        // collect just here, at the call site that actually needs it.
-        let slots: Vec<PathBuf> = slots.collect();
-        slots.par_iter().try_for_each(|slot_dir| {
-            let modules_dir = slot_dir.join("node_modules");
-
-            // Identify the slot's own package by walking `node_modules` and
-            // recovering the directory that matches the slot name. Since
-            // pacquet's virtual store always stores the slot's own package
-            // at `<slot>/node_modules/<pkg>` (see
-            // `create_virtual_dir_by_snapshot.rs`), the bin output dir is
-            // `<slot>/node_modules/<pkg>/node_modules/.bin`. There's
-            // exactly one such candidate per slot. The others are
-            // `node_modules/<dep>` symlinks pointing at sibling slots.
-            //
-            // `find_slot_own_package_dir` probes the candidate via
-            // `Api::read_dir`, so a missing `<slot>/node_modules` (e.g.
-            // freshly created slot, partial install) short-circuits to
-            // `None` without touching the real filesystem when a fake
-            // `Api` is injected. The outer existence check on
-            // `modules_dir` would be redundant; `link_bins_excluding`
-            // also handles `NotFound` from `Api::read_dir`.
-            let Some(self_pkg_dir) = find_slot_own_package_dir::<Api>(slot_dir, &modules_dir)
-            else {
-                return Ok(());
-            };
-            let bins_dir = self_pkg_dir.join("node_modules/.bin");
-
-            // Children of this slot are everything under `node_modules`
-            // *other than* the slot's own package. `link_bins` already
-            // skips dot-prefixed entries (`.bin`, `.modules.yaml`, ...).
-            link_bins_excluding::<Api>(&modules_dir, &bins_dir, &self_pkg_dir)
-                .map_err(LinkVirtualStoreBinsError::LinkBins)
-        })
+        let LinkVirtualStoreBins { virtual_store_dir, snapshots, package_manifests } = self;
+        if let Some(snapshots) = snapshots {
+            run_lockfile_driven::<Api>(virtual_store_dir, snapshots, package_manifests)
+        } else {
+            run_with_readdir::<Api>(virtual_store_dir)
+        }
     }
+}
+
+/// Walk the lockfile's `snapshots:` map, build each slot's bin output
+/// directory lexically, and link every child's bins into it. The
+/// child set comes from `snapshot.dependencies` +
+/// `snapshot.optional_dependencies`; the corresponding manifest
+/// comes from [`PackageManifests`] (no disk read) or, for cold-batch
+/// packages that prefetch missed, a fallback `package.json` read
+/// through the existing symlink at `<slot>/node_modules/<alias>`.
+fn run_lockfile_driven<Api>(
+    virtual_store_dir: &Path,
+    snapshots: &HashMap<PackageKey, SnapshotEntry>,
+    package_manifests: &PackageManifests,
+) -> Result<(), LinkVirtualStoreBinsError>
+where
+    Api: FsReadFile
+        + FsReadString
+        + FsReadHead
+        + FsCreateDirAll
+        + FsWalkFiles
+        + FsWrite
+        + FsSetExecutable
+        + FsEnsureExecutableBits,
+{
+    // Materialise as a `Vec` so rayon can split the work; iterating
+    // a `HashMap` directly with `par_iter` would require collecting
+    // anyway, and explicit collection here keeps the parallelism
+    // contract obvious.
+    let slot_entries: Vec<(&PackageKey, &SnapshotEntry)> = snapshots.iter().collect();
+    slot_entries.par_iter().try_for_each(|(slot_key, snapshot)| {
+        let slot_dir = virtual_store_dir.join(slot_key.to_virtual_store_name());
+        let modules_dir = slot_dir.join("node_modules");
+        let self_pkg_dir = slot_own_pkg_dir(&modules_dir, slot_key);
+        let bins_dir = self_pkg_dir.join("node_modules/.bin");
+
+        let children = snapshot
+            .dependencies
+            .iter()
+            .flatten()
+            .chain(snapshot.optional_dependencies.iter().flatten());
+
+        let mut bin_sources: Vec<PackageBinSource> = Vec::new();
+        for (alias, dep_ref) in children {
+            let child_key = dep_ref.resolve(alias);
+            let child_location = pkg_dir_under(&modules_dir, alias);
+            let metadata_key = child_key.without_peer();
+            if let Some(manifest) = package_manifests.get(&metadata_key) {
+                // Hot path: parsed manifest already in memory from
+                // the warm-cache prefetch. The clone is a recursive
+                // copy of the BundledManifest subset (small — `bin`,
+                // `directories`, `name`, `version`, …), and only
+                // fires for children whose package is present in the
+                // prefetch.
+                bin_sources.push(PackageBinSource {
+                    location: child_location,
+                    manifest: Value::clone(manifest),
+                });
+            } else {
+                // Cold-batch fallback: package was downloaded
+                // earlier in the run, so its row isn't in the
+                // prefetched manifest map yet. Reading from disk
+                // here is the same code path as the non-lockfile
+                // install — see [`run_with_readdir`].
+                match read_package::<Api>(&child_location) {
+                    Ok(Some(pkg)) => bin_sources.push(pkg),
+                    Ok(None) => {}
+                    Err(error) => return Err(LinkVirtualStoreBinsError::LinkBins(error)),
+                }
+            }
+        }
+
+        if bin_sources.is_empty() {
+            return Ok(());
+        }
+        link_bins_of_packages::<Api>(&bin_sources, &bins_dir)
+            .map_err(LinkVirtualStoreBinsError::LinkBins)
+    })
+}
+
+/// Compute `<slot>/node_modules/<pkg-or-@scope/pkg>` for the slot's
+/// own package. The slot's package name lives on the lockfile key,
+/// so no filesystem probing is needed (the directory is an invariant
+/// maintained by [`crate::create_virtual_dir_by_snapshot`]). Scoped
+/// names land at `<modules>/@scope/<name>`, unscoped names at
+/// `<modules>/<name>`.
+fn slot_own_pkg_dir(modules_dir: &Path, slot_key: &PackageKey) -> PathBuf {
+    pkg_dir_under(modules_dir, &slot_key.name)
+}
+
+/// Join a package name onto a `node_modules` directory, handling the
+/// `@scope/name` split into two path components. Operates on the raw
+/// [`PkgName`] (whose `scope` and `bare` fields are already split),
+/// not on the virtual-store-name form — for instance the input
+/// represents `@types/node`, **not** `@types+node`.
+fn pkg_dir_under(modules_dir: &Path, name: &PkgName) -> PathBuf {
+    match &name.scope {
+        Some(scope) => modules_dir.join(format!("@{scope}")).join(&name.bare),
+        None => modules_dir.join(&name.bare),
+    }
+}
+
+/// Fallback (non-lockfile) path: enumerate slots via `read_dir`,
+/// then walk each slot's `node_modules` to discover children. Used
+/// only by [`crate::InstallWithoutLockfile`] today; the lockfile
+/// path bypasses every directory enumeration in here.
+fn run_with_readdir<Api>(virtual_store_dir: &Path) -> Result<(), LinkVirtualStoreBinsError>
+where
+    Api: FsReadDir
+        + FsReadFile
+        + FsReadString
+        + FsReadHead
+        + FsCreateDirAll
+        + FsWalkFiles
+        + FsWrite
+        + FsSetExecutable
+        + FsEnsureExecutableBits,
+{
+    let slots = match Api::read_dir(virtual_store_dir) {
+        Ok(slots) => slots,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(LinkVirtualStoreBinsError::ReadVirtualStore {
+                dir: virtual_store_dir.to_path_buf(),
+                error,
+            });
+        }
+    };
+    let slots: Vec<PathBuf> = slots.collect();
+    slots.par_iter().try_for_each(|slot_dir| {
+        let modules_dir = slot_dir.join("node_modules");
+        let Some(self_pkg_dir) = find_slot_own_package_dir::<Api>(slot_dir, &modules_dir) else {
+            return Ok(());
+        };
+        let bins_dir = self_pkg_dir.join("node_modules/.bin");
+        link_bins_excluding::<Api>(&modules_dir, &bins_dir, &self_pkg_dir)
+            .map_err(LinkVirtualStoreBinsError::LinkBins)
+    })
 }
 
 /// Locate the slot's own package directory inside `<slot>/node_modules`.

@@ -39,7 +39,13 @@ fn writes_child_bins_into_slot_own_package_node_modules() {
     .unwrap();
     write_file(child_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
 
-    LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }.run().unwrap();
+    LinkVirtualStoreBins {
+        virtual_store_dir: &virtual_dir,
+        snapshots: None,
+        package_manifests: &Default::default(),
+    }
+    .run()
+    .unwrap();
 
     let shim_path = parent_dir.join("node_modules/.bin/child");
     assert!(shim_path.exists(), "expected shim at {shim_path:?}");
@@ -99,7 +105,13 @@ fn skips_slot_own_package_when_walking_children() {
     .unwrap();
     write_file(other_dir.join("other.js"), "#!/usr/bin/env node\n").unwrap();
 
-    LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }.run().unwrap();
+    LinkVirtualStoreBins {
+        virtual_store_dir: &virtual_dir,
+        snapshots: None,
+        package_manifests: &Default::default(),
+    }
+    .run()
+    .unwrap();
 
     let bin_dir = pkg_dir.join("node_modules/.bin");
     assert!(
@@ -116,7 +128,13 @@ fn skips_slot_own_package_when_walking_children() {
 fn link_virtual_store_bins_no_op_when_dir_missing() {
     let tmp = tempdir().unwrap();
     let nonexistent = tmp.path().join("does-not-exist");
-    LinkVirtualStoreBins { virtual_store_dir: &nonexistent }.run().expect("missing dir is Ok");
+    LinkVirtualStoreBins {
+        virtual_store_dir: &nonexistent,
+        snapshots: None,
+        package_manifests: &Default::default(),
+    }
+    .run()
+    .expect("missing dir is Ok");
 }
 
 /// Slot whose name has a `+` (scope separator) resolves to
@@ -146,7 +164,13 @@ fn link_virtual_store_bins_handles_scoped_slot_name() {
     .unwrap();
     write_file(child_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
 
-    LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }.run().unwrap();
+    LinkVirtualStoreBins {
+        virtual_store_dir: &virtual_dir,
+        snapshots: None,
+        package_manifests: &Default::default(),
+    }
+    .run()
+    .unwrap();
 
     let shim = parent_dir.join("node_modules/.bin/child");
     assert!(shim.exists(), "scoped-slot bin linking must produce a shim at {shim:?}");
@@ -189,7 +213,13 @@ fn link_virtual_store_bins_handles_peer_resolved_slot_name() {
     .unwrap();
     write_file(child_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
 
-    LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }.run().unwrap();
+    LinkVirtualStoreBins {
+        virtual_store_dir: &virtual_dir,
+        snapshots: None,
+        package_manifests: &Default::default(),
+    }
+    .run()
+    .unwrap();
 
     let shim = pkg_dir.join("node_modules/.bin/child");
     assert!(
@@ -231,7 +261,13 @@ fn link_virtual_store_bins_handles_unscoped_name_with_plus() {
     .unwrap();
     write_file(child_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
 
-    LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }.run().unwrap();
+    LinkVirtualStoreBins {
+        virtual_store_dir: &virtual_dir,
+        snapshots: None,
+        package_manifests: &Default::default(),
+    }
+    .run()
+    .unwrap();
 
     let shim = pkg_dir.join("node_modules/.bin/child");
     assert!(
@@ -248,7 +284,13 @@ fn link_virtual_store_bins_skips_slot_without_node_modules() {
     let tmp = tempdir().unwrap();
     let virtual_dir = tmp.path().join(".pacquet");
     create_dir_all(virtual_dir.join("incomplete@1.0.0")).unwrap();
-    LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }.run().unwrap();
+    LinkVirtualStoreBins {
+        virtual_store_dir: &virtual_dir,
+        snapshots: None,
+        package_manifests: &Default::default(),
+    }
+    .run()
+    .unwrap();
 }
 
 /// A slot whose `node_modules/` exists but lacks the expected own-package
@@ -267,9 +309,13 @@ fn link_virtual_store_bins_skips_slot_without_own_package_dir() {
     // `<slot>/node_modules/foo` (matching the slot name `foo@1.0.0`)
     // is missing, so `find_slot_own_package_dir` returns `None`.
     create_dir_all(virtual_dir.join("foo@1.0.0/node_modules")).unwrap();
-    LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }
-        .run()
-        .expect("missing own-package dir is skipped silently");
+    LinkVirtualStoreBins {
+        virtual_store_dir: &virtual_dir,
+        snapshots: None,
+        package_manifests: &Default::default(),
+    }
+    .run()
+    .expect("missing own-package dir is skipped silently");
 }
 
 /// [`link_direct_dep_bins`] walks the project's `node_modules/<dep>`
@@ -409,8 +455,12 @@ fn link_virtual_store_bins_propagates_read_error_via_di() {
         }
     }
 
-    let err = LinkVirtualStoreBins { virtual_store_dir: Path::new("/anything") }
-        .run_with::<DenyVirtualStore>()
-        .expect_err("read_dir error must propagate");
+    let err = LinkVirtualStoreBins {
+        virtual_store_dir: Path::new("/anything"),
+        snapshots: None,
+        package_manifests: &Default::default(),
+    }
+    .run_with::<DenyVirtualStore>()
+    .expect_err("read_dir error must propagate");
     assert!(matches!(err, LinkVirtualStoreBinsError::ReadVirtualStore { .. }));
 }

@@ -200,9 +200,19 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
         link_bins::<RealApi>(&config.modules_dir, &config.modules_dir.join(".bin"))
             .map_err(InstallWithoutLockfileError::LinkBins)?;
 
-        LinkVirtualStoreBins { virtual_store_dir: &config.virtual_store_dir }
-            .run()
-            .map_err(InstallWithoutLockfileError::LinkVirtualStoreBins)?;
+        // No lockfile here, so no prefetched manifests are available —
+        // fall back to the legacy readdir-driven path (slots discovered
+        // by walking `<virtual_store_dir>`, child manifests read from
+        // disk). The frozen-lockfile path skips both via
+        // [`LinkVirtualStoreBins::snapshots`] / `package_manifests`.
+        let empty_manifests = std::collections::HashMap::new();
+        LinkVirtualStoreBins {
+            virtual_store_dir: &config.virtual_store_dir,
+            snapshots: None,
+            package_manifests: &empty_manifests,
+        }
+        .run()
+        .map_err(InstallWithoutLockfileError::LinkVirtualStoreBins)?;
 
         // Mirrors upstream `link.ts:167-170`: `importing_done` fires once
         // extraction and symlink linking are complete. The without-lockfile
