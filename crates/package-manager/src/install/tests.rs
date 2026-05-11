@@ -505,7 +505,7 @@ async fn install_emits_pnpm_event_sequence() {
                 LogEvent::Stage(StageLog { stage: Stage::ImportingDone, .. }),
                 LogEvent::IgnoredScripts(_),
                 LogEvent::Summary(_),
-            ]
+            ],
         ),
         "unexpected event sequence: {captured:?}",
     );

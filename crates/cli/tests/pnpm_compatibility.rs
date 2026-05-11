@@ -164,7 +164,7 @@ fn same_index_file_contents() {
 // encoding.
 //
 // Why that regression would be silent without this test: pnpm's
-// `Packr({useRecords: true, moreTypes: true}).unpack(…)` decodes
+// `Packr({useRecords: true, moreTypes: true}).unpack(...)` decodes
 // every plain msgpack map (at any nesting level) as a JS `Map` —
 // records are the escape hatch that says "this one's a plain object".
 // A plain-map-encoded row would come back as a top-level `Map`,

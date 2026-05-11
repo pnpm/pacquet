@@ -38,7 +38,7 @@ fn init_creates_all_256_shards_and_populates_cache() {
         assert!(files.join(&name).is_dir(), "shard {name} must exist after init");
         assert!(
             store.shard_already_ensured(shard),
-            "shard {name} must be marked ensured in the cache"
+            "shard {name} must be marked ensured in the cache",
         );
     }
 }
@@ -78,7 +78,7 @@ fn init_rejects_non_directory_files_path() {
     for shard in 0u8..=255 {
         assert!(
             !store.shard_already_ensured(shard),
-            "a failing init must not seed the shard cache"
+            "a failing init must not seed the shard cache",
         );
     }
 }
@@ -106,7 +106,7 @@ fn init_warm_store_is_noop_and_leaves_cache_empty() {
     for shard in 0u8..=255 {
         assert!(
             !store.shard_already_ensured(shard),
-            "shard {shard:02x} must NOT be marked ensured on warm-store init — the cache is populated lazily from write_cas_file"
+            "shard {shard:02x} must NOT be marked ensured on warm-store init — the cache is populated lazily from write_cas_file",
         );
     }
 }

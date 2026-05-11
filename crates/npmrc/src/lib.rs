@@ -415,7 +415,7 @@ mod tests {
         let value: Npmrc = serde_ini::from_str("virtual-store-dir=node_modules/.pacquet").unwrap();
         assert_eq!(
             value.virtual_store_dir,
-            env::current_dir().unwrap().join("node_modules/.pacquet")
+            env::current_dir().unwrap().join("node_modules/.pacquet"),
         );
     }
 

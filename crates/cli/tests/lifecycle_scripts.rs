@@ -47,7 +47,7 @@ mod known_failures {
         eprintln!("Checking generated-by-prepare.js does NOT exist...");
         assert!(
             !pkg_dir.join("generated-by-prepare.js").exists(),
-            "prepare should not run for registry packages"
+            "prepare should not run for registry packages",
         );
 
         eprintln!("Checking generated-by-preinstall.js exists...");
@@ -242,7 +242,7 @@ mod known_failures {
         assert!(scripts_pkg_dir.join("package.json").exists());
         assert!(
             !scripts_pkg_dir.join("generated-by-preinstall.js").exists(),
-            "scripts should not have run with ignoreScripts"
+            "scripts should not have run with ignoreScripts",
         );
 
         drop((root, mock_instance));
@@ -345,7 +345,7 @@ mod known_failures {
         // does not emit that channel yet (see issue #397).
 
         eprintln!(
-            "Re-running install with explicit denial of pre-and-postinstall-scripts-example..."
+            "Re-running install with explicit denial of pre-and-postinstall-scripts-example...",
         );
         fs::remove_dir_all(&node_modules).expect("remove node_modules");
         let updated_package_json = serde_json::json!({

@@ -10,7 +10,7 @@ where
     dbg!(&received);
     let expected_version = expected_version.into();
     let expected_peer = expected_peer.into();
-    assert_eq!((received.version(), received.peer()), (&expected_version, expected_peer.as_str()),);
+    assert_eq!((received.version(), received.peer()), (&expected_version, expected_peer.as_str()));
     assert_eq!(received.into_tuple(), (expected_version, expected_peer));
 }
 

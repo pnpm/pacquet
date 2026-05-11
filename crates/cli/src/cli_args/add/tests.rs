@@ -15,7 +15,7 @@ fn dependency_options_to_dependency_groups() {
             save_optional: false,
             save_peer: false
         }),
-        [Prod]
+        [Prod],
     );
 
     // --save-prod -> prod
@@ -26,7 +26,7 @@ fn dependency_options_to_dependency_groups() {
             save_optional: false,
             save_peer: false
         }),
-        [Prod]
+        [Prod],
     );
 
     // --save-dev -> dev
@@ -37,7 +37,7 @@ fn dependency_options_to_dependency_groups() {
             save_optional: false,
             save_peer: false
         }),
-        [Dev]
+        [Dev],
     );
 
     // --save-optional -> optional
@@ -48,7 +48,7 @@ fn dependency_options_to_dependency_groups() {
             save_optional: true,
             save_peer: false
         }),
-        [Optional]
+        [Optional],
     );
 
     // --save-peer -> dev + peer
@@ -59,7 +59,7 @@ fn dependency_options_to_dependency_groups() {
             save_optional: false,
             save_peer: true
         }),
-        [Dev, Peer]
+        [Dev, Peer],
     );
 
     // --save-prod --save-peer -> prod + peer
@@ -70,7 +70,7 @@ fn dependency_options_to_dependency_groups() {
             save_optional: false,
             save_peer: true
         }),
-        [Prod, Peer]
+        [Prod, Peer],
     );
 
     // --save-dev --save-peer -> dev + peer
@@ -81,7 +81,7 @@ fn dependency_options_to_dependency_groups() {
             save_optional: false,
             save_peer: true
         }),
-        [Dev, Peer]
+        [Dev, Peer],
     );
 
     // --save-optional --save-peer -> optional + peer
@@ -92,6 +92,6 @@ fn dependency_options_to_dependency_groups() {
             save_optional: true,
             save_peer: true
         }),
-        [Optional, Peer]
+        [Optional, Peer],
     );
 }

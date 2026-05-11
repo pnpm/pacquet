@@ -148,3 +148,79 @@ jobs:
           packages: taplo-cli@0.8.1
 
       - run: taplo format --check
+
+  dylint:
+    name: Dylint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Two caches with disjoint scopes:
+      #
+      #   1. Workspace cache — `~/.cargo`, `~/.dylint_drivers`, and the
+      #      workspace `target/` directory minus `target/dylint`. Keyed
+      #      loosely on `Cargo.lock` with a `rust-toolchain.toml`-only
+      #      fallback so a lockfile-only change still benefits from a
+      #      warm registry and a warm workspace build cache. The
+      #      `!target/dylint` negation excludes the lint library from
+      #      this snapshot so it cannot leak across `dylint.toml`
+      #      changes.
+      #
+      #   2. Dylint-library cache — `target/dylint`, where cargo-dylint
+      #      builds `libperfectionist.so`. Keyed strictly on
+      #      `dylint.toml` with no looser restore-keys, so a hit
+      #      guarantees the cached `.so` was built against the
+      #      in-tree config. On a miss cargo-dylint rebuilds the
+      #      library from scratch.
+      #
+      # Splitting the caches this way removes the need for a separate
+      # "invalidate stale dylint artifacts" step: the workspace cache
+      # never holds a `target/dylint` snapshot to invalidate, and the
+      # dylint-library cache can never be restored from a mismatched
+      # `dylint.toml`.
+      - name: Cache workspace artifacts
+        uses: actions/cache@v5
+        timeout-minutes: 2
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo
+            ~/.dylint_drivers
+            target
+            !target/dylint
+          key: ${{ github.job }}-workspace-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ github.job }}-workspace-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+            ${{ github.job }}-workspace-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
+
+      - name: Cache dylint lint library
+        uses: actions/cache@v5
+        timeout-minutes: 2
+        continue-on-error: true
+        with:
+          path: target/dylint
+          key: ${{ github.job }}-dylint-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('dylint.toml') }}
+
+      - name: Install Rust Toolchain
+        uses: ./.github/actions/rustup
+        with:
+          # Disable Swatinem/rust-cache: it strips `target/` aggressively
+          # before saving, which would wipe the `target/dylint`
+          # `libperfectionist.so` we want to preserve. The `actions/cache`
+          # steps above handle caching instead.
+          restore-cache: false
+
+      - name: Install cargo-dylint and dylint-link
+        uses: ./.github/actions/binstall
+        with:
+          packages: cargo-dylint dylint-link
+
+      - name: Run dylint
+        # `-D warnings` must come in via `RUSTFLAGS`, not as a trailing
+        # `-- -D warnings` after `cargo dylint`'s `--`: `cargo dylint`
+        # forwards args after `--` to `cargo check`, which would treat
+        # `-D warnings` as a cargo argument and reject it. This mirrors
+        # how KSXGitHub/parallel-disk-usage invokes the same lint.
+        env:
+          RUSTFLAGS: '-D warnings'
+        run: cargo dylint --all -- --all-targets --workspace
