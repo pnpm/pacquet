@@ -24,20 +24,30 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Cache the artifacts dylint produces and consumes:
-      #   * `~/.cargo`                — registry index, source cache,
-      #                                 and the installed `cargo-dylint` /
-      #                                 `dylint-link` binaries.
-      #   * `~/.dylint_drivers`       — per-toolchain rustc drivers that
-      #                                 dylint downloads on first use.
-      #   * `target`                  — including `target/dylint`, where
-      #                                 dylint builds the `libperfectionist.so`
-      #                                 lint library.
+      # Two caches with disjoint scopes:
       #
-      # Restore keys are layered from strictest to loosest so we still
-      # benefit from a partial cache when only `Cargo.lock` changes.
-      - name: Cache
-        id: cache
+      #   1. Workspace cache — `~/.cargo`, `~/.dylint_drivers`, and the
+      #      workspace `target/` directory minus `target/dylint`. Keyed
+      #      loosely on `Cargo.lock` with a `rust-toolchain.toml`-only
+      #      fallback so a lockfile-only change still benefits from a
+      #      warm registry and a warm workspace build cache. The
+      #      `!target/dylint` negation excludes the lint library from
+      #      this snapshot so it cannot leak across `dylint.toml`
+      #      changes.
+      #
+      #   2. Dylint-library cache — `target/dylint`, where cargo-dylint
+      #      builds `libperfectionist.so`. Keyed strictly on
+      #      `dylint.toml` with no looser restore-keys, so a hit
+      #      guarantees the cached `.so` was built against the
+      #      in-tree config. On a miss cargo-dylint rebuilds the
+      #      library from scratch.
+      #
+      # Splitting the caches this way removes the need for a separate
+      # "invalidate stale dylint artifacts" step: the workspace cache
+      # never holds a `target/dylint` snapshot to invalidate, and the
+      # dylint-library cache can never be restored from a mismatched
+      # `dylint.toml`.
+      - name: Cache workspace artifacts
         uses: actions/cache@v5
         timeout-minutes: 2
         continue-on-error: true
@@ -46,11 +56,19 @@ jobs:
             ~/.cargo
             ~/.dylint_drivers
             target
-          key: ${{ github.job }}-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('dylint.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+            !target/dylint
+          key: ${{ github.job }}-workspace-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ github.job }}-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('dylint.toml') }}-${{ hashFiles('**/Cargo.lock') }}
-            ${{ github.job }}-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('dylint.toml') }}-
-            ${{ github.job }}-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
+            ${{ github.job }}-workspace-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+            ${{ github.job }}-workspace-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
+
+      - name: Cache dylint lint library
+        uses: actions/cache@v5
+        timeout-minutes: 2
+        continue-on-error: true
+        with:
+          path: target/dylint
+          key: ${{ github.job }}-dylint-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('dylint.toml') }}
 
       - name: Install Rust Toolchain
         uses: ./.github/actions/rustup
@@ -58,29 +76,13 @@ jobs:
           # Disable Swatinem/rust-cache: it strips `target/` aggressively
           # before saving, which would wipe the `target/dylint`
           # `libperfectionist.so` we want to preserve. The `actions/cache`
-          # step above handles caching instead.
+          # steps above handle caching instead.
           restore-cache: false
 
       - name: Install cargo-dylint and dylint-link
         uses: ./.github/actions/binstall
         with:
           packages: cargo-dylint dylint-link
-
-      # When the primary cache key did not match exactly, the cache was
-      # either missed entirely or restored from one of the looser
-      # `restore-keys` entries. The third entry ignores `dylint.toml`,
-      # so the restored `target/dylint/libraries/libperfectionist.so` may
-      # have been built from a different `dylint.toml` (different
-      # perfectionist `tag`, different per-rule config, etc.).
-      # `cargo dylint` does not always detect a changed `git` `rev` /
-      # `tag` and would reuse the cached `.so` as-is. Remove the dylint
-      # build directory in this case so the library rebuilds from the
-      # in-tree `dylint.toml`. On an exact cache hit the `.so` already
-      # matches `dylint.toml` and the rebuild is skipped.
-      - name: Invalidate stale dylint build artifacts
-        if: steps.cache.outputs.cache-hit != 'true'
-        shell: bash
-        run: rm -rf target/dylint
 
       - name: Run dylint
         run: cargo dylint --all -- --all-targets --workspace
