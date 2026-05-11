@@ -85,4 +85,11 @@ jobs:
           packages: cargo-dylint dylint-link
 
       - name: Run dylint
-        run: cargo dylint --all -- --all-targets --workspace -- -D warnings
+        # `-D warnings` must come in via `RUSTFLAGS`, not as a trailing
+        # `-- -D warnings` after `cargo dylint`'s `--`: `cargo dylint`
+        # forwards args after `--` to `cargo check`, which would treat
+        # `-D warnings` as a cargo argument and reject it. This mirrors
+        # how KSXGitHub/parallel-disk-usage invokes the same lint.
+        env:
+          RUSTFLAGS: '-D warnings'
+        run: cargo dylint --all -- --all-targets --workspace
