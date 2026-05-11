@@ -19,11 +19,18 @@ use std::{
 
 /// Read up to `buf.len()` bytes of `path` starting at byte `offset`.
 ///
-/// The trait promises a single underlying syscall. POSIX `read(2)`
-/// is allowed to return fewer bytes than requested (a "short read"),
-/// so callers that need a fully-filled buffer must loop.
+/// The returned `usize` is the number of bytes actually written into
+/// `buf`. Like `std::io::Read::read`, an impl is allowed to return
+/// fewer bytes than requested (a "short read") even when more data is
+/// available, so callers that need a fully-filled buffer must loop.
 /// [`crate::read_head_filled`] supplies that loop while staying
 /// generic over this trait, so test fakes do not have to grow.
+///
+/// The trait makes no claim about how many syscalls a particular
+/// impl will use — the production `RealApi` impl opens the file,
+/// seeks to `offset` (if non-zero), and reads, which is more than
+/// one. What it does promise is the semantic contract: read up to
+/// `buf.len()` bytes starting at `offset` into `buf`.
 ///
 /// Used by [`crate::search_script_runtime`] (via [`crate::read_head_filled`])
 /// to detect the script runtime via the shebang at the head of a bin
@@ -99,14 +106,17 @@ pub trait FsCreateDirAll {
 /// exists. Used to write the three shim flavors (`.sh`, `.cmd`,
 /// `.ps1`).
 ///
-/// **Not atomic.** This trait promises only what `std::fs::write`
-/// promises: a single `write(2)` call, no tempfile-rename guard.
-/// A SIGINT mid-write can leave a truncated file. If a future
-/// caller needs atomic write semantics, build it on top of this
-/// trait by writing to a sibling tempfile and then renaming. Hiding
-/// that algorithm inside the capability would obscure what each
-/// callsite inherits; keeping the trait minimal lets every callsite
-/// see exactly what guarantees it gets.
+/// **Not atomic.** This trait is the moral equivalent of
+/// `std::fs::write`: it opens (or creates and truncates) the file,
+/// writes `bytes`, and closes. No tempfile + rename guard, no
+/// `fsync`. A SIGINT or crash mid-write can leave a truncated file
+/// on disk. Number of syscalls is up to the impl — `std::fs::write`
+/// itself is open/(truncate)/write/close, and a fake might loop.
+/// If a future caller needs atomic write semantics, build it on top
+/// of this trait by writing to a sibling tempfile and then
+/// renaming. Hiding that algorithm inside the capability would
+/// obscure what each callsite inherits; keeping the trait minimal
+/// lets every callsite see exactly what guarantees it gets.
 pub trait FsWrite {
     fn write(path: &Path, bytes: &[u8]) -> io::Result<()>;
 }
