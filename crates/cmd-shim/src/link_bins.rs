@@ -260,14 +260,26 @@ fn pick_winner(bin_name: &str, existing: &str, candidate: &str) -> bool {
     }
 }
 
-/// Write the shell shim for `target_path` at `shim_path` and chmod it
+/// Write all three shim flavors for `target_path` (the canonical `.sh`
+/// at `shim_path`, plus the `.cmd` and `.ps1` siblings) and chmod them
 /// executable. Idempotent on warm reinstalls via [`is_shim_pointing_at`].
 ///
-/// On Unix this writes a single shell script and chmods both it and the
-/// target binary to `0o755`, matching the `fixBin(cmd.path, 0o755)` and
-/// `chmodShim` sequence in pnpm v11. Windows `.cmd` / `.ps1` are deferred.
-/// The platform-specific behavior is gated behind `#[cfg(unix)]` so the
-/// build still compiles on Windows.
+/// Pnpm always emits all three flavors per bin (independent of host
+/// platform), so a project installed on Linux stays usable when the
+/// same `node_modules` is reused from Windows via a network share or
+/// a `git clone` of a checked-in install. Pacquet matches that
+/// contract here: `generate_sh_shim`, `generate_cmd_shim`, and
+/// `generate_pwsh_shim` are unconditional, and the writer emits all
+/// three.
+///
+/// The chmod step (`set_executable` for the canonical shim and
+/// `ensure_executable_bits` for the target binary, matching pnpm's
+/// `fixBin(cmd.path, 0o755)` and `chmodShim`) is wired through the
+/// [`FsSetExecutable`] / [`FsEnsureExecutableBits`] capability traits.
+/// On Unix the production impls run the actual `chmod`; on Windows
+/// they are no-ops (Windows has no equivalent permission concept), so
+/// the call sites stay portable and don't need their own
+/// `#[cfg(unix)]` gating.
 fn write_shim<Api>(target_path: &Path, shim_path: &Path) -> Result<(), LinkBinsError>
 where
     Api: FsReadString + FsReadHead + FsWrite + FsSetExecutable + FsEnsureExecutableBits,
