@@ -507,28 +507,40 @@ fn extract_tarball_entries(
             tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
         }
 
-        // Capture the parsed manifest the first time we see
-        // `package.json`. Mirrors pnpm's `bundledManifest`
-        // pass-through at [pnpm/pnpm@4750fd370c]: pnpm stuffs the
-        // narrowed manifest into `pkgFilesIndex.manifest` so
-        // install-side consumers (notably `linkBinsOfDependencies`)
-        // can avoid re-reading the file from disk. The
-        // [`normalize_bundled_manifest`] pick drops fields downstream
-        // code doesn't use, keeping `index.db` rows tight. Failed
-        // JSON parses degrade to `None` — the manifest field is
-        // best-effort: a corrupt `package.json` is the publisher's
-        // fault, and downstream code can still fall back to disk
-        // reads for the rare case.
+        // Capture the parsed manifest whenever we see `package.json`.
+        // Mirrors pnpm's `bundledManifest` pass-through at
+        // [pnpm/pnpm@4750fd370c]: pnpm stuffs the narrowed manifest
+        // into `pkgFilesIndex.manifest` so install-side consumers
+        // (notably `linkBinsOfDependencies`) can avoid re-reading
+        // the file from disk. The [`normalize_bundled_manifest`]
+        // pick drops fields downstream code doesn't use, keeping
+        // `index.db` rows tight.
+        //
+        // **Last-entry wins.** Pnpm's [`addFilesFromTarball`] always
+        // overwrites `manifestBuffer = fileBuffer` per `package.json`
+        // entry (no `if (manifestBuffer === undefined)` guard), so
+        // when a tarball contains duplicate `package.json` entries
+        // the final one is canonical — same shape as
+        // `filesIndex.set(...)` which already overwrites duplicates.
+        // Real npm tarballs never publish multiple `package.json`
+        // entries, but the consistency with the `files` map is what
+        // matters: `manifest` and `files` must describe the same
+        // file. Failed JSON parses degrade the field to `None` (the
+        // manifest is best-effort; a corrupt `package.json` is the
+        // publisher's fault and downstream code can fall back to
+        // disk reads).
         //
         // [pnpm/pnpm@4750fd370c]: https://github.com/pnpm/pnpm/blob/4750fd370c/worker/src/start.ts#L218
-        if cleaned_entry_path == "package.json" && pkg_files_idx.manifest.is_none() {
+        // [`addFilesFromTarball`]: https://github.com/pnpm/pnpm/blob/4750fd370c/store/cafs/src/addFilesFromTarball.ts#L41-L43
+        if cleaned_entry_path == "package.json" {
             match serde_json::from_slice::<serde_json::Value>(&buffer) {
                 Ok(parsed) => pkg_files_idx.manifest = normalize_bundled_manifest(&parsed),
                 Err(error) => {
                     tracing::debug!(
                         ?error,
-                        "package.json in tarball failed to parse as JSON; bundled manifest will be None",
+                        "package.json in tarball failed to parse as JSON; bundled manifest cleared",
                     );
+                    pkg_files_idx.manifest = None;
                 }
             }
         }

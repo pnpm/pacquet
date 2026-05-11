@@ -169,7 +169,7 @@ impl<'a> LinkVirtualStoreBins<'a> {
             run_lockfile_driven::<Api>(
                 virtual_store_dir,
                 snapshots,
-                &has_bin_set,
+                has_bin_set.as_ref(),
                 package_manifests,
             )
         } else {
@@ -185,20 +185,31 @@ impl<'a> LinkVirtualStoreBins<'a> {
 /// per-child manifest lookup with this set is the cheapest win on
 /// warm-cache installs.
 ///
-/// `packages` is optional because the lockfile is allowed to omit
-/// the `packages:` section in pathological setups; in that case we
-/// fall back to the conservative "we don't know, try anyway"
-/// behaviour and return an empty set (treated as "everything passes
-/// the filter" below).
+/// Return-value semantics distinguish "lockfile metadata absent"
+/// from "lockfile metadata says no package has a bin":
+///
+/// - `None` — the lockfile's `packages:` section wasn't supplied
+///   (pathological lockfile shape). We have no info, so the bin
+///   linker falls back to the conservative "process every child"
+///   path and lets the per-package bin resolver sort it out.
+/// - `Some(set)` — the section was present and we used it. The
+///   `set` contains only entries with `hasBin == Some(true)`; an
+///   *empty* `Some(set)` is authoritative: the lockfile says no
+///   package has a bin, and every slot should short-circuit
+///   immediately. Conflating this case with `None` (the bug Copilot
+///   flagged at <https://github.com/pnpm/pacquet/pull/333#discussion_r3222807548>)
+///   would force per-child work the lockfile already ruled out.
 fn build_has_bin_set(
     packages: Option<&HashMap<PackageKey, PackageMetadata>>,
-) -> HashSet<PackageKey> {
-    let Some(packages) = packages else { return HashSet::new() };
-    packages
-        .iter()
-        .filter(|(_, meta)| meta.has_bin == Some(true))
-        .map(|(key, _)| key.clone())
-        .collect()
+) -> Option<HashSet<PackageKey>> {
+    let packages = packages?;
+    Some(
+        packages
+            .iter()
+            .filter(|(_, meta)| meta.has_bin == Some(true))
+            .map(|(key, _)| key.clone())
+            .collect(),
+    )
 }
 
 /// Walk the lockfile's `snapshots:` map, build each slot's bin output
@@ -214,7 +225,7 @@ fn build_has_bin_set(
 fn run_lockfile_driven<Api>(
     virtual_store_dir: &Path,
     snapshots: &HashMap<PackageKey, SnapshotEntry>,
-    has_bin_set: &HashSet<PackageKey>,
+    has_bin_set: Option<&HashSet<PackageKey>>,
     package_manifests: &PackageManifests,
 ) -> Result<(), LinkVirtualStoreBinsError>
 where
@@ -227,12 +238,13 @@ where
         + FsSetExecutable
         + FsEnsureExecutableBits,
 {
-    // If we have no `packages:` info to filter against, we can't
-    // short-circuit slots — fall through to the path that visits
-    // every child. `has_bin_set` is `true` for every child in that
-    // case so the inner branch becomes a no-op filter.
-    let unfiltered = has_bin_set.is_empty();
-
+    // `has_bin_set` is `Some` exactly when the lockfile's `packages:`
+    // section was present at install start — in which case the set
+    // is authoritative and every slot is filtered through it (an
+    // empty `Some(set)` means "no package declares a bin", which
+    // short-circuits every slot below). When the section was
+    // missing we have no info and fall through to processing every
+    // child. See [`build_has_bin_set`] for the rationale.
     // Materialise as a `Vec` so rayon can split the work; iterating
     // a `HashMap` directly with `par_iter` would require collecting
     // anyway, and explicit collection here keeps the parallelism
@@ -257,11 +269,11 @@ where
             .filter_map(|(alias, dep_ref)| {
                 let child_key = dep_ref.resolve(alias);
                 let metadata_key = child_key.without_peer();
-                if unfiltered || has_bin_set.contains(&metadata_key) {
-                    Some((alias, metadata_key))
-                } else {
-                    None
-                }
+                let keep = match has_bin_set {
+                    Some(set) => set.contains(&metadata_key),
+                    None => true,
+                };
+                keep.then_some((alias, metadata_key))
             })
             .collect();
         if with_bin.is_empty() {
