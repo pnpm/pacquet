@@ -874,7 +874,8 @@ fn link_bins_propagates_modules_dir_read_error_via_di() {
 
     let err = link_bins::<FailingModulesRead>(Path::new("/x"), Path::new("/x/.bin"))
         .expect_err("read_dir error must propagate");
-    assert!(matches!(err, LinkBinsError::CreateBinDir { .. }));
+    eprintln!("link_bins_propagates_modules_dir_read_error err={err:?}");
+    assert!(matches!(err, LinkBinsError::ReadModulesDir { .. }));
 }
 
 /// Conflict resolution: when two packages declare the same bin name, the

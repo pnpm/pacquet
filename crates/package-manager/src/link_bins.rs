@@ -214,7 +214,7 @@ where
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => {
-            return Err(LinkBinsError::CreateBinDir { dir: modules_dir.to_path_buf(), error });
+            return Err(LinkBinsError::ReadModulesDir { dir: modules_dir.to_path_buf(), error });
         }
     };
 

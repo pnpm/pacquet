@@ -39,6 +39,14 @@ pub enum LinkBinsError {
         error: io::Error,
     },
 
+    #[display("Failed to read modules directory at {dir:?}: {error}")]
+    #[diagnostic(code(pacquet_cmd_shim::read_modules_dir))]
+    ReadModulesDir {
+        dir: PathBuf,
+        #[error(source)]
+        error: io::Error,
+    },
+
     #[display("Failed to read package manifest at {path:?}: {error}")]
     #[diagnostic(code(pacquet_cmd_shim::read_manifest))]
     ReadManifest {
@@ -121,7 +129,7 @@ where
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(packages),
         Err(error) => {
-            return Err(LinkBinsError::CreateBinDir { dir: modules_dir.to_path_buf(), error });
+            return Err(LinkBinsError::ReadModulesDir { dir: modules_dir.to_path_buf(), error });
         }
     };
 
