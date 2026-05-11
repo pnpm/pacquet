@@ -341,7 +341,7 @@ esac
 /// re-parsing its body. Pacquet uses [`is_shim_pointing_at`] for the same
 /// short-circuit on warm reinstalls.
 fn shim_target_marker(target_path: &Path) -> String {
-    format!("cmd-shim-target={}", target_path.to_string_lossy().replace('\\', "/"),)
+    format!("cmd-shim-target={}", target_path.to_string_lossy().replace('\\', "/"))
 }
 
 /// Whether an already-on-disk shim targets `target_path`. Mirrors

@@ -168,7 +168,7 @@ impl<'a> LinkVirtualStoreBins<'a> {
 
             // Children of this slot are everything under `node_modules`
             // *other than* the slot's own package. `link_bins` already
-            // skips dot-prefixed entries (`.bin`, `.modules.yaml`, …).
+            // skips dot-prefixed entries (`.bin`, `.modules.yaml`, ...).
             link_bins_excluding::<Api>(&modules_dir, &bins_dir, &self_pkg_dir)
                 .map_err(LinkVirtualStoreBinsError::LinkBins)
         })

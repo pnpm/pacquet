@@ -106,7 +106,7 @@ fn skips_slot_own_package_when_walking_children() {
         bin_dir.join("other").exists(),
         "child bin `other` must be linked under the slot's own package",
     );
-    assert!(!bin_dir.join("tsc").exists(), "self-bin `tsc` must not be linked into own slot",);
+    assert!(!bin_dir.join("tsc").exists(), "self-bin `tsc` must not be linked into own slot");
 }
 
 /// [`LinkVirtualStoreBins`] with a non-existent virtual-store directory
