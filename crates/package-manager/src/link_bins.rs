@@ -210,13 +210,19 @@ fn find_slot_own_package_dir<Api: FsReadDir>(
     // (`@scope+pkg@...` → start the `@` search at offset 1).
     // After `to_virtual_store_name`, `/` in scoped names becomes `+`,
     // so the package-name half can never contain `@` itself.
-    let search_start = if slot_name.starts_with('@') { 1 } else { 0 };
+    let scoped = slot_name.starts_with('@');
+    let search_start = usize::from(scoped);
     let at = search_start + slot_name[search_start..].find('@')?;
     let name_part = &slot_name[..at];
 
-    // `+` separates `<scope>+<name>` for scoped packages; non-scoped
-    // names contain no `+`.
-    let pkg_dir = match name_part.split_once('+') {
+    // `+` separates `<scope>+<name>` for scoped packages, and *only*
+    // for scoped packages. Gating on `scoped` avoids mis-parsing a
+    // hypothetical unscoped name that contains `+`: `PkgName::parse`
+    // does not reject non-URL-safe characters (only npm's
+    // `validate-npm-package-name` warns about them), so an unscoped
+    // name like `foo+bar` could in principle reach here and would
+    // otherwise be split into `foo` / `bar`.
+    let pkg_dir = match scoped.then(|| name_part.split_once('+')).flatten() {
         Some((scope, name)) => modules_dir.join(scope).join(name),
         None => modules_dir.join(name_part),
     };

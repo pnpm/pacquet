@@ -199,6 +199,48 @@ fn link_virtual_store_bins_handles_peer_resolved_slot_name() {
     );
 }
 
+/// An unscoped slot name that contains `+` must be treated as a
+/// single bare package name, not split on `+` like the scoped form
+/// `<scope>+<name>`. `PkgName::parse` does not reject non-URL-safe
+/// characters (npm's `validate-npm-package-name` only emits a
+/// warning), so a manifest with `"name": "foo+bar"` reaches
+/// `to_virtual_store_name` unchanged and the slot ends up as
+/// `foo+bar@1.0.0`. Without gating the `+` split on `scoped`, the
+/// own-package lookup would build `node_modules/foo/bar` and miss
+/// the actual `node_modules/foo+bar` directory.
+#[test]
+fn link_virtual_store_bins_handles_unscoped_name_with_plus() {
+    let tmp = tempdir().unwrap();
+    let virtual_dir = tmp.path().join(".pacquet");
+    let slot = virtual_dir.join("foo+bar@1.0.0");
+    let modules = slot.join("node_modules");
+    let pkg_dir = modules.join("foo+bar");
+    let child_dir = modules.join("child");
+    create_dir_all(&pkg_dir).unwrap();
+    create_dir_all(&child_dir).unwrap();
+
+    write_file(
+        pkg_dir.join("package.json"),
+        json!({"name": "foo+bar", "version": "1.0.0"}).to_string(),
+    )
+    .unwrap();
+    write_file(
+        child_dir.join("package.json"),
+        json!({"name": "child", "version": "1.0.0", "bin": "cli.js"}).to_string(),
+    )
+    .unwrap();
+    write_file(child_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
+
+    LinkVirtualStoreBins { virtual_store_dir: &virtual_dir }.run().unwrap();
+
+    let shim = pkg_dir.join("node_modules/.bin/child");
+    assert!(
+        shim.exists(),
+        "unscoped slot name containing `+` must not be split as `<scope>+<name>`; \
+         expected shim at {shim:?}",
+    );
+}
+
 /// A virtual-store slot whose `node_modules/` is missing must be skipped
 /// without error.
 #[test]
