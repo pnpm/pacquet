@@ -14,6 +14,7 @@ use std::{
     },
     iter::{Empty, empty},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use tempfile::tempdir;
 
@@ -37,7 +38,7 @@ fn writes_all_three_shim_flavors_per_bin() {
     let manifest_value: Value =
         serde_json::from_slice(&read_file(pkg_dir.join("package.json")).unwrap()).unwrap();
     link_bins_of_packages::<RealApi>(
-        &[PackageBinSource { location: pkg_dir.clone(), manifest: manifest_value }],
+        &[PackageBinSource { location: pkg_dir.clone(), manifest: Arc::new(manifest_value) }],
         &bins_dir,
     )
     .unwrap();
@@ -77,7 +78,7 @@ fn writes_shim_for_bin_string() {
     let manifest_value: Value =
         serde_json::from_slice(&read_file(pkg_dir.join("package.json")).unwrap()).unwrap();
     link_bins_of_packages::<RealApi>(
-        &[PackageBinSource { location: pkg_dir.clone(), manifest: manifest_value }],
+        &[PackageBinSource { location: pkg_dir.clone(), manifest: Arc::new(manifest_value) }],
         &bins_dir,
     )
     .unwrap();
@@ -158,7 +159,7 @@ fn link_bins_of_packages_no_op_when_no_bins() {
     let bins = tmp.path().join(".bin");
     let manifest: Value =
         serde_json::from_slice(&read_file(pkg.join("package.json")).unwrap()).unwrap();
-    link_bins_of_packages::<RealApi>(&[PackageBinSource { location: pkg, manifest }], &bins)
+    link_bins_of_packages::<RealApi>(&[PackageBinSource { location: pkg, manifest: Arc::new(manifest) }], &bins)
         .unwrap();
     assert!(!bins.exists(), "bins dir must not be created when nothing to link");
 }
@@ -196,8 +197,8 @@ fn lexical_compare_breaks_tie_when_neither_owns() {
     // discovery order.
     link_bins_of_packages::<RealApi>(
         &[
-            PackageBinSource { location: beta.clone(), manifest: manifest_beta },
-            PackageBinSource { location: alpha.clone(), manifest: manifest_alpha },
+            PackageBinSource { location: beta.clone(), manifest: Arc::new(manifest_beta) },
+            PackageBinSource { location: alpha.clone(), manifest: Arc::new(manifest_alpha) },
         ],
         &bins,
     )
@@ -348,7 +349,7 @@ fn link_bins_propagates_create_bin_dir_error_via_di() {
     create_dir_all(&pkg).unwrap();
     write_file(pkg.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
     let err = link_bins_of_packages::<FailingCreateDir>(
-        &[PackageBinSource { location: pkg, manifest }],
+        &[PackageBinSource { location: pkg, manifest: Arc::new(manifest) }],
         Path::new("/anything"),
     )
     .expect_err("create_dir_all error must propagate");
@@ -418,7 +419,7 @@ fn link_bins_propagates_write_shim_error_via_di() {
     create_dir_all(&pkg).unwrap();
     write_file(pkg.join("cli.js"), "").unwrap();
     let err = link_bins_of_packages::<FailingWrite>(
-        &[PackageBinSource { location: pkg, manifest }],
+        &[PackageBinSource { location: pkg, manifest: Arc::new(manifest) }],
         &tmp.path().join(".bin"),
     )
     .expect_err("write error must propagate");
@@ -485,7 +486,7 @@ fn link_bins_propagates_chmod_error_via_di() {
     create_dir_all(&pkg).unwrap();
     write_file(pkg.join("cli.js"), "").unwrap();
     let err = link_bins_of_packages::<FailingChmod>(
-        &[PackageBinSource { location: pkg, manifest }],
+        &[PackageBinSource { location: pkg, manifest: Arc::new(manifest) }],
         &tmp.path().join(".bin"),
     )
     .expect_err("chmod error must propagate");
@@ -560,7 +561,7 @@ fn link_bins_propagates_target_chmod_error_via_di() {
     create_dir_all(&pkg).unwrap();
     write_file(pkg.join("cli.js"), "").unwrap();
     let err = link_bins_of_packages::<FailingTargetChmod>(
-        &[PackageBinSource { location: pkg, manifest }],
+        &[PackageBinSource { location: pkg, manifest: Arc::new(manifest) }],
         &tmp.path().join(".bin"),
     )
     .expect_err("non-NotFound target chmod error must propagate as Chmod");
@@ -631,7 +632,7 @@ fn link_bins_swallows_target_chmod_not_found_via_di() {
     create_dir_all(&pkg).unwrap();
     write_file(pkg.join("cli.js"), "").unwrap();
     link_bins_of_packages::<NotFoundTargetChmod>(
-        &[PackageBinSource { location: pkg, manifest }],
+        &[PackageBinSource { location: pkg, manifest: Arc::new(manifest) }],
         &tmp.path().join(".bin"),
     )
     .expect("NotFound on target chmod must be swallowed silently");
@@ -700,7 +701,7 @@ fn link_bins_propagates_probe_shim_source_error_via_di() {
     let pkg = tmp.path().join("foo");
     create_dir_all(&pkg).unwrap();
     let err = link_bins_of_packages::<FailingProbe>(
-        &[PackageBinSource { location: pkg, manifest }],
+        &[PackageBinSource { location: pkg, manifest: Arc::new(manifest) }],
         &tmp.path().join(".bin"),
     )
     .expect_err("probe error must propagate");
@@ -805,8 +806,8 @@ fn ownership_breaks_bin_conflicts_when_existing_owns() {
     let bins = tmp.path().join(".bin");
     link_bins_of_packages::<RealApi>(
         &[
-            PackageBinSource { location: npm.clone(), manifest: manifest_npm },
-            PackageBinSource { location: aaa_other.clone(), manifest: manifest_other },
+            PackageBinSource { location: npm.clone(), manifest: Arc::new(manifest_npm) },
+            PackageBinSource { location: aaa_other.clone(), manifest: Arc::new(manifest_other) },
         ],
         &bins,
     )
@@ -911,8 +912,8 @@ fn ownership_breaks_bin_conflicts() {
     let bins = tmp.path().join(".bin");
     link_bins_of_packages::<RealApi>(
         &[
-            PackageBinSource { location: aaa_other.clone(), manifest: manifest_other },
-            PackageBinSource { location: npm.clone(), manifest: manifest_npm },
+            PackageBinSource { location: aaa_other.clone(), manifest: Arc::new(manifest_other) },
+            PackageBinSource { location: npm.clone(), manifest: Arc::new(manifest_npm) },
         ],
         &bins,
     )

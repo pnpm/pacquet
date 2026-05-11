@@ -209,6 +209,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
         LinkVirtualStoreBins {
             virtual_store_dir: &config.virtual_store_dir,
             snapshots: None,
+            packages: None,
             package_manifests: &empty_manifests,
         }
         .run()

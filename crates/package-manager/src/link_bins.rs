@@ -6,13 +6,13 @@ use pacquet_cmd_shim::{
     FsSetExecutable, FsWalkFiles, FsWrite, LinkBinsError, PackageBinSource, RealApi,
     link_bins_of_packages,
 };
-use pacquet_lockfile::{PackageKey, PkgName, SnapshotEntry};
+use pacquet_lockfile::{PackageKey, PackageMetadata, PkgName, SnapshotEntry};
 use rayon::prelude::*;
-use serde_json::Value;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 /// Read the `package.json` of every direct dependency under `modules_dir`
@@ -49,13 +49,16 @@ pub fn link_direct_dep_bins(modules_dir: &Path, dep_names: &[String]) -> Result<
                     return Some(Err(LinkBinsError::ReadManifest { path: manifest_path, error }));
                 }
             };
-            let manifest = match serde_json::from_slice(&bytes) {
+            let manifest: serde_json::Value = match serde_json::from_slice(&bytes) {
                 Ok(manifest) => manifest,
                 Err(error) => {
                     return Some(Err(LinkBinsError::ParseManifest { path: manifest_path, error }));
                 }
             };
-            Some(Ok(PackageBinSource { location: location.clone(), manifest }))
+            Some(Ok(PackageBinSource {
+                location: location.clone(),
+                manifest: Arc::new(manifest),
+            }))
         })
         .collect::<Result<_, _>>()?;
     if bin_sources.is_empty() {
@@ -122,6 +125,15 @@ pub struct LinkVirtualStoreBins<'a> {
     /// each slot's children from its `dependencies` /
     /// `optionalDependencies` lists without touching the filesystem.
     pub snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,
+    /// Lockfile `packages:` section, indexed by `PkgNameVerPeer`
+    /// (without peer suffix). Used to filter children by
+    /// `hasBin == true` *before* any per-child IO — mirrors pnpm's
+    /// `dep.hasBin` filter in
+    /// [`linkBinsOfDependencies`](https://github.com/pnpm/pnpm/blob/4750fd370c/building/during-install/src/index.ts#L283).
+    /// Most packages don't declare a bin, so this short-circuits the
+    /// bulk of the per-slot work before any path-building or manifest
+    /// lookup happens.
+    pub packages: Option<&'a HashMap<PackageKey, PackageMetadata>>,
     /// Bundled manifests recovered from the warm-cache prefetch of
     /// `index.db` ([`crate::PackageManifests`]). A hit lets the
     /// linker skip the `package.json` read for that child entirely;
@@ -153,25 +165,63 @@ impl<'a> LinkVirtualStoreBins<'a> {
             + FsSetExecutable
             + FsEnsureExecutableBits,
     {
-        let LinkVirtualStoreBins { virtual_store_dir, snapshots, package_manifests } = self;
+        let LinkVirtualStoreBins {
+            virtual_store_dir,
+            snapshots,
+            packages,
+            package_manifests,
+        } = self;
         if let Some(snapshots) = snapshots {
-            run_lockfile_driven::<Api>(virtual_store_dir, snapshots, package_manifests)
+            let has_bin_set = build_has_bin_set(packages);
+            run_lockfile_driven::<Api>(
+                virtual_store_dir,
+                snapshots,
+                &has_bin_set,
+                package_manifests,
+            )
         } else {
             run_with_readdir::<Api>(virtual_store_dir)
         }
     }
 }
 
+/// Pre-compute the set of package keys whose lockfile metadata sets
+/// `hasBin: true`. Mirrors pnpm's filter at
+/// [`during-install/src/index.ts:283`](https://github.com/pnpm/pnpm/blob/4750fd370c/building/during-install/src/index.ts#L283):
+/// most packages don't declare a bin, so short-circuiting the
+/// per-child manifest lookup with this set is the cheapest win on
+/// warm-cache installs.
+///
+/// `packages` is optional because the lockfile is allowed to omit
+/// the `packages:` section in pathological setups; in that case we
+/// fall back to the conservative "we don't know, try anyway"
+/// behaviour and return an empty set (treated as "everything passes
+/// the filter" below).
+fn build_has_bin_set(
+    packages: Option<&HashMap<PackageKey, PackageMetadata>>,
+) -> HashSet<PackageKey> {
+    let Some(packages) = packages else { return HashSet::new() };
+    packages
+        .iter()
+        .filter(|(_, meta)| meta.has_bin == Some(true))
+        .map(|(key, _)| key.clone())
+        .collect()
+}
+
 /// Walk the lockfile's `snapshots:` map, build each slot's bin output
 /// directory lexically, and link every child's bins into it. The
 /// child set comes from `snapshot.dependencies` +
-/// `snapshot.optional_dependencies`; the corresponding manifest
-/// comes from [`PackageManifests`] (no disk read) or, for cold-batch
-/// packages that prefetch missed, a fallback `package.json` read
-/// through the existing symlink at `<slot>/node_modules/<alias>`.
+/// `snapshot.optional_dependencies`, filtered by `has_bin_set` so
+/// packages that don't declare a bin never make it into the
+/// per-slot path-building or manifest-lookup work. The corresponding
+/// manifest comes from [`PackageManifests`] (no disk read) or, for
+/// cold-batch packages that prefetch missed, a fallback
+/// `package.json` read through the existing symlink at
+/// `<slot>/node_modules/<alias>`.
 fn run_lockfile_driven<Api>(
     virtual_store_dir: &Path,
     snapshots: &HashMap<PackageKey, SnapshotEntry>,
+    has_bin_set: &HashSet<PackageKey>,
     package_manifests: &PackageManifests,
 ) -> Result<(), LinkVirtualStoreBinsError>
 where
@@ -184,38 +234,67 @@ where
         + FsSetExecutable
         + FsEnsureExecutableBits,
 {
+    // If we have no `packages:` info to filter against, we can't
+    // short-circuit slots — fall through to the path that visits
+    // every child. `has_bin_set` is `true` for every child in that
+    // case so the inner branch becomes a no-op filter.
+    let unfiltered = has_bin_set.is_empty();
+
     // Materialise as a `Vec` so rayon can split the work; iterating
     // a `HashMap` directly with `par_iter` would require collecting
     // anyway, and explicit collection here keeps the parallelism
     // contract obvious.
     let slot_entries: Vec<(&PackageKey, &SnapshotEntry)> = snapshots.iter().collect();
     slot_entries.par_iter().try_for_each(|(slot_key, snapshot)| {
-        let slot_dir = virtual_store_dir.join(slot_key.to_virtual_store_name());
-        let modules_dir = slot_dir.join("node_modules");
-        let self_pkg_dir = slot_own_pkg_dir(&modules_dir, slot_key);
-        let bins_dir = self_pkg_dir.join("node_modules/.bin");
-
         let children = snapshot
             .dependencies
             .iter()
             .flatten()
             .chain(snapshot.optional_dependencies.iter().flatten());
 
-        let mut bin_sources: Vec<PackageBinSource> = Vec::new();
-        for (alias, dep_ref) in children {
-            let child_key = dep_ref.resolve(alias);
+        // First pass: figure out which children (if any) have a bin
+        // declared. Cheap — just hash-set lookups against the
+        // pre-built `has_bin_set` and a `without_peer` materialisation
+        // per child. If no child has a bin, skip the slot entirely —
+        // we don't even build the slot's path. Slots in this category
+        // are the bulk of a real lockfile (~95% in the integrated
+        // benchmark fixture); skipping them removes the dominant
+        // chunk of the per-install bin-link work.
+        let with_bin: Vec<(&PkgName, PackageKey)> = children
+            .filter_map(|(alias, dep_ref)| {
+                let child_key = dep_ref.resolve(alias);
+                let metadata_key = child_key.without_peer();
+                if unfiltered || has_bin_set.contains(&metadata_key) {
+                    Some((alias, metadata_key))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if with_bin.is_empty() {
+            return Ok(());
+        }
+
+        let slot_dir = virtual_store_dir.join(slot_key.to_virtual_store_name());
+        let modules_dir = slot_dir.join("node_modules");
+        let self_pkg_dir = slot_own_pkg_dir(&modules_dir, slot_key);
+        let bins_dir = self_pkg_dir.join("node_modules/.bin");
+
+        let mut bin_sources: Vec<PackageBinSource> = Vec::with_capacity(with_bin.len());
+        for (alias, metadata_key) in with_bin {
             let child_location = pkg_dir_under(&modules_dir, alias);
-            let metadata_key = child_key.without_peer();
             if let Some(manifest) = package_manifests.get(&metadata_key) {
                 // Hot path: parsed manifest already in memory from
-                // the warm-cache prefetch. The clone is a recursive
-                // copy of the BundledManifest subset (small — `bin`,
-                // `directories`, `name`, `version`, …), and only
-                // fires for children whose package is present in the
-                // prefetch.
+                // the warm-cache prefetch. Both the prefetch map
+                // and `PackageBinSource` hold the manifest via
+                // [`Arc`], so this is a refcount bump rather than a
+                // deep clone of the JSON tree. Avoids the
+                // `slots × children`-sized clone fan-out that
+                // dominated the previous version of this path on
+                // warm-cache installs.
                 bin_sources.push(PackageBinSource {
                     location: child_location,
-                    manifest: Value::clone(manifest),
+                    manifest: Arc::clone(manifest),
                 });
             } else {
                 // Cold-batch fallback: package was downloaded
@@ -290,7 +369,7 @@ where
     let slots: Vec<PathBuf> = slots.collect();
     slots.par_iter().try_for_each(|slot_dir| {
         let modules_dir = slot_dir.join("node_modules");
-        let Some(self_pkg_dir) = find_slot_own_package_dir::<Api>(slot_dir, &modules_dir) else {
+        let Some(self_pkg_dir) = find_slot_own_package_dir(slot_dir, &modules_dir) else {
             return Ok(());
         };
         let bins_dir = self_pkg_dir.join("node_modules/.bin");
@@ -312,15 +391,17 @@ where
 /// and silently break peer-resolved slots; parse from the left
 /// instead, skipping a leading `@` that belongs to a scoped package.
 ///
-/// Existence of the resolved candidate is probed via `Api::read_dir`
-/// rather than `Path::is_dir`, so tests injecting a fake `Api` see the
-/// fake's view of the world. A path that is not a directory (or that
-/// does not exist) yields `Err` from the trait, which we map to
-/// `None`.
-fn find_slot_own_package_dir<Api: FsReadDir>(
-    slot_dir: &Path,
-    modules_dir: &Path,
-) -> Option<PathBuf> {
+/// Returns `None` only when the slot name fails to parse — there's no
+/// filesystem probe for the resolved candidate. The previous version
+/// stat-equivalent-ed the path with `Api::read_dir` to short-circuit
+/// missing slots, but on a 1267-package fixture that was 1267
+/// wasted `open(O_DIRECTORY) + close` round-trips on the hot path of
+/// every warm install. The slot's own package directory is an
+/// invariant of [`crate::create_virtual_dir_by_snapshot`]; the
+/// downstream `link_bins_excluding` handles `NotFound` from its own
+/// `read_dir` of `<slot>/node_modules` cleanly when the invariant
+/// ever does break, so the probe is pure overhead.
+fn find_slot_own_package_dir(slot_dir: &Path, modules_dir: &Path) -> Option<PathBuf> {
     let slot_name = slot_dir.file_name()?.to_str()?;
 
     // The package-name half is everything before the **first** `@`,
@@ -344,12 +425,7 @@ fn find_slot_own_package_dir<Api: FsReadDir>(
         Some((scope, name)) => modules_dir.join(scope).join(name),
         None => modules_dir.join(name_part),
     };
-    // `Api::read_dir` returns `impl Iterator<Item = PathBuf>` that may
-    // borrow from `&pkg_dir`. Drop the iterator before moving
-    // `pkg_dir` out; turn the `Ok`/`Err` into a `bool` first so the
-    // borrow ends with the temporary.
-    let exists = Api::read_dir(&pkg_dir).is_ok();
-    exists.then_some(pkg_dir)
+    Some(pkg_dir)
 }
 
 /// Like [`pacquet_cmd_shim::link_bins`] but skipping the slot's own package
@@ -431,7 +507,10 @@ fn read_package<Api: FsReadFile>(
     };
     let manifest: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|error| LinkBinsError::ParseManifest { path: manifest_path, error })?;
-    Ok(Some(PackageBinSource { location: location.to_path_buf(), manifest }))
+    Ok(Some(PackageBinSource {
+        location: location.to_path_buf(),
+        manifest: Arc::new(manifest),
+    }))
 }
 
 fn paths_eq(a: &Path, b: &Path) -> bool {

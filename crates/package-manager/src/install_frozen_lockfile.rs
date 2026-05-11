@@ -103,6 +103,7 @@ where
         LinkVirtualStoreBins {
             virtual_store_dir: &config.virtual_store_dir,
             snapshots,
+            packages,
             package_manifests: &package_manifests,
         }
         .run()

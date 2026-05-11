@@ -42,6 +42,7 @@ fn writes_child_bins_into_slot_own_package_node_modules() {
     LinkVirtualStoreBins {
         virtual_store_dir: &virtual_dir,
         snapshots: None,
+        packages: None,
         package_manifests: &Default::default(),
     }
     .run()
@@ -108,6 +109,7 @@ fn skips_slot_own_package_when_walking_children() {
     LinkVirtualStoreBins {
         virtual_store_dir: &virtual_dir,
         snapshots: None,
+        packages: None,
         package_manifests: &Default::default(),
     }
     .run()
@@ -131,6 +133,7 @@ fn link_virtual_store_bins_no_op_when_dir_missing() {
     LinkVirtualStoreBins {
         virtual_store_dir: &nonexistent,
         snapshots: None,
+        packages: None,
         package_manifests: &Default::default(),
     }
     .run()
@@ -167,6 +170,7 @@ fn link_virtual_store_bins_handles_scoped_slot_name() {
     LinkVirtualStoreBins {
         virtual_store_dir: &virtual_dir,
         snapshots: None,
+        packages: None,
         package_manifests: &Default::default(),
     }
     .run()
@@ -216,6 +220,7 @@ fn link_virtual_store_bins_handles_peer_resolved_slot_name() {
     LinkVirtualStoreBins {
         virtual_store_dir: &virtual_dir,
         snapshots: None,
+        packages: None,
         package_manifests: &Default::default(),
     }
     .run()
@@ -264,6 +269,7 @@ fn link_virtual_store_bins_handles_unscoped_name_with_plus() {
     LinkVirtualStoreBins {
         virtual_store_dir: &virtual_dir,
         snapshots: None,
+        packages: None,
         package_manifests: &Default::default(),
     }
     .run()
@@ -287,6 +293,7 @@ fn link_virtual_store_bins_skips_slot_without_node_modules() {
     LinkVirtualStoreBins {
         virtual_store_dir: &virtual_dir,
         snapshots: None,
+        packages: None,
         package_manifests: &Default::default(),
     }
     .run()
@@ -312,6 +319,7 @@ fn link_virtual_store_bins_skips_slot_without_own_package_dir() {
     LinkVirtualStoreBins {
         virtual_store_dir: &virtual_dir,
         snapshots: None,
+        packages: None,
         package_manifests: &Default::default(),
     }
     .run()
@@ -458,6 +466,7 @@ fn link_virtual_store_bins_propagates_read_error_via_di() {
     let err = LinkVirtualStoreBins {
         virtual_store_dir: Path::new("/anything"),
         snapshots: None,
+        packages: None,
         package_manifests: &Default::default(),
     }
     .run_with::<DenyVirtualStore>()

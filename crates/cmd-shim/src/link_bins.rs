@@ -17,15 +17,24 @@ use std::{
     collections::HashMap,
     io,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 /// One package known to be installed at `location`, with its parsed
 /// `package.json`. Mirrors the per-package input shape of pnpm's
 /// `linkBinsOfPackages`.
+///
+/// The manifest is shared via `Arc` rather than owned by value: the
+/// lockfile-driven bin-link path looks up the same parsed manifest
+/// from a process-wide map, so packing it into a [`PackageBinSource`]
+/// is a refcount bump (cheap) rather than a deep clone of the JSON
+/// tree (which would have been the bulk of the per-slot CPU work,
+/// since the per-install clone count is `slots × children` =
+/// thousands of times).
 #[derive(Debug, Clone)]
 pub struct PackageBinSource {
     pub location: PathBuf,
-    pub manifest: Value,
+    pub manifest: Arc<Value>,
 }
 
 /// Error type for [`link_bins_of_packages`].
@@ -176,7 +185,10 @@ fn read_package<Api: FsReadFile>(
     };
     let manifest: Value = serde_json::from_slice(&bytes)
         .map_err(|error| LinkBinsError::ParseManifest { path: manifest_path, error })?;
-    Ok(Some(PackageBinSource { location: location.to_path_buf(), manifest }))
+    Ok(Some(PackageBinSource {
+        location: location.to_path_buf(),
+        manifest: Arc::new(manifest),
+    }))
 }
 
 /// Link every bin declared by `packages` into `bins_dir`, applying the same
