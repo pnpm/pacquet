@@ -140,7 +140,7 @@ fn basic_auth_built_from_username_and_password() {
     // be `Basic base64(username:raw_password)`.
     let raw_password = "p@ss";
     let password_b64 = base64_encode(raw_password);
-    let ini = format!("//reg.com/:username=alice\n//reg.com/:_password={password_b64}\n",);
+    let ini = format!("//reg.com/:username=alice\n//reg.com/:_password={password_b64}\n");
     let mut npmrc = Npmrc::new();
     NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to(&mut npmrc);
     assert_eq!(
@@ -235,7 +235,7 @@ fn lone_per_registry_password_produces_no_header() {
 fn per_registry_username_password_apply_through_build_auth_headers() {
     let raw_password = "hunter2";
     let password_b64 = base64_encode(raw_password);
-    let ini = format!("//reg.example/:username=alice\n//reg.example/:_password={password_b64}\n",);
+    let ini = format!("//reg.example/:username=alice\n//reg.example/:_password={password_b64}\n");
     let mut npmrc = Npmrc::new();
     NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to(&mut npmrc);
     assert_eq!(

@@ -595,7 +595,8 @@ mod tests {
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || unreachable!("shouldn't reach home dir"),
             Npmrc::new,
-        );
+        )
+        .expect("workspace yaml absent => no error");
         assert_eq!(config.registry, "https://from-yaml.test/");
         // The creds should match against the YAML-overridden registry.
         assert_eq!(
@@ -673,7 +674,8 @@ mod tests {
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || unreachable!("shouldn't reach home dir"),
             Npmrc::new,
-        );
+        )
+        .expect("workspace yaml absent => no error");
         // The substitution failed (NoEnv reports the var as unset) so
         // the parser kept the raw `${MISSING_TOKEN}` value verbatim
         // and emitted a warning. The `Authorization` header attached
@@ -683,7 +685,6 @@ mod tests {
         assert_eq!(
             config.auth_headers.for_url("https://reg.com/foo").as_deref(),
             Some("Bearer ${MISSING_TOKEN}"),
-        .expect("workspace yaml absent => no error");
         );
     }
 }

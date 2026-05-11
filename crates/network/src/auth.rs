@@ -433,7 +433,7 @@ mod tests {
     #[test]
     fn slash_append_branch_lets_path_segment_match() {
         let headers = build(&[("//reg.com/scope/", "Bearer scoped")]);
-        assert_eq!(headers.for_url("https://reg.com/scope").as_deref(), Some("Bearer scoped"),);
+        assert_eq!(headers.for_url("https://reg.com/scope").as_deref(), Some("Bearer scoped"));
     }
 
     /// Hits the `None => return String::new()` branch of [`nerf_dart`]
