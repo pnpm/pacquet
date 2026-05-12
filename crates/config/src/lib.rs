@@ -175,22 +175,34 @@ pub struct Config {
     pub verify_store_integrity: bool,
 
     /// Whether to consult the side-effects cache
-    /// (`PackageFilesIndex.sideEffects`) when importing a package.
+    /// (`PackageFilesIndex.sideEffects`) when importing a package
+    /// and whether to populate it after a successful postinstall.
     /// Read from `pnpm-workspace.yaml`'s `sideEffectsCache` field
-    /// (camelCase, optional, defaults `true`). **Not yet acted on:**
-    /// the build phase doesn't currently gate the rebuild-skip on
-    /// this flag, and the WRITE path (populating the cache after a
-    /// postinstall) is also unimplemented. Both follow up
-    /// separately — tracked in pnpm/pacquet#421.
+    /// (camelCase, optional, defaults `true`).
     ///
     /// Default `true`, matching pnpm's `side-effects-cache` at
-    /// [`config/config/src/index.ts`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/config/src/index.ts).
-    /// Wiring the config-source plumbing through now means
-    /// downstream callers can set `sideEffectsCache: false` in
-    /// `pnpm-workspace.yaml` today and have the value take effect
-    /// as soon as the read-path gate lands.
+    /// [`config/reader/src/index.ts`](https://github.com/pnpm/pnpm/blob/7e3145f9fc/config/reader/src/index.ts#L614-L615).
+    ///
+    /// The READ gate combines this with [`side_effects_cache_readonly`]
+    /// via [`Config::side_effects_cache_read`]; the WRITE gate via
+    /// [`Config::side_effects_cache_write`]. Consume those helpers
+    /// rather than reading this field directly so the precedence
+    /// stays single-sourced.
+    ///
+    /// [`side_effects_cache_readonly`]: Self::side_effects_cache_readonly
     #[default = true]
     pub side_effects_cache: bool,
+
+    /// Treat the side-effects cache as read-only — pacquet still
+    /// honors cache hits on the READ side but does not populate
+    /// the cache after a successful postinstall. Mirrors pnpm's
+    /// [`side-effects-cache-readonly`](https://github.com/pnpm/pnpm/blob/7e3145f9fc/config/reader/src/Config.ts#L124).
+    /// Default `false`. Read from `pnpm-workspace.yaml`'s
+    /// `sideEffectsCacheReadonly` field.
+    ///
+    /// Consume via [`Config::side_effects_cache_read`] and
+    /// [`Config::side_effects_cache_write`].
+    pub side_effects_cache_readonly: bool,
 
     /// How many times pacquet retries a failed tarball fetch on transient
     /// errors before giving up. Mirrors pnpm's `fetchRetries` (default
@@ -233,6 +245,31 @@ pub struct Config {
 impl Config {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Whether the install should consult the side-effects cache.
+    /// Mirrors upstream's
+    /// [`sideEffectsCacheRead = sideEffectsCache ?? sideEffectsCacheReadonly`](https://github.com/pnpm/pnpm/blob/7e3145f9fc/config/reader/src/index.ts#L614).
+    ///
+    /// Pacquet collapses upstream's tri-state (`undefined`/`true`/`false`)
+    /// into two booleans: the cache is read when either flag is on, so
+    /// users who only want the READ side can set
+    /// `sideEffectsCacheReadonly: true` with `sideEffectsCache: false`
+    /// and get a read-only view.
+    pub fn side_effects_cache_read(&self) -> bool {
+        self.side_effects_cache || self.side_effects_cache_readonly
+    }
+
+    /// Whether the install is allowed to populate the side-effects
+    /// cache after a successful postinstall. Mirrors upstream's
+    /// [`sideEffectsCacheWrite = sideEffectsCache`](https://github.com/pnpm/pnpm/blob/7e3145f9fc/config/reader/src/index.ts#L615)
+    /// with the additional constraint that the explicit
+    /// `sideEffectsCacheReadonly: true` always wins — upstream's
+    /// `??` semantics let `readonly` slip through when both flags
+    /// are explicitly set, but `readonly` as a flag name only makes
+    /// sense if it really does block writes.
+    pub fn side_effects_cache_write(&self) -> bool {
+        self.side_effects_cache && !self.side_effects_cache_readonly
     }
 
     /// Build the runtime config by layering:
