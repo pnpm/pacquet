@@ -1,16 +1,8 @@
 use pacquet_store_dir::StoreDir;
-use pipe_trait::Pipe;
-use serde::{Deserialize, Deserializer, de};
-use std::{env, path::PathBuf, str::FromStr};
+use std::{env, path::PathBuf};
 
 #[cfg(windows)]
 use std::{path::Component, path::Path};
-
-// This needs to be implemented because serde doesn't support default = "true" as
-// a valid option, and throws  "failed to parse" error.
-pub fn bool_true() -> bool {
-    true
-}
 
 pub fn default_hoist_pattern() -> Vec<String> {
     vec!["*".to_string()]
@@ -111,64 +103,6 @@ pub fn default_fetch_retry_mintimeout() -> u64 {
 
 pub fn default_fetch_retry_maxtimeout() -> u64 {
     60_000
-}
-
-pub fn deserialize_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    u32::from_str(&s).map_err(de::Error::custom)
-}
-
-pub fn deserialize_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    bool::from_str(&s).map_err(de::Error::custom)
-}
-
-pub fn deserialize_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    u64::from_str(&s).map_err(de::Error::custom)
-}
-
-pub fn deserialize_pathbuf<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let path = deserializer.pipe(String::deserialize)?.pipe(PathBuf::from);
-
-    if path.is_absolute() {
-        return Ok(path);
-    }
-
-    Ok(env::current_dir().map_err(de::Error::custom)?.join(path))
-}
-
-pub fn deserialize_store_dir<'de, D>(deserializer: D) -> Result<StoreDir, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    deserialize_pathbuf(deserializer).map(StoreDir::from)
-}
-
-/// This deserializer adds a trailing "/" if not exist to make our life easier.
-pub fn deserialize_registry<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-
-    if s.ends_with('/') {
-        return Ok(s);
-    }
-
-    Ok(format!("{s}/"))
 }
 
 #[cfg(test)]

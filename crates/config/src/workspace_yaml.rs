@@ -121,17 +121,16 @@ impl WorkspaceSettings {
         Ok(None)
     }
 
-    /// Apply every set field onto `npmrc`, leaving unset ones untouched.
+    /// Apply every set field onto `config`, leaving unset ones untouched.
     ///
     /// Path-valued fields (`store_dir`, `modules_dir`, `virtual_store_dir`)
-    /// are resolved against `base_dir` if relative — mirroring `.npmrc`'s
-    /// resolve-against-cwd behaviour but anchored at the workspace root
-    /// where the yaml was found, which is what pnpm does.
-    pub fn apply_to(self, npmrc: &mut Config, base_dir: &Path) {
+    /// are resolved against `base_dir` if relative — anchored at the
+    /// workspace root where the yaml was found, matching pnpm.
+    pub fn apply_to(self, config: &mut Config, base_dir: &Path) {
         macro_rules! apply {
             ($($field:ident),* $(,)?) => {$(
                 if let Some(v) = self.$field {
-                    npmrc.$field = v;
+                    config.$field = v;
                 }
             )*};
         }
@@ -147,16 +146,16 @@ impl WorkspaceSettings {
         }
 
         if let Some(v) = self.modules_dir {
-            npmrc.modules_dir = resolve(base_dir, &v);
+            config.modules_dir = resolve(base_dir, &v);
         }
         if let Some(v) = self.virtual_store_dir {
-            npmrc.virtual_store_dir = resolve(base_dir, &v);
+            config.virtual_store_dir = resolve(base_dir, &v);
         }
         if let Some(v) = self.store_dir {
-            npmrc.store_dir = StoreDir::from(resolve(base_dir, &v));
+            config.store_dir = StoreDir::from(resolve(base_dir, &v));
         }
         if let Some(v) = self.registry {
-            npmrc.registry = if v.ends_with('/') { v } else { format!("{v}/") };
+            config.registry = if v.ends_with('/') { v } else { format!("{v}/") };
         }
     }
 }

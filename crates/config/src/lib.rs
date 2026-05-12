@@ -1,4 +1,4 @@
-mod custom_deserializer;
+mod defaults;
 mod npmrc_auth;
 #[cfg(test)]
 mod test_env_guard;
@@ -10,12 +10,11 @@ use serde::Deserialize;
 use smart_default::SmartDefault;
 use std::{fs, path::PathBuf};
 
-use crate::custom_deserializer::{
-    bool_true, default_fetch_retries, default_fetch_retry_factor, default_fetch_retry_maxtimeout,
+use crate::defaults::{
+    default_fetch_retries, default_fetch_retry_factor, default_fetch_retry_maxtimeout,
     default_fetch_retry_mintimeout, default_hoist_pattern, default_modules_cache_max_age,
     default_modules_dir, default_public_hoist_pattern, default_registry, default_store_dir,
-    default_virtual_store_dir, deserialize_bool, deserialize_pathbuf, deserialize_registry,
-    deserialize_store_dir, deserialize_u32, deserialize_u64,
+    default_virtual_store_dir,
 };
 pub use workspace_yaml::{
     LoadWorkspaceYamlError, WORKSPACE_MANIFEST_FILENAME, WorkspaceSettings, workspace_root_or,
@@ -59,13 +58,19 @@ pub enum PackageImportMethod {
     CloneOrCopy,
 }
 
-#[derive(Debug, Deserialize, SmartDefault)]
-#[serde(rename_all = "kebab-case")]
+/// Resolved runtime config built from defaults, the auth subset of
+/// `.npmrc`, and `pnpm-workspace.yaml` (see [`Config::current`]).
+///
+/// The type carries the merged result — it is never deserialized from a
+/// file directly. Yaml is parsed into [`WorkspaceSettings`] and applied
+/// onto `Config` field-by-field, mirroring pnpm 11's split between
+/// `.npmrc` (auth/registry/network) and `pnpm-workspace.yaml`
+/// (project-structural settings).
+#[derive(Debug, SmartDefault)]
 pub struct Config {
     /// When true, all dependencies are hoisted to node_modules/.pnpm/node_modules.
     /// This makes unlisted dependencies accessible to all packages inside node_modules.
     #[default = true]
-    #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
     pub hoist: bool,
 
     /// Tells pnpm which packages should be hoisted to node_modules/.pnpm/node_modules.
@@ -73,7 +78,6 @@ pub struct Config {
     /// have phantom dependencies, you can use this option to exclusively hoist the phantom
     /// dependencies (recommended).
     #[default(_code = "default_hoist_pattern()")]
-    #[serde(default = "default_hoist_pattern")]
     pub hoist_pattern: Vec<String>,
 
     /// Unlike hoist-pattern, which hoists dependencies to a hidden modules directory inside the
@@ -81,7 +85,6 @@ pub struct Config {
     /// modules directory. Hoisting to the root modules directory means that application code will
     /// have access to phantom dependencies, even if they modify the resolution strategy improperly.
     #[default(_code = "default_public_hoist_pattern()")]
-    #[serde(default = "default_public_hoist_pattern")]
     pub public_hoist_pattern: Vec<String>,
 
     /// By default, pnpm creates a semistrict node_modules, meaning dependencies have access to
@@ -89,38 +92,31 @@ pub struct Config {
     /// most of the packages in the ecosystem work with no issues. However, if some tooling only
     /// works when the hoisted dependencies are in the root of node_modules, you can set this to
     /// true to hoist them for you.
-    #[serde(default, deserialize_with = "deserialize_bool")]
     pub shamefully_hoist: bool,
 
     /// The location where all the packages are saved on the disk.
     #[default(_code = "default_store_dir()")]
-    #[serde(default = "default_store_dir", deserialize_with = "deserialize_store_dir")]
     pub store_dir: StoreDir,
 
     /// The directory in which dependencies will be installed (instead of node_modules).
     #[default(_code = "default_modules_dir()")]
-    #[serde(default = "default_modules_dir", deserialize_with = "deserialize_pathbuf")]
     pub modules_dir: PathBuf,
 
     /// Defines what linker should be used for installing Node packages.
-    #[serde(default)]
     pub node_linker: NodeLinker,
 
     /// When symlink is set to false, pnpm creates a virtual store directory without any symlinks.
     /// It is a useful setting together with node-linker=pnp.
     #[default = true]
-    #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
     pub symlink: bool,
 
     /// The directory with links to the store. All direct and indirect dependencies of the
     /// project are linked into this directory.
     #[default(_code = "default_virtual_store_dir()")]
-    #[serde(default = "default_virtual_store_dir", deserialize_with = "deserialize_pathbuf")]
     pub virtual_store_dir: PathBuf,
 
     /// Controls the way packages are imported from the store (if you want to disable symlinks
     /// inside node_modules, then you need to change the node-linker setting, not this one).
-    #[serde(default)]
     pub package_import_method: PackageImportMethod,
 
     /// The time in minutes after which orphan packages from the modules directory should be
@@ -129,41 +125,33 @@ pub struct Config {
     ///
     /// Default value is 10080 (7 days in minutes)
     #[default(_code = "default_modules_cache_max_age()")]
-    #[serde(default = "default_modules_cache_max_age", deserialize_with = "deserialize_u64")]
     pub modules_cache_max_age: u64,
 
     /// When set to false, pnpm won't read or generate a pnpm-lock.yaml file.
-    #[serde(default, deserialize_with = "deserialize_bool")]
     pub lockfile: bool,
 
     /// When set to true and the available pnpm-lock.yaml satisfies the package.json dependencies
     /// directive, a headless installation is performed. A headless installation skips all
     /// dependency resolution as it does not need to modify the lockfile.
     #[default = true]
-    #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
     pub prefer_frozen_lockfile: bool,
 
     /// Add the full URL to the package's tarball to every entry in pnpm-lock.yaml.
-    #[serde(default, deserialize_with = "deserialize_bool")]
     pub lockfile_include_tarball_url: bool,
 
     /// The base URL of the npm package registry (trailing slash included).
     #[default(_code = "default_registry()")]
-    #[serde(default = "default_registry", deserialize_with = "deserialize_registry")]
     pub registry: String, // TODO: use Url type (compatible with reqwest)
 
     /// When true, any missing non-optional peer dependencies are automatically installed.
     #[default = true]
-    #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
     pub auto_install_peers: bool,
 
     /// When this setting is set to true, packages with peer dependencies will be deduplicated after peers resolution.
     #[default = true]
-    #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
     pub dedupe_peer_dependents: bool,
 
     /// If this is enabled, commands will fail if there is a missing or invalid peer dependency in the tree.
-    #[serde(default, deserialize_with = "deserialize_bool")]
     pub strict_peer_dependencies: bool,
 
     /// When enabled, dependencies of the root workspace project are used to resolve peer
@@ -171,7 +159,6 @@ pub struct Config {
     /// your peer dependencies only in the root of the workspace, and you can be sure that all
     /// projects in the workspace use the same versions of the peer dependencies.
     #[default = true]
-    #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
     pub resolve_peers_from_workspace_root: bool,
 
     /// Whether to verify each CAFS file's on-disk integrity before reusing it
@@ -184,13 +171,7 @@ pub struct Config {
     /// Matches pnpm's `verifyStoreIntegrity` camelCase key in
     /// `pnpm-workspace.yaml` (same `true` default as pnpm's
     /// `installing/deps-installer/src/install/extendInstallOptions.ts`).
-    /// Only `pnpm-workspace.yaml` is wired up today — [`Config::current`]
-    /// applies auth/registry from `.npmrc` and reads project-structural
-    /// settings from `pnpm-workspace.yaml`, matching pnpm 11's own
-    /// split. A `verify-store-integrity=…` line in `.npmrc` is
-    /// silently ignored.
     #[default = true]
-    #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
     pub verify_store_integrity: bool,
 
     /// How many times pacquet retries a failed tarball fetch on transient
@@ -207,13 +188,8 @@ pub struct Config {
     /// [`isIniConfigKey`](https://github.com/pnpm/pnpm/blob/1819226b51/config/reader/src/localConfig.ts#L160-L161)
     /// excludes the `fetch-retry*` family from `NPM_AUTH_SETTINGS`, so a
     /// `fetch-retries=…` line in `.npmrc` is ignored upstream and is
-    /// ignored here too. The kebab-case serde attribute is kept so test
-    /// fixtures that round-trip a partial config through
-    /// `serde_ini::from_str` still parse; [`Config::current`] applies the
-    /// auth subset from `.npmrc` and reads project-structural settings
-    /// from `pnpm-workspace.yaml`.
+    /// ignored here too.
     #[default(_code = "default_fetch_retries()")]
-    #[serde(default = "default_fetch_retries", deserialize_with = "deserialize_u32")]
     pub fetch_retries: u32,
 
     /// Exponential-backoff growth factor between retry attempts. Mirrors
@@ -221,21 +197,18 @@ pub struct Config {
     /// `min(fetch_retry_mintimeout * factor^attempt, fetch_retry_maxtimeout)`.
     /// Yaml-only — see [`Config::fetch_retries`].
     #[default(_code = "default_fetch_retry_factor()")]
-    #[serde(default = "default_fetch_retry_factor", deserialize_with = "deserialize_u32")]
     pub fetch_retry_factor: u32,
 
     /// Floor in milliseconds for the wait between retries. Mirrors pnpm's
     /// `fetchRetryMintimeout` (default `10000` — 10 s). Yaml-only — see
     /// [`Config::fetch_retries`].
     #[default(_code = "default_fetch_retry_mintimeout()")]
-    #[serde(default = "default_fetch_retry_mintimeout", deserialize_with = "deserialize_u64")]
     pub fetch_retry_mintimeout: u64,
 
     /// Cap in milliseconds on the wait between retries. Mirrors pnpm's
     /// `fetchRetryMaxtimeout` (default `60000` — 1 min). Yaml-only —
     /// see [`Config::fetch_retries`].
     #[default(_code = "default_fetch_retry_maxtimeout()")]
-    #[serde(default = "default_fetch_retry_maxtimeout", deserialize_with = "deserialize_u64")]
     pub fetch_retry_maxtimeout: u64,
 }
 
@@ -273,7 +246,7 @@ impl Config {
         HomeDir: FnOnce() -> Option<PathBuf>,
         Default: FnOnce() -> Config,
     {
-        let mut npmrc = default();
+        let mut config = default();
 
         let cwd = current_dir().ok();
         // Read the nearest .npmrc (cwd first, home second) and apply only
@@ -283,7 +256,7 @@ impl Config {
             .and_then(|dir| read_npmrc(dir))
             .or_else(|| home_dir().and_then(|dir| read_npmrc(&dir)));
         if let Some(text) = auth_source {
-            crate::npmrc_auth::NpmrcAuth::from_ini(&text).apply_to(&mut npmrc);
+            crate::npmrc_auth::NpmrcAuth::from_ini(&text).apply_to(&mut config);
         }
 
         // Layer pnpm-workspace.yaml overrides on top. A missing file is
@@ -292,10 +265,10 @@ impl Config {
             && let Some((path, settings)) = WorkspaceSettings::find_and_load(&start)?
         {
             let base_dir = path.parent().unwrap_or(&start).to_path_buf();
-            settings.apply_to(&mut npmrc, &base_dir);
+            settings.apply_to(&mut config, &base_dir);
         }
 
-        Ok(npmrc)
+        Ok(config)
     }
 
     /// Persist the config data until the program terminates.
@@ -314,14 +287,12 @@ fn read_npmrc(dir: &std::path::Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use std::env;
-    #[cfg(not(target_os = "windows"))]
-    use std::path::Path;
 
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
 
     use super::{Config, NodeLinker, PackageImportMethod, fs};
-    use crate::{custom_deserializer::default_store_dir, test_env_guard::EnvGuard};
+    use crate::{defaults::default_store_dir, test_env_guard::EnvGuard};
     use pacquet_store_dir::StoreDir;
     use pipe_trait::Pipe;
 
@@ -339,30 +310,6 @@ mod tests {
         assert!(value.hoist);
         assert_eq!(value.store_dir, default_store_dir());
         assert_eq!(value.registry, "https://registry.npmjs.org/");
-    }
-
-    #[test]
-    pub fn parse_package_import_method() {
-        let value: Config = serde_ini::from_str("package-import-method=hardlink").unwrap();
-        assert_eq!(value.package_import_method, PackageImportMethod::Hardlink);
-    }
-
-    #[test]
-    pub fn parse_node_linker() {
-        let value: Config = serde_ini::from_str("node-linker=hoisted").unwrap();
-        assert_eq!(value.node_linker, NodeLinker::Hoisted);
-    }
-
-    #[test]
-    pub fn parse_bool() {
-        let value: Config = serde_ini::from_str("prefer-frozen-lockfile=false").unwrap();
-        assert!(!value.prefer_frozen_lockfile);
-    }
-
-    #[test]
-    pub fn parse_u64() {
-        let value: Config = serde_ini::from_str("modules-cache-max-age=1000").unwrap();
-        assert_eq!(value.modules_cache_max_age, 1000);
     }
 
     /// `fetch-retries*` defaults must match pnpm's
@@ -386,7 +333,7 @@ mod tests {
         unsafe {
             env::set_var("PNPM_HOME", "/hello"); // TODO: change this to dependency injection
         }
-        let value: Config = serde_ini::from_str("").unwrap();
+        let value = Config::new();
         assert_eq!(display_store_dir(&value.store_dir), "/hello/store");
     }
 
@@ -398,7 +345,7 @@ mod tests {
         // branch and fail the assertion. Snapshot both so the test
         // cleans up after itself even when parallel peers observe the
         // temporarily-unset state. See the companion fix in
-        // `custom_deserializer::tests::test_default_store_dir_with_xdg_env`.
+        // `defaults::tests::test_default_store_dir_with_xdg_env`.
         let _g = EnvGuard::snapshot(["PNPM_HOME", "XDG_DATA_HOME"]);
         // SAFETY: EnvGuard above serializes the test against other env-mutating
         // tests in this process; no other thread reads these vars concurrently.
@@ -406,34 +353,8 @@ mod tests {
             env::remove_var("PNPM_HOME"); // TODO: change this to dependency injection
             env::set_var("XDG_DATA_HOME", "/hello");
         }
-        let value: Config = serde_ini::from_str("").unwrap();
+        let value = Config::new();
         assert_eq!(display_store_dir(&value.store_dir), "/hello/pnpm/store");
-    }
-
-    #[test]
-    pub fn should_use_relative_virtual_store_dir() {
-        let value: Config = serde_ini::from_str("virtual-store-dir=node_modules/.pacquet").unwrap();
-        assert_eq!(
-            value.virtual_store_dir,
-            env::current_dir().unwrap().join("node_modules/.pacquet"),
-        );
-    }
-
-    #[test]
-    #[cfg(not(target_os = "windows"))]
-    pub fn should_use_absolute_virtual_store_dir() {
-        let value: Config =
-            serde_ini::from_str("virtual-store-dir=/node_modules/.pacquet").unwrap();
-        assert_eq!(value.virtual_store_dir, Path::new("/node_modules/.pacquet"));
-    }
-
-    #[test]
-    pub fn add_slash_to_registry_end() {
-        let without_slash: Config = serde_ini::from_str("registry=https://yagiz.co").unwrap();
-        assert_eq!(without_slash.registry, "https://yagiz.co/");
-
-        let without_slash: Config = serde_ini::from_str("registry=https://yagiz.co/").unwrap();
-        assert_eq!(without_slash.registry, "https://yagiz.co/");
     }
 
     #[test]
@@ -555,7 +476,7 @@ mod tests {
         let config = Config::current(
             || current_dir.path().to_path_buf().pipe(Ok::<_, ()>),
             || home_dir.path().to_path_buf().pipe(Some),
-            || serde_ini::from_str("symlink=false").unwrap(),
+            || Config { symlink: false, ..Config::new() },
         )
         .expect("workspace yaml absent => no error");
         assert!(!config.symlink);
