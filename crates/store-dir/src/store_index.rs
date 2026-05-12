@@ -699,7 +699,7 @@ pub struct PackageFilesIndex {
     /// Side-effect overlays applied after post-install scripts. Populated
     /// by the build-side-effects cache (WRITE path).
     ///
-    /// Serialized through [`serialize_sorted_map`] so the msgpack
+    /// Serialized through `serialize_sorted_map_opt` so the msgpack
     /// bytes are stable across runs even though the field's type is
     /// `HashMap`. Without that, two installs that produce the same
     /// logical overlay can produce two different row payloads,
@@ -754,7 +754,7 @@ fn serialize_checked_at<S: serde::Serializer>(
 
 /// Value of [`PackageFilesIndex::side_effects`].
 ///
-/// `added` round-trips through [`serialize_sorted_map`] so the
+/// `added` round-trips through `serialize_sorted_map_opt` so the
 /// msgpack bytes are stable for the same logical overlay — same
 /// rationale as the parent struct's `side_effects` field.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
