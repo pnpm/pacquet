@@ -190,7 +190,6 @@ pub struct Config {
     /// as soon as the read-path gate lands, without a config
     /// migration.
     #[default = true]
-    #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
     pub side_effects_cache: bool,
 
     /// How many times pacquet retries a failed tarball fetch on transient
