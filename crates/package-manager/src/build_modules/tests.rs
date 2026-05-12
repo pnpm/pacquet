@@ -264,15 +264,23 @@ fn build_modules_excludes_explicit_deny_from_ignored() {
 /// Optional dep whose postinstall fails must be reported through the
 /// `pnpm:skipped-optional-dependency` channel (reason `build_failure`)
 /// and NOT abort the install. Mirrors upstream
-/// `building/during-install/src/index.ts:218-240`.
+/// `building/during-install/src/index.ts:218-240` and the spirit of
+/// `'do not fail on an optional dependency that has a non-optional
+/// dependency with a failing postinstall script'` at
+/// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/installing/deps-installer/test/install/optionalDependencies.ts#L563-L572>.
 ///
-/// Unix-gated because the test script (`exit 1`) and the spawn shell
-/// pacquet picks (`cmd /d /s /c` on Windows) don't agree on basic
-/// exit-code semantics across this test's surface — same gating
-/// pattern as the lifecycle spawn tests in `crate::executor::lifecycle::tests`.
+/// The test uses the upstream fixture `@pnpm.e2e/failing-postinstall@1.0.0`
+/// (script body verbatim from `/Volumes/src/pnpm/registry-mock/packages/failing-postinstall/package.json`)
+/// so the failure mode is exactly the one upstream's optional-dep
+/// tests exercise.
+///
+/// Unix-gated because the upstream script (`echo hello && echo world && exit 1`)
+/// is POSIX shell syntax. The cmd-on-Windows path picks a different
+/// shell — `crate::executor::shell` covers the shell-selection
+/// branches in isolation.
 #[cfg(unix)]
 #[test]
-fn optional_dep_build_failure_is_swallowed_and_reported() {
+fn do_not_fail_on_optional_dep_with_failing_postinstall() {
     static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
     EVENTS.lock().expect("lock").clear();
 
@@ -283,12 +291,13 @@ fn optional_dep_build_failure_is_swallowed_and_reported() {
         }
     }
 
+    let pkg_key = key("@pnpm.e2e/failing-postinstall", "1.0.0");
     let mut optional_snapshot = SnapshotEntry::default();
     optional_snapshot.optional = true;
-    let snapshots = HashMap::from([(key("flaky", "1.0.0"), optional_snapshot)]);
-    let importers = root_importers(&[("flaky", "1.0.0")]);
+    let snapshots = HashMap::from([(pkg_key.clone(), optional_snapshot)]);
+    let importers = root_importers(&[("@pnpm.e2e/failing-postinstall", "1.0.0")]);
     // `dangerouslyAllowAllBuilds` so the policy lets the failing
-    // script through to actually run; this test exercises the
+    // script through to actually run — this test exercises the
     // build-failure path, not the policy gate.
     let policy = AllowBuildPolicy::new(rules([]), true);
 
@@ -296,7 +305,7 @@ fn optional_dep_build_failure_is_swallowed_and_reported() {
     let modules_dir = tempdir().expect("create temp dir");
     let lockfile_dir = tempdir().expect("create temp dir");
 
-    create_failing_pkg(virtual_store_dir.path(), &key("flaky", "1.0.0"));
+    create_failing_postinstall_fixture(virtual_store_dir.path(), &pkg_key);
 
     let ignored = BuildModules {
         virtual_store_dir: virtual_store_dir.path(),
@@ -320,27 +329,39 @@ fn optional_dep_build_failure_is_swallowed_and_reported() {
         })
         .expect("must emit pnpm:skipped-optional-dependency");
     assert_eq!(skipped_event.reason, SkippedOptionalReason::BuildFailure);
-    assert_eq!(skipped_event.package.name, "flaky");
+    assert_eq!(skipped_event.package.name, "@pnpm.e2e/failing-postinstall");
     assert_eq!(skipped_event.package.version, "1.0.0");
     assert!(skipped_event.details.is_some(), "details must carry the error toString");
 }
 
-/// Symmetric: a NON-optional dep with the same failing postinstall
-/// must propagate the error as `BuildModulesError::LifecycleScript`.
-/// Mirrors upstream's `throw err` at
-/// `building/during-install/src/index.ts:240`.
+/// Mirrors `'fail on a package with failing postinstall if the
+/// package is both an optional and non-optional dependency'` at
+/// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/installing/deps-installer/test/install/optionalDependencies.ts#L574-L591>.
+///
+/// Upstream's resolver folds reachability ALL-paths-optional, so a
+/// package reachable through any non-optional edge has
+/// `snapshots[...].optional = false` in the lockfile (cf.
+/// `installing/deps-resolver/src/resolveDependencies.ts:1605-1610`).
+/// `BuildModules` then propagates the build failure rather than
+/// swallowing it. Pacquet trusts the precomputed flag; this test
+/// pins the propagation branch by supplying the same fixture with
+/// `optional: false`, which is the lockfile shape upstream produces
+/// for the dual-reachability case.
 #[cfg(unix)]
 #[test]
-fn non_optional_dep_build_failure_propagates() {
-    let snapshots = HashMap::from([(key("required", "1.0.0"), SnapshotEntry::default())]);
-    let importers = root_importers(&[("required", "1.0.0")]);
+fn fail_when_failing_postinstall_is_required() {
+    let pkg_key = key("@pnpm.e2e/failing-postinstall", "1.0.0");
+    // `optional: false` — pacquet's analog of upstream's
+    // ALL-paths-optional fold concluding the dep is required.
+    let snapshots = HashMap::from([(pkg_key.clone(), SnapshotEntry::default())]);
+    let importers = root_importers(&[("@pnpm.e2e/failing-postinstall", "1.0.0")]);
     let policy = AllowBuildPolicy::new(rules([]), true);
 
     let virtual_store_dir = tempdir().expect("create temp dir");
     let modules_dir = tempdir().expect("create temp dir");
     let lockfile_dir = tempdir().expect("create temp dir");
 
-    create_failing_pkg(virtual_store_dir.path(), &key("required", "1.0.0"));
+    create_failing_postinstall_fixture(virtual_store_dir.path(), &pkg_key);
 
     let err = BuildModules {
         virtual_store_dir: virtual_store_dir.path(),
@@ -351,15 +372,20 @@ fn non_optional_dep_build_failure_propagates() {
         allow_build_policy: &policy,
     }
     .run::<SilentReporter>()
-    .expect_err("non-optional build failure must propagate");
+    .expect_err("required build failure must propagate");
     eprintln!("ERR: {err}");
     assert!(matches!(err, crate::build_modules::BuildModulesError::LifecycleScript(_)));
 }
 
-/// Helper: materialize a package whose `postinstall` exits non-zero.
-/// Mirrors `create_buildable_pkg` but with a script that fails so
-/// the run actually exercises the error path.
-fn create_failing_pkg(virtual_store_dir: &Path, key: &PackageKey) -> PathBuf {
+/// Materialize a package fixture whose contents are byte-identical
+/// to upstream's `@pnpm.e2e/failing-postinstall@1.0.0` at
+/// `/Volumes/src/pnpm/registry-mock/packages/failing-postinstall/package.json`.
+/// Reusing the upstream script body (`echo hello && echo world && exit 1`)
+/// keeps the failure mode and exit code identical to what
+/// `optionalDependencies.ts` exercises against the live mock
+/// registry, without dragging the lockfile-with-real-integrity
+/// machinery into a `BuildModules`-unit test.
+fn create_failing_postinstall_fixture(virtual_store_dir: &Path, key: &PackageKey) -> PathBuf {
     let key_str = key.without_peer().to_string();
     let name_version = key_str.strip_prefix('/').unwrap_or(&key_str);
     let at_idx = name_version.rfind('@').unwrap_or(name_version.len());
@@ -370,7 +396,7 @@ fn create_failing_pkg(virtual_store_dir: &Path, key: &PackageKey) -> PathBuf {
     let manifest = serde_json::json!({
         "name": pkg_name,
         "version": name_version[at_idx + 1..].to_string(),
-        "scripts": { "postinstall": "exit 1" },
+        "scripts": { "postinstall": "echo hello && echo world && exit 1" },
     });
     fs::write(pkg_dir.join("package.json"), manifest.to_string()).expect("write manifest");
     pkg_dir
