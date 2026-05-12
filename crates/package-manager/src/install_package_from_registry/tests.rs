@@ -46,6 +46,9 @@ fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path)
         patched_dependencies: None,
         allow_builds: Default::default(),
         dangerously_allow_all_builds: false,
+        scripts_prepend_node_path: Default::default(),
+        unsafe_perm: true,
+        child_concurrency: 1,
     }
 }
 

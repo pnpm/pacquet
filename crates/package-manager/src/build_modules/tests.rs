@@ -1,5 +1,6 @@
 use super::{AllowBuildPolicy, BuildModules, parse_name_version_from_key};
 use pacquet_config::Config;
+use pacquet_executor::ScriptsPrependNodePath;
 use pacquet_lockfile::{
     PackageKey, PkgName, PkgVerPeer, ProjectSnapshot, ResolvedDependencyMap,
     ResolvedDependencySpec, SnapshotEntry,
@@ -299,6 +300,10 @@ fn build_modules_collects_ignored_builds() {
         store_dir: None,
         store_index_writer: None,
         patches: None,
+
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        unsafe_perm: true,
+        child_concurrency: 1,
     }
     .run::<SilentReporter>()
     .expect("run BuildModules");
@@ -308,6 +313,75 @@ fn build_modules_collects_ignored_builds() {
         ignored,
         vec!["aaa@2.0.0".to_string(), "zzz@1.0.0".to_string()],
         "ignored set must be sorted lexicographically: {ignored:?}",
+    );
+}
+
+/// Parallel-path variant of [`build_modules_collects_ignored_builds`]
+/// running under `child_concurrency: 2` so the rayon
+/// `chunk.par_iter().try_for_each(...)` dispatch is actually
+/// exercised. The other `BuildModules` tests all run with
+/// `child_concurrency: 1`, which is the sequential codepath; this
+/// test pins the concurrent codepath against a fixture that places
+/// two policy-denied build candidates in the same chunk (no
+/// dependency edges between them, so the topo sort puts them both
+/// in chunk 0).
+///
+/// The assertion is the same sorted ignored-set as the sequential
+/// test — a regression that dropped the `pool.install` /
+/// `try_for_each` wrapping would still collect both names but in
+/// non-deterministic order on insertion. The
+/// `BTreeSet`-backed `ignored_builds` ordering hides that, so
+/// breakage would more likely show up as a lock contention bug
+/// (e.g. dropping the `Mutex` wrapping) which would manifest as a
+/// rustc / clippy error rather than a runtime failure; this test
+/// at least documents that the codepath is exercised.
+#[test]
+fn build_modules_collects_ignored_builds_under_concurrency() {
+    let snapshots = HashMap::from([
+        (key("zzz", "1.0.0"), SnapshotEntry::default()),
+        (key("aaa", "2.0.0"), SnapshotEntry::default()),
+    ]);
+    let importers = root_importers(&[("zzz", "1.0.0"), ("aaa", "2.0.0")]);
+    let policy = AllowBuildPolicy::default();
+
+    let virtual_store_dir = tempdir().expect("create temp dir");
+    let modules_dir = tempdir().expect("create temp dir");
+    let lockfile_dir = tempdir().expect("create temp dir");
+
+    create_buildable_pkg(virtual_store_dir.path(), &key("zzz", "1.0.0"));
+    create_buildable_pkg(virtual_store_dir.path(), &key("aaa", "2.0.0"));
+
+    let ignored = BuildModules {
+        virtual_store_dir: virtual_store_dir.path(),
+        modules_dir: modules_dir.path(),
+        lockfile_dir: lockfile_dir.path(),
+        snapshots: Some(&snapshots),
+        importers: &importers,
+        packages: None,
+        allow_build_policy: &policy,
+        side_effects_maps_by_snapshot: None,
+        engine_name: None,
+        side_effects_cache: true,
+        side_effects_cache_write: false,
+        store_dir: None,
+        store_index_writer: None,
+        patches: None,
+
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        unsafe_perm: true,
+        child_concurrency: 2,
+    }
+    .run::<SilentReporter>()
+    .expect("run BuildModules under concurrency");
+    dbg!(&ignored);
+
+    // Same expected output as the sequential test — both members of
+    // the same chunk insert into the `Mutex<BTreeSet>` concurrently
+    // and the BTreeSet's iteration order normalizes the result.
+    assert_eq!(
+        ignored,
+        vec!["aaa@2.0.0".to_string(), "zzz@1.0.0".to_string()],
+        "ignored set must be the same under concurrency 2 as under 1: {ignored:?}",
     );
 }
 
@@ -346,6 +420,10 @@ fn build_modules_excludes_explicit_deny_from_ignored() {
         store_dir: None,
         store_index_writer: None,
         patches: None,
+
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        unsafe_perm: true,
+        child_concurrency: 1,
     }
     .run::<SilentReporter>()
     .expect("run BuildModules");
@@ -420,6 +498,10 @@ fn do_not_fail_on_optional_dep_with_failing_postinstall() {
         store_dir: None,
         store_index_writer: None,
         patches: None,
+
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        unsafe_perm: true,
+        child_concurrency: 1,
     }
     .run::<RecordingReporter>()
     .expect("optional build failure must NOT abort the install");
@@ -542,6 +624,10 @@ fn using_side_effects_cache_skips_rebuild() {
         store_dir: None,
         store_index_writer: None,
         patches: None,
+
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        unsafe_perm: true,
+        child_concurrency: 1,
     }
     .run::<RecordingReporter>()
     .expect("install must succeed when the cache hit skips the rebuild");
@@ -599,6 +685,10 @@ fn side_effects_cache_disabled_bypasses_the_gate() {
         store_dir: None,
         store_index_writer: None,
         patches: None,
+
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        unsafe_perm: true,
+        child_concurrency: 1,
     }
     .run::<SilentReporter>()
     .expect_err("with cache disabled, the failing postinstall must run and the install must fail");
@@ -649,6 +739,10 @@ fn fail_when_failing_postinstall_is_required() {
         store_dir: None,
         store_index_writer: None,
         patches: None,
+
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        unsafe_perm: true,
+        child_concurrency: 1,
     }
     .run::<SilentReporter>()
     .expect_err("required build failure must propagate");
@@ -876,6 +970,10 @@ async fn write_path_populates_side_effects_row() {
         store_dir: Some(&store_dir),
         store_index_writer: Some(&writer),
         patches: None,
+
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        unsafe_perm: true,
+        child_concurrency: 1,
     }
     .run::<SilentReporter>()
     .expect("build modules must complete cleanly");
@@ -978,6 +1076,10 @@ async fn write_path_disabled_skips_upload() {
         store_dir: Some(&store_dir),
         store_index_writer: Some(&writer),
         patches: None,
+
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        unsafe_perm: true,
+        child_concurrency: 1,
     }
     .run::<SilentReporter>()
     .expect("build modules must complete cleanly");
@@ -1089,6 +1191,10 @@ async fn upload_error_does_not_interrupt_install() {
         store_dir: Some(&store_dir),
         store_index_writer: Some(&writer),
         patches: None,
+
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        unsafe_perm: true,
+        child_concurrency: 1,
     }
     .run::<SilentReporter>()
     .expect("upload failure must not propagate; install continues");
@@ -1310,6 +1416,10 @@ new file mode 100644
         store_dir: Some(&store_dir),
         store_index_writer: Some(&writer),
         patches: Some(&patches),
+
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        unsafe_perm: true,
+        child_concurrency: 1,
     }
     .run::<SilentReporter>()
     .expect("build modules must complete cleanly");
@@ -1409,6 +1519,10 @@ new file mode 100644
         store_dir: Some(&store_dir),
         store_index_writer: Some(&writer),
         patches: Some(&patches),
+
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        unsafe_perm: true,
+        child_concurrency: 1,
     }
     .run::<SilentReporter>()
     .expect("build modules must complete cleanly");
@@ -1479,6 +1593,10 @@ async fn missing_patch_file_path_errors_with_diagnostic() {
         store_dir: Some(&store_dir),
         store_index_writer: Some(&writer),
         patches: Some(&patches),
+
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        unsafe_perm: true,
+        child_concurrency: 1,
     }
     .run::<SilentReporter>()
     .expect_err("missing patch_file_path must surface as PatchFilePathMissing");

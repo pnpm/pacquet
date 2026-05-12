@@ -1,4 +1,7 @@
-use super::default_store_dir;
+use super::{
+    default_child_concurrency_with_parallelism, default_store_dir, resolve_child_concurrency,
+    resolve_child_concurrency_with_parallelism,
+};
 use crate::test_env_guard::EnvGuard;
 use pacquet_store_dir::StoreDir;
 use pretty_assertions::assert_eq;
@@ -44,6 +47,96 @@ fn test_default_store_dir_with_xdg_env() {
     }
     let store_dir = default_store_dir();
     assert_eq!(display_store_dir(&store_dir), "/tmp/xdg_data_home/pnpm/store");
+}
+
+/// Port of upstream
+/// [`'getDefaultWorkspaceConcurrency: cpu num < 4'`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/concurrency.test.ts#L25-L28).
+/// On a 1-core host, the default caps at 1 (not 4).
+#[test]
+fn default_child_concurrency_with_parallelism_below_four() {
+    assert_eq!(default_child_concurrency_with_parallelism(1), 1);
+}
+
+/// Port of upstream
+/// [`'getDefaultWorkspaceConcurrency: cpu num > 4'`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/concurrency.test.ts#L30-L33).
+/// Caps at 4 on a 5-core host.
+#[test]
+fn default_child_concurrency_with_parallelism_above_four() {
+    assert_eq!(default_child_concurrency_with_parallelism(5), 4);
+}
+
+/// Port of upstream
+/// [`'getDefaultWorkspaceConcurrency: cpu num = 4'`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/concurrency.test.ts#L35-L38).
+/// At the boundary, 4 is the exact result (not floored or capped).
+#[test]
+fn default_child_concurrency_with_parallelism_at_four() {
+    assert_eq!(default_child_concurrency_with_parallelism(4), 4);
+}
+
+/// Port of upstream
+/// [`'default workspace concurrency'`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/concurrency.test.ts#L48-L52).
+/// `getWorkspaceConcurrency(undefined)` on a >=4-core host yields 4
+/// (the upstream test runs on the default Jest host; on a host with
+/// >=4 cores the default is 4). Pin a >=4 parallelism so the
+/// expectation is deterministic.
+#[test]
+fn resolve_child_concurrency_default_with_four_or_more_cores() {
+    assert_eq!(resolve_child_concurrency_with_parallelism(None, 4), 4);
+    assert_eq!(resolve_child_concurrency_with_parallelism(None, 8), 4);
+}
+
+/// Port of upstream
+/// [`'match host cores amount'`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/concurrency.test.ts#L58-L62).
+/// `getWorkspaceConcurrency(0)` returns the host's parallelism
+/// verbatim — the saturated `parallelism - 0` path.
+#[test]
+fn resolve_child_concurrency_zero_returns_full_parallelism() {
+    assert_eq!(resolve_child_concurrency_with_parallelism(Some(0), 8), 8);
+    assert_eq!(resolve_child_concurrency_with_parallelism(Some(0), 1), 1);
+}
+
+/// Port of upstream
+/// [`'host cores minus X'`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/concurrency.test.ts#L64-L71).
+/// `n = -1` → `max(1, cores - 1)`; `n = -9999` → `1` (saturating).
+/// Replaces the earlier bound-check-only test with the precise
+/// formula that the upstream suite pins.
+#[test]
+fn resolve_child_concurrency_negative_offset_matches_upstream_formula() {
+    // n = -1 with 8 cores → 7.
+    assert_eq!(resolve_child_concurrency_with_parallelism(Some(-1), 8), 7);
+    // n = -1 with 1 core → max(1, 0) → 1.
+    assert_eq!(resolve_child_concurrency_with_parallelism(Some(-1), 1), 1);
+    // n = -9999 saturates → 1 regardless of parallelism.
+    assert_eq!(resolve_child_concurrency_with_parallelism(Some(-9999), 8), 1);
+    assert_eq!(resolve_child_concurrency_with_parallelism(Some(-9999), 1), 1);
+}
+
+/// Existing pacquet test (not from upstream): both the public
+/// `resolve_child_concurrency` and the testable
+/// `_with_parallelism` helper agree on positive inputs. The
+/// upstream
+/// [`'get back positive amount'`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/concurrency.test.ts#L54-L56)
+/// case (`n = 5` → `5`) is checked here alongside the helper
+/// equivalence.
+#[test]
+fn resolve_child_concurrency_positive_amount() {
+    assert_eq!(resolve_child_concurrency(Some(5)), 5);
+    assert_eq!(resolve_child_concurrency_with_parallelism(Some(5), 1), 5);
+    assert_eq!(resolve_child_concurrency_with_parallelism(Some(5), 100), 5);
+}
+
+/// `resolve_child_concurrency(Some(i32::MIN))` must not panic.
+/// A naive `(-n) as u32` overflows in debug builds when
+/// `n == i32::MIN` because the negation itself overflows;
+/// `unsigned_abs` is the safe path. `i32::MIN.unsigned_abs()`
+/// is `2_147_483_648`, well above any plausible host
+/// parallelism, so `saturating_sub` produces `0` and `.max(1)`
+/// lifts to exactly `1` — assert that precise value so a wrong
+/// result like `2` would still fail the test.
+#[test]
+fn resolve_child_concurrency_handles_i32_min() {
+    let result = resolve_child_concurrency(Some(i32::MIN));
+    assert_eq!(result, 1);
 }
 
 #[cfg(windows)]

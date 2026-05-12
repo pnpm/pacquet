@@ -1,4 +1,6 @@
-use crate::{Config, NodeLinker, PackageImportMethod};
+use crate::{
+    Config, NodeLinker, PackageImportMethod, ScriptsPrependNodePath, resolve_child_concurrency,
+};
 use derive_more::{Display, Error};
 use indexmap::IndexMap;
 use miette::Diagnostic;
@@ -104,6 +106,22 @@ pub struct WorkspaceSettings {
     ///
     /// [`allow_builds`]: Self::allow_builds
     pub dangerously_allow_all_builds: Option<bool>,
+
+    /// `scriptsPrependNodePath` from `pnpm-workspace.yaml`. Tri-state
+    /// — yaml accepts `true` / `false` / `"warn-only"`. Custom serde
+    /// shape, see [`ScriptsPrependNodePath`]'s `Deserialize` impl.
+    pub scripts_prepend_node_path: Option<ScriptsPrependNodePath>,
+
+    /// `unsafePerm` from `pnpm-workspace.yaml`. Forced to `true` on
+    /// Windows in `apply_to` (matches upstream's
+    /// `process.platform === 'win32'` override).
+    pub unsafe_perm: Option<bool>,
+
+    /// `childConcurrency` from `pnpm-workspace.yaml`. Resolved
+    /// through [`crate::resolve_child_concurrency`] in `apply_to`.
+    /// Signed `i32` here so negative values (interpreted as
+    /// `parallelism - |value|`) round-trip cleanly.
+    pub child_concurrency: Option<i32>,
 }
 
 /// Basename of the file pnpm reads; exported for test use.
@@ -222,6 +240,26 @@ impl WorkspaceSettings {
         }
         if let Some(v) = self.dangerously_allow_all_builds {
             config.dangerously_allow_all_builds = v;
+        }
+        if let Some(v) = self.scripts_prepend_node_path {
+            config.scripts_prepend_node_path = v;
+        }
+        if let Some(v) = self.unsafe_perm {
+            config.unsafe_perm = v;
+        }
+        // Windows force-override (matches upstream's
+        // [`process.platform === 'win32'`](https://github.com/pnpm/npm-lifecycle/blob/d2d8e790/index.js#L204-L220)
+        // — running lifecycle scripts under a uid/gid drop is
+        // POSIX-only).
+        if cfg!(windows) {
+            config.unsafe_perm = true;
+        }
+        // `childConcurrency: None` keeps the smart-default
+        // `Config` constructor produced from
+        // [`default_child_concurrency`]; `Some(n)` (including
+        // negative) goes through the upstream resolver.
+        if let Some(v) = self.child_concurrency {
+            config.child_concurrency = resolve_child_concurrency(Some(v));
         }
     }
 }

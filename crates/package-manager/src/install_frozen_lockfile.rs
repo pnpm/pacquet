@@ -6,6 +6,7 @@ use crate::{
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_config::Config;
+use pacquet_executor::ScriptsPrependNodePath as ExecScriptsPrependNodePath;
 use pacquet_lockfile::{PackageKey, PackageMetadata, ProjectSnapshot, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_package_manifest::DependencyGroup;
@@ -225,6 +226,19 @@ where
                 _ => None,
             };
 
+        // Convert `pacquet-config`'s mirror enum to the executor's
+        // canonical type. Config's enum carries the yaml-deserialize
+        // impl; the executor's stays free of serde wiring. See the
+        // doc on [`pacquet_config::ScriptsPrependNodePath`] for the
+        // rationale.
+        let scripts_prepend_node_path = match config.scripts_prepend_node_path {
+            pacquet_config::ScriptsPrependNodePath::Always => ExecScriptsPrependNodePath::Always,
+            pacquet_config::ScriptsPrependNodePath::Never => ExecScriptsPrependNodePath::Never,
+            pacquet_config::ScriptsPrependNodePath::WarnOnly => {
+                ExecScriptsPrependNodePath::WarnOnly
+            }
+        };
+
         let ignored_builds = BuildModules {
             virtual_store_dir: &config.virtual_store_dir,
             modules_dir: &config.modules_dir,
@@ -240,6 +254,9 @@ where
             store_dir: Some(&config.store_dir),
             store_index_writer: Some(&store_index_writer),
             patches: patches.as_ref(),
+            scripts_prepend_node_path,
+            unsafe_perm: config.unsafe_perm,
+            child_concurrency: config.child_concurrency,
         }
         .run::<R>()
         .map_err(InstallFrozenLockfileError::BuildModules)?;

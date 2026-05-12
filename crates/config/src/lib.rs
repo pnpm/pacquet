@@ -12,11 +12,12 @@ use serde::Deserialize;
 use smart_default::SmartDefault;
 use std::{collections::HashMap, fs, path::PathBuf};
 
+pub use crate::defaults::{available_parallelism, resolve_child_concurrency};
 use crate::defaults::{
-    default_fetch_retries, default_fetch_retry_factor, default_fetch_retry_maxtimeout,
-    default_fetch_retry_mintimeout, default_hoist_pattern, default_modules_cache_max_age,
-    default_modules_dir, default_public_hoist_pattern, default_registry, default_store_dir,
-    default_virtual_store_dir,
+    default_child_concurrency, default_fetch_retries, default_fetch_retry_factor,
+    default_fetch_retry_maxtimeout, default_fetch_retry_mintimeout, default_hoist_pattern,
+    default_modules_cache_max_age, default_modules_dir, default_public_hoist_pattern,
+    default_registry, default_store_dir, default_virtual_store_dir,
 };
 pub use workspace_yaml::{
     LoadWorkspaceYamlError, WORKSPACE_MANIFEST_FILENAME, WorkspaceSettings, workspace_root_or,
@@ -37,6 +38,61 @@ pub enum NodeLinker {
     /// Yarn Berry. It is recommended to also set symlink setting to false when using pnp as
     /// your linker.
     Pnp,
+}
+
+/// Tri-state mirror of `pacquet_executor::ScriptsPrependNodePath`
+/// with serde wiring. The executor crate keeps its own enum free of
+/// serde so config concerns don't leak into the spawn-path. Converted
+/// at the `BuildModules` call site (see `install_frozen_lockfile.rs`)
+/// via an explicit `match`; no `From` impl exists because neither
+/// crate depends on the other, and adding such a dep just for the
+/// conversion would invert the layering. Both enums share the same
+/// three variants so the match is exhaustive and one-line per arm.
+///
+/// Deserializes the upstream `scriptsPrependNodePath: boolean | 'warn-only'`
+/// yaml shape ([`Config.scriptsPrependNodePath`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/Config.ts#L108)).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum ScriptsPrependNodePath {
+    /// `scriptsPrependNodePath: true` — always prepend.
+    Always,
+    /// `scriptsPrependNodePath: false` (or absent) — never prepend.
+    #[default]
+    Never,
+    /// `scriptsPrependNodePath: 'warn-only'` — emit a warning if the
+    /// node in PATH differs from the running interpreter, do not
+    /// prepend.
+    WarnOnly,
+}
+
+impl<'de> serde::Deserialize<'de> for ScriptsPrependNodePath {
+    fn deserialize<D>(d: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, Visitor};
+        use std::fmt;
+
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = ScriptsPrependNodePath;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a boolean or the string \"warn-only\"")
+            }
+            fn visit_bool<E: de::Error>(self, v: bool) -> Result<Self::Value, E> {
+                Ok(if v { ScriptsPrependNodePath::Always } else { ScriptsPrependNodePath::Never })
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                match v {
+                    "warn-only" => Ok(ScriptsPrependNodePath::WarnOnly),
+                    other => Err(E::invalid_value(
+                        de::Unexpected::Str(other),
+                        &"true, false, or \"warn-only\"",
+                    )),
+                }
+            }
+        }
+        d.deserialize_any(V)
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -282,6 +338,50 @@ pub struct Config {
     /// `true`, every package may run lifecycle scripts regardless of
     /// `allow_builds`. Default `false` to match pnpm v11.
     pub dangerously_allow_all_builds: bool,
+
+    /// `scriptsPrependNodePath` from `pnpm-workspace.yaml`. Controls
+    /// whether `dirname(node_execpath)` is prepended to `PATH` when
+    /// running lifecycle scripts. Default `Never` to match pnpm's
+    /// [`StrictBuildOptions.scriptsPrependNodePath: false`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/after-install/src/extendBuildOptions.ts#L78).
+    /// Yaml accepts `true` / `false` / `"warn-only"`.
+    pub scripts_prepend_node_path: ScriptsPrependNodePath,
+
+    /// `unsafePerm` from `pnpm-workspace.yaml`. When `false`, pnpm
+    /// runs lifecycle scripts under a TMPDIR isolated to
+    /// `node_modules/.tmp` and (in upstream) drops uid/gid to a
+    /// non-root user. Default `true` here. Pacquet honors the
+    /// TMPDIR side of the upstream behavior (see
+    /// `pacquet_executor::make_env`); the uid/gid drop is a no-op
+    /// in practice because pnpm's npm-lifecycle fork never
+    /// populates `opts.user` / `opts.group`, so even upstream just
+    /// re-applies the current process's uid/gid.
+    ///
+    /// Pacquet's default deviates slightly from upstream's
+    /// [`StrictBuildOptions.unsafePerm`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/after-install/src/extendBuildOptions.ts#L83-L86)
+    /// which auto-detects root-on-POSIX (`getuid() === 0 && setgid`)
+    /// and flips to `false`. Adding the auto-detect requires `libc`
+    /// (not currently in `[workspace.dependencies]`); for now,
+    /// root-run CI must set `unsafePerm: false` in yaml explicitly.
+    /// On Windows, [`WorkspaceSettings::apply_to`] forces this to
+    /// `true` regardless of yaml — matching upstream's
+    /// `process.platform === 'win32'` override at
+    /// [`@pnpm/npm-lifecycle/index.js:204-220`](https://github.com/pnpm/npm-lifecycle/blob/d2d8e790/index.js#L204-L220).
+    #[default = true]
+    pub unsafe_perm: bool,
+
+    /// `childConcurrency` from `pnpm-workspace.yaml` — the maximum
+    /// number of lifecycle-script spawns that may run in parallel
+    /// inside a single `BuildModules` chunk. Resolved through
+    /// [`resolve_child_concurrency`] so the yaml value can be
+    /// negative (interpreted as `parallelism - |value|`).
+    ///
+    /// Default: `min(4, availableParallelism())`, matching upstream's
+    /// [`getDefaultWorkspaceConcurrency`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/concurrency.ts#L21-L23).
+    /// Chunks run sequentially (children before parents); only
+    /// members within a chunk are parallelized — same as upstream's
+    /// [`runGroups(getWorkspaceConcurrency(opts.childConcurrency), groups)`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L124).
+    #[default(_code = "default_child_concurrency()")]
+    pub child_concurrency: u32,
 }
 
 impl Config {

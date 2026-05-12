@@ -7,6 +7,11 @@ use std::{
 /// Controls whether the dir containing the current `node` interpreter
 /// is appended to PATH. Tri-state from
 /// <https://github.com/pnpm/npm-lifecycle/blob/d2d8e790/lib/extendPath.js#L29-L61>.
+///
+/// `pacquet-config` mirrors this enum with its own yaml-deserializable
+/// type (upstream's `scriptsPrependNodePath: boolean | 'warn-only'`
+/// shape) and converts to this one at the call site, so the executor
+/// crate stays free of serde and Config wiring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScriptsPrependNodePath {
     /// `scriptsPrependNodePath: true` — always prepend.

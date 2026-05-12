@@ -1,5 +1,5 @@
 use super::{LoadWorkspaceYamlError, WORKSPACE_MANIFEST_FILENAME, WorkspaceSettings};
-use crate::{Config, NodeLinker};
+use crate::{Config, NodeLinker, ScriptsPrependNodePath};
 use pacquet_store_dir::StoreDir;
 use pipe_trait::Pipe;
 use pretty_assertions::assert_eq;
@@ -274,6 +274,109 @@ fn parses_dangerously_allow_all_builds_from_yaml_and_applies() {
     assert!(!config.dangerously_allow_all_builds, "default is false");
     settings.apply_to(&mut config, Path::new("/irrelevant"));
     assert!(config.dangerously_allow_all_builds);
+}
+
+/// `scriptsPrependNodePath` is the tri-state from upstream
+/// [`Config.scriptsPrependNodePath: boolean | 'warn-only'`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/Config.ts#L108).
+/// `true` → Always, `false` → Never, `"warn-only"` → WarnOnly.
+/// Pacquet's default is Never (matches upstream's
+/// [`StrictBuildOptions.scriptsPrependNodePath: false`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/after-install/src/extendBuildOptions.ts#L78)).
+#[test]
+fn parses_scripts_prepend_node_path_true_from_yaml() {
+    let yaml = "scriptsPrependNodePath: true\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    assert_eq!(settings.scripts_prepend_node_path, Some(ScriptsPrependNodePath::Always));
+
+    let mut config = Config::new();
+    assert_eq!(config.scripts_prepend_node_path, ScriptsPrependNodePath::Never, "default Never");
+    settings.apply_to(&mut config, Path::new("/irrelevant"));
+    assert_eq!(config.scripts_prepend_node_path, ScriptsPrependNodePath::Always);
+}
+
+#[test]
+fn parses_scripts_prepend_node_path_false_from_yaml() {
+    let yaml = "scriptsPrependNodePath: false\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    assert_eq!(settings.scripts_prepend_node_path, Some(ScriptsPrependNodePath::Never));
+}
+
+#[test]
+fn parses_scripts_prepend_node_path_warn_only_from_yaml() {
+    let yaml = "scriptsPrependNodePath: warn-only\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    assert_eq!(settings.scripts_prepend_node_path, Some(ScriptsPrependNodePath::WarnOnly));
+}
+
+#[test]
+fn rejects_invalid_scripts_prepend_node_path() {
+    let yaml = "scriptsPrependNodePath: nonsense\n";
+    serde_saphyr::from_str::<WorkspaceSettings>(yaml).expect_err("must reject");
+}
+
+/// `unsafePerm` from yaml flips the default-`true` field. Mirrors
+/// upstream's [`Config.unsafePerm: boolean`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/Config.ts).
+/// Pacquet's auto-root-detect default is a follow-up — for now,
+/// yaml override is the only way to flip the flag on POSIX.
+#[test]
+fn parses_unsafe_perm_from_yaml_and_applies() {
+    // POSIX-only: the Windows force-override below would mask this
+    // test's behavior. See [`WorkspaceSettings::apply_to`].
+    if cfg!(windows) {
+        return;
+    }
+    let yaml = "unsafePerm: false\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    assert_eq!(settings.unsafe_perm, Some(false));
+
+    let mut config = Config::new();
+    assert!(config.unsafe_perm, "default is true");
+    settings.apply_to(&mut config, Path::new("/irrelevant"));
+    assert!(!config.unsafe_perm, "yaml override wins on POSIX");
+}
+
+/// On Windows, `apply_to` ignores the yaml value and forces
+/// `unsafe_perm = true`. Mirrors upstream's
+/// [`process.platform === 'win32'` override](https://github.com/pnpm/npm-lifecycle/blob/d2d8e790/index.js#L204-L220)
+/// — running lifecycle scripts under a uid/gid drop is POSIX-only.
+#[cfg(windows)]
+#[test]
+fn unsafe_perm_force_true_on_windows() {
+    let yaml = "unsafePerm: false\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    let mut config = Config::new();
+    settings.apply_to(&mut config, Path::new("C:/irrelevant"));
+    assert!(config.unsafe_perm, "Windows forces unsafe_perm true regardless of yaml");
+}
+
+/// A positive `childConcurrency` is taken verbatim — mirrors
+/// upstream's [`getWorkspaceConcurrency`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/concurrency.ts#L25-L34).
+#[test]
+fn parses_positive_child_concurrency_from_yaml_and_applies() {
+    let yaml = "childConcurrency: 8\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    assert_eq!(settings.child_concurrency, Some(8));
+
+    let mut config = Config::new();
+    settings.apply_to(&mut config, Path::new("/irrelevant"));
+    assert_eq!(config.child_concurrency, 8);
+}
+
+/// A non-positive `childConcurrency` is interpreted as
+/// `max(1, parallelism - |value|)`. The exact result depends on
+/// the host's reported parallelism, so we just bound-check it:
+/// negative offsets must produce at least 1 and at most
+/// `parallelism()`.
+#[test]
+fn parses_negative_child_concurrency_from_yaml_and_resolves() {
+    let yaml = "childConcurrency: -1\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    assert_eq!(settings.child_concurrency, Some(-1));
+
+    let mut config = Config::new();
+    settings.apply_to(&mut config, Path::new("/irrelevant"));
+    let parallelism = crate::available_parallelism();
+    assert!(config.child_concurrency >= 1, "must floor at 1");
+    assert!(config.child_concurrency <= parallelism, "must not exceed available parallelism");
 }
 
 #[test]
