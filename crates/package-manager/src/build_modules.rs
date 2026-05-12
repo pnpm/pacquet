@@ -1,4 +1,5 @@
 use crate::build_sequence::build_sequence;
+use crate::version_policy::{VersionPolicyError, expand_package_version_specs};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_config::Config;
@@ -13,7 +14,7 @@ use pacquet_reporter::{
     SkippedOptionalReason,
 };
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
@@ -47,24 +48,37 @@ pub enum BuildModulesError {
 /// Ports pnpm's `createAllowBuildFunction` from
 /// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/policy/src/index.ts>.
 ///
+/// The internal `expanded_allowed` and `expanded_disallowed` sets
+/// contain the result of running each `allowBuilds` key through
+/// [`expand_package_version_specs`], so a key like
+/// `foo@1.0.0 || 2.0.0` lands as two separate `foo@1.0.0` and
+/// `foo@2.0.0` entries that [`AllowBuildPolicy::check`] can match
+/// via `HashSet::contains`.
+///
 /// The tri-state return from [`AllowBuildPolicy::check`]:
 /// - `Some(true)`: explicitly allowed, run scripts
 /// - `Some(false)`: explicitly denied, silently skip
 /// - `None`: not in the list, skip and report as ignored
 #[derive(Debug, Default)]
 pub struct AllowBuildPolicy {
-    rules: HashMap<String, bool>,
+    expanded_allowed: HashSet<String>,
+    expanded_disallowed: HashSet<String>,
     dangerously_allow_all: bool,
 }
 
 impl AllowBuildPolicy {
-    /// Build a policy from already-parsed `allowBuilds` rules and
-    /// `dangerouslyAllowAllBuilds`. Pure constructor — no IO — so
-    /// the policy logic is tested directly with in-memory inputs
-    /// (mirrors upstream's `createAllowBuildFunction(opts)` in
+    /// Build a policy from already-expanded `allowed` and
+    /// `disallowed` sets and `dangerouslyAllowAllBuilds`. Pure
+    /// constructor — no IO — so the policy logic is tested
+    /// directly with in-memory inputs (mirrors upstream's
+    /// `createAllowBuildFunction(opts)` in
     /// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/policy/src/index.ts>).
-    pub fn new(rules: HashMap<String, bool>, dangerously_allow_all: bool) -> Self {
-        Self { rules, dangerously_allow_all }
+    pub fn new(
+        expanded_allowed: HashSet<String>,
+        expanded_disallowed: HashSet<String>,
+        dangerously_allow_all: bool,
+    ) -> Self {
+        Self { expanded_allowed, expanded_disallowed, dangerously_allow_all }
     }
 
     /// Build the policy from a resolved [`Config`]. Reads
@@ -72,8 +86,29 @@ impl AllowBuildPolicy {
     /// populated by [`pacquet_config::WorkspaceSettings::apply_to`]
     /// from `pnpm-workspace.yaml`. pnpm v11 stopped reading these
     /// from `package.json#pnpm` — see pnpm/pacquet#397 item 5.
-    pub fn from_config(config: &Config) -> Self {
-        Self::new(config.allow_builds.clone(), config.dangerously_allow_all_builds)
+    ///
+    /// Each `allow_builds` key is partitioned by its boolean value
+    /// into `allowed` / `disallowed` sets, then each set is
+    /// expanded through [`expand_package_version_specs`] so version
+    /// unions like `foo@1.0.0 || 2.0.0` become two literal
+    /// `foo@1.0.0` / `foo@2.0.0` entries. Errors from the expansion
+    /// (`ERR_PNPM_INVALID_VERSION_UNION` /
+    /// `ERR_PNPM_NAME_PATTERN_IN_VERSION_UNION`) surface to the
+    /// caller — mirrors upstream's behavior of throwing from
+    /// `expandPackageVersionSpecs` at config-load time.
+    pub fn from_config(config: &Config) -> Result<Self, VersionPolicyError> {
+        let mut allowed_specs: Vec<&str> = Vec::new();
+        let mut disallowed_specs: Vec<&str> = Vec::new();
+        for (spec, &value) in &config.allow_builds {
+            if value {
+                allowed_specs.push(spec);
+            } else {
+                disallowed_specs.push(spec);
+            }
+        }
+        let expanded_allowed = expand_package_version_specs(allowed_specs)?;
+        let expanded_disallowed = expand_package_version_specs(disallowed_specs)?;
+        Ok(Self::new(expanded_allowed, expanded_disallowed, config.dangerously_allow_all_builds))
     }
 
     /// Check whether a package is allowed to run build scripts.
@@ -82,18 +117,28 @@ impl AllowBuildPolicy {
     /// - `Some(true)`: explicitly allowed (or `dangerouslyAllowAllBuilds`)
     /// - `Some(false)`: explicitly denied, silently skip
     /// - `None`: not in the list, skip and report as ignored
+    ///
+    /// Mirrors upstream's
+    /// [`createAllowBuildFunction`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/policy/src/index.ts#L35-L44)
+    /// matching: `disallowed` checked first, then `allowed`, both
+    /// against `name` and `name@version`. The `HashSet::contains`
+    /// lookup means `*` wildcards in specs do NOT match real
+    /// package names — see [`expand_package_version_specs`] for
+    /// the rationale.
     pub fn check(&self, name: &str, version: &str) -> Option<bool> {
         if self.dangerously_allow_all {
             return Some(true);
         }
 
-        let exact_key = format!("{name}@{version}");
-        if let Some(&allowed) = self.rules.get(&exact_key) {
-            return Some(allowed);
+        let name_at_version = format!("{name}@{version}");
+        if self.expanded_disallowed.contains(name)
+            || self.expanded_disallowed.contains(&name_at_version)
+        {
+            return Some(false);
         }
-
-        if let Some(&allowed) = self.rules.get(name) {
-            return Some(allowed);
+        if self.expanded_allowed.contains(name) || self.expanded_allowed.contains(&name_at_version)
+        {
+            return Some(true);
         }
 
         None

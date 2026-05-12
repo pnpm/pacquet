@@ -16,9 +16,29 @@ use std::{
 };
 use tempfile::tempdir;
 
-/// Build a rules map from a list of (name, allowed) pairs, for tests.
-fn rules<const N: usize>(entries: [(&str, bool); N]) -> HashMap<String, bool> {
-    entries.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
+/// Build an [`AllowBuildPolicy`] from a list of `(spec, allowed)`
+/// pairs, mirroring how `pnpm-workspace.yaml`'s `allowBuilds` map
+/// would arrive at the policy. Each spec is parsed through
+/// [`crate::expand_package_version_specs`] so version unions
+/// (`foo@1.0.0 || 2.0.0`) work the same way they do at runtime.
+/// Panics on any parse failure — test inputs must be valid.
+fn policy_from_specs<const N: usize>(
+    entries: [(&str, bool); N],
+    dangerously_allow_all: bool,
+) -> AllowBuildPolicy {
+    use crate::expand_package_version_specs;
+    let mut allowed_specs: Vec<&str> = Vec::new();
+    let mut disallowed_specs: Vec<&str> = Vec::new();
+    for (spec, value) in entries {
+        if value {
+            allowed_specs.push(spec);
+        } else {
+            disallowed_specs.push(spec);
+        }
+    }
+    let expanded_allowed = expand_package_version_specs(allowed_specs).expect("valid specs");
+    let expanded_disallowed = expand_package_version_specs(disallowed_specs).expect("valid specs");
+    AllowBuildPolicy::new(expanded_allowed, expanded_disallowed, dangerously_allow_all)
 }
 
 #[test]
@@ -57,49 +77,115 @@ fn default_policy_denies_all() {
 
 #[test]
 fn explicit_allow() {
-    let policy = AllowBuildPolicy::new(rules([("@pnpm.e2e/install-script-example", true)]), false);
+    let policy = policy_from_specs([("@pnpm.e2e/install-script-example", true)], false);
     assert_eq!(policy.check("@pnpm.e2e/install-script-example", "1.0.0"), Some(true));
 }
 
 #[test]
 fn explicit_deny() {
-    let policy = AllowBuildPolicy::new(rules([("@pnpm.e2e/bad-package", false)]), false);
+    let policy = policy_from_specs([("@pnpm.e2e/bad-package", false)], false);
     assert_eq!(policy.check("@pnpm.e2e/bad-package", "1.0.0"), Some(false));
 }
 
 #[test]
 fn unlisted_returns_none() {
-    let policy = AllowBuildPolicy::new(rules([("@pnpm.e2e/allowed", true)]), false);
+    let policy = policy_from_specs([("@pnpm.e2e/allowed", true)], false);
     assert_eq!(policy.check("@pnpm.e2e/not-listed", "1.0.0"), None);
 }
 
+/// Upstream checks `expandedDisallowed` before `expandedAllowed`
+/// in [`createAllowBuildFunction`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/policy/src/index.ts#L36-L43),
+/// so a bare-name disallow wins over an exact-version allow.
+/// Pacquet matches that order — pre-#397-item-5, the matcher
+/// checked exact-version first, which diverged from upstream.
 #[test]
-fn exact_version_takes_precedence() {
-    let policy = AllowBuildPolicy::new(
-        rules([("@pnpm.e2e/pkg@1.0.0", true), ("@pnpm.e2e/pkg", false)]),
-        false,
-    );
-    assert_eq!(policy.check("@pnpm.e2e/pkg", "1.0.0"), Some(true));
+fn disallow_bare_name_wins_over_allow_exact_version() {
+    let policy =
+        policy_from_specs([("@pnpm.e2e/pkg@1.0.0", true), ("@pnpm.e2e/pkg", false)], false);
+    assert_eq!(policy.check("@pnpm.e2e/pkg", "1.0.0"), Some(false));
     assert_eq!(policy.check("@pnpm.e2e/pkg", "2.0.0"), Some(false));
+}
+
+/// The converse: a bare-name allow combined with an exact-version
+/// disallow → the disallow on `pkg@1.0.0` fires only for that
+/// version; other versions hit the bare-name allow.
+#[test]
+fn disallow_exact_version_with_allow_bare_name() {
+    let policy =
+        policy_from_specs([("@pnpm.e2e/pkg", true), ("@pnpm.e2e/pkg@1.0.0", false)], false);
+    assert_eq!(policy.check("@pnpm.e2e/pkg", "1.0.0"), Some(false));
+    assert_eq!(policy.check("@pnpm.e2e/pkg", "2.0.0"), Some(true));
 }
 
 #[test]
 fn empty_rules_denies_all() {
-    let policy = AllowBuildPolicy::new(HashMap::new(), false);
+    let policy = policy_from_specs([], false);
     assert_eq!(policy.check("any-package", "1.0.0"), None);
 }
 
 #[test]
 fn dangerously_allow_all_builds() {
-    let policy = AllowBuildPolicy::new(HashMap::new(), true);
+    let policy = policy_from_specs([], true);
     assert_eq!(policy.check("any-package", "1.0.0"), Some(true));
     assert_eq!(policy.check("other-package", "2.0.0"), Some(true));
 }
 
 #[test]
 fn dangerously_allow_all_overrides_deny() {
-    let policy = AllowBuildPolicy::new(rules([("@pnpm.e2e/pkg", false)]), true);
+    let policy = policy_from_specs([("@pnpm.e2e/pkg", false)], true);
     assert_eq!(policy.check("@pnpm.e2e/pkg", "1.0.0"), Some(true));
+}
+
+/// Mirrors upstream's
+/// [`'should allowBuilds with true value'`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/policy/test/index.ts#L5-L15)
+/// — version unions expand into separate exact-version allows.
+/// `qar@1.0.0 || 2.0.0` allows exactly those two versions, leaves
+/// other versions unlisted (`None`).
+#[test]
+fn allow_via_version_union() {
+    let policy = policy_from_specs([("foo", true), ("qar@1.0.0 || 2.0.0", true)], false);
+    assert_eq!(policy.check("foo", "1.0.0"), Some(true));
+    assert_eq!(policy.check("bar", "1.0.0"), None);
+    assert_eq!(policy.check("qar", "1.0.0"), Some(true));
+    assert_eq!(policy.check("qar", "2.0.0"), Some(true));
+    assert_eq!(policy.check("qar", "1.1.0"), None);
+}
+
+/// Mirrors upstream's
+/// [`'should not allow patterns in allowBuilds'`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/policy/test/index.ts#L28-L34)
+/// — wildcards in `allowBuilds` keys are accepted by the parser
+/// (they land as literal strings in the expanded set) but the
+/// `HashSet::contains` lookup means they never match a real
+/// package name. Use `dangerouslyAllowAllBuilds` for blanket
+/// allow.
+#[test]
+fn wildcard_name_in_allow_builds_does_not_match_real_package() {
+    let policy = policy_from_specs([("is-*", true)], false);
+    assert_eq!(policy.check("is-odd", "1.0.0"), None);
+    assert_eq!(policy.check("is-positive", "1.0.0"), None);
+}
+
+/// `from_config` propagates `expand_package_version_specs` errors —
+/// an invalid version union in `Config.allow_builds` surfaces as
+/// `ERR_PNPM_INVALID_VERSION_UNION` rather than silently dropping
+/// the rule.
+#[test]
+fn from_config_propagates_invalid_version_union() {
+    let mut config = Config::new();
+    config.allow_builds.insert("foo@not-a-version".to_string(), true);
+    let err = AllowBuildPolicy::from_config(&config).expect_err("must reject");
+    assert!(matches!(err, crate::VersionPolicyError::InvalidVersionUnion { .. }), "got: {err:?}");
+}
+
+#[test]
+fn from_config_propagates_name_pattern_in_version_union() {
+    let mut config = Config::new();
+    config.allow_builds.insert("foo*@1.0.0".to_string(), true);
+    let err = AllowBuildPolicy::from_config(&config).expect_err("must reject");
+    assert!(
+        matches!(err, crate::VersionPolicyError::NamePatternInVersionUnion { .. }),
+        "got: {err:?}",
+    );
 }
 
 // The next two tests exercise `from_config` end-to-end: an empty Config
@@ -110,7 +196,7 @@ fn dangerously_allow_all_overrides_deny() {
 
 #[test]
 fn empty_config_denies_all() {
-    let policy = AllowBuildPolicy::from_config(&Config::new());
+    let policy = AllowBuildPolicy::from_config(&Config::new()).expect("empty config never errors");
     assert_eq!(policy.check("anything", "1.0.0"), None);
 }
 
@@ -121,7 +207,7 @@ fn from_config_consumes_allow_builds_and_dangerously_allow_all_builds() {
     config.allow_builds.insert("@pnpm.e2e/install-script-example".to_string(), true);
     config.allow_builds.insert("@pnpm.e2e/bad-package".to_string(), false);
 
-    let policy = AllowBuildPolicy::from_config(&config);
+    let policy = AllowBuildPolicy::from_config(&config).expect("valid specs");
     assert_eq!(policy.check("@pnpm.e2e/install-script-example", "1.0.0"), Some(true));
     assert_eq!(policy.check("@pnpm.e2e/bad-package", "1.0.0"), Some(false));
     assert_eq!(policy.check("@pnpm.e2e/unrelated", "1.0.0"), None);
@@ -236,7 +322,7 @@ fn build_modules_excludes_explicit_deny_from_ignored() {
     ]);
     let importers = root_importers(&[("denied", "1.0.0"), ("ignored", "1.0.0")]);
 
-    let policy = AllowBuildPolicy::new(rules([("denied", false)]), false);
+    let policy = policy_from_specs([("denied", false)], false);
 
     let virtual_store_dir = tempdir().expect("create temp dir");
     let modules_dir = tempdir().expect("create temp dir");
@@ -311,7 +397,7 @@ fn do_not_fail_on_optional_dep_with_failing_postinstall() {
     // `dangerouslyAllowAllBuilds` so the policy lets the failing
     // script through to actually run — this test exercises the
     // build-failure path, not the policy gate.
-    let policy = AllowBuildPolicy::new(rules([]), true);
+    let policy = policy_from_specs([], true);
 
     let virtual_store_dir = tempdir().expect("create temp dir");
     let modules_dir = tempdir().expect("create temp dir");
@@ -411,7 +497,7 @@ fn using_side_effects_cache_skips_rebuild() {
             },
         )]);
     let importers = root_importers(&[("@pnpm.e2e/failing-postinstall", "1.0.0")]);
-    let policy = AllowBuildPolicy::new(rules([]), true);
+    let policy = policy_from_specs([], true);
 
     let virtual_store_dir = tempdir().expect("create temp dir");
     let modules_dir = tempdir().expect("create temp dir");
@@ -482,7 +568,7 @@ fn side_effects_cache_disabled_bypasses_the_gate() {
     let packages: HashMap<pacquet_lockfile::PackageKey, pacquet_lockfile::PackageMetadata> =
         HashMap::new();
     let importers = root_importers(&[("@pnpm.e2e/failing-postinstall", "1.0.0")]);
-    let policy = AllowBuildPolicy::new(rules([]), true);
+    let policy = policy_from_specs([], true);
 
     let virtual_store_dir = tempdir().expect("create temp dir");
     let modules_dir = tempdir().expect("create temp dir");
@@ -540,7 +626,7 @@ fn fail_when_failing_postinstall_is_required() {
     // ALL-paths-optional fold concluding the dep is required.
     let snapshots = HashMap::from([(pkg_key.clone(), SnapshotEntry::default())]);
     let importers = root_importers(&[("@pnpm.e2e/failing-postinstall", "1.0.0")]);
-    let policy = AllowBuildPolicy::new(rules([]), true);
+    let policy = policy_from_specs([], true);
 
     let virtual_store_dir = tempdir().expect("create temp dir");
     let modules_dir = tempdir().expect("create temp dir");
@@ -710,7 +796,7 @@ async fn write_path_populates_side_effects_row() {
             },
         )]);
     let importers = root_importers(&[("@pnpm/postinstall-modifies-source", "1.0.0")]);
-    let policy = AllowBuildPolicy::new(rules([]), true);
+    let policy = policy_from_specs([], true);
 
     let store_root = tempdir().expect("create store dir");
     let store_dir = StoreDir::from(store_root.path().to_path_buf());
@@ -850,7 +936,7 @@ async fn write_path_disabled_skips_upload() {
             },
         )]);
     let importers = root_importers(&[("@pnpm/postinstall-modifies-source", "1.0.0")]);
-    let policy = AllowBuildPolicy::new(rules([]), true);
+    let policy = policy_from_specs([], true);
 
     let store_root = tempdir().expect("create store dir");
     let store_dir = StoreDir::from(store_root.path().to_path_buf());
@@ -953,7 +1039,7 @@ async fn upload_error_does_not_interrupt_install() {
             },
         )]);
     let importers = root_importers(&[("@pnpm/postinstall-modifies-source", "1.0.0")]);
-    let policy = AllowBuildPolicy::new(rules([]), true);
+    let policy = policy_from_specs([], true);
 
     let store_root = tempdir().expect("create store dir");
     let store_dir = StoreDir::from(store_root.path().to_path_buf());
@@ -1122,7 +1208,7 @@ async fn write_path_cache_key_includes_patch_hash() {
             },
         )]);
     let importers = root_importers(&[("@pnpm/postinstall-modifies-source", "1.0.0")]);
-    let policy = AllowBuildPolicy::new(rules([]), true);
+    let policy = policy_from_specs([], true);
 
     let store_root = tempdir().expect("create store dir");
     let store_dir = StoreDir::from(store_root.path().to_path_buf());
@@ -1262,7 +1348,7 @@ async fn patch_only_snapshot_gets_patched_via_build_modules() {
     let pkg_key = key("is-positive", "1.0.0");
     let snapshots = HashMap::from([(pkg_key.clone(), SnapshotEntry::default())]);
     let importers = root_importers(&[("is-positive", "1.0.0")]);
-    let policy = AllowBuildPolicy::new(rules([]), true);
+    let policy = policy_from_specs([], true);
 
     let store_root = tempdir().expect("create store dir");
     let store_dir = StoreDir::from(store_root.path().to_path_buf());
@@ -1350,7 +1436,7 @@ async fn missing_patch_file_path_errors_with_diagnostic() {
     let pkg_key = key("is-positive", "1.0.0");
     let snapshots = HashMap::from([(pkg_key.clone(), SnapshotEntry::default())]);
     let importers = root_importers(&[("is-positive", "1.0.0")]);
-    let policy = AllowBuildPolicy::new(rules([]), true);
+    let policy = policy_from_specs([], true);
 
     let store_root = tempdir().expect("create store dir");
     let store_dir = StoreDir::from(store_root.path().to_path_buf());
