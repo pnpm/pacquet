@@ -49,13 +49,15 @@ fn test_default_store_dir_with_xdg_env() {
 /// `resolve_child_concurrency(Some(i32::MIN))` must not panic.
 /// A naive `(-n) as u32` overflows in debug builds when
 /// `n == i32::MIN` because the negation itself overflows;
-/// `unsigned_abs` is the safe path. Bounds the result against
-/// the same `[1, parallelism]` envelope as the negative-offset
-/// path normally produces.
+/// `unsigned_abs` is the safe path. `i32::MIN.unsigned_abs()`
+/// is `2_147_483_648`, well above any plausible host
+/// parallelism, so `saturating_sub` produces `0` and `.max(1)`
+/// lifts to exactly `1` — assert that precise value so a wrong
+/// result like `2` would still fail the test.
 #[test]
 fn resolve_child_concurrency_handles_i32_min() {
     let result = resolve_child_concurrency(Some(i32::MIN));
-    assert!(result >= 1, "must floor at 1 even for i32::MIN");
+    assert_eq!(result, 1);
 }
 
 #[cfg(windows)]
