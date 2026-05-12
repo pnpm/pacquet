@@ -7,10 +7,10 @@ use serde_json::Value;
 use crate::{
     AddedRoot, ContextLog, DependencyType, Envelope, FetchingProgressLog, FetchingProgressMessage,
     GetHostName, IgnoredScriptsLog, LifecycleLog, LifecycleMessage, LifecycleStdio, LogEvent,
-    SkippedOptionalDependencyLog, SkippedOptionalPackage, SkippedOptionalReason,
     LogLevel, PackageImportMethod, PackageImportMethodLog, PackageManifestLog,
     PackageManifestMessage, ProgressLog, ProgressMessage, RealApi, RemovedRoot, Reporter,
-    RequestRetryError, RequestRetryLog, RootLog, RootMessage, SilentReporter, Stage, StageLog,
+    RequestRetryError, RequestRetryLog, RootLog, RootMessage, SilentReporter,
+    SkippedOptionalDependencyLog, SkippedOptionalPackage, SkippedOptionalReason, Stage, StageLog,
     StatsLog, StatsMessage, SummaryLog,
 };
 
@@ -633,10 +633,7 @@ fn skipped_optional_omits_absent_details() {
         .expect("serialize envelope")
         .pipe_as_ref(serde_json::from_str)
         .expect("parse JSON");
-    assert!(
-        json.get("details").is_none(),
-        "details must be omitted when absent, got {json:?}",
-    );
+    assert!(json.get("details").is_none(), "details must be omitted when absent, got {json:?}",);
 }
 
 /// All four reason variants serialize as the snake_case strings

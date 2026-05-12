@@ -220,8 +220,7 @@ impl<'a> BuildModules<'a> {
                     continue;
                 }
 
-                let optional =
-                    snapshots.get(&snapshot_key).is_some_and(|entry| entry.optional);
+                let optional = snapshots.get(&snapshot_key).is_some_and(|entry| entry.optional);
 
                 let result = run_postinstall_hooks::<R>(RunPostinstallHooks {
                     dep_path: &snapshot_key.to_string(),
