@@ -141,6 +141,18 @@ fn collect_root_dep_paths(
             }
         }
     }
+    // [`get_subgraph_to_build`] is order-sensitive (a node walked
+    // first via root A may mark a shared child as already-walked, so
+    // a second root B sharing that child gets trimmed). Upstream's
+    // input arrives in JS-object insertion order; pacquet sources
+    // these from `HashMap<_, ProjectSnapshot>` and
+    // `HashMap<PkgName, ResolvedDependencySpec>`, so iteration order
+    // is non-deterministic. Sort by `PackageKey` string repr so the
+    // build sequence (and the trim behavior) is reproducible run to
+    // run. Long-term fix is to preserve lockfile declaration order
+    // via `IndexMap`; until then, an alphabetical sort is enough to
+    // make the build path deterministic.
+    roots.sort_by_key(|k| k.to_string());
     roots
 }
 

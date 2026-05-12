@@ -172,3 +172,36 @@ fn parallel_build_leaves_share_chunk() {
     assert_eq!(leaves, vec![key("a", "1.0.0"), key("b", "1.0.0")]);
     assert_eq!(chunks[1], vec![key("root", "1.0.0")]);
 }
+
+/// Direct port of upstream
+/// [`'buildSequence() test 2'`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/test/buildSequence.test.ts#L28-L51).
+///
+/// Two importers `a` and `b` both depend on a shared builder leaf
+/// `c`. Only `a` requires its own build; `b` does not. The result
+/// must surface `c` in the first chunk and `a` in the second — `b`
+/// is *trimmed* from the build sequence because it neither needs a
+/// build itself nor has a buildable descendant that's exclusive to
+/// it (its descendant `c` is already scheduled via `a`).
+///
+/// This is the subgraph-trim case for #397 item #16. Pacquet's
+/// existing `unrelated_subgraph_excluded` covers a stronger
+/// scenario (an entirely unreachable subgraph); this one pins the
+/// upstream-equivalent behavior where an importer that's still in
+/// the install set gets dropped from the build sequence.
+#[test]
+fn non_builder_importer_with_shared_builder_child_is_trimmed() {
+    let snapshots = HashMap::from([
+        (key("a", "1.0.0"), snap(&[("c", "1.0.0")])),
+        (key("b", "1.0.0"), snap(&[("c", "1.0.0")])),
+        (key("c", "1.0.0"), snap(&[])),
+    ]);
+    let requires_build = requires([
+        (key("a", "1.0.0"), true),
+        (key("b", "1.0.0"), false),
+        (key("c", "1.0.0"), true),
+    ]);
+    let importers = root_importers(&[("a", "1.0.0"), ("b", "1.0.0")]);
+
+    let chunks = build_sequence(&requires_build, None, &snapshots, &importers);
+    assert_eq!(chunks, vec![vec![key("c", "1.0.0")], vec![key("a", "1.0.0")]]);
+}

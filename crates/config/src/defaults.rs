@@ -111,7 +111,15 @@ pub fn default_fetch_retry_maxtimeout() -> u64 {
 /// and overrides via yaml still resolve to a usable value on
 /// 1-core sandboxes.
 pub fn default_child_concurrency() -> u32 {
-    available_parallelism().min(4)
+    default_child_concurrency_with_parallelism(available_parallelism())
+}
+
+/// Internal helper exposed for tests so they can pin the
+/// `parallelism` input. Upstream's test suite mocks
+/// `os.availableParallelism` via Jest; pacquet injects the value
+/// directly. Mirrors upstream's [`getDefaultWorkspaceConcurrency`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/concurrency.ts#L21-L23).
+pub fn default_child_concurrency_with_parallelism(parallelism: u32) -> u32 {
+    parallelism.min(4)
 }
 
 /// Available CPU parallelism, mirroring upstream's
@@ -132,14 +140,23 @@ pub fn available_parallelism() -> u32 {
 /// The negative-offset semantics let users say "use all cores minus
 /// N" without hardcoding the core count.
 pub fn resolve_child_concurrency(option: Option<i32>) -> u32 {
+    resolve_child_concurrency_with_parallelism(option, available_parallelism())
+}
+
+/// Internal helper exposed for tests so they can pin the
+/// `parallelism` input. Mirrors upstream's
+/// [`getWorkspaceConcurrency`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/concurrency.ts#L25-L34)
+/// — the resolver logic itself, with the parallelism input
+/// injected rather than read from the OS.
+pub fn resolve_child_concurrency_with_parallelism(option: Option<i32>, parallelism: u32) -> u32 {
     match option {
-        None => default_child_concurrency(),
+        None => default_child_concurrency_with_parallelism(parallelism),
         Some(n) if n > 0 => n as u32,
         // `unsigned_abs` instead of `(-n) as u32` — the latter
         // panics in debug builds on `n == i32::MIN` (negation
         // overflow); the former returns `i32::MAX as u32 + 1`
         // safely.
-        Some(n) => available_parallelism().saturating_sub(n.unsigned_abs()).max(1),
+        Some(n) => parallelism.saturating_sub(n.unsigned_abs()).max(1),
     }
 }
 
