@@ -107,10 +107,7 @@ fn virtual_store_walk_orders_deepest_first() {
     for window in parts.windows(2) {
         let deeper = &window[0];
         let shallower = &window[1];
-        assert!(
-            deeper.len() > shallower.len(),
-            "{deeper:?} must be deeper than {shallower:?}",
-        );
+        assert!(deeper.len() > shallower.len(), "{deeper:?} must be deeper than {shallower:?}");
         assert!(deeper.ends_with(".bin") && shallower.ends_with(".bin"));
     }
 }

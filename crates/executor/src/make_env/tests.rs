@@ -129,11 +129,19 @@ fn make_env_stamps_lifecycle_specific_keys() {
 
     let built = build_env(&opts, &json!({ "name": "y", "version": "1.0.0" }), HashMap::new());
 
+    // Compute expected paths through the same `join` so the
+    // assertions are correct on Windows (`\\` separator) as well as
+    // POSIX. Path-separator handling itself is `std`'s job — these
+    // tests verify build_env's mapping, not separator policy.
+    let expected_package_json = pkg_root.join("package.json").to_string_lossy().into_owned();
+    let expected_init_cwd = init_cwd.to_string_lossy().into_owned();
+    let expected_src_dir = pkg_root.to_string_lossy().into_owned();
+
     assert_eq!(built.env.get("npm_lifecycle_event").map(String::as_str), Some("preinstall"));
     assert_eq!(built.env.get("npm_lifecycle_script").map(String::as_str), Some("node x.js"));
-    assert_eq!(built.env.get("npm_package_json").map(String::as_str), Some("/tmp/y/package.json"));
-    assert_eq!(built.env.get("INIT_CWD").map(String::as_str), Some("/tmp/projects/y"));
-    assert_eq!(built.env.get("PNPM_SCRIPT_SRC_DIR").map(String::as_str), Some("/tmp/y"));
+    assert_eq!(built.env.get("npm_package_json"), Some(&expected_package_json));
+    assert_eq!(built.env.get("INIT_CWD"), Some(&expected_init_cwd));
+    assert_eq!(built.env.get("PNPM_SCRIPT_SRC_DIR"), Some(&expected_src_dir));
 }
 
 /// `unsafe_perm: true` skips both the TMPDIR creation and the env
@@ -152,8 +160,9 @@ fn make_env_tmpdir_gating_mirrors_unsafe_perm() {
 
     opts.unsafe_perm = false;
     let built = build_env(&opts, &json!({"name":"z","version":"0"}), HashMap::new());
-    assert_eq!(built.tmpdir.as_deref(), Some(Path::new("/tmp/z/node_modules/.tmp")));
-    assert_eq!(built.env.get("TMPDIR").map(String::as_str), Some("/tmp/z/node_modules/.tmp"));
+    let expected_tmpdir = pkg_root.join("node_modules").join(".tmp");
+    assert_eq!(built.tmpdir.as_deref(), Some(expected_tmpdir.as_path()));
+    assert_eq!(built.env.get("TMPDIR"), Some(&expected_tmpdir.to_string_lossy().into_owned()));
 }
 
 /// `extra_env` is applied AFTER the lifecycle-area writes, so it can
