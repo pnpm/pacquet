@@ -33,7 +33,7 @@ fn resolves_relative_paths_against_workspace_dir() {
     assert_eq!(exact.key, "lodash@4.17.21");
     assert_eq!(
         exact.patch_file_path.as_deref(),
-        Some(patches.join("lodash@4.17.21.patch")).as_deref()
+        Some(patches.join("lodash@4.17.21.patch")).as_deref(),
     );
 }
 

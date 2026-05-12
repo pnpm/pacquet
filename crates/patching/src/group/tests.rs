@@ -38,15 +38,15 @@ fn groups_by_name_match_type_and_version() {
         result.get("exact-version-only").expect("exact-version-only group present");
     assert_eq!(
         exact_version_only.exact.get("0.0.0"),
-        Some(&info("exact-version-only@0.0.0", ZERO_HASH))
+        Some(&info("exact-version-only@0.0.0", ZERO_HASH)),
     );
     assert_eq!(
         exact_version_only.exact.get("1.2.3"),
-        Some(&info("exact-version-only@1.2.3", ZERO_HASH))
+        Some(&info("exact-version-only@1.2.3", ZERO_HASH)),
     );
     assert_eq!(
         exact_version_only.exact.get("2.1.0"),
-        Some(&info("exact-version-only@2.1.0", ZERO_HASH))
+        Some(&info("exact-version-only@2.1.0", ZERO_HASH)),
     );
     assert!(exact_version_only.range.is_empty());
     assert_eq!(exact_version_only.all, None);
@@ -69,7 +69,7 @@ fn groups_by_name_match_type_and_version() {
                 version: "4".to_string(),
                 patch: info("version-range-only@4", ZERO_HASH),
             },
-        ]
+        ],
     );
     assert_eq!(version_range_only.all, None);
 
@@ -90,7 +90,7 @@ fn groups_by_name_match_type_and_version() {
         vec![PatchGroupRangeItem {
             version: "1.x.x".to_string(),
             patch: info("mixed-style@1.x.x", ZERO_HASH),
-        }]
+        }],
     );
     assert_eq!(mixed.all, Some(info("mixed-style", ZERO_HASH)));
 }

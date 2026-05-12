@@ -117,7 +117,7 @@ mod tests {
         assert_eq!(
             hashes.get("bar").unwrap(),
             // sha256 of "world\n"
-            "e258d248fda94c63753607f7c4494ee0fcbe92f1a76bfdac795c9d84101eb317"
+            "e258d248fda94c63753607f7c4494ee0fcbe92f1a76bfdac795c9d84101eb317",
         );
     }
 
