@@ -102,8 +102,21 @@ fn ancestor_node_modules_bins(wd: &Path) -> Vec<PathBuf> {
     // `/node_modules/` segment); remaining parts are intermediate
     // `node_modules/<pp>` slots.
     let (head, tail) = parts.split_first().expect("split always yields at least one element");
-    let head_path = PathBuf::from(head);
-    let mut acc = path::absolute(&head_path).unwrap_or(head_path);
+
+    // Match upstream's `path.resolve(p.shift())` at
+    // lib/extendPath.js:8: absolute paths stay as-is, relative
+    // paths anchor against the process cwd, and an empty head
+    // (which happens when `wd` starts with `node_modules/`) means
+    // "use cwd". This anchoring carries upstream's cwd-dependence
+    // when the caller passes a relative wd — pacquet's production
+    // call sites always pass an absolute pkg_root, so the
+    // dependency is a non-issue in practice.
+    let mut acc = if head.is_empty() {
+        env::current_dir().unwrap_or_else(|_| PathBuf::new())
+    } else {
+        let head_path = PathBuf::from(head);
+        path::absolute(&head_path).unwrap_or(head_path)
+    };
 
     let mut bins: Vec<PathBuf> = Vec::with_capacity(parts.len());
 

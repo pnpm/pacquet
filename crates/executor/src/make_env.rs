@@ -152,7 +152,12 @@ fn filter_parent_env(env: HashMap<String, String>) -> HashMap<String, String> {
 /// bodies. Production callers pass `cfg!(windows)`.
 fn is_stamping_key(key: &str, is_windows: bool) -> bool {
     if is_windows {
-        if key.len() >= 4 && key[..4].eq_ignore_ascii_case("npm_") {
+        // Byte-level prefix check: `key[..4]` would panic if byte 4
+        // lands inside a multi-byte UTF-8 codepoint (e.g. a key
+        // containing `𐀀` whose first byte sits at index 0). Since
+        // the prefix we want is pure ASCII, comparing bytes
+        // sidesteps the UTF-8 boundary question entirely.
+        if key.as_bytes().get(..4).is_some_and(|b| b.eq_ignore_ascii_case(b"npm_")) {
             return true;
         }
         return ["NODE", "TMPDIR", "INIT_CWD", "PNPM_SCRIPT_SRC_DIR"]

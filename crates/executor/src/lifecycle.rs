@@ -270,6 +270,15 @@ fn run_lifecycle_hook<R: Reporter>(
         }
     })?;
 
+    // Drop any inherited PATH-like key (`Path` on Windows, `PATH`
+    // on POSIX) from the env map before spawning — otherwise on
+    // Windows the spawn would see both that and the explicit `PATH`
+    // we set below, and `Command::env` deduplicates them with an
+    // unspecified winner.
+    let mut child_env = built.env;
+    child_env.retain(|k, _| !k.eq_ignore_ascii_case("PATH"));
+    child_env.insert("PATH".to_string(), path_env.to_string_lossy().into_owned());
+
     let mut cmd = Command::new(&shell.program);
     cmd.args(&shell.args)
         .arg(script)
@@ -278,8 +287,7 @@ fn run_lifecycle_hook<R: Reporter>(
         // invocation cannot leak in. `build_env` already folded the
         // surviving parent keys into `built.env`.
         .env_clear()
-        .envs(&built.env)
-        .env("PATH", &path_env)
+        .envs(&child_env)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     // `windowsVerbatimArguments` from `npm-lifecycle/index.js:251`.

@@ -270,6 +270,26 @@ fn is_stamping_key_is_case_sensitive_on_posix() {
     assert!(!is_stamping_key("PNPM_HOME", false));
 }
 
+/// Regression: the byte-level prefix check inside the Windows
+/// branch must not panic on non-ASCII keys whose UTF-8 byte
+/// representation crosses byte 4. Slicing `key[..4]` panics for
+/// e.g. `"x𐀀"` (1 ASCII byte + a 4-byte codepoint), since byte 4
+/// lands inside the codepoint.
+#[test]
+fn is_stamping_key_handles_non_ascii_keys_without_panicking() {
+    // 1 ASCII byte + 4-byte UTF-8 codepoint = 5 bytes; byte 4 is
+    // mid-char. Comparison must be byte-safe.
+    assert!(!is_stamping_key("x\u{10000}", true));
+    assert!(!is_stamping_key("x\u{10000}", false));
+    // 2-byte codepoint repeated: byte 4 IS a char boundary, but
+    // the leading bytes are not ASCII so the comparison must
+    // still return false.
+    assert!(!is_stamping_key("\u{0419}\u{0419}", true));
+    // 1-character ASCII (< 4 bytes): byte slice short-circuits.
+    assert!(!is_stamping_key("abc", true));
+    assert!(!is_stamping_key("", true));
+}
+
 /// On Windows, Rust's `Command::env` treats env keys
 /// case-insensitively, so `NPM_CONFIG_FOO` and `npm_config_foo`
 /// refer to the same variable. We must strip the entire family
