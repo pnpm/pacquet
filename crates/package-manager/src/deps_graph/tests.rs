@@ -1,4 +1,4 @@
-use super::build_deps_graph;
+use super::{build_deps_graph, build_deps_subgraph};
 use pacquet_lockfile::{
     LockfileResolution, PackageKey, PackageMetadata, PkgName, PkgVerPeer, RegistryResolution,
     SnapshotDepRef, SnapshotEntry,
@@ -134,4 +134,78 @@ fn snapshot_without_metadata_is_skipped() {
 
     let graph = build_deps_graph(&snapshots, &packages);
     assert!(graph.is_empty(), "orphan snapshot must not produce a graph node");
+}
+
+/// `build_deps_subgraph` with empty roots produces an empty graph
+/// — the pure-JS install case where no snapshot is `requires_build`.
+#[test]
+fn subgraph_with_empty_roots_is_empty() {
+    let parent_key = key("a", "1.0.0");
+    let child_key = key("b", "1.0.0");
+    let deps = HashMap::from([(name("b"), SnapshotDepRef::Plain(ver("1.0.0")))]);
+    let snapshots = HashMap::from([
+        (parent_key, SnapshotEntry { dependencies: Some(deps), ..Default::default() }),
+        (child_key, SnapshotEntry::default()),
+    ]);
+    let packages = HashMap::from([
+        (key("a", "1.0.0"), registry_metadata()),
+        (key("b", "1.0.0"), registry_metadata()),
+    ]);
+
+    let graph = build_deps_subgraph(&snapshots, &packages, std::iter::empty());
+    assert!(graph.is_empty(), "empty roots must produce an empty graph");
+}
+
+/// `build_deps_subgraph` walks the forward closure of each root.
+/// For `a -> b -> c` with `a` as the only root, all three nodes
+/// land in the graph; `d` (unrelated) does not. Mirrors the
+/// `calc_dep_state` recursion's reach.
+#[test]
+fn subgraph_walks_forward_closure() {
+    let a = key("a", "1.0.0");
+    let b = key("b", "1.0.0");
+    let c = key("c", "1.0.0");
+    let d = key("d", "1.0.0"); // unrelated
+    let a_deps = HashMap::from([(name("b"), SnapshotDepRef::Plain(ver("1.0.0")))]);
+    let b_deps = HashMap::from([(name("c"), SnapshotDepRef::Plain(ver("1.0.0")))]);
+    let snapshots = HashMap::from([
+        (a.clone(), SnapshotEntry { dependencies: Some(a_deps), ..Default::default() }),
+        (b.clone(), SnapshotEntry { dependencies: Some(b_deps), ..Default::default() }),
+        (c.clone(), SnapshotEntry::default()),
+        (d.clone(), SnapshotEntry::default()),
+    ]);
+    let packages = HashMap::from([
+        (a.clone(), registry_metadata()),
+        (b.clone(), registry_metadata()),
+        (c.clone(), registry_metadata()),
+        (d.clone(), registry_metadata()),
+    ]);
+
+    let graph = build_deps_subgraph(&snapshots, &packages, std::iter::once(a.clone()));
+    assert!(graph.contains_key(&a));
+    assert!(graph.contains_key(&b), "b is in a's closure");
+    assert!(graph.contains_key(&c), "c is in a's closure via b");
+    assert!(!graph.contains_key(&d), "d is unrelated; must not be included");
+}
+
+/// `build_deps_subgraph` terminates on a dependency cycle —
+/// `a -> b -> a` enqueues `a` and `b` once each, then bails on
+/// re-visits.
+#[test]
+fn subgraph_terminates_on_cycle() {
+    let a = key("a", "1.0.0");
+    let b = key("b", "1.0.0");
+    let a_deps = HashMap::from([(name("b"), SnapshotDepRef::Plain(ver("1.0.0")))]);
+    let b_deps = HashMap::from([(name("a"), SnapshotDepRef::Plain(ver("1.0.0")))]);
+    let snapshots = HashMap::from([
+        (a.clone(), SnapshotEntry { dependencies: Some(a_deps), ..Default::default() }),
+        (b.clone(), SnapshotEntry { dependencies: Some(b_deps), ..Default::default() }),
+    ]);
+    let packages =
+        HashMap::from([(a.clone(), registry_metadata()), (b.clone(), registry_metadata())]);
+
+    let graph = build_deps_subgraph(&snapshots, &packages, std::iter::once(a.clone()));
+    assert_eq!(graph.len(), 2);
+    assert!(graph.contains_key(&a));
+    assert!(graph.contains_key(&b));
 }

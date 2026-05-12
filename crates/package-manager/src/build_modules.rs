@@ -229,36 +229,45 @@ impl<'a> BuildModules<'a> {
         // either the READ side (prefetch surfaced cache rows) or
         // the WRITE side (the install will be populating new
         // cache entries after a successful build). When neither
-        // applies the O(|snapshots|) graph construction is dead
-        // work.
+        // applies the graph construction is dead work.
         //
-        // The WRITE side additionally requires at least one
-        // `requires_build` snapshot, because the upload site is
-        // gated on that bit per-snapshot — a pure-JS install
-        // with no postinstalls / no `binding.gyp` produces zero
-        // upload calls regardless of how `side_effects_cache_write`
-        // is set, and walking the graph for that case is dead work
-        // (the cold-install benchmark catches this — see the
-        // pnpm/pacquet#424 review).
+        // The graph is bounded to the *forward closure of
+        // `requires_build` snapshots* via `build_deps_subgraph`.
+        // The upload-site and gate-check loops only ever compute
+        // cache keys for `requires_build` snapshots (the
+        // `continue` at the top of the chunk loop), and
+        // `calc_dep_state` only recurses into a snapshot's own
+        // children, so the closure-bounded graph produces the
+        // exact same cache keys as the full graph for every
+        // root we'll query. Saves the O(|snapshots|) walk for
+        // pure-JS installs without postinstalls (#424 cold-install
+        // benchmark catches the unbounded cost).
         //
         // Mirrors upstream's per-install `DepsStateCache` at
         // <https://github.com/pnpm/pnpm/blob/7e3145f9fc/building/during-install/src/index.ts#L74>.
         // The cache memoizes per-node hash across diamond-shaped
         // subgraphs so the recursive walk stays linear in
-        // |snapshots| even when the same dep is reachable through
+        // |closure| even when the same dep is reachable through
         // many parents.
         let read_gate_active = side_effects_cache
             && engine_name.is_some()
             && side_effects_maps_by_snapshot.is_some_and(|m| !m.is_empty());
+        let any_requires_build = requires_build_map.values().any(|&v| v);
         let write_gate_active = side_effects_cache_write
             && engine_name.is_some()
             && store_index_writer.is_some()
-            && requires_build_map.values().any(|&v| v);
-        let cache_gate_active = (read_gate_active || write_gate_active) && packages.is_some();
+            && any_requires_build;
+        let cache_gate_active =
+            (read_gate_active || write_gate_active) && packages.is_some() && any_requires_build;
         let dep_graph = cache_gate_active.then(|| {
-            crate::build_deps_graph(
+            let roots = requires_build_map
+                .iter()
+                .filter(|&(_, &requires_build)| requires_build)
+                .map(|(key, _)| key.clone());
+            crate::build_deps_subgraph(
                 snapshots,
                 packages.expect("`cache_gate_active` requires packages: Some"),
+                roots,
             )
         });
         let mut deps_state_cache: pacquet_graph_hasher::DepsStateCache<PackageKey> =

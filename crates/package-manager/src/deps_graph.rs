@@ -39,15 +39,70 @@ pub fn build_deps_graph(
 ) -> HashMap<PackageKey, DepsGraphNode<PackageKey>> {
     let mut graph = HashMap::with_capacity(snapshots.len());
     for (snapshot_key, snapshot) in snapshots {
-        let metadata_key = snapshot_key.without_peer();
-        let Some(metadata) = packages.get(&metadata_key) else {
-            continue;
-        };
-        let full_pkg_id = full_pkg_id_for(&metadata_key, &metadata.resolution);
-        let children = build_children(snapshot);
-        graph.insert(snapshot_key.clone(), DepsGraphNode { full_pkg_id, children });
+        if let Some(node) = build_node(snapshot_key, snapshot, packages) {
+            graph.insert(snapshot_key.clone(), node);
+        }
     }
     graph
+}
+
+/// Build the `DepsGraph` for only the forward closure of `roots`
+/// — the union of every snapshot transitively reachable through
+/// `dependencies` + `optional_dependencies` starting from any root.
+///
+/// `BuildModules` uses this for the side-effects cache READ /
+/// WRITE gates so the O(|snapshots|) walk doesn't run on the
+/// pure-JS install case where no snapshot is `requires_build`.
+/// `calc_dep_state` only ever recurses into a node's own
+/// closure, so the bounded graph produces the exact same cache
+/// keys as the full graph for every root — observable behavior
+/// matches [`build_deps_graph`] for the inputs we care about.
+///
+/// Upstream's [`lockfileToDepGraph`](https://github.com/pnpm/pnpm/blob/7e3145f9fc/deps/graph-builder/src/lockfileToDepGraph.ts#L123-L170)
+/// always builds the full graph because its consumers extend
+/// beyond cache hashing (hierarchy + hoisting + direct-deps map +
+/// bin linking). Pacquet only uses the graph for cache hashing
+/// today, so the trimmed walk is sound here — same cache keys,
+/// fewer cycles spent.
+pub fn build_deps_subgraph<I>(
+    snapshots: &HashMap<PackageKey, SnapshotEntry>,
+    packages: &HashMap<PackageKey, PackageMetadata>,
+    roots: I,
+) -> HashMap<PackageKey, DepsGraphNode<PackageKey>>
+where
+    I: IntoIterator<Item = PackageKey>,
+{
+    let mut graph: HashMap<PackageKey, DepsGraphNode<PackageKey>> = HashMap::new();
+    let mut queue: std::collections::VecDeque<PackageKey> = roots.into_iter().collect();
+    while let Some(key) = queue.pop_front() {
+        if graph.contains_key(&key) {
+            continue;
+        }
+        let Some(snapshot) = snapshots.get(&key) else { continue };
+        let Some(node) = build_node(&key, snapshot, packages) else { continue };
+        // Enqueue every child the new node points at. Repeat-enqueues
+        // are cheap — the `graph.contains_key` guard at the top of
+        // the loop discards them.
+        for child_key in node.children.values() {
+            if !graph.contains_key(child_key) {
+                queue.push_back(child_key.clone());
+            }
+        }
+        graph.insert(key, node);
+    }
+    graph
+}
+
+fn build_node(
+    snapshot_key: &PackageKey,
+    snapshot: &SnapshotEntry,
+    packages: &HashMap<PackageKey, PackageMetadata>,
+) -> Option<DepsGraphNode<PackageKey>> {
+    let metadata_key = snapshot_key.without_peer();
+    let metadata = packages.get(&metadata_key)?;
+    let full_pkg_id = full_pkg_id_for(&metadata_key, &metadata.resolution);
+    let children = build_children(snapshot);
+    Some(DepsGraphNode { full_pkg_id, children })
 }
 
 /// Mirrors [`createFullPkgId`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/deps/graph-hasher/src/index.ts#L263-L292).
