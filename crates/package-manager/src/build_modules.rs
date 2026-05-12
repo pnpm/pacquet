@@ -145,8 +145,24 @@ pub struct BuildModules<'a> {
     pub modules_dir: &'a Path,
     pub lockfile_dir: &'a Path,
     pub snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,
+    pub packages: Option<&'a HashMap<PackageKey, pacquet_lockfile::PackageMetadata>>,
     pub importers: &'a HashMap<String, ProjectSnapshot>,
     pub allow_build_policy: &'a AllowBuildPolicy,
+    /// Per-snapshot side-effects-cache overlays — passed in from
+    /// `CreateVirtualStore`'s prefetch. `None` means the cache is
+    /// disabled or no rows were prefetched; the gate falls through
+    /// to "rebuild" for every snapshot.
+    pub side_effects_maps_by_snapshot: Option<&'a crate::SideEffectsMapsBySnapshot>,
+    /// `<platform>;<arch>;node<major>` — the prefix part of
+    /// upstream's dep-state cache key. Computed once at install
+    /// start by [`pacquet_graph_hasher::detect_node_major`] +
+    /// [`pacquet_graph_hasher::engine_name`]. When `None`, the
+    /// gate falls through to "rebuild" (no key to look up).
+    pub engine_name: Option<&'a str>,
+    /// Mirrors `config.side_effects_cache`. When `false`, the
+    /// gate is bypassed entirely and every `requires_build`
+    /// snapshot runs its scripts.
+    pub side_effects_cache: bool,
 }
 
 impl<'a> BuildModules<'a> {
@@ -162,8 +178,12 @@ impl<'a> BuildModules<'a> {
             modules_dir,
             lockfile_dir,
             snapshots,
+            packages,
             importers,
             allow_build_policy,
+            side_effects_maps_by_snapshot,
+            engine_name,
+            side_effects_cache,
         } = self;
 
         let Some(snapshots) = snapshots else { return Ok(Vec::new()) };
@@ -186,6 +206,33 @@ impl<'a> BuildModules<'a> {
                 (key.clone(), pkg_requires_build(&pkg_dir))
             })
             .collect();
+
+        // Build the dep graph + state cache only when the
+        // side-effects-cache gate has a chance of firing. Otherwise
+        // the O(|snapshots|) graph construction is dead work — when
+        // `config.side_effects_cache` is off, or no Node major was
+        // detected, or the prefetch surfaced no cache rows, the
+        // gate below short-circuits before ever consulting the
+        // graph.
+        //
+        // Mirrors upstream's per-install `DepsStateCache` at
+        // <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L74>.
+        // The cache memoizes per-node hash across diamond-shaped
+        // subgraphs so the recursive walk stays linear in
+        // |snapshots| even when the same dep is reachable through
+        // many parents.
+        let cache_gate_active = side_effects_cache
+            && engine_name.is_some()
+            && side_effects_maps_by_snapshot.is_some_and(|m| !m.is_empty())
+            && packages.is_some();
+        let dep_graph = cache_gate_active.then(|| {
+            crate::build_deps_graph(
+                snapshots,
+                packages.expect("`cache_gate_active` requires packages: Some"),
+            )
+        });
+        let mut deps_state_cache: pacquet_graph_hasher::DepsStateCache<PackageKey> =
+            pacquet_graph_hasher::DepsStateCache::new();
 
         let chunks = build_sequence(&requires_build_map, snapshots, importers);
 
@@ -213,6 +260,54 @@ impl<'a> BuildModules<'a> {
                         continue;
                     }
                     Some(true) => {}
+                }
+
+                // Side-effects-cache `is_built` gate. Mirrors
+                // upstream's `!node.isBuilt` filter at
+                // <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L73-L77>.
+                // We're already past the policy gate, so this
+                // snapshot would otherwise run its scripts — but if
+                // the prefetch surfaced a matching side-effects-cache
+                // entry, the build is already represented on disk
+                // (pnpm seeded it on a previous install) and we
+                // can skip.
+                if side_effects_cache
+                    && let Some(maps_by_snapshot) = side_effects_maps_by_snapshot
+                    && let Some(maps) = maps_by_snapshot.get(&snapshot_key)
+                    && let Some(graph) = dep_graph.as_ref()
+                    && let Some(engine) = engine_name
+                {
+                    let cache_key = pacquet_graph_hasher::calc_dep_state(
+                        graph,
+                        &mut deps_state_cache,
+                        &snapshot_key,
+                        &pacquet_graph_hasher::CalcDepStateOptions {
+                            engine_name: engine,
+                            // Patch-hash plumbing arrives with
+                            // `patchedDependencies` (#397 item 9).
+                            // Until then there's nothing to append,
+                            // matching upstream's behavior when
+                            // `depNode.patch == null`.
+                            patch_file_hash: None,
+                            // `hasSideEffects` upstream — for a
+                            // `requires_build = true` snapshot
+                            // that's reached this point, the only
+                            // way the script can have side effects
+                            // is to actually run, so the bit is
+                            // true. Matches
+                            // `building/during-install/src/index.ts:202`.
+                            include_dep_graph_hash: true,
+                        },
+                    );
+                    if maps.contains_key(&cache_key) {
+                        tracing::debug!(
+                            target: "pacquet::build",
+                            ?snapshot_key,
+                            cache_key,
+                            "side-effects cache hit; skipping build",
+                        );
+                        continue;
+                    }
                 }
 
                 let pkg_dir = virtual_store_dir_for_key(virtual_store_dir, &snapshot_key);

@@ -19,9 +19,13 @@ use std::collections::{HashMap, HashSet};
 /// children. Pacquet's natural input shape is the lockfile's
 /// `snapshots[].dependencies` + `optionalDependencies` flattened,
 /// with each value resolved to the snapshot key it points at.
-pub struct DepsGraphNode<'a, K> {
-    pub full_pkg_id: &'a str,
-    pub children: HashMap<&'a str, K>,
+///
+/// Owns its strings so a caller building the graph from a lockfile
+/// doesn't have to keep a separate `String` arena alive for the
+/// duration of the hash walk.
+pub struct DepsGraphNode<K> {
+    pub full_pkg_id: String,
+    pub children: HashMap<String, K>,
 }
 
 /// Memoized per-depPath state cache. Mirrors pnpm's
@@ -54,7 +58,7 @@ pub struct CalcDepStateOptions<'a> {
 /// parity with pnpm is required — the key is persisted on disk and
 /// shared with pnpm.
 pub fn calc_dep_state<K>(
-    graph: &HashMap<K, DepsGraphNode<'_, K>>,
+    graph: &HashMap<K, DepsGraphNode<K>>,
     cache: &mut DepsStateCache<K>,
     dep_path: &K,
     opts: &CalcDepStateOptions<'_>,
@@ -85,7 +89,7 @@ where
 /// contribution becomes `""` (matching upstream's "node not in
 /// graph" guard at line 55, which returns the empty string).
 fn calc_dep_graph_hash<K>(
-    graph: &HashMap<K, DepsGraphNode<'_, K>>,
+    graph: &HashMap<K, DepsGraphNode<K>>,
     cache: &mut DepsStateCache<K>,
     parents: &mut HashSet<String>,
     dep_path: &K,
@@ -100,20 +104,20 @@ where
         return String::new();
     };
     let mut deps_obj = serde_json::Map::new();
-    if !node.children.is_empty() && !parents.contains(node.full_pkg_id) {
+    if !node.children.is_empty() && !parents.contains(&node.full_pkg_id) {
         // Push our `full_pkg_id` for the duration of this subtree
         // so cycles short-circuit on the second visit.
-        let inserted = parents.insert(node.full_pkg_id.to_string());
+        let inserted = parents.insert(node.full_pkg_id.clone());
         for (alias, child_key) in &node.children {
             let child_hash = calc_dep_graph_hash(graph, cache, parents, child_key);
-            deps_obj.insert((*alias).to_string(), Value::String(child_hash));
+            deps_obj.insert(alias.clone(), Value::String(child_hash));
         }
         if inserted {
-            parents.remove(node.full_pkg_id);
+            parents.remove(&node.full_pkg_id);
         }
     }
     let hashed = hash_object(&json!({
-        "id": node.full_pkg_id,
+        "id": node.full_pkg_id.clone(),
         "deps": Value::Object(deps_obj),
     }));
     cache.insert(dep_path.clone(), hashed.clone());
@@ -132,7 +136,7 @@ mod tests {
     /// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/deps/graph-hasher/src/index.ts#L36>.
     #[test]
     fn engine_only_key() {
-        let graph: HashMap<String, DepsGraphNode<'_, String>> = HashMap::new();
+        let graph: HashMap<String, DepsGraphNode<String>> = HashMap::new();
         let mut cache = HashMap::new();
         let result = calc_dep_state(
             &graph,
@@ -152,7 +156,7 @@ mod tests {
     /// lines 40-42 of `calcDepState`.
     #[test]
     fn patch_appended_without_dep_graph_hash() {
-        let graph: HashMap<String, DepsGraphNode<'_, String>> = HashMap::new();
+        let graph: HashMap<String, DepsGraphNode<String>> = HashMap::new();
         let mut cache = HashMap::new();
         let result = calc_dep_state(
             &graph,
@@ -173,10 +177,13 @@ mod tests {
     /// children-elided case for cycle/missing-node) must agree.
     #[test]
     fn dep_graph_hash_for_leaf_uses_id_and_empty_deps() {
-        let mut graph: HashMap<String, DepsGraphNode<'_, String>> = HashMap::new();
+        let mut graph: HashMap<String, DepsGraphNode<String>> = HashMap::new();
         graph.insert(
             "leaf@1.0.0".to_string(),
-            DepsGraphNode { full_pkg_id: "leaf@1.0.0:sha512-leaf", children: HashMap::new() },
+            DepsGraphNode {
+                full_pkg_id: "leaf@1.0.0:sha512-leaf".to_string(),
+                children: HashMap::new(),
+            },
         );
         let mut cache = HashMap::new();
         let result = calc_dep_state(
@@ -202,10 +209,13 @@ mod tests {
     /// `full_pkg_id` must agree.
     #[test]
     fn cache_makes_repeat_calls_byte_equal() {
-        let mut graph: HashMap<String, DepsGraphNode<'_, String>> = HashMap::new();
+        let mut graph: HashMap<String, DepsGraphNode<String>> = HashMap::new();
         graph.insert(
             "leaf@1.0.0".to_string(),
-            DepsGraphNode { full_pkg_id: "leaf@1.0.0:sha512-x", children: HashMap::new() },
+            DepsGraphNode {
+                full_pkg_id: "leaf@1.0.0:sha512-x".to_string(),
+                children: HashMap::new(),
+            },
         );
         let mut cache = HashMap::new();
         let opts = CalcDepStateOptions {
@@ -224,29 +234,32 @@ mod tests {
     /// node's hash, and the recursion must terminate.
     #[test]
     fn diamond_graph_resolves_consistently() {
-        let mut graph: HashMap<String, DepsGraphNode<'_, String>> = HashMap::new();
+        let mut graph: HashMap<String, DepsGraphNode<String>> = HashMap::new();
         let mut root_children = HashMap::new();
-        root_children.insert("a", "a@1.0.0".to_string());
-        root_children.insert("b", "b@1.0.0".to_string());
+        root_children.insert("a".to_string(), "a@1.0.0".to_string());
+        root_children.insert("b".to_string(), "b@1.0.0".to_string());
         graph.insert(
             "root@1.0.0".to_string(),
-            DepsGraphNode { full_pkg_id: "root@1.0.0:sha512-root", children: root_children },
+            DepsGraphNode {
+                full_pkg_id: "root@1.0.0:sha512-root".to_string(),
+                children: root_children,
+            },
         );
         let mut a_children = HashMap::new();
-        a_children.insert("c", "c@1.0.0".to_string());
+        a_children.insert("c".to_string(), "c@1.0.0".to_string());
         graph.insert(
             "a@1.0.0".to_string(),
-            DepsGraphNode { full_pkg_id: "a@1.0.0:sha512-a", children: a_children },
+            DepsGraphNode { full_pkg_id: "a@1.0.0:sha512-a".to_string(), children: a_children },
         );
         let mut b_children = HashMap::new();
-        b_children.insert("c", "c@1.0.0".to_string());
+        b_children.insert("c".to_string(), "c@1.0.0".to_string());
         graph.insert(
             "b@1.0.0".to_string(),
-            DepsGraphNode { full_pkg_id: "b@1.0.0:sha512-b", children: b_children },
+            DepsGraphNode { full_pkg_id: "b@1.0.0:sha512-b".to_string(), children: b_children },
         );
         graph.insert(
             "c@1.0.0".to_string(),
-            DepsGraphNode { full_pkg_id: "c@1.0.0:sha512-c", children: HashMap::new() },
+            DepsGraphNode { full_pkg_id: "c@1.0.0:sha512-c".to_string(), children: HashMap::new() },
         );
         let mut cache = HashMap::new();
         let result = calc_dep_state(
@@ -270,18 +283,18 @@ mod tests {
     /// guard at line 66.
     #[test]
     fn cyclic_graph_terminates_and_is_stable() {
-        let mut graph: HashMap<String, DepsGraphNode<'_, String>> = HashMap::new();
+        let mut graph: HashMap<String, DepsGraphNode<String>> = HashMap::new();
         let mut a_children = HashMap::new();
-        a_children.insert("b", "b@1.0.0".to_string());
+        a_children.insert("b".to_string(), "b@1.0.0".to_string());
         graph.insert(
             "a@1.0.0".to_string(),
-            DepsGraphNode { full_pkg_id: "a@1.0.0:sha512-a", children: a_children },
+            DepsGraphNode { full_pkg_id: "a@1.0.0:sha512-a".to_string(), children: a_children },
         );
         let mut b_children = HashMap::new();
-        b_children.insert("a", "a@1.0.0".to_string());
+        b_children.insert("a".to_string(), "a@1.0.0".to_string());
         graph.insert(
             "b@1.0.0".to_string(),
-            DepsGraphNode { full_pkg_id: "b@1.0.0:sha512-b", children: b_children },
+            DepsGraphNode { full_pkg_id: "b@1.0.0:sha512-b".to_string(), children: b_children },
         );
         let mut cache = HashMap::new();
         let opts = CalcDepStateOptions {
@@ -298,10 +311,10 @@ mod tests {
     /// `<engine>;deps=<h>;patch=<h>`. Mirrors index.js:36-42.
     #[test]
     fn dep_graph_and_patch_concatenate_in_upstream_order() {
-        let mut graph: HashMap<String, DepsGraphNode<'_, String>> = HashMap::new();
+        let mut graph: HashMap<String, DepsGraphNode<String>> = HashMap::new();
         graph.insert(
             "x@1.0.0".to_string(),
-            DepsGraphNode { full_pkg_id: "x@1.0.0:sha512-x", children: HashMap::new() },
+            DepsGraphNode { full_pkg_id: "x@1.0.0:sha512-x".to_string(), children: HashMap::new() },
         );
         let mut cache = HashMap::new();
         let result = calc_dep_state(

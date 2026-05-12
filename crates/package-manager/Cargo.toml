@@ -18,6 +18,7 @@ pacquet-lockfile         = { workspace = true }
 pacquet-modules-yaml     = { workspace = true }
 pacquet-network          = { workspace = true }
 pacquet-config           = { workspace = true }
+pacquet-graph-hasher     = { workspace = true }
 pacquet-package-manifest = { workspace = true }
 pacquet-registry         = { workspace = true }
 pacquet-reporter         = { workspace = true }

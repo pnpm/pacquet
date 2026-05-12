@@ -622,15 +622,35 @@ pub type PrefetchedCasPaths = HashMap<String, Arc<HashMap<String, PathBuf>>>;
 /// from the same [`PrefetchResult`].
 pub type PrefetchedManifests = HashMap<String, Arc<serde_json::Value>>;
 
+/// Side-effects-cache overlays recovered from the same `index.db`
+/// rows as [`PrefetchedCasPaths`]. The outer key is the same
+/// `<integrity>\t<pkg_id>` store-index row key; the inner map is
+/// the per-row `cache_key → FilesMap` table that `VerifyResult`
+/// produces (already with the `added` / `deleted` overlay applied
+/// against the base files). Mirrors the shape pnpm threads through
+/// `PackageFilesResponse.sideEffectsMaps` at
+/// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/store/create-cafs-store/src/index.ts#L83-L100>.
+///
+/// Pacquet hands these off to `BuildModules`'s `is_built` gate —
+/// the build-phase skips a snapshot when its computed
+/// `calc_dep_state` cache key has a matching entry here.
+///
+/// Outer values are `Arc`-wrapped for the same cold-batch cheap-clone
+/// reason `PrefetchedCasPaths` is.
+pub type PrefetchedSideEffectsMaps =
+    HashMap<String, Arc<HashMap<String, HashMap<String, PathBuf>>>>;
+
 /// Output of [`prefetch_cas_paths`]: the warm-cache filesystem map
-/// plus any bundled manifests recovered from the same `index.db`
-/// rows. Bundled in a single struct so callers can destructure both
-/// after one `await`, rather than the function having to thread two
-/// separate spawn_blocking round-trips through.
+/// plus any bundled manifests and side-effects overlays recovered
+/// from the same `index.db` rows. Bundled in a single struct so
+/// callers can destructure all three after one `await`, rather than
+/// the function having to thread three separate spawn_blocking
+/// round-trips through.
 #[derive(Default)]
 pub struct PrefetchResult {
     pub cas_paths: PrefetchedCasPaths,
     pub manifests: PrefetchedManifests,
+    pub side_effects_maps: PrefetchedSideEffectsMaps,
 }
 
 /// Batch the entire warm-cache lookup phase into one `spawn_blocking`
@@ -753,15 +773,21 @@ pub async fn prefetch_cas_paths(
 
         let mut cas_paths = HashMap::with_capacity(decoded.len());
         let mut manifests = HashMap::new();
+        let mut side_effects_maps = HashMap::new();
         for (cache_key, manifest, verify_result) in decoded {
             if verify_result.passed {
                 if let Some(manifest) = manifest {
                     manifests.insert(cache_key.clone(), manifest);
                 }
+                if let Some(maps) = verify_result.side_effects_maps
+                    && !maps.is_empty()
+                {
+                    side_effects_maps.insert(cache_key.clone(), Arc::new(maps));
+                }
                 cas_paths.insert(cache_key, Arc::new(verify_result.files_map));
             }
         }
-        PrefetchResult { cas_paths, manifests }
+        PrefetchResult { cas_paths, manifests, side_effects_maps }
     })
     .await;
     result.unwrap_or_else(|error| {

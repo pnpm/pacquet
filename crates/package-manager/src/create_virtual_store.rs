@@ -15,7 +15,7 @@ use pacquet_reporter::{
 use pacquet_store_dir::{SharedVerifiedFilesCache, StoreIndex, StoreIndexWriter, store_index_key};
 use pacquet_tarball::{PrefetchResult, prefetch_cas_paths};
 use pipe_trait::Pipe;
-use std::{collections::HashMap, sync::atomic::AtomicU8};
+use std::{collections::HashMap, path::PathBuf, sync::atomic::AtomicU8};
 
 /// Bundled package manifests recovered from the SQLite store index
 /// during [`CreateVirtualStore::run`], keyed by the same
@@ -33,6 +33,34 @@ use std::{collections::HashMap, sync::atomic::AtomicU8};
 /// `dep.fetching()?.bundledManifest` for cold ones, but the cold
 /// path's `bundledManifest` isn't plumbed through pacquet yet.
 pub type PackageManifests = HashMap<PkgNameVerPeer, std::sync::Arc<serde_json::Value>>;
+
+/// Per-snapshot side-effects-cache overlays, keyed by the snapshot's
+/// `PackageKey` and then by the dep-state cache key (the string
+/// `pacquet_graph_hasher::calc_dep_state` produces). The inner map
+/// is the post-build files map for that cache key — already with
+/// the `added` / `deleted` overlay applied against the base files
+/// (see `pacquet_store_dir::VerifyResult.side_effects_maps`).
+///
+/// Multiple snapshot peer-variants of the same package share one
+/// `Arc<_>` value — the store-index row is keyed peer-stripped, so
+/// each `PackageKey::without_peer()` lookup returns the same
+/// underlying map.
+///
+/// Hands off to `BuildModules`'s `is_built` gate (pnpm/pacquet#421):
+/// for a snapshot whose `calc_dep_state` cache key matches an entry
+/// here, the build is skipped — pacquet treats the package as
+/// already built (typically because pnpm seeded the cache on a
+/// previous install).
+pub type SideEffectsMapsBySnapshot =
+    HashMap<PackageKey, std::sync::Arc<HashMap<String, HashMap<String, PathBuf>>>>;
+
+/// Output of [`CreateVirtualStore::run`]. Bundles the bin-link
+/// manifest cache and the per-snapshot side-effects-cache overlays
+/// the build-phase needs.
+pub struct CreateVirtualStoreOutput {
+    pub package_manifests: PackageManifests,
+    pub side_effects_maps_by_snapshot: SideEffectsMapsBySnapshot,
+}
 
 /// This subroutine generates filesystem layout for the virtual store at `node_modules/.pacquet`.
 #[must_use]
@@ -72,7 +100,9 @@ impl<'a> CreateVirtualStore<'a> {
     /// recovered from `index.db` for the warm-batch slots — the
     /// bin linker uses these to avoid re-reading `package.json` per
     /// child. See [`PackageManifests`].
-    pub async fn run<R: Reporter>(self) -> Result<PackageManifests, CreateVirtualStoreError> {
+    pub async fn run<R: Reporter>(
+        self,
+    ) -> Result<CreateVirtualStoreOutput, CreateVirtualStoreError> {
         let CreateVirtualStore {
             http_client,
             config,
@@ -86,7 +116,10 @@ impl<'a> CreateVirtualStore<'a> {
             // No snapshots to install. If the lockfile also has no project deps
             // this is a valid no-op; if it does, pnpm would have populated
             // `snapshots`, so bailing out here is safe enough for v9.
-            return Ok(PackageManifests::new());
+            return Ok(CreateVirtualStoreOutput {
+                package_manifests: PackageManifests::new(),
+                side_effects_maps_by_snapshot: SideEffectsMapsBySnapshot::new(),
+            });
         };
         let packages = packages.ok_or(CreateVirtualStoreError::MissingPackagesSection)?;
 
@@ -246,15 +279,18 @@ impl<'a> CreateVirtualStore<'a> {
         cache_key_refs.sort_unstable();
         cache_key_refs.dedup();
         let cache_keys: Vec<String> = cache_key_refs.into_iter().map(String::from).collect();
-        let PrefetchResult { cas_paths: prefetched, manifests: prefetched_manifests } =
-            prefetch_cas_paths(
-                store_index.clone(),
-                store_dir,
-                cache_keys,
-                config.verify_store_integrity,
-                SharedVerifiedFilesCache::clone(&verified_files_cache),
-            )
-            .await;
+        let PrefetchResult {
+            cas_paths: prefetched,
+            manifests: prefetched_manifests,
+            side_effects_maps: prefetched_side_effects,
+        } = prefetch_cas_paths(
+            store_index.clone(),
+            store_dir,
+            cache_keys,
+            config.verify_store_integrity,
+            SharedVerifiedFilesCache::clone(&verified_files_cache),
+        )
+        .await;
 
         // Partition snapshots by whether the prefetch covered them. The
         // warm batch — every snapshot whose tarball is already in the
@@ -300,6 +336,8 @@ impl<'a> CreateVirtualStore<'a> {
         // bin linker already looks up by.
         let mut package_manifests: PackageManifests =
             HashMap::with_capacity(prefetched_manifests.len());
+        let mut side_effects_maps_by_snapshot: SideEffectsMapsBySnapshot =
+            HashMap::with_capacity(prefetched_side_effects.len());
         for (snapshot_key, snapshot, cache_key) in &snapshot_entries {
             if let Some(cache_key) = cache_key.as_deref()
                 && let Some(manifest) = prefetched_manifests.get(cache_key)
@@ -307,6 +345,14 @@ impl<'a> CreateVirtualStore<'a> {
                 package_manifests
                     .entry(snapshot_key.without_peer())
                     .or_insert_with(|| std::sync::Arc::clone(manifest));
+            }
+            // Peer-variants of the same package share the same
+            // store-index row → the same `Arc<_>`. Cheap to share.
+            if let Some(cache_key) = cache_key.as_deref()
+                && let Some(maps) = prefetched_side_effects.get(cache_key)
+            {
+                side_effects_maps_by_snapshot
+                    .insert((*snapshot_key).clone(), std::sync::Arc::clone(maps));
             }
             match cache_key.as_deref().and_then(|k| prefetched.get(k)) {
                 Some(cas_paths) => warm.push((snapshot_key, snapshot, cas_paths)),
@@ -417,7 +463,7 @@ impl<'a> CreateVirtualStore<'a> {
             ),
         }
 
-        Ok(package_manifests)
+        Ok(CreateVirtualStoreOutput { package_manifests, side_effects_maps_by_snapshot })
     }
 }
 

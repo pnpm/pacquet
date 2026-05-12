@@ -27,6 +27,50 @@ pub fn engine_name(node_major: u32, platform: Option<&str>, arch: Option<&str>) 
     format!("{platform};{arch};node{node_major}")
 }
 
+/// Discover the host Node binary's major version by spawning
+/// `node --version` and parsing the leading major-version digits
+/// from its output.
+///
+/// Accepted shapes (in order of how `parse_node_version_output`
+/// strips them):
+/// - `v22.11.0` — canonical Node output.
+/// - `22.11.0` — a leading `v` is optional, for Node-compat runtimes
+///   that drop it.
+/// - `v25.0.0-nightly` — pre-release tags after the major are fine
+///   because parsing stops at the first `.`.
+/// - `v22` — no `.` at all is still parseable; the whole post-`v`
+///   string is treated as the major.
+///
+/// Used by [`engine_name`] callers that don't have a Node version
+/// pinned by config. Returns `None` when:
+/// - `node` isn't on `PATH`,
+/// - the binary fails to launch,
+/// - or the leading token (after an optional `v` and before the
+///   first `.`) isn't a parseable `u32`.
+///
+/// Callers should fall back to either a sentinel cache key (which
+/// won't match any pnpm-written entry — safe) or skip the
+/// cache-read entirely when this returns `None`.
+pub fn detect_node_major() -> Option<u32> {
+    let output = std::process::Command::new("node").arg("--version").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = std::str::from_utf8(&output.stdout).ok()?.trim();
+    parse_node_version_output(stdout)
+}
+
+/// Parse `v22.11.0`-style output from `node --version` to the major
+/// version integer. Factored out so the parsing rule is unit-testable
+/// without spawning `node`.
+fn parse_node_version_output(stdout: &str) -> Option<u32> {
+    // Tolerate a missing leading `v` for alternative Node-compat
+    // runtimes that omit it.
+    let after_v = stdout.strip_prefix('v').unwrap_or(stdout);
+    let major = after_v.split('.').next()?;
+    major.parse().ok()
+}
+
 /// Map `std::env::consts::OS` to Node's `process.platform` naming.
 /// Node uses `darwin` / `linux` / `win32` / `freebsd` / `openbsd` /
 /// `sunos` / `aix` / `android`. Rust uses `macos` / `linux` /
@@ -65,7 +109,7 @@ fn host_arch() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::engine_name;
+    use super::{engine_name, parse_node_version_output};
     use pretty_assertions::assert_eq;
 
     /// Format matches pnpm's `${platform};${arch};node${major}`
@@ -75,6 +119,26 @@ mod tests {
         assert_eq!(engine_name(20, Some("darwin"), Some("arm64")), "darwin;arm64;node20");
         assert_eq!(engine_name(22, Some("linux"), Some("x64")), "linux;x64;node22");
         assert_eq!(engine_name(24, Some("win32"), Some("x64")), "win32;x64;node24");
+    }
+
+    /// Output of `node --version` is the trimmed string
+    /// `v<major>.<minor>.<patch>`. Major-extract handles the leading
+    /// `v` and falls through cleanly on alternative Node-compat
+    /// runtimes that drop it.
+    #[test]
+    fn parse_node_version_handles_common_shapes() {
+        assert_eq!(parse_node_version_output("v22.11.0"), Some(22));
+        assert_eq!(parse_node_version_output("v20.18.1"), Some(20));
+        // Off-spec (no leading `v`).
+        assert_eq!(parse_node_version_output("18.20.4"), Some(18));
+        // Pre-release tag in the patch position — still parses the
+        // major.
+        assert_eq!(parse_node_version_output("v25.0.0-nightly"), Some(25));
+        // Garbage returns `None` so the caller can fall through to
+        // the no-cache path.
+        assert_eq!(parse_node_version_output(""), None);
+        assert_eq!(parse_node_version_output("not a version"), None);
+        assert_eq!(parse_node_version_output("v.broken"), None);
     }
 
     /// Defaults route through the host mapping. Just assert the

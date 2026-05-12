@@ -209,7 +209,11 @@ fn build_modules_collects_ignored_builds() {
         lockfile_dir: lockfile_dir.path(),
         snapshots: Some(&snapshots),
         importers: &importers,
+        packages: None,
         allow_build_policy: &policy,
+        side_effects_maps_by_snapshot: None,
+        engine_name: None,
+        side_effects_cache: true,
     }
     .run::<SilentReporter>()
     .expect("run BuildModules");
@@ -248,7 +252,11 @@ fn build_modules_excludes_explicit_deny_from_ignored() {
         lockfile_dir: lockfile_dir.path(),
         snapshots: Some(&snapshots),
         importers: &importers,
+        packages: None,
         allow_build_policy: &policy,
+        side_effects_maps_by_snapshot: None,
+        engine_name: None,
+        side_effects_cache: true,
     }
     .run::<SilentReporter>()
     .expect("run BuildModules");
@@ -314,7 +322,11 @@ fn do_not_fail_on_optional_dep_with_failing_postinstall() {
         lockfile_dir: lockfile_dir.path(),
         snapshots: Some(&snapshots),
         importers: &importers,
+        packages: None,
         allow_build_policy: &policy,
+        side_effects_maps_by_snapshot: None,
+        engine_name: None,
+        side_effects_cache: true,
     }
     .run::<RecordingReporter>()
     .expect("optional build failure must NOT abort the install");
@@ -333,6 +345,163 @@ fn do_not_fail_on_optional_dep_with_failing_postinstall() {
     assert_eq!(skipped_event.package.name, "@pnpm.e2e/failing-postinstall");
     assert_eq!(skipped_event.package.version, "1.0.0");
     assert!(skipped_event.details.is_some(), "details must carry the error toString");
+}
+
+/// Ports the upstream `'using side effects cache'` test at
+/// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/installing/deps-installer/test/install/sideEffects.ts#L79-L131>.
+///
+/// Upstream runs the install twice — first to populate the cache
+/// via the WRITE path, then to consume it. Pacquet doesn't have a
+/// WRITE path yet (#421's slice (B)), so we hand-craft the same
+/// state directly: a `side_effects_maps_by_snapshot` entry whose
+/// cache key matches what `BuildModules` will compute via
+/// `calc_dep_state`. With that in place, the gate skips the build
+/// even though the package's `postinstall` would have failed —
+/// observable via the absence of a `pnpm:lifecycle` event for the
+/// stage.
+///
+/// The fixture (`@pnpm.e2e/failing-postinstall@1.0.0`, `postinstall:
+/// echo hello && echo world && exit 1`) is the same upstream's
+/// own tests use; if the gate were broken the build would run and
+/// the install would propagate the exit-1 failure (cf.
+/// `fail_when_failing_postinstall_is_required` below).
+#[cfg(unix)]
+#[test]
+fn using_side_effects_cache_skips_rebuild() {
+    static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+    EVENTS.lock().expect("lock").clear();
+
+    struct RecordingReporter;
+    impl Reporter for RecordingReporter {
+        fn emit(event: &LogEvent) {
+            EVENTS.lock().expect("lock").push(event.clone());
+        }
+    }
+
+    let pkg_key = key("@pnpm.e2e/failing-postinstall", "1.0.0");
+    let snapshots = HashMap::from([(pkg_key.clone(), SnapshotEntry::default())]);
+    let packages: HashMap<pacquet_lockfile::PackageKey, pacquet_lockfile::PackageMetadata> =
+        HashMap::from([(
+            pkg_key.without_peer(),
+            pacquet_lockfile::PackageMetadata {
+                resolution: pacquet_lockfile::LockfileResolution::Registry(
+                    pacquet_lockfile::RegistryResolution {
+                        integrity: "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                            .parse()
+                            .expect("parse integrity"),
+                    },
+                ),
+                engines: None,
+                cpu: None,
+                os: None,
+                libc: None,
+                deprecated: None,
+                has_bin: None,
+                prepare: None,
+                bundled_dependencies: None,
+                peer_dependencies: None,
+                peer_dependencies_meta: None,
+            },
+        )]);
+    let importers = root_importers(&[("@pnpm.e2e/failing-postinstall", "1.0.0")]);
+    let policy = AllowBuildPolicy::new(rules([]), true);
+
+    let virtual_store_dir = tempdir().expect("create temp dir");
+    let modules_dir = tempdir().expect("create temp dir");
+    let lockfile_dir = tempdir().expect("create temp dir");
+
+    create_failing_postinstall_fixture(virtual_store_dir.path(), &pkg_key);
+
+    // Compute the cache key the same way `BuildModules` will, then
+    // pre-populate `side_effects_maps_by_snapshot` with a matching
+    // entry. The inner FilesMap value is irrelevant for this
+    // assertion — only presence of the key matters for the gate.
+    let engine = "darwin;arm64;node20";
+    let dep_graph = crate::build_deps_graph(&snapshots, &packages);
+    let mut state_cache = pacquet_graph_hasher::DepsStateCache::new();
+    let expected_cache_key = pacquet_graph_hasher::calc_dep_state(
+        &dep_graph,
+        &mut state_cache,
+        &pkg_key,
+        &pacquet_graph_hasher::CalcDepStateOptions {
+            engine_name: engine,
+            patch_file_hash: None,
+            include_dep_graph_hash: true,
+        },
+    );
+    let mut overlay = std::collections::HashMap::new();
+    overlay.insert(expected_cache_key, std::collections::HashMap::new());
+    let mut side_effects_maps = std::collections::HashMap::new();
+    side_effects_maps.insert(pkg_key.clone(), std::sync::Arc::new(overlay));
+
+    BuildModules {
+        virtual_store_dir: virtual_store_dir.path(),
+        modules_dir: modules_dir.path(),
+        lockfile_dir: lockfile_dir.path(),
+        snapshots: Some(&snapshots),
+        packages: Some(&packages),
+        importers: &importers,
+        allow_build_policy: &policy,
+        side_effects_maps_by_snapshot: Some(&side_effects_maps),
+        engine_name: Some(engine),
+        side_effects_cache: true,
+    }
+    .run::<RecordingReporter>()
+    .expect("install must succeed when the cache hit skips the rebuild");
+
+    // The build was skipped, so no `pnpm:lifecycle` event for the
+    // postinstall stage should have been emitted. If the gate were
+    // broken the failing-postinstall script would have run and
+    // emitted a `Script` (and a non-zero `Exit`) event, plus
+    // returned `Err(BuildModulesError::LifecycleScript(...))` from
+    // `.run()`.
+    let captured = EVENTS.lock().expect("lock").clone();
+    let any_lifecycle = captured.iter().any(|e| matches!(e, LogEvent::Lifecycle(_)));
+    assert!(!any_lifecycle, "side-effects cache hit must skip lifecycle scripts: {captured:#?}");
+}
+
+/// Negative pair: with `side_effects_cache = false`, even a
+/// matching cache entry is ignored — the build runs. Mirrors
+/// upstream's `sideEffectsCache: false` config branch.
+#[cfg(unix)]
+#[test]
+fn side_effects_cache_disabled_bypasses_the_gate() {
+    let pkg_key = key("@pnpm.e2e/failing-postinstall", "1.0.0");
+    let snapshots = HashMap::from([(pkg_key.clone(), SnapshotEntry::default())]);
+    let packages: HashMap<pacquet_lockfile::PackageKey, pacquet_lockfile::PackageMetadata> =
+        HashMap::new();
+    let importers = root_importers(&[("@pnpm.e2e/failing-postinstall", "1.0.0")]);
+    let policy = AllowBuildPolicy::new(rules([]), true);
+
+    let virtual_store_dir = tempdir().expect("create temp dir");
+    let modules_dir = tempdir().expect("create temp dir");
+    let lockfile_dir = tempdir().expect("create temp dir");
+
+    create_failing_postinstall_fixture(virtual_store_dir.path(), &pkg_key);
+
+    // Same overlay shape as the positive test, but the
+    // `side_effects_cache: false` flag must short-circuit before
+    // the lookup even runs.
+    let mut overlay = std::collections::HashMap::new();
+    overlay.insert("any-key".to_string(), std::collections::HashMap::new());
+    let mut side_effects_maps = std::collections::HashMap::new();
+    side_effects_maps.insert(pkg_key.clone(), std::sync::Arc::new(overlay));
+
+    let err = BuildModules {
+        virtual_store_dir: virtual_store_dir.path(),
+        modules_dir: modules_dir.path(),
+        lockfile_dir: lockfile_dir.path(),
+        snapshots: Some(&snapshots),
+        packages: Some(&packages),
+        importers: &importers,
+        allow_build_policy: &policy,
+        side_effects_maps_by_snapshot: Some(&side_effects_maps),
+        engine_name: Some("darwin;arm64;node20"),
+        side_effects_cache: false,
+    }
+    .run::<SilentReporter>()
+    .expect_err("with cache disabled, the failing postinstall must run and the install must fail");
+    assert!(matches!(err, crate::build_modules::BuildModulesError::LifecycleScript(_)));
 }
 
 /// Mirrors `'fail on a package with failing postinstall if the
@@ -370,7 +539,11 @@ fn fail_when_failing_postinstall_is_required() {
         lockfile_dir: lockfile_dir.path(),
         snapshots: Some(&snapshots),
         importers: &importers,
+        packages: None,
         allow_build_policy: &policy,
+        side_effects_maps_by_snapshot: None,
+        engine_name: None,
+        side_effects_cache: true,
     }
     .run::<SilentReporter>()
     .expect_err("required build failure must propagate");

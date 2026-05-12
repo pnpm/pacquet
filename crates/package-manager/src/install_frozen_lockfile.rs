@@ -1,7 +1,7 @@
 use crate::{
     AllowBuildPolicy, BuildModules, BuildModulesError, CreateVirtualStore, CreateVirtualStoreError,
-    LinkVirtualStoreBins, LinkVirtualStoreBinsError, SymlinkDirectDependencies,
-    SymlinkDirectDependenciesError,
+    CreateVirtualStoreOutput, LinkVirtualStoreBins, LinkVirtualStoreBinsError,
+    SymlinkDirectDependencies, SymlinkDirectDependenciesError,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
@@ -74,17 +74,35 @@ where
 
         // TODO: check if the lockfile is out-of-date
 
-        let package_manifests = CreateVirtualStore {
-            http_client,
-            config,
-            packages,
-            snapshots,
-            logged_methods,
-            requester,
-        }
-        .run::<R>()
+        let CreateVirtualStoreOutput { package_manifests, side_effects_maps_by_snapshot } =
+            CreateVirtualStore {
+                http_client,
+                config,
+                packages,
+                snapshots,
+                logged_methods,
+                requester,
+            }
+            .run::<R>()
+            .await
+            .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
+
+        // Detect the host `node` major version once per install,
+        // not per snapshot. Threaded into `BuildModules` so the
+        // side-effects-cache lookup can compose the right cache
+        // key. `None` (no `node` on PATH) means the cache gate
+        // falls through to "rebuild" — safe.
+        //
+        // `detect_node_major` spawns `node --version` synchronously,
+        // so run it on a blocking thread to keep the async install
+        // driver from stalling.
+        let engine_name: Option<String> = tokio::task::spawn_blocking(|| {
+            pacquet_graph_hasher::detect_node_major()
+                .map(|major| pacquet_graph_hasher::engine_name(major, None, None))
+        })
         .await
-        .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
+        .ok()
+        .flatten();
 
         SymlinkDirectDependencies { config, importers, dependency_groups, requester }
             .run::<R>()
@@ -128,8 +146,12 @@ where
             modules_dir: &config.modules_dir,
             lockfile_dir: manifest_dir,
             snapshots,
+            packages,
             importers,
             allow_build_policy: &allow_build_policy,
+            side_effects_maps_by_snapshot: Some(&side_effects_maps_by_snapshot),
+            engine_name: engine_name.as_deref(),
+            side_effects_cache: config.side_effects_cache,
         }
         .run::<R>()
         .map_err(InstallFrozenLockfileError::BuildModules)?;
