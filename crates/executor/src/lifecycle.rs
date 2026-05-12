@@ -1,6 +1,6 @@
 use crate::{
     extend_path::{ScriptsPrependNodePath, extend_path},
-    make_env::{EnvOptions, build_env},
+    make_env::{EnvOptions, build_env, path_value},
     shell::{ScriptShellError, select_shell},
 };
 use derive_more::{Display, Error};
@@ -137,12 +137,18 @@ pub fn run_postinstall_hooks<R: Reporter>(
     let get_script =
         |name: &str| -> Option<&str> { scripts.and_then(|s| s.get(name)).and_then(|v| v.as_str()) };
 
+    // Snapshot the process env once for this package. Each of
+    // preinstall/install/postinstall reads from this snapshot, which
+    // keeps the three runs observably consistent and avoids three
+    // separate calls to `env::vars()` over a thread-shared global.
+    let parent_env: HashMap<String, String> = env::vars().collect();
+
     let mut ran_any = false;
 
     if let Some(script) = get_script("preinstall")
         && script != "npx only-allow pnpm"
     {
-        run_lifecycle_hook::<R>("preinstall", script, &opts, &manifest)?;
+        run_lifecycle_hook::<R>("preinstall", script, &opts, &manifest, &parent_env)?;
         ran_any = true;
     }
 
@@ -156,14 +162,14 @@ pub fn run_postinstall_hooks<R: Reporter>(
     if let Some(script) = &install_script
         && script != "npx only-allow pnpm"
     {
-        run_lifecycle_hook::<R>("install", script, &opts, &manifest)?;
+        run_lifecycle_hook::<R>("install", script, &opts, &manifest, &parent_env)?;
         ran_any = true;
     }
 
     if let Some(script) = get_script("postinstall")
         && script != "npx only-allow pnpm"
     {
-        run_lifecycle_hook::<R>("postinstall", script, &opts, &manifest)?;
+        run_lifecycle_hook::<R>("postinstall", script, &opts, &manifest, &parent_env)?;
         ran_any = true;
     }
 
@@ -183,6 +189,7 @@ fn run_lifecycle_hook<R: Reporter>(
     script: &str,
     opts: &RunPostinstallHooks<'_>,
     manifest: &Value,
+    parent_env: &HashMap<String, String>,
 ) -> Result<(), LifecycleScriptError> {
     tracing::debug!(
         target: "pacquet::lifecycle",
@@ -220,26 +227,27 @@ fn run_lifecycle_hook<R: Reporter>(
         unsafe_perm: opts.unsafe_perm,
         extra_env: opts.extra_env,
     };
-    let built = build_env(&env_opts, manifest, env::vars().collect());
+    let built = build_env(&env_opts, manifest, parent_env.clone());
 
     if let Some(tmpdir) = &built.tmpdir {
-        // Mirrors index.js:97-102 — create the dir, swallow EEXIST,
-        // propagate everything else as a spawn error.
-        if let Err(e) = fs::create_dir_all(tmpdir)
-            && e.kind() != std::io::ErrorKind::AlreadyExists
-        {
-            return Err(LifecycleScriptError::Spawn {
-                dep_path: opts.dep_path.to_string(),
-                stage: stage.to_string(),
-                source: e,
-            });
-        }
+        // `fs::create_dir_all` is idempotent for existing
+        // directories (it returns `Ok(())`), so the upstream
+        // `EEXIST` swallow at index.js:97-102 doesn't translate.
+        // Treat any error here — including `AlreadyExists`, which
+        // signals a *file* at that path — as a real spawn failure.
+        fs::create_dir_all(tmpdir).map_err(|e| LifecycleScriptError::Spawn {
+            dep_path: opts.dep_path.to_string(),
+            stage: stage.to_string(),
+            source: e,
+        })?;
     }
 
     // Mirrors the `env[PATH] = extendPath(...)` line in `lifecycle_`
     // at index.js:116, with the original PATH coming from the
     // (already-filtered) parent env captured during `build_env`.
-    let original_path = built.env.get("PATH").map(|v| OsString::from(v.as_str()));
+    // Lookup is case-insensitive because Windows preserves the
+    // system casing (typically `Path`) on env keys.
+    let original_path = path_value(&built.env).map(OsString::from);
     let path_env = extend_path(
         opts.pkg_root,
         original_path.as_ref(),

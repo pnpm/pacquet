@@ -54,10 +54,12 @@ pub fn build_env(
     manifest: &Value,
     parent_env: HashMap<String, String>,
 ) -> EnvBuild {
-    // 1. Start from the parent env, stripping every `npm_*` /
-    //    `pnpm_config_*` / `NODE` / `TMPDIR` key so a wrapping
-    //    invocation cannot leak its stamp through. Mirrors the
-    //    `!i.match(/^npm_/)` filter at index.js:359.
+    // 1. Start from the parent env, stripping every `npm_*` key
+    //    plus the per-call stamps we re-derive (`NODE`, `TMPDIR`,
+    //    `INIT_CWD`, `PNPM_SCRIPT_SRC_DIR`). Mirrors the
+    //    `!i.match(/^npm_/)` filter at index.js:359 — `pnpm_*` keys
+    //    such as `PNPM_HOME` are intentionally NOT in the filter
+    //    (upstream doesn't strip them either).
     let mut env = filter_parent_env(parent_env);
 
     // 2. `npm_package_*` recursive stamp. Top-level keeps only
@@ -68,7 +70,11 @@ pub fn build_env(
     // 3. Per-call stamping from `lifecycle()` body (index.js:74-87).
     env.insert("npm_lifecycle_event".into(), opts.stage.to_string());
 
-    let node_execpath = opts.node_execpath.map(Path::to_path_buf).or_else(find_node_in_path);
+    let parent_path = path_value(&env);
+    let node_execpath = opts
+        .node_execpath
+        .map(Path::to_path_buf)
+        .or_else(|| find_node_in_path(parent_path.as_deref()));
     if let Some(node) = node_execpath {
         let node_str = node.to_string_lossy().into_owned();
         env.insert("npm_node_execpath".into(), node_str.clone());
@@ -121,23 +127,40 @@ pub fn build_env(
 }
 
 /// Keep PATH (handled by the caller) and everything that does not
-/// start with the npm/pnpm stamping prefixes; drop NODE and TMPDIR
-/// for the same reason — we re-derive them.
+/// start with `npm_`; drop NODE / TMPDIR / INIT_CWD /
+/// PNPM_SCRIPT_SRC_DIR because we re-derive them.
 fn filter_parent_env(env: HashMap<String, String>) -> HashMap<String, String> {
     env.into_iter().filter(|(k, _)| !is_stamping_key(k)).collect()
 }
 
+/// Mirrors `!i.match(/^npm_/)` at index.js:359 plus the per-call
+/// stamps we always re-derive (`NODE`, `TMPDIR`, `INIT_CWD`,
+/// `PNPM_SCRIPT_SRC_DIR`). Only the `npm_*` prefix is stripped —
+/// `pnpm_*` keys (e.g. `PNPM_HOME`, feature flags) are upstream-
+/// preserved and pacquet does the same.
 fn is_stamping_key(key: &str) -> bool {
-    if key.starts_with("npm_") || key.starts_with("pnpm_") {
+    if key.starts_with("npm_") {
         return true;
     }
     matches!(key, "NODE" | "TMPDIR" | "INIT_CWD" | "PNPM_SCRIPT_SRC_DIR")
 }
 
-fn find_node_in_path() -> Option<PathBuf> {
-    let path = env::var_os("PATH")?;
+/// Look up the `PATH` value from `env` case-insensitively. On
+/// Windows the system variable is typically `Path`, not `PATH`;
+/// returning the value here lets the rest of `build_env` stay
+/// independent of casing.
+pub(crate) fn path_value(env: &HashMap<String, String>) -> Option<String> {
+    env.iter().find_map(|(k, v)| k.eq_ignore_ascii_case("PATH").then(|| v.clone()))
+}
+
+/// Look up `node` along the supplied `PATH`. Driven by the filtered
+/// `parent_env`'s PATH (not the process-global env) so `build_env`
+/// stays deterministic given its inputs — matching the docstring
+/// contract.
+fn find_node_in_path(path: Option<&str>) -> Option<PathBuf> {
+    let path = path?;
     let node_name = if cfg!(windows) { "node.exe" } else { "node" };
-    env::split_paths(&path).find_map(|dir| {
+    env::split_paths(path).find_map(|dir| {
         let candidate = dir.join(node_name);
         candidate.is_file().then_some(candidate)
     })

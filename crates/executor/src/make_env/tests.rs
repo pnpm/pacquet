@@ -30,17 +30,20 @@ fn base_opts<'a>(
 /// Ports `test('makeEnv')` from
 /// <https://github.com/pnpm/npm-lifecycle/blob/d2d8e790/test/index.js#L97-L124>.
 ///
-/// Three invariants we mirror:
+/// Four invariants we mirror:
 /// - top-level `npm_package_name` is set from the manifest's `name`,
 /// - package-local config like `_myPackage` keys are NOT promoted to
 ///   `npm_package_config_*`,
-/// - `npm_config_*` keys leaked from the parent env are stripped.
+/// - `npm_*` keys leaked from the parent env are stripped (upstream's
+///   `!i.match(/^npm_/)` filter at `index.js:359`),
+/// - everything else passes through — including `pnpm_*` keys like
+///   `PNPM_HOME`, which upstream does not filter.
 #[test]
 fn make_env_stamps_top_level_keys_and_strips_npm_config_leakage() {
     let mut parent = HashMap::new();
     parent.insert("PATH".into(), "/usr/bin".into());
     parent.insert("npm_config_enteente".into(), "should-be-stripped".into());
-    parent.insert("pnpm_config_user_agent".into(), "should-also-go".into());
+    parent.insert("PNPM_HOME".into(), "/opt/pnpm".into());
     parent.insert("HOME".into(), "/home/me".into());
 
     let manifest = json!({
@@ -67,10 +70,10 @@ fn make_env_stamps_top_level_keys_and_strips_npm_config_leakage() {
         "npm_config_* must be stripped from parent env: {:?}",
         built.env,
     );
-    assert!(
-        !built.env.contains_key("pnpm_config_user_agent"),
-        "pnpm_config_* must be stripped from parent env: {:?}",
-        built.env,
+    assert_eq!(
+        built.env.get("PNPM_HOME").map(String::as_str),
+        Some("/opt/pnpm"),
+        "pnpm_* (incl. PNPM_HOME) keys are NOT in upstream's strip filter — they must pass through",
     );
     assert_eq!(
         built.env.get("HOME").map(String::as_str),

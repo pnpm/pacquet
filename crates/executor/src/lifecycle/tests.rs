@@ -261,14 +261,20 @@ fn missing_manifest_returns_false() {
 #[cfg(unix)]
 #[test]
 fn child_sees_stamped_npm_package_and_no_leaked_npm_config() {
-    // SAFETY: this test mutates the process's own env to seed a
-    // would-be-leaked `npm_config_*` key. nextest runs each test in
-    // its own thread, so concurrent reads from `env::vars()` in
-    // sibling tests could observe this. Wrapping in `unsafe` is
-    // unavoidable since stdlib's set/remove are `unsafe` to call.
-    unsafe {
-        std::env::set_var("npm_config_should_be_stripped", "leak");
+    /// RAII guard that removes a process env var on drop, so an
+    /// assertion failure can't leak the seed into sibling tests.
+    /// Stdlib `set_var`/`remove_var` are `unsafe` in current Rust;
+    /// SAFETY: nextest runs each test in its own thread, so the
+    /// only risk is sibling tests calling `env::vars()`
+    /// concurrently — the guard's `Drop` still runs on panic.
+    struct EnvGuard(&'static str);
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            unsafe { std::env::remove_var(self.0) }
+        }
     }
+    let _guard = EnvGuard("npm_config_should_be_stripped");
+    unsafe { std::env::set_var("npm_config_should_be_stripped", "leak") };
 
     let dir = tempdir().expect("create temp dir");
     let pkg_root = dir.path();
@@ -310,15 +316,9 @@ fn child_sees_stamped_npm_package_and_no_leaked_npm_config() {
     };
 
     let ran = run_postinstall_hooks::<SilentReporter>(opts).expect("postinstall");
-    assert!(ran);
+    assert!(ran, "run_postinstall_hooks must report at least one script ran: ran={ran}");
 
-    unsafe {
-        std::env::remove_var("npm_config_should_be_stripped");
-    }
-
-    let dumped = fs::read_to_string(&dump_path).expect("read env dump");
-    let dump = &dumped;
-    dbg!(dump);
+    let dump = fs::read_to_string(&dump_path).expect("read env dump");
 
     let expected_init_cwd = pkg_root.to_string_lossy();
     let expected_pairs = [
