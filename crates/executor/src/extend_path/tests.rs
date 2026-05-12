@@ -65,23 +65,54 @@ fn no_ancestors_when_wd_has_no_node_modules_segment() {
 /// Two-level pnpm virtual store wd:
 /// `<root>/node_modules/.pnpm/foo@1.0.0/node_modules/foo`. The walk
 /// must produce three `.bin` paths, ordered deepest-first.
+///
+/// Unix-only because `path::absolute("/proj")` on Windows resolves
+/// against the current drive (`C:\proj`), which makes the hard-coded
+/// expected values racy. The structural invariants (count + deepest-
+/// first ordering) are covered platform-neutrally in
+/// [`virtual_store_walk_orders_deepest_first`] below.
+#[cfg(unix)]
 #[test]
 fn pnpm_virtual_store_layout_yields_three_bins_deepest_first() {
     let wd = Path::new("/proj/node_modules/.pnpm/foo@1.0.0/node_modules/foo");
     let extra: Vec<PathBuf> = vec![];
     let path = extend_path(wd, None, None, &extra, ScriptsPrependNodePath::Never, None);
     let parts = segments(&path);
-    assert_eq!(parts.len(), 3, "expected three bin paths, got {parts:?}");
-
-    let normalized: Vec<String> = parts.into_iter().map(|p| p.replace('\\', "/")).collect();
     assert_eq!(
-        normalized,
+        parts,
         vec![
             "/proj/node_modules/.pnpm/foo@1.0.0/node_modules/foo/node_modules/.bin".to_string(),
             "/proj/node_modules/.pnpm/foo@1.0.0/node_modules/.bin".to_string(),
             "/proj/node_modules/.bin".to_string(),
         ],
     );
+}
+
+/// Platform-neutral version of the virtual-store walk test: assert
+/// the count and the deepest-first ordering (each entry must be a
+/// strict prefix of the entry before it after stripping the trailing
+/// `node_modules/.bin`) without anchoring to any absolute root.
+#[test]
+fn virtual_store_walk_orders_deepest_first() {
+    let wd = Path::new("proj")
+        .join("node_modules")
+        .join(".pnpm")
+        .join("foo@1.0.0")
+        .join("node_modules")
+        .join("foo");
+    let extra: Vec<PathBuf> = vec![];
+    let path = extend_path(&wd, None, None, &extra, ScriptsPrependNodePath::Never, None);
+    let parts = segments(&path);
+    assert_eq!(parts.len(), 3, "expected three bin paths, got {parts:?}");
+    for window in parts.windows(2) {
+        let deeper = &window[0];
+        let shallower = &window[1];
+        assert!(
+            deeper.len() > shallower.len(),
+            "{deeper:?} must be deeper than {shallower:?}",
+        );
+        assert!(deeper.ends_with(".bin") && shallower.ends_with(".bin"));
+    }
 }
 
 /// `extra_bin_paths` slot in after the .bin walk and after node-gyp.

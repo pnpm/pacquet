@@ -11,6 +11,13 @@ use tempfile::tempdir;
 /// Recording-fake reporter that pushes every emitted [`LogEvent`] into
 /// `EVENTS`. The static lives in this test function's own scope, so
 /// other tests have independent buffers.
+///
+/// Unix-only: the script body uses `;` and `1>&2`, which `cmd /d /s /c`
+/// (the default shell pacquet now picks on Windows, per item #4)
+/// does not interpret the same way. Windows e2e coverage for
+/// lifecycle spawning is a follow-up — for now the cmd path is
+/// exercised by the unit tests in [`crate::shell`].
+#[cfg(unix)]
 #[test]
 fn lifecycle_emits_script_stdio_and_exit_in_order() {
     static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
@@ -246,6 +253,12 @@ fn missing_manifest_returns_false() {
 /// from this process's env. Adapts the upstream test at
 /// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/exec/lifecycle/test/index.ts#L65-L77>
 /// to a file-dump model so we don't need an IPC fixture.
+///
+/// Unix-only: relies on `printf` and `$VAR` expansion, which `cmd`
+/// (the Windows default per item #4) doesn't speak. Env stamping
+/// itself is platform-agnostic and covered by the unit tests in
+/// [`crate::make_env`].
+#[cfg(unix)]
 #[test]
 fn child_sees_stamped_npm_package_and_no_leaked_npm_config() {
     // SAFETY: this test mutates the process's own env to seed a
