@@ -54,7 +54,10 @@ pub enum BuildModulesError {
             "Lower childConcurrency in pnpm-workspace.yaml, or raise the process's RLIMIT_NPROC."
         )
     )]
-    ThreadPoolBuild { source: rayon::ThreadPoolBuildError },
+    ThreadPoolBuild {
+        #[error(source)]
+        source: rayon::ThreadPoolBuildError,
+    },
 }
 
 /// Build policy derived from `allowBuilds` and
