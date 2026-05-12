@@ -1,10 +1,10 @@
 use super::{Install, InstallError};
+use pacquet_config::Config;
 use pacquet_lockfile::Lockfile;
 use pacquet_modules_yaml::{
     DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH, LayoutVersion, Modules, NodeLinker, RealApi,
     read_modules_manifest,
 };
-use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry_mock::AutoMockInstance;
 use pacquet_reporter::{
@@ -37,7 +37,7 @@ async fn should_install_dependencies() {
 
     manifest.save().unwrap();
 
-    let mut config = Npmrc::new();
+    let mut config = Config::new();
     config.store_dir = store_dir.into();
     config.modules_dir = modules_dir.to_path_buf();
     config.virtual_store_dir = virtual_store_dir.to_path_buf();
@@ -89,7 +89,7 @@ async fn should_error_when_frozen_lockfile_is_requested_but_none_exists() {
     let manifest_path = dir.path().join("package.json");
     let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
 
-    let mut config = Npmrc::new();
+    let mut config = Config::new();
     config.lockfile = true;
     config.store_dir = store_dir.into();
     config.modules_dir = modules_dir.to_path_buf();
@@ -124,7 +124,7 @@ async fn should_error_when_writable_lockfile_mode_is_used() {
     let manifest_path = dir.path().join("package.json");
     let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
 
-    let mut config = Npmrc::new();
+    let mut config = Config::new();
     config.lockfile = true;
     config.store_dir = store_dir.into();
     config.modules_dir = modules_dir.to_path_buf();
@@ -172,7 +172,7 @@ async fn frozen_lockfile_flag_overrides_config_lockfile_false() {
     let manifest_path = dir.path().join("package.json");
     let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
 
-    let mut config = Npmrc::new();
+    let mut config = Config::new();
     // Explicitly disabled — this is the pacquet default today. The
     // CLI flag must still take over.
     config.lockfile = false;
@@ -245,7 +245,7 @@ async fn npm_alias_dependency_installs_under_alias_key() {
         .unwrap();
     manifest.save().unwrap();
 
-    let mut config = Npmrc::new();
+    let mut config = Config::new();
     config.store_dir = store_dir.into();
     config.modules_dir = modules_dir.to_path_buf();
     config.virtual_store_dir = virtual_store_dir.to_path_buf();
@@ -319,7 +319,7 @@ async fn unversioned_npm_alias_defaults_to_latest() {
         .unwrap();
     manifest.save().unwrap();
 
-    let mut config = Npmrc::new();
+    let mut config = Config::new();
     config.store_dir = store_dir.into();
     config.modules_dir = modules_dir.to_path_buf();
     config.virtual_store_dir = virtual_store_dir.to_path_buf();
@@ -378,7 +378,7 @@ async fn frozen_lockfile_flag_with_no_lockfile_errors() {
     let manifest_path = dir.path().join("package.json");
     let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
 
-    let mut config = Npmrc::new();
+    let mut config = Config::new();
     config.lockfile = false;
     config.store_dir = store_dir.into();
     config.modules_dir = modules_dir.to_path_buf();
@@ -445,7 +445,7 @@ async fn install_emits_pnpm_event_sequence() {
     let manifest_path = dir.path().join("package.json");
     let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
 
-    let mut config = Npmrc::new();
+    let mut config = Config::new();
     config.lockfile = false;
     config.store_dir = store_dir.clone().into();
     config.modules_dir = modules_dir.to_path_buf();
@@ -576,7 +576,7 @@ async fn install_writes_modules_yaml() {
     let manifest_path = dir.path().join("package.json");
     let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
 
-    let mut config = Npmrc::new();
+    let mut config = Config::new();
     config.lockfile = false;
     config.store_dir = store_dir.clone().into();
     config.modules_dir = modules_dir.clone();
@@ -683,7 +683,7 @@ async fn install_optional_failing_postinstall_dep_via_registry_mock_succeeds() {
         .unwrap();
     manifest.save().unwrap();
 
-    let mut config = Npmrc::new();
+    let mut config = Config::new();
     config.store_dir = store_dir.into();
     config.modules_dir = modules_dir.to_path_buf();
     config.virtual_store_dir = virtual_store_dir.to_path_buf();

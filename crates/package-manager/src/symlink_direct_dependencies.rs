@@ -2,8 +2,8 @@ use crate::{link_direct_dep_bins, symlink_package};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_cmd_shim::LinkBinsError;
+use pacquet_config::Config;
 use pacquet_lockfile::{Lockfile, PkgName, PkgNameVerPeer, ProjectSnapshot};
-use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::DependencyGroup;
 use pacquet_reporter::{
     AddedRoot, DependencyType, LogEvent, LogLevel, Reporter, RootLog, RootMessage,
@@ -22,7 +22,7 @@ pub struct SymlinkDirectDependencies<'a, DependencyGroupList>
 where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
-    pub config: &'static Npmrc,
+    pub config: &'static Config,
     pub importers: &'a HashMap<String, ProjectSnapshot>,
     pub dependency_groups: DependencyGroupList,
     /// Install root, threaded into the `pnpm:root` `prefix` field.

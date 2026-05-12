@@ -4,11 +4,11 @@ use crate::{
 use derive_more::{Display, Error};
 use futures_util::future;
 use miette::Diagnostic;
+use pacquet_config::Config;
 use pacquet_lockfile::{
     LockfileResolution, PackageKey, PackageMetadata, PkgNameVerPeer, SnapshotEntry,
 };
 use pacquet_network::ThrottledClient;
-use pacquet_npmrc::Npmrc;
 use pacquet_reporter::{
     LogEvent, LogLevel, ProgressLog, ProgressMessage, Reporter, StatsLog, StatsMessage,
 };
@@ -38,7 +38,7 @@ pub type PackageManifests = HashMap<PkgNameVerPeer, std::sync::Arc<serde_json::V
 #[must_use]
 pub struct CreateVirtualStore<'a> {
     pub http_client: &'a ThrottledClient,
-    pub config: &'static Npmrc,
+    pub config: &'static Config,
     pub packages: Option<&'a HashMap<PackageKey, PackageMetadata>>,
     pub snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,
     /// Install-scoped dedupe state for `pnpm:package-import-method`.

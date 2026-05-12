@@ -1,7 +1,7 @@
 use super::InstallPackageFromRegistry;
 use node_semver::Version;
+use pacquet_config::Config;
 use pacquet_network::ThrottledClient;
-use pacquet_npmrc::Npmrc;
 use pacquet_registry_mock::AutoMockInstance;
 use pacquet_reporter::{LogEvent, ProgressMessage, Reporter, SilentReporter};
 use pacquet_store_dir::{SharedVerifiedFilesCache, StoreDir};
@@ -14,8 +14,8 @@ use std::{
 };
 use tempfile::tempdir;
 
-fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path) -> Npmrc {
-    Npmrc {
+fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path) -> Config {
+    Config {
         hoist: false,
         hoist_pattern: vec![],
         public_hoist_pattern: vec![],
@@ -48,7 +48,7 @@ pub async fn should_find_package_version_from_registry() {
     let store_dir = tempdir().unwrap();
     let modules_dir = tempdir().unwrap();
     let virtual_store_dir = tempdir().unwrap();
-    let config: &'static Npmrc =
+    let config: &'static Config =
         create_config(store_dir.path(), modules_dir.path(), virtual_store_dir.path())
             .pipe(Box::new)
             .pipe(Box::leak);
@@ -127,7 +127,7 @@ async fn no_lockfile_install_emits_progress_sequence() {
 
     let mut config = create_config(store_dir.path(), modules_dir.path(), virtual_store_dir.path());
     config.registry = mock_instance.url();
-    let config: &'static Npmrc = config.pipe(Box::new).pipe(Box::leak);
+    let config: &'static Config = config.pipe(Box::new).pipe(Box::leak);
 
     let http_client = ThrottledClient::new_for_installs();
     let verified_files_cache = SharedVerifiedFilesCache::default();

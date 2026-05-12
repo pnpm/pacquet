@@ -1858,12 +1858,12 @@ dependencies = [
  "home",
  "insta",
  "miette 7.6.0",
+ "pacquet-config",
  "pacquet-diagnostics",
  "pacquet-executor",
  "pacquet-fs",
  "pacquet-lockfile",
  "pacquet-network",
- "pacquet-npmrc",
  "pacquet-package-manager",
  "pacquet-package-manifest",
  "pacquet-registry",
@@ -1891,6 +1891,22 @@ dependencies = [
  "serde_json",
  "tempfile",
  "walkdir",
+]
+
+[[package]]
+name = "pacquet-config"
+version = "0.0.1"
+dependencies = [
+ "derive_more",
+ "home",
+ "miette 7.6.0",
+ "pacquet-store-dir",
+ "pipe-trait",
+ "pretty_assertions",
+ "serde",
+ "serde-saphyr",
+ "smart-default",
+ "tempfile",
 ]
 
 [[package]]
@@ -2012,23 +2028,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pacquet-npmrc"
-version = "0.0.1"
-dependencies = [
- "derive_more",
- "home",
- "miette 7.6.0",
- "pacquet-store-dir",
- "pipe-trait",
- "pretty_assertions",
- "serde",
- "serde-saphyr",
- "serde_ini",
- "smart-default",
- "tempfile",
-]
-
-[[package]]
 name = "pacquet-package-manager"
 version = "0.0.1"
 dependencies = [
@@ -2041,12 +2040,12 @@ dependencies = [
  "miette 7.6.0",
  "node-semver",
  "pacquet-cmd-shim",
+ "pacquet-config",
  "pacquet-executor",
  "pacquet-fs",
  "pacquet-lockfile",
  "pacquet-modules-yaml",
  "pacquet-network",
- "pacquet-npmrc",
  "pacquet-package-manifest",
  "pacquet-registry",
  "pacquet-registry-mock",
@@ -2553,12 +2552,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e061d1b48cb8d38042de4ae0a7a6401009d6143dc80d2e2d6f31f0bdd6470c7"
 
 [[package]]
-name = "result"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "194d8e591e405d1eecf28819740abed6d719d1a2db87fc0bcdedee9a26d55560"
-
-[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2765,17 +2758,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "serde_ini"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb236687e2bb073a7521c021949be944641e671b8505a94069ca37b656c81139"
-dependencies = [
- "result",
- "serde",
- "void",
 ]
 
 [[package]]
@@ -3439,12 +3421,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "void"
-version = "1.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a02e4885ed3bc0f2de90ea6dd45ebcbb66dacffe03547fadbb0eeae2770887d"
 
 [[package]]
 name = "wait-timeout"

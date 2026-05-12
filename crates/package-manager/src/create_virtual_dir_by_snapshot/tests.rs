@@ -1,6 +1,6 @@
 use super::{CreateVirtualDirBySnapshot, optimistic_wire_method};
+use pacquet_config::PackageImportMethod;
 use pacquet_lockfile::{PackageKey, SnapshotEntry};
-use pacquet_npmrc::PackageImportMethod;
 use pacquet_reporter::{
     LogEvent, PackageImportMethod as WireImportMethod, ProgressMessage, Reporter,
 };

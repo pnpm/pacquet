@@ -1,5 +1,5 @@
 [package]
-name                  = "pacquet-npmrc"
+name                  = "pacquet-config"
 version               = "0.0.1"
 publish               = false
 authors.workspace     = true
@@ -19,7 +19,6 @@ miette        = { workspace = true }
 pipe-trait    = { workspace = true }
 serde         = { workspace = true }
 serde-saphyr  = { workspace = true }
-serde_ini     = { workspace = true }
 smart-default = { workspace = true }
 
 [dev-dependencies]

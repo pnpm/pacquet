@@ -1,6 +1,6 @@
 use super::{SymlinkDirectDependencies, SymlinkDirectDependenciesError};
+use pacquet_config::Config;
 use pacquet_lockfile::{Lockfile, ProjectSnapshot, ResolvedDependencyMap, ResolvedDependencySpec};
-use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::DependencyGroup;
 use pacquet_reporter::{
     AddedRoot, DependencyType, LogEvent, Reporter, RootLog, RootMessage, SilentReporter,
@@ -34,7 +34,7 @@ fn emits_pnpm_root_added_per_direct_dependency() {
     let modules_dir = project_root.join("node_modules");
     let virtual_store_dir = modules_dir.join(".pacquet");
 
-    let mut config = Npmrc::new();
+    let mut config = Config::new();
     config.store_dir = dir.path().join("pacquet-store").into();
     config.modules_dir = modules_dir.clone();
     config.virtual_store_dir = virtual_store_dir.clone();
@@ -154,7 +154,7 @@ fn duplicate_dep_across_groups_collapses_to_one_entry() {
     let modules_dir = project_root.join("node_modules");
     let virtual_store_dir = modules_dir.join(".pacquet");
 
-    let mut config = Npmrc::new();
+    let mut config = Config::new();
     config.store_dir = dir.path().join("pacquet-store").into();
     config.modules_dir = modules_dir.clone();
     config.virtual_store_dir = virtual_store_dir.clone();
@@ -225,7 +225,7 @@ fn duplicate_dep_across_groups_collapses_to_one_entry() {
 #[test]
 fn missing_root_importer_surfaces_as_error() {
     let dir = tempdir().unwrap();
-    let mut config = Npmrc::new();
+    let mut config = Config::new();
     config.store_dir = dir.path().join("pacquet-store").into();
     config.modules_dir = dir.path().join("project/node_modules");
     config.virtual_store_dir = dir.path().join("project/node_modules/.pacquet");

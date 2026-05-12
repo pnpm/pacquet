@@ -1,4 +1,4 @@
-use crate::Npmrc;
+use crate::Config;
 
 /// Narrow subset of `.npmrc` that pacquet currently reads.
 ///
@@ -23,9 +23,9 @@ impl NpmrcAuth {
     /// Unknown keys are silently dropped.
     ///
     /// The `.npmrc` format is a tiny ini dialect: one `key=value` per line,
-    /// plus comments starting with `;` or `#`. We hand-parse instead of
-    /// `serde_ini` so unknown / malformed keys don't blow up parsing the way
-    /// they would with a strongly-typed deserializer.
+    /// plus comments starting with `;` or `#`. We hand-parse rather than
+    /// use a strongly-typed deserializer so unknown / malformed keys don't
+    /// blow up parsing.
     pub fn from_ini(text: &str) -> Self {
         let mut auth = NpmrcAuth::default();
         for line in text.lines() {
@@ -51,12 +51,11 @@ impl NpmrcAuth {
         auth
     }
 
-    /// Apply the parsed auth settings onto `npmrc`, leaving unset fields
-    /// alone and doing the same trailing-slash normalisation the ini
-    /// deserializer used to perform via `deserialize_registry`.
-    pub fn apply_to(self, npmrc: &mut Npmrc) {
+    /// Apply the parsed auth settings onto `config`, leaving unset fields
+    /// alone and normalising `registry` to end with a trailing slash.
+    pub fn apply_to(self, config: &mut Config) {
         if let Some(registry) = self.registry {
-            npmrc.registry =
+            config.registry =
                 if registry.ends_with('/') { registry } else { format!("{registry}/") };
         }
     }

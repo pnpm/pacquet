@@ -7,15 +7,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Handle the slight difference between OSes.
-///
-/// **TODO:** may be we should have handle them in the production code instead?
+/// Canonicalize a path the same way the production CLI does. The CLI
+/// runs `dunce::canonicalize` on `--dir` and threads that through to
+/// `Config::current`, so on Windows the printed `storeDir` is the long
+/// form (`C:\Users\runneradmin\...`) even when the surrounding test
+/// runs in a `TEMP` directory whose env var resolves to the short DOS
+/// form (`C:\Users\RUNNER~1\...`). Mirror that here so the expected
+/// value matches what pacquet actually prints.
 fn canonicalize(path: &Path) -> PathBuf {
-    if cfg!(windows) {
-        path.to_path_buf()
-    } else {
-        dunce::canonicalize(path).expect("canonicalize path")
-    }
+    dunce::canonicalize(path).expect("canonicalize path")
 }
 
 #[test]

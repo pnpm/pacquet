@@ -2,7 +2,7 @@ use super::{
     LINK_STATE_CLONE, LINK_STATE_COPY, LINK_STATE_HARDLINK, LinkFileError, auto_link,
     clone_or_copy_link, is_call_error, is_cross_device, link_file,
 };
-use pacquet_npmrc::PackageImportMethod;
+use pacquet_config::PackageImportMethod;
 use pacquet_reporter::SilentReporter;
 use pretty_assertions::assert_eq;
 use std::{

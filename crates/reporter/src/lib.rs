@@ -221,7 +221,7 @@ pub struct PackageImportMethodLog {
 }
 
 /// Wire-format import method. pnpm only knows three values; pacquet's
-/// config enum (`pacquet_npmrc::PackageImportMethod`) carries `Auto`
+/// config enum (`pacquet_config::PackageImportMethod`) carries `Auto`
 /// and `CloneOrCopy` on top of those, but those are dispatched-on by
 /// the auto-importer's fallback chain, not emitted. The wire value is
 /// the resolved method `link_file` actually used — `Clone` /

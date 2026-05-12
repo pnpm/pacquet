@@ -1,9 +1,9 @@
 //! Pacquet's prod manifest type
-//! (`pacquet_npmrc::workspace_yaml::WorkspaceSettings`) is shaped for
-//! deserializing user input as an additive overlay over `Npmrc` — it
+//! (`pacquet_config::workspace_yaml::WorkspaceSettings`) is shaped for
+//! deserializing user input as an additive overlay over `Config` — it
 //! is `Deserialize`-only, has no `supportedArchitectures` /
 //! `allowBuilds` fields, and its semantics are "apply non-`None` fields
-//! onto an existing `Npmrc`". The benchmark needs to *emit* a complete
+//! onto an existing `Config`". The benchmark needs to *emit* a complete
 //! workspace manifest including those benchmark-only fields, so this
 //! module defines a small `Serialize + Deserialize` shape with just
 //! the keys we read and write.

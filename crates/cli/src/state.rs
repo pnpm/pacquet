@@ -1,8 +1,8 @@
 use derive_more::{Display, Error};
 use miette::Diagnostic;
+use pacquet_config::Config;
 use pacquet_lockfile::{LoadLockfileError, Lockfile};
 use pacquet_network::ThrottledClient;
-use pacquet_npmrc::Npmrc;
 use pacquet_package_manager::ResolvedPackages;
 use pacquet_package_manifest::{PackageManifest, PackageManifestError};
 use pacquet_tarball::MemCache;
@@ -15,8 +15,9 @@ pub struct State {
     pub tarball_mem_cache: MemCache,
     /// HTTP client to make HTTP requests.
     pub http_client: ThrottledClient,
-    /// Configuration read from `.npmrc`
-    pub config: &'static Npmrc,
+    /// Merged runtime configuration: built-in defaults, with overlays from
+    /// the auth subset of `.npmrc` and from `pnpm-workspace.yaml`.
+    pub config: &'static Config,
     /// Data from the `package.json` file.
     pub manifest: PackageManifest,
     /// Data from the `pnpm-lock.yaml` file.
@@ -47,7 +48,7 @@ impl State {
     /// (or unset) in config.
     pub fn init(
         manifest_path: PathBuf,
-        config: &'static Npmrc,
+        config: &'static Config,
         require_lockfile: bool,
     ) -> Result<Self, InitStateError> {
         let should_load = config.lockfile || require_lockfile;
