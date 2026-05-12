@@ -683,7 +683,7 @@ async fn install_optional_failing_postinstall_dep_via_registry_mock_succeeds() {
         .unwrap();
     manifest.save().unwrap();
 
-    let mut config = Npmrc::new();
+    let mut config = Config::new();
     config.store_dir = store_dir.into();
     config.modules_dir = modules_dir.to_path_buf();
     config.virtual_store_dir = virtual_store_dir.to_path_buf();
