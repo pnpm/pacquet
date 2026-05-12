@@ -56,6 +56,7 @@ fn lifecycle_emits_script_stdio_and_exit_in_order() {
         node_gyp_bin: None,
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         script_shell: None,
+        optional: false,
     };
 
     let ran = run_postinstall_hooks::<RecordingReporter>(opts).expect("postinstall");
@@ -118,6 +119,84 @@ fn lifecycle_emits_script_stdio_and_exit_in_order() {
     );
 }
 
+/// `RunPostinstallHooks.optional` is stamped into both the `Script`
+/// and `Exit` `pnpm:lifecycle` events, matching upstream's
+/// `lifecycleLogger.debug({ optional, … })` shape at
+/// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/exec/lifecycle/src/runLifecycleHook.ts#L102>
+/// and `:165`. The two-bit truth on the wire lets the default
+/// reporter dispatch (e.g. quieting optional-dep noise) the same
+/// way it does against pnpm.
+#[cfg(unix)]
+#[test]
+fn lifecycle_events_carry_optional_flag() {
+    static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+    EVENTS.lock().expect("lock").clear();
+
+    struct RecordingReporter;
+    impl Reporter for RecordingReporter {
+        fn emit(event: &LogEvent) {
+            EVENTS.lock().expect("lock").push(event.clone());
+        }
+    }
+
+    let dir = tempdir().expect("create temp dir");
+    let pkg_root = dir.path();
+    let manifest = serde_json::json!({
+        "name": "opt",
+        "version": "1.0.0",
+        "scripts": { "postinstall": "true" },
+    });
+    fs::write(pkg_root.join("package.json"), manifest.to_string()).expect("write manifest");
+
+    let extra_env: HashMap<String, String> = HashMap::new();
+    let extra_bin_paths: Vec<std::path::PathBuf> = vec![];
+    let opts = RunPostinstallHooks {
+        dep_path: "/opt@1.0.0",
+        pkg_root,
+        root_modules_dir: pkg_root,
+        init_cwd: pkg_root,
+        extra_bin_paths: &extra_bin_paths,
+        extra_env: &extra_env,
+        node_execpath: None,
+        npm_execpath: None,
+        node_gyp_path: None,
+        user_agent: None,
+        unsafe_perm: true,
+        node_gyp_bin: None,
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        script_shell: None,
+        optional: true,
+    };
+
+    run_postinstall_hooks::<RecordingReporter>(opts).expect("postinstall");
+
+    let captured = EVENTS.lock().expect("lock").clone();
+    let lifecycle_events: Vec<_> = captured
+        .iter()
+        .filter_map(|e| match e {
+            LogEvent::Lifecycle(l) => Some(&l.message),
+            _ => None,
+        })
+        .collect();
+    dbg!(&lifecycle_events);
+    let script_optional = lifecycle_events
+        .iter()
+        .find_map(|m| match m {
+            LifecycleMessage::Script { optional, .. } => Some(*optional),
+            _ => None,
+        })
+        .expect("must emit a Script event");
+    assert!(script_optional, "Script event must carry optional=true");
+    let exit_optional = lifecycle_events
+        .iter()
+        .find_map(|m| match m {
+            LifecycleMessage::Exit { optional, .. } => Some(*optional),
+            _ => None,
+        })
+        .expect("must emit an Exit event");
+    assert!(exit_optional, "Exit event must carry optional=true");
+}
+
 /// Failing scripts emit a Script event, the captured stdio, and an Exit
 /// event with the resolved non-zero exit code, then return a
 /// [`LifecycleScriptError::ScriptFailed`].
@@ -159,6 +238,7 @@ fn lifecycle_emits_exit_with_nonzero_code_on_failure() {
         node_gyp_bin: None,
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         script_shell: None,
+        optional: false,
     };
 
     let err = run_postinstall_hooks::<RecordingReporter>(opts).expect_err("script must fail");
@@ -208,6 +288,7 @@ fn lifecycle_runs_under_silent_reporter() {
         node_gyp_bin: None,
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         script_shell: None,
+        optional: false,
     };
 
     let ran = run_postinstall_hooks::<SilentReporter>(opts).expect("postinstall");
@@ -241,6 +322,7 @@ fn missing_manifest_returns_false() {
         node_gyp_bin: None,
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         script_shell: None,
+        optional: false,
     };
 
     let ran = run_postinstall_hooks::<SilentReporter>(opts).expect("missing manifest is OK");
@@ -313,6 +395,7 @@ fn child_sees_stamped_npm_package_and_no_leaked_npm_config() {
         node_gyp_bin: None,
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         script_shell: None,
+        optional: false,
     };
 
     let ran = run_postinstall_hooks::<SilentReporter>(opts).expect("postinstall");
@@ -367,6 +450,7 @@ fn malformed_manifest_propagates_error() {
         node_gyp_bin: None,
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         script_shell: None,
+        optional: false,
     };
 
     let err = run_postinstall_hooks::<SilentReporter>(opts).expect_err("malformed JSON must fail");

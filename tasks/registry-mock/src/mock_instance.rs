@@ -9,7 +9,7 @@ use reqwest::Client;
 use std::{
     fs::File,
     path::Path,
-    process::{Child, Command, Stdio},
+    process::{Child, Stdio},
 };
 use sysinfo::{Pid, Signal};
 use tokio::time::{Duration, sleep};
@@ -79,7 +79,6 @@ impl<'a> MockInstanceOptions<'a> {
 
         eprintln!("Preparing...");
         node_registry_mock()
-            .pipe(Command::new)
             .arg("prepare")
             .env("PNPM_REGISTRY_MOCK_PORT", &port)
             .stdin(Stdio::null())
@@ -95,7 +94,6 @@ impl<'a> MockInstanceOptions<'a> {
             File::create(stderr).expect("create file for stderr").into()
         });
         let process = node_registry_mock()
-            .pipe(Command::new)
             .env("PNPM_REGISTRY_MOCK_PORT", &port)
             .stdin(Stdio::null())
             .stdout(stdout)
