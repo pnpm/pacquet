@@ -238,6 +238,10 @@ impl<'a> BuildModules<'a> {
                     // Item #15 in #397 will surface `scriptsPrependNodePath`
                     // from config; today the safe default is `Never`.
                     scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+                    // `scriptShell` / `shell-emulator` plumbing through the
+                    // package-manager config is its own follow-up — pass
+                    // `None` here to use the platform default.
+                    script_shell: None,
                 })
                 .map_err(BuildModulesError::LifecycleScript)?;
             }

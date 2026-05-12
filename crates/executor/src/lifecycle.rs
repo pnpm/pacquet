@@ -1,6 +1,7 @@
 use crate::{
     extend_path::{ScriptsPrependNodePath, extend_path},
     make_env::{EnvOptions, build_env},
+    shell::{ScriptShellError, select_shell},
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
@@ -55,6 +56,15 @@ pub enum LifecycleScriptError {
         #[error(source)]
         source: std::io::Error,
     },
+
+    #[display("Invalid script shell for {dep_path} {stage}: {source}")]
+    #[diagnostic(code(pacquet_executor::invalid_script_shell))]
+    ScriptShell {
+        dep_path: String,
+        stage: String,
+        #[error(source)]
+        source: ScriptShellError,
+    },
 }
 
 /// Options for [`run_postinstall_hooks`].
@@ -96,6 +106,10 @@ pub struct RunPostinstallHooks<'a> {
     /// Tri-state from `scriptsPrependNodePath` config. `Never` is the
     /// safe default; `Always` appends `dirname(node)` to `PATH`.
     pub scripts_prepend_node_path: ScriptsPrependNodePath,
+    /// Custom shell from `scriptShell` config (e.g. `bash`,
+    /// `/usr/local/bin/bash`). `None` means use the platform default
+    /// (`sh -c` on POSIX, `cmd /d /s /c` on Windows).
+    pub script_shell: Option<&'a Path>,
 }
 
 /// Run the preinstall, install, and postinstall lifecycle scripts for
@@ -235,8 +249,20 @@ fn run_lifecycle_hook<R: Reporter>(
         opts.node_execpath,
     );
 
-    let mut cmd = Command::new("sh");
-    cmd.arg("-c")
+    // Pick the shell up front so a misconfigured `scriptShell` fails
+    // before we touch the filesystem (TMPDIR etc. already created
+    // above — that's a minor leak, but matches upstream where
+    // `makeEnv` runs before the `runCmd_` shell pick anyway).
+    let shell = select_shell(opts.script_shell, cfg!(windows)).map_err(|source| {
+        LifecycleScriptError::ScriptShell {
+            dep_path: opts.dep_path.to_string(),
+            stage: stage.to_string(),
+            source,
+        }
+    })?;
+
+    let mut cmd = Command::new(&shell.program);
+    cmd.args(&shell.args)
         .arg(script)
         .current_dir(opts.pkg_root)
         // Stripping inherited env so leftover npm_* keys from a wrapping
@@ -247,6 +273,10 @@ fn run_lifecycle_hook<R: Reporter>(
         .env("PATH", &path_env)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // `windowsVerbatimArguments` from `npm-lifecycle/index.js:251`.
+    // Wire up Rust's equivalent (`raw_arg` on Windows) when we have a
+    // way to test it. For now the field signals intent for follow-up.
+    let _ = shell.windows_verbatim_args;
 
     let mut child = cmd.spawn().map_err(|e| LifecycleScriptError::Spawn {
         dep_path: opts.dep_path.to_string(),

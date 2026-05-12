@@ -48,6 +48,7 @@ fn lifecycle_emits_script_stdio_and_exit_in_order() {
         unsafe_perm: true,
         node_gyp_bin: None,
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        script_shell: None,
     };
 
     let ran = run_postinstall_hooks::<RecordingReporter>(opts).expect("postinstall");
@@ -150,6 +151,7 @@ fn lifecycle_emits_exit_with_nonzero_code_on_failure() {
         unsafe_perm: true,
         node_gyp_bin: None,
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        script_shell: None,
     };
 
     let err = run_postinstall_hooks::<RecordingReporter>(opts).expect_err("script must fail");
@@ -198,6 +200,7 @@ fn lifecycle_runs_under_silent_reporter() {
         unsafe_perm: true,
         node_gyp_bin: None,
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        script_shell: None,
     };
 
     let ran = run_postinstall_hooks::<SilentReporter>(opts).expect("postinstall");
@@ -230,6 +233,7 @@ fn missing_manifest_returns_false() {
         unsafe_perm: true,
         node_gyp_bin: None,
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        script_shell: None,
     };
 
     let ran = run_postinstall_hooks::<SilentReporter>(opts).expect("missing manifest is OK");
@@ -289,6 +293,7 @@ fn child_sees_stamped_npm_package_and_no_leaked_npm_config() {
         unsafe_perm: true,
         node_gyp_bin: None,
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        script_shell: None,
     };
 
     let ran = run_postinstall_hooks::<SilentReporter>(opts).expect("postinstall");
@@ -348,6 +353,7 @@ fn malformed_manifest_propagates_error() {
         unsafe_perm: true,
         node_gyp_bin: None,
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        script_shell: None,
     };
 
     let err = run_postinstall_hooks::<SilentReporter>(opts).expect_err("malformed JSON must fail");
