@@ -187,6 +187,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           name: pacquet v${{ needs.build.outputs.version }}
+          tag_name: v${{ needs.build.outputs.version }}
           draft: true
           files: pacquet-*
           fail_on_unmatched_files: true
