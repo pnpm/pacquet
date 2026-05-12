@@ -88,7 +88,7 @@ impl CliArgs {
             .into_diagnostic()
             .wrap_err_with(|| format!("canonicalizing the `--dir` argument: {}", dir.display()))?;
         let manifest_path = || dir.join("package.json");
-        let npmrc = || -> miette::Result<&'static mut Config> {
+        let config = || -> miette::Result<&'static mut Config> {
             Config::current(env::current_dir, home::home_dir, Default::default)
                 .map(Config::leak)
                 .map_err(miette::Report::new)
@@ -102,7 +102,7 @@ impl CliArgs {
         // must not be silently dropped because `lockfile=false` was set
         // (or defaulted) in config.
         let state = |require_lockfile: bool| -> miette::Result<State> {
-            State::init(manifest_path(), npmrc()?, require_lockfile)
+            State::init(manifest_path(), config()?, require_lockfile)
                 .wrap_err("initialize the state")
         };
 
@@ -141,7 +141,7 @@ impl CliArgs {
                 let command = manifest.script("start", true)?.unwrap_or("node server.js");
                 execute_shell(command).wrap_err(format!("executing command: \"{0}\"", command))?;
             }
-            CliCommand::Store(command) => command.run(|| npmrc().map(|m| &*m))?,
+            CliCommand::Store(command) => command.run(|| config().map(|m| &*m))?,
         }
 
         Ok(())

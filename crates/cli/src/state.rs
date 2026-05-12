@@ -15,7 +15,8 @@ pub struct State {
     pub tarball_mem_cache: MemCache,
     /// HTTP client to make HTTP requests.
     pub http_client: ThrottledClient,
-    /// Configuration read from `.npmrc`
+    /// Merged runtime configuration: built-in defaults, with overlays from
+    /// the auth subset of `.npmrc` and from `pnpm-workspace.yaml`.
     pub config: &'static Config,
     /// Data from the `package.json` file.
     pub manifest: PackageManifest,
