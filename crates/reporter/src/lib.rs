@@ -149,6 +149,19 @@ pub enum LogEvent {
     /// Emit site: <https://github.com/pnpm/pnpm/blob/80037699fb/installing/deps-installer/src/install/index.ts#L414>.
     #[serde(rename = "pnpm:ignored-scripts")]
     IgnoredScripts(IgnoredScriptsLog),
+
+    /// One per optional-dependency that pnpm decided to skip rather
+    /// than fail the install over. Reason discriminates the cause —
+    /// pacquet currently only emits `build_failure` (from
+    /// `BuildModules` when a postinstall fails on an optional dep);
+    /// the `unsupported_engine` / `unsupported_platform` /
+    /// `resolution_failure` reasons upstream uses come from earlier
+    /// phases that haven't landed in pacquet yet.
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/core/core-loggers/src/skippedOptionalDependencyLogger.ts>.
+    /// Emit site (build_failure): <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L218-L240>.
+    #[serde(rename = "pnpm:skipped-optional-dependency")]
+    SkippedOptionalDependency(SkippedOptionalDependencyLog),
 }
 
 /// `pnpm:context` payload.
@@ -515,6 +528,48 @@ pub enum LifecycleStdio {
 pub struct IgnoredScriptsLog {
     pub level: LogLevel,
     pub package_names: Vec<String>,
+}
+
+/// `pnpm:skipped-optional-dependency` payload. The full upstream
+/// `SkippedOptionalDependencyMessage` is a discriminated union over
+/// `reason`; pacquet currently only emits the `build_failure`
+/// variant, so this struct models that shape directly. Other
+/// reasons (`unsupported_engine`, `unsupported_platform`,
+/// `resolution_failure`) will need their own variants when the
+/// corresponding emit sites land. `parents` is a TODO upstream
+/// too — see `during-install/src/index.ts:227` — so it's omitted.
+#[derive(Debug, Clone, Serialize)]
+pub struct SkippedOptionalDependencyLog {
+    pub level: LogLevel,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
+    pub package: SkippedOptionalPackage,
+    pub prefix: String,
+    pub reason: SkippedOptionalReason,
+}
+
+/// Package identifier carried on a [`SkippedOptionalDependencyLog`].
+/// Matches the upstream "non-resolution-failure" branch of
+/// `SkippedOptionalDependencyMessage` at
+/// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/core/core-loggers/src/skippedOptionalDependencyLogger.ts#L15-L19>.
+#[derive(Debug, Clone, Serialize)]
+pub struct SkippedOptionalPackage {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+}
+
+/// Discriminator on a [`SkippedOptionalDependencyLog`]. Only
+/// `BuildFailure` lands at pacquet's current emit sites; the others
+/// are kept in the enum for forward compatibility so callers don't
+/// have to widen the type when more reasons are wired up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkippedOptionalReason {
+    BuildFailure,
+    UnsupportedEngine,
+    UnsupportedPlatform,
+    ResolutionFailure,
 }
 
 /// Severity level on the [bunyan]-shaped envelope.
