@@ -1,6 +1,6 @@
 use super::{
-    default_child_concurrency_with_parallelism, default_store_dir, resolve_child_concurrency,
-    resolve_child_concurrency_with_parallelism,
+    default_child_concurrency_with_parallelism, default_store_dir, default_unsafe_perm,
+    is_unsafe_perm_posix, resolve_child_concurrency, resolve_child_concurrency_with_parallelism,
 };
 use crate::test_env_guard::EnvGuard;
 use pacquet_store_dir::StoreDir;
@@ -137,6 +137,56 @@ fn resolve_child_concurrency_positive_amount() {
 fn resolve_child_concurrency_handles_i32_min() {
     let result = resolve_child_concurrency(Some(i32::MIN));
     assert_eq!(result, 1);
+}
+
+/// POSIX truth table for [`is_unsafe_perm_posix`] matching
+/// upstream's
+/// [`getuid?.() !== 0`](https://github.com/pnpm/pnpm/blob/94240bc046/building/after-install/src/extendBuildOptions.ts#L83-L86)
+/// branch:
+///
+/// - root (uid 0) → `false` (drop privileges)
+/// - non-root (any other uid) → `true` (no drop)
+#[test]
+fn is_unsafe_perm_posix_truth_table() {
+    assert!(!is_unsafe_perm_posix(0), "running as root → drop perms");
+    assert!(is_unsafe_perm_posix(1), "non-root uid 1 → no drop");
+    assert!(is_unsafe_perm_posix(501), "non-root uid 501 → no drop");
+    assert!(is_unsafe_perm_posix(65534), "non-root uid 65534 → no drop");
+}
+
+/// On Windows, [`default_unsafe_perm`] short-circuits to `true`
+/// without ever calling `getuid()`. Mirrors upstream's
+/// `process.platform === 'win32' || process.platform === 'cygwin'`
+/// branch.
+#[cfg(windows)]
+#[test]
+fn default_unsafe_perm_on_windows_is_always_true() {
+    assert!(default_unsafe_perm(), "Windows default must always be true");
+}
+
+/// On POSIX (excluding Cygwin), [`default_unsafe_perm`] matches
+/// the host's runtime uid via [`is_unsafe_perm_posix`]. Test
+/// environments don't usually run as root, so this is `true` in
+/// practice; the `is_unsafe_perm_posix_truth_table` test above
+/// pins the per-uid logic without needing root privileges. Cygwin
+/// is excluded because `default_unsafe_perm` short-circuits to
+/// `true` on Cygwin regardless of uid (matching upstream's
+/// `process.platform === 'cygwin'` branch).
+#[cfg(all(unix, not(target_os = "cygwin")))]
+#[test]
+fn default_unsafe_perm_on_posix_matches_runtime_uid() {
+    // SAFETY: `libc::getuid` is documented as always-safe.
+    let uid = unsafe { libc::getuid() } as u32;
+    assert_eq!(default_unsafe_perm(), is_unsafe_perm_posix(uid));
+}
+
+/// On Cygwin, [`default_unsafe_perm`] short-circuits to `true`
+/// without consulting the uid — same branch as Windows. Mirrors
+/// upstream's `process.platform === 'cygwin'` check.
+#[cfg(target_os = "cygwin")]
+#[test]
+fn default_unsafe_perm_on_cygwin_is_always_true() {
+    assert!(default_unsafe_perm(), "Cygwin default must always be true (matches upstream)");
 }
 
 #[cfg(windows)]

@@ -23,6 +23,9 @@ serde         = { workspace = true }
 serde-saphyr  = { workspace = true }
 smart-default = { workspace = true }
 
+[target.'cfg(all(unix, not(target_os = "cygwin")))'.dependencies]
+libc = { workspace = true }
+
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 tempfile          = { workspace = true }

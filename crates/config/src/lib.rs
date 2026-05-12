@@ -12,7 +12,9 @@ use serde::Deserialize;
 use smart_default::SmartDefault;
 use std::{collections::HashMap, fs, path::PathBuf};
 
-pub use crate::defaults::{available_parallelism, resolve_child_concurrency};
+pub use crate::defaults::{
+    available_parallelism, default_unsafe_perm, is_unsafe_perm_posix, resolve_child_concurrency,
+};
 use crate::defaults::{
     default_child_concurrency, default_fetch_retries, default_fetch_retry_factor,
     default_fetch_retry_maxtimeout, default_fetch_retry_mintimeout, default_hoist_pattern,
@@ -346,27 +348,25 @@ pub struct Config {
     /// Yaml accepts `true` / `false` / `"warn-only"`.
     pub scripts_prepend_node_path: ScriptsPrependNodePath,
 
-    /// `unsafePerm` from `pnpm-workspace.yaml`. When `false`, pnpm
-    /// runs lifecycle scripts under a TMPDIR isolated to
+    /// `unsafePerm` from `pnpm-workspace.yaml`. When `false`,
+    /// pnpm runs lifecycle scripts under a TMPDIR isolated to
     /// `node_modules/.tmp` and (in upstream) drops uid/gid to a
-    /// non-root user. Default `true` here. Pacquet honors the
-    /// TMPDIR side of the upstream behavior (see
-    /// `pacquet_executor::make_env`); the uid/gid drop is a no-op
-    /// in practice because pnpm's npm-lifecycle fork never
-    /// populates `opts.user` / `opts.group`, so even upstream just
-    /// re-applies the current process's uid/gid.
+    /// non-root user. Pacquet honors the TMPDIR side of the
+    /// upstream behavior (see `pacquet_executor::make_env`); the
+    /// uid/gid drop is a no-op in practice because pnpm's
+    /// npm-lifecycle fork never populates `opts.user` /
+    /// `opts.group`, so even upstream just re-applies the current
+    /// process's uid/gid.
     ///
-    /// Pacquet's default deviates slightly from upstream's
-    /// [`StrictBuildOptions.unsafePerm`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/after-install/src/extendBuildOptions.ts#L83-L86)
-    /// which auto-detects root-on-POSIX (`getuid() === 0 && setgid`)
-    /// and flips to `false`. Adding the auto-detect requires `libc`
-    /// (not currently in `[workspace.dependencies]`); for now,
-    /// root-run CI must set `unsafePerm: false` in yaml explicitly.
-    /// On Windows, [`WorkspaceSettings::apply_to`] forces this to
-    /// `true` regardless of yaml — matching upstream's
-    /// `process.platform === 'win32'` override at
+    /// The default is auto-detected via [`default_unsafe_perm`] to
+    /// mirror upstream's [`StrictBuildOptions.unsafePerm`](https://github.com/pnpm/pnpm/blob/94240bc046/building/after-install/src/extendBuildOptions.ts#L83-L86):
+    /// `true` on Windows or POSIX-not-root; `false` when running
+    /// as root on POSIX. On Windows,
+    /// [`WorkspaceSettings::apply_to`] also force-overrides the
+    /// applied value to `true` regardless of yaml — matching
+    /// upstream's `process.platform === 'win32'` gate at
     /// [`@pnpm/npm-lifecycle/index.js:204-220`](https://github.com/pnpm/npm-lifecycle/blob/d2d8e790/index.js#L204-L220).
-    #[default = true]
+    #[default(_code = "default_unsafe_perm()")]
     pub unsafe_perm: bool,
 
     /// `childConcurrency` from `pnpm-workspace.yaml` — the maximum

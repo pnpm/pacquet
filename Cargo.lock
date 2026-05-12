@@ -1912,6 +1912,7 @@ dependencies = [
  "derive_more",
  "home",
  "indexmap",
+ "libc",
  "miette 7.6.0",
  "pacquet-patching",
  "pacquet-store-dir",

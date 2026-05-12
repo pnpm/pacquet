@@ -160,5 +160,92 @@ pub fn resolve_child_concurrency_with_parallelism(option: Option<i32>, paralleli
     }
 }
 
+/// Default `unsafePerm` matching upstream's
+/// [`extendBuildOptions`](https://github.com/pnpm/pnpm/blob/94240bc046/building/after-install/src/extendBuildOptions.ts#L83-L86):
+///
+/// ```ts
+/// unsafePerm: process.platform === 'win32' ||
+///   process.platform === 'cygwin' ||
+///   !process.setgid ||
+///   process.getuid?.() !== 0,
+/// ```
+///
+/// Truth table:
+/// - Windows or Cygwin → `true`. POSIX privilege drop doesn't
+///   apply; upstream's `process.platform === 'win32' ||
+///   process.platform === 'cygwin'` branch fires unconditionally.
+/// - POSIX (excluding Cygwin), not running as root → `true`. Nothing
+///   to drop from.
+/// - POSIX, running as root → `false`. Lifecycle scripts will run
+///   under TMPDIR isolation to `node_modules/.tmp`.
+/// - Anything else (e.g. `wasm32-*`) → `true`. No POSIX privilege
+///   model to drop into; behave like upstream's Windows branch.
+///
+/// Pacquet's executor doesn't currently consume `unsafe_perm` to
+/// actually drop uid/gid (upstream's own [`@pnpm/npm-lifecycle`
+/// implementation](https://github.com/pnpm/npm-lifecycle/blob/d2d8e790/index.js#L236-L239)
+/// is a no-op in practice because `opts.user` / `opts.group` are
+/// never populated), but the TMPDIR-isolation side of the flag is
+/// honored — see `pacquet_executor::make_env`.
+///
+/// Cygwin needs explicit handling because Rust's
+/// [`x86_64-pc-cygwin` target](https://doc.rust-lang.org/rustc/platform-support/x86_64-pc-cygwin.html)
+/// emits `target_os = "cygwin"` with `cfg!(unix)` set and
+/// `cfg!(windows)` *unset*, so a plain `cfg!(windows)` check would
+/// fall through to the uid logic and diverge from upstream's
+/// unconditional-true Cygwin behavior. The `!process.setgid` branch
+/// in upstream is a Node-version compatibility check for older Node
+/// where `setgid` doesn't exist; it doesn't translate to Rust
+/// (libc's `setgid` is always available on POSIX hosts where libc
+/// compiles).
+pub fn default_unsafe_perm() -> bool {
+    platform_unsafe_perm_default()
+}
+
+/// Windows / Cygwin branch — always `true` (no POSIX privilege
+/// drop applies).
+#[cfg(any(windows, target_os = "cygwin"))]
+fn platform_unsafe_perm_default() -> bool {
+    true
+}
+
+/// POSIX (excluding Cygwin) — drop privileges only when running
+/// as root.
+#[cfg(all(unix, not(target_os = "cygwin")))]
+fn platform_unsafe_perm_default() -> bool {
+    is_unsafe_perm_posix(posix_getuid())
+}
+
+/// Targets that are neither Windows, Cygwin, nor POSIX
+/// (`wasm32-*`, `redox`, etc.) have no `getuid()` and no privilege
+/// model to drop into. Default to `true` so lifecycle scripts
+/// behave the same as on Windows.
+#[cfg(not(any(windows, unix)))]
+fn platform_unsafe_perm_default() -> bool {
+    true
+}
+
+/// Pure-logic helper exposed for tests so the POSIX branch can be
+/// exercised under both root and non-root uids without root
+/// privileges. Mirrors the POSIX half of [`default_unsafe_perm`].
+pub fn is_unsafe_perm_posix(uid: u32) -> bool {
+    // `unsafe_perm = true` means "do NOT drop privileges". Drop
+    // only when we *are* root (uid == 0).
+    uid != 0
+}
+
+/// Safe wrapper around `libc::getuid` — contains the `unsafe`
+/// FFI block internally so the caller doesn't need to propagate
+/// `unsafe`. `libc::getuid` is documented as always-safe: it
+/// reads a kernel field, has no side effects, and cannot fail.
+/// Only compiled on POSIX-excluding-Cygwin since that's the only
+/// branch that actually calls it.
+#[cfg(all(unix, not(target_os = "cygwin")))]
+fn posix_getuid() -> u32 {
+    // SAFETY: `libc::getuid` has no preconditions; it reads a
+    // kernel-owned uid field and cannot fail.
+    unsafe { libc::getuid() as u32 }
+}
+
 #[cfg(test)]
 mod tests;
