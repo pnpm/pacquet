@@ -207,20 +207,30 @@ impl<'a> BuildModules<'a> {
             })
             .collect();
 
-        // Build the dep graph + state cache once per install. Mirrors
-        // upstream's per-install `DepsStateCache` at
+        // Build the dep graph + state cache only when the
+        // side-effects-cache gate has a chance of firing. Otherwise
+        // the O(|snapshots|) graph construction is dead work — when
+        // `config.side_effects_cache` is off, or no Node major was
+        // detected, or the prefetch surfaced no cache rows, the
+        // gate below short-circuits before ever consulting the
+        // graph.
+        //
+        // Mirrors upstream's per-install `DepsStateCache` at
         // <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L74>.
         // The cache memoizes per-node hash across diamond-shaped
-        // subgraphs so the recursive walk stays linear in |snapshots|
-        // even when the same dep is reachable through many parents.
-        //
-        // Side-effects-cache lookup is gated on three preconditions:
-        //  - `config.side_effects_cache` is on,
-        //  - we have a Node major version (engine_name),
-        //  - the prefetch surfaced any cache rows at all.
-        // Failing any of those, the gate is `None` and every
-        // `requires_build` snapshot falls through to the build path.
-        let dep_graph = packages.map(|pkgs| crate::build_deps_graph(snapshots, pkgs));
+        // subgraphs so the recursive walk stays linear in
+        // |snapshots| even when the same dep is reachable through
+        // many parents.
+        let cache_gate_active = side_effects_cache
+            && engine_name.is_some()
+            && side_effects_maps_by_snapshot.is_some_and(|m| !m.is_empty())
+            && packages.is_some();
+        let dep_graph = cache_gate_active.then(|| {
+            crate::build_deps_graph(
+                snapshots,
+                packages.expect("`cache_gate_active` requires packages: Some"),
+            )
+        });
         let mut deps_state_cache: pacquet_graph_hasher::DepsStateCache<PackageKey> =
             pacquet_graph_hasher::DepsStateCache::new();
 

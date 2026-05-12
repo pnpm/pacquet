@@ -42,7 +42,7 @@ pub type PackageManifests = HashMap<PkgNameVerPeer, std::sync::Arc<serde_json::V
 /// (see `pacquet_store_dir::VerifyResult.side_effects_maps`).
 ///
 /// Multiple snapshot peer-variants of the same package share one
-/// `Arc<…>` value — the store-index row is keyed peer-stripped, so
+/// `Arc<_>` value — the store-index row is keyed peer-stripped, so
 /// each `PackageKey::without_peer()` lookup returns the same
 /// underlying map.
 ///
@@ -347,7 +347,7 @@ impl<'a> CreateVirtualStore<'a> {
                     .or_insert_with(|| std::sync::Arc::clone(manifest));
             }
             // Peer-variants of the same package share the same
-            // store-index row → the same `Arc<…>`. Cheap to share.
+            // store-index row → the same `Arc<_>`. Cheap to share.
             if let Some(cache_key) = cache_key.as_deref()
                 && let Some(maps) = prefetched_side_effects.get(cache_key)
             {

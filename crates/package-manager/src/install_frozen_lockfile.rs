@@ -92,8 +92,17 @@ where
         // side-effects-cache lookup can compose the right cache
         // key. `None` (no `node` on PATH) means the cache gate
         // falls through to "rebuild" — safe.
-        let engine_name: Option<String> = pacquet_graph_hasher::detect_node_major()
-            .map(|major| pacquet_graph_hasher::engine_name(major, None, None));
+        //
+        // `detect_node_major` spawns `node --version` synchronously,
+        // so run it on a blocking thread to keep the async install
+        // driver from stalling.
+        let engine_name: Option<String> = tokio::task::spawn_blocking(|| {
+            pacquet_graph_hasher::detect_node_major()
+                .map(|major| pacquet_graph_hasher::engine_name(major, None, None))
+        })
+        .await
+        .ok()
+        .flatten();
 
         SymlinkDirectDependencies { config, importers, dependency_groups, requester }
             .run::<R>()

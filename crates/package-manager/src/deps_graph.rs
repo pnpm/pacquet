@@ -2,7 +2,7 @@
 //! [`pacquet_graph_hasher::DepsGraphNode`].
 //!
 //! `BuildModules`'s `is_built` gate needs to call
-//! `calc_dep_state(graph, …)` per snapshot to compute the
+//! `calc_dep_state(graph, ...)` per snapshot to compute the
 //! side-effects-cache key. Upstream's `DepsGraph` is built from the
 //! lockfile via `lockfileToDepGraph` at
 //! <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/deps/graph-builder/src/lockfileToDepGraph.ts>;
@@ -70,10 +70,10 @@ fn full_pkg_id_for(pkg_key: &PackageKey, resolution: &LockfileResolution) -> Str
     }
     // Fallback for non-integrity resolutions (git, directory). We
     // serialize the resolution to a JSON value and hash it the same
-    // way upstream's `hashObject(resolution)` does. The hex digest
-    // matches upstream's encoding for this site (upstream calls
-    // `hashObject` which defaults to base64 — pacquet's call site
-    // uses the default base64 too, kept consistent here).
+    // way upstream's `hashObject(resolution)` does. Upstream's
+    // `hashObject` defaults to base64; pacquet pins the same
+    // encoding here for byte-for-byte parity of the resulting
+    // `<pkg_id>:<digest>` string.
     let resolution_value = serde_json::to_value(resolution).unwrap_or(serde_json::Value::Null);
     let hash =
         hash_object_with_encoding(&resolution_value, HashEncoding::Base64, /* sort */ true);

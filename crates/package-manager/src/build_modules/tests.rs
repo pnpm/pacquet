@@ -429,7 +429,6 @@ fn using_side_effects_cache_skips_rebuild() {
             include_dep_graph_hash: true,
         },
     );
-    dbg!(&expected_cache_key);
     let mut overlay = std::collections::HashMap::new();
     overlay.insert(expected_cache_key, std::collections::HashMap::new());
     let mut side_effects_maps = std::collections::HashMap::new();
@@ -449,7 +448,6 @@ fn using_side_effects_cache_skips_rebuild() {
     }
     .run::<RecordingReporter>()
     .expect("install must succeed when the cache hit skips the rebuild");
-    dbg!(&ignored);
 
     // The build was skipped, so no `pnpm:lifecycle` event for the
     // postinstall stage should have been emitted. If the gate were
@@ -503,7 +501,6 @@ fn side_effects_cache_disabled_bypasses_the_gate() {
     }
     .run::<SilentReporter>()
     .expect_err("with cache disabled, the failing postinstall must run and the install must fail");
-    eprintln!("ERR: {err}");
     assert!(matches!(err, crate::build_modules::BuildModulesError::LifecycleScript(_)));
 }
 
