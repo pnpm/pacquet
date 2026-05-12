@@ -104,7 +104,7 @@ fn mixed_entries_resolve_in_one_call() {
 /// `PatchGroup.range`. Switching back to BTreeMap (alphabetical)
 /// would silently break parity with upstream's JS-object iteration
 /// order and surface as different `PATCH_KEY_CONFLICT` diagnostics
-/// when multiple ranges match a version. Caught in review of slice A.
+/// when multiple ranges match a version.
 #[test]
 fn range_preserves_user_specified_order() {
     let workspace = tempdir().unwrap();

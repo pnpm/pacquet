@@ -24,8 +24,7 @@ fn entries(keys: &[&str]) -> Vec<(String, PatchInput)> {
 ///    then the wildcard.
 ///
 /// Assert the order directly rather than sorting — sorting would
-/// hide regressions in [`all_patch_keys`]. Flagged in slice A
-/// review.
+/// hide regressions in [`all_patch_keys`].
 #[test]
 fn all_keys_yields_every_configured_key() {
     let groups = group_patched_dependencies(entries(&[

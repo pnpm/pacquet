@@ -42,6 +42,7 @@ command-extra = { version = "1.0.0" }
 base64 = { version = "0.22.1" }
 dashmap = { version = "6.1.0" }
 derive_more = { version = "2.1.1", features = ["full"] }
+diffy = { version = "0.5.0" }
 dunce = { version = "1.0.5" }
 home = { version = "0.5.12" }
 httpdate = { version = "1.0.3" }

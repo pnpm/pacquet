@@ -1078,10 +1078,9 @@ fn sha512_hex(buf: &[u8]) -> String {
     format!("{digest:x}")
 }
 
-/// Slice B of pacquet#397 item 9: when `BuildModules.patches`
-/// contains an entry for a snapshot, the side-effects-cache key
-/// computed for that snapshot must include the `;patch=<hash>`
-/// segment that
+/// When `BuildModules.patches` contains an entry for a snapshot,
+/// the side-effects-cache key computed for that snapshot must
+/// include the `;patch=<hash>` segment that
 /// [`pacquet_graph_hasher::CalcDepStateOptions::patch_file_hash`]
 /// appends.
 ///
@@ -1161,14 +1160,33 @@ async fn write_path_cache_key_includes_patch_hash() {
 
     let (writer, writer_task) = StoreIndexWriter::spawn(&store_dir);
 
-    // Build the patches map keyed by the same peer-stripped key
-    // `BuildModules::run` uses internally for the lookup.
+    // The applier runs against `pkg_dir` before the postinstall, so
+    // it needs a real patch file that succeeds. Touch a brand-new
+    // file rather than modifying `index.js` so the assertions on
+    // the diff map below stay simple — the patch adds
+    // `patched.txt`, the postinstall adds `generated.txt`, the
+    // pristine `index.js` stays at its base digest.
+    let patch_dir = tempdir().expect("create patch dir");
+    let patch_file = patch_dir.path().join("foo.patch");
+    fs::write(
+        &patch_file,
+        "\
+diff --git a/patched.txt b/patched.txt
+new file mode 100644
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++hello from the patch
+",
+    )
+    .expect("write patch");
+
     let patch_hash = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
     let patches: HashMap<PackageKey, ExtendedPatchInfo> = HashMap::from([(
         pkg_key.without_peer(),
         ExtendedPatchInfo {
             hash: patch_hash.to_string(),
-            patch_file_path: None,
+            patch_file_path: Some(patch_file.clone()),
             key: "@pnpm/postinstall-modifies-source@1.0.0".to_string(),
         },
     )]);
@@ -1222,4 +1240,165 @@ async fn write_path_cache_key_includes_patch_hash() {
          expected key {expected_cache_key_with_patch:?}, got keys {:?}",
         side_effects.keys().collect::<Vec<_>>(),
     );
+}
+
+/// A patch in the `patches` map gets applied to the extracted
+/// package dir before postinstall hooks run. Mirrors the upstream
+/// `simple-with-patch` fixture at
+/// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/installing/deps-restorer/test/fixtures/simple-with-patch/>
+/// at the unit level.
+///
+/// Drives `BuildModules` with a single `requires_build=false`
+/// snapshot (no postinstall scripts), `dangerouslyAllowAllBuilds: true`
+/// (irrelevant — no scripts to allow), and a patch that creates
+/// `patched.txt`. After the run, `patched.txt` must exist on disk
+/// with the patch body.
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn patch_only_snapshot_gets_patched_via_build_modules() {
+    use pacquet_patching::ExtendedPatchInfo;
+    use pacquet_store_dir::{StoreDir, StoreIndexWriter};
+
+    let pkg_key = key("is-positive", "1.0.0");
+    let snapshots = HashMap::from([(pkg_key.clone(), SnapshotEntry::default())]);
+    let importers = root_importers(&[("is-positive", "1.0.0")]);
+    let policy = AllowBuildPolicy::new(rules([]), true);
+
+    let store_root = tempdir().expect("create store dir");
+    let store_dir = StoreDir::from(store_root.path().to_path_buf());
+    store_dir.init().expect("init store");
+    let virtual_store_dir = tempdir().expect("create vstore dir");
+    let modules_dir = tempdir().expect("create modules dir");
+    let lockfile_dir = tempdir().expect("create lockfile dir");
+
+    // Lay down a pristine `is-positive` package dir under the
+    // virtual store so the applier has a real target. No scripts,
+    // so `requires_build_map` for this snapshot stays false — the
+    // build trigger fires solely because of the patch entry.
+    let pkg_dir = virtual_store_dir.path().join("is-positive@1.0.0/node_modules/is-positive");
+    fs::create_dir_all(&pkg_dir).expect("create pkg dir");
+    fs::write(pkg_dir.join("package.json"), r#"{"name":"is-positive","version":"1.0.0"}"#)
+        .expect("write manifest");
+
+    // Patch that creates a brand-new file. Pure Create operation;
+    // diffy parses and applies it cleanly.
+    let patch_dir = tempdir().expect("create patch dir");
+    let patch_file = patch_dir.path().join("is-positive.patch");
+    fs::write(
+        &patch_file,
+        "\
+diff --git a/patched.txt b/patched.txt
+new file mode 100644
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++applied
+",
+    )
+    .expect("write patch");
+
+    let patches: HashMap<PackageKey, ExtendedPatchInfo> = HashMap::from([(
+        pkg_key.without_peer(),
+        ExtendedPatchInfo {
+            hash: "0".repeat(64),
+            patch_file_path: Some(patch_file.clone()),
+            key: "is-positive@1.0.0".to_string(),
+        },
+    )]);
+
+    let (writer, writer_task) = StoreIndexWriter::spawn(&store_dir);
+
+    BuildModules {
+        virtual_store_dir: virtual_store_dir.path(),
+        modules_dir: modules_dir.path(),
+        lockfile_dir: lockfile_dir.path(),
+        snapshots: Some(&snapshots),
+        packages: None,
+        importers: &importers,
+        allow_build_policy: &policy,
+        side_effects_maps_by_snapshot: None,
+        engine_name: None,
+        side_effects_cache: false,
+        side_effects_cache_write: false,
+        store_dir: Some(&store_dir),
+        store_index_writer: Some(&writer),
+        patches: Some(&patches),
+    }
+    .run::<SilentReporter>()
+    .expect("build modules must complete cleanly");
+
+    drop(writer);
+    writer_task.await.expect("await writer").expect("writer succeeds");
+
+    let patched = pkg_dir.join("patched.txt");
+    assert!(patched.exists(), "patch must have created {}", patched.display());
+    assert_eq!(fs::read_to_string(&patched).unwrap(), "applied\n");
+}
+
+/// When the resolved patch entry carries a hash but no
+/// `patch_file_path`, surfacing `ERR_PNPM_PATCH_FILE_PATH_MISSING`
+/// is the explicit signal the user should add the package to
+/// `patchedDependencies` in `pnpm-workspace.yaml`. Mirrors upstream's
+/// guard at
+/// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L172-L176>.
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn missing_patch_file_path_errors_with_diagnostic() {
+    use pacquet_patching::ExtendedPatchInfo;
+    use pacquet_store_dir::{StoreDir, StoreIndexWriter};
+
+    let pkg_key = key("is-positive", "1.0.0");
+    let snapshots = HashMap::from([(pkg_key.clone(), SnapshotEntry::default())]);
+    let importers = root_importers(&[("is-positive", "1.0.0")]);
+    let policy = AllowBuildPolicy::new(rules([]), true);
+
+    let store_root = tempdir().expect("create store dir");
+    let store_dir = StoreDir::from(store_root.path().to_path_buf());
+    store_dir.init().expect("init store");
+    let virtual_store_dir = tempdir().expect("create vstore dir");
+    let modules_dir = tempdir().expect("create modules dir");
+    let lockfile_dir = tempdir().expect("create lockfile dir");
+
+    let pkg_dir = virtual_store_dir.path().join("is-positive@1.0.0/node_modules/is-positive");
+    fs::create_dir_all(&pkg_dir).expect("create pkg dir");
+    fs::write(pkg_dir.join("package.json"), r#"{"name":"is-positive","version":"1.0.0"}"#)
+        .expect("write manifest");
+
+    // `patch_file_path: None` — the lockfile-only shape where a hash
+    // is known but no live config provides a file. Must surface as
+    // `ERR_PNPM_PATCH_FILE_PATH_MISSING`.
+    let patches: HashMap<PackageKey, ExtendedPatchInfo> = HashMap::from([(
+        pkg_key.without_peer(),
+        ExtendedPatchInfo {
+            hash: "0".repeat(64),
+            patch_file_path: None,
+            key: "is-positive@1.0.0".to_string(),
+        },
+    )]);
+
+    let (writer, writer_task) = StoreIndexWriter::spawn(&store_dir);
+
+    let err = BuildModules {
+        virtual_store_dir: virtual_store_dir.path(),
+        modules_dir: modules_dir.path(),
+        lockfile_dir: lockfile_dir.path(),
+        snapshots: Some(&snapshots),
+        packages: None,
+        importers: &importers,
+        allow_build_policy: &policy,
+        side_effects_maps_by_snapshot: None,
+        engine_name: None,
+        side_effects_cache: false,
+        side_effects_cache_write: false,
+        store_dir: Some(&store_dir),
+        store_index_writer: Some(&writer),
+        patches: Some(&patches),
+    }
+    .run::<SilentReporter>()
+    .expect_err("missing patch_file_path must surface as PatchFilePathMissing");
+
+    drop(writer);
+    let _ = writer_task.await;
+
+    assert!(matches!(err, super::BuildModulesError::PatchFilePathMissing { .. }), "got: {err:?}");
 }

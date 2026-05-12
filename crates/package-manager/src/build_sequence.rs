@@ -1,5 +1,6 @@
 use crate::graph_sequencer::{GraphSequencerResult, graph_sequencer};
 use pacquet_lockfile::{PackageKey, ProjectSnapshot, SnapshotEntry};
+use pacquet_patching::ExtendedPatchInfo;
 use std::collections::{HashMap, HashSet};
 
 /// Compute topologically ordered chunks of packages that need building.
@@ -20,8 +21,21 @@ use std::collections::{HashMap, HashSet};
 /// extraction (from each package's manifest scripts and presence of
 /// `binding.gyp` / `.hooks/`). Mirrors the role of `node.requiresBuild`
 /// upstream, which the worker computes from the extracted package contents.
+///
+/// `patches` is the per-snapshot lookup map produced by
+/// `InstallFrozenLockfile::run` from
+/// [`pacquet_patching::resolve_and_group`] + per-snapshot
+/// [`pacquet_patching::get_patch_info`]: keys are peer-stripped
+/// [`PackageKey`]s, values are the matched
+/// [`pacquet_patching::ExtendedPatchInfo`]. `None` when no
+/// `patchedDependencies` is configured. Presence of a key here
+/// mirrors upstream's `node.patch != null` and makes the snapshot
+/// a build candidate even when `requires_build` is false. Mirrors
+/// upstream's
+/// [`getSubgraphToBuild`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/buildSequence.ts#L40-L67).
 pub fn build_sequence(
     requires_build: &HashMap<PackageKey, bool>,
+    patches: Option<&HashMap<PackageKey, ExtendedPatchInfo>>,
     snapshots: &HashMap<PackageKey, SnapshotEntry>,
     importers: &HashMap<String, ProjectSnapshot>,
 ) -> Vec<Vec<PackageKey>> {
@@ -35,6 +49,7 @@ pub fn build_sequence(
         &root_dep_paths,
         &children,
         requires_build,
+        patches,
         &mut nodes_to_build_set,
         &mut nodes_to_build,
         &mut walked,
@@ -133,13 +148,17 @@ fn collect_root_dep_paths(
 /// packages whose subtree (including themselves) contains a build candidate.
 ///
 /// Ports `getSubgraphToBuild` from
-/// `https://github.com/pnpm/pnpm/blob/80037699fb/building/during-install/src/buildSequence.ts`.
+/// `https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/buildSequence.ts`.
+/// A node is a candidate when `requires_build` is set OR when an entry
+/// for the peer-stripped key is present in `patches` (mirrors
+/// upstream's `node.requiresBuild || node.patch != null`).
 ///
 /// Returns whether *any* of the entry nodes (or their subtrees) needs to build.
 fn get_subgraph_to_build(
     entry_nodes: &[PackageKey],
     children: &HashMap<PackageKey, Vec<PackageKey>>,
     requires_build: &HashMap<PackageKey, bool>,
+    patches: Option<&HashMap<PackageKey, ExtendedPatchInfo>>,
     nodes_to_build_set: &mut HashSet<PackageKey>,
     nodes_to_build: &mut Vec<PackageKey>,
     walked: &mut HashSet<PackageKey>,
@@ -159,16 +178,16 @@ fn get_subgraph_to_build(
             &child_paths,
             children,
             requires_build,
+            patches,
             nodes_to_build_set,
             nodes_to_build,
             walked,
         );
 
         let needs_build = requires_build.get(dep_path).copied().unwrap_or(false);
-        // TODO: also trigger on `patch != null` when pacquet supports
-        // `patchedDependencies`.
+        let has_patch = patches.is_some_and(|p| p.contains_key(&dep_path.without_peer()));
 
-        if child_should_be_built || needs_build {
+        if child_should_be_built || needs_build || has_patch {
             if nodes_to_build_set.insert(dep_path.clone()) {
                 nodes_to_build.push(dep_path.clone());
             }

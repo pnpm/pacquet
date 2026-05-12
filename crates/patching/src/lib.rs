@@ -1,31 +1,31 @@
-//! Configuration and matching logic for pnpm's `patchedDependencies`.
+//! Configuration, matching, and application logic for pnpm's
+//! `patchedDependencies` (pacquet#397 item 9).
 //!
-//! Ports the upstream `@pnpm/patching.types` and `@pnpm/patching.config`
+//! Ports the upstream `@pnpm/patching.types`,
+//! `@pnpm/patching.config`, and `@pnpm/patching.apply-patch`
 //! workspaces (commit
-//! [`b4f8f47ac2`](https://github.com/pnpm/pnpm/tree/b4f8f47ac2)) plus
-//! the patch-file hashing in `@pnpm/lockfile.settings-checker`'s
+//! [`b4f8f47ac2`](https://github.com/pnpm/pnpm/tree/b4f8f47ac2))
+//! plus the patch-file hashing in `@pnpm/lockfile.settings-checker`'s
 //! [`calcPatchHashes`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/lockfile/settings-checker/src/calcPatchHashes.ts).
 //!
-//! Pacquet's `patchedDependencies` work (pacquet#397 item 9) lands
-//! across multiple slices. This PR (slices A + B) covers everything
-//! up to threading the patch hash into the side-effects-cache key:
+//! The crate exposes:
 //!
 //! 1. Types, parser, grouping, matcher, verify, hashing, and the
-//!    workspace-dir-anchored [`resolve_and_group`] helper.
-//! 2. `pacquet-config` exposes
-//!    [`Config::resolved_patched_dependencies`][crate-config] and the
-//!    install pipeline (`InstallFrozenLockfile::run`) calls it once
-//!    per install, looks each snapshot up with [`get_patch_info()`],
-//!    and threads the resulting map into `BuildModules`.
-//! 3. `BuildModules` passes the per-snapshot
-//!    [`ExtendedPatchInfo::hash`] into
-//!    `pacquet_graph_hasher::CalcDepStateOptions::patch_file_hash`
-//!    so the cache key includes `;patch=<hash>` when a snapshot is
-//!    patched.
-//!
-//! Slice C will land the remaining pieces: the build-trigger update
-//! (`requires_build || patch.is_some()`) and the actual patch
-//! application to extracted package dirs before postinstall hooks.
+//!    workspace-dir-anchored [`resolve_and_group`] helper for going
+//!    from `pnpm-workspace.yaml`'s `patchedDependencies` map to a
+//!    [`PatchGroupRecord`].
+//! 2. [`get_patch_info()`] for looking up the matching patch for a
+//!    `(name, version)` pair (exact → unique range → wildcard) with
+//!    `ERR_PNPM_PATCH_KEY_CONFLICT` on ambiguity.
+//! 3. [`apply_patch_to_dir`] for applying a unified-diff patch
+//!    against an extracted package directory before postinstall
+//!    hooks run. Ports upstream's
+//!    [`applyPatchToDir`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/patching/apply-patch/src/index.ts)
+//!    using the pure-Rust [`diffy`] crate (the upstream `@pnpm/patch-package`
+//!    fork serves the same role with `git apply` and `patch` ruled out
+//!    for cross-platform reasons).
+//! 4. [`verify_patches`] for the `ERR_PNPM_UNUSED_PATCH` diagnostic
+//!    when configured patches don't match any installed dep.
 //!
 //! pnpm v11 reads `patchedDependencies` from `pnpm-workspace.yaml`,
 //! not from `package.json`'s `pnpm` field. [`resolve_and_group`]
@@ -33,9 +33,8 @@
 //! [`IndexMap`][indexmap::IndexMap] — the caller is responsible for
 //! surfacing the map (today: from yaml; in the lockfile-only path,
 //! from `pnpm-lock.yaml`'s top-level `patchedDependencies` field).
-//!
-//! [crate-config]: ../pacquet_config/struct.Config.html#method.resolved_patched_dependencies
 
+mod apply;
 mod get_patch_info;
 mod group;
 mod hash;
@@ -44,6 +43,7 @@ mod resolve;
 mod types;
 mod verify;
 
+pub use apply::{PatchApplyError, apply_patch_to_dir};
 pub use get_patch_info::{PatchKeyConflictError, get_patch_info};
 pub use group::{PatchInput, PatchNonSemverRangeError, group_patched_dependencies};
 pub use hash::{CalcPatchHashError, calc_patch_hashes, create_hex_hash_from_file};
