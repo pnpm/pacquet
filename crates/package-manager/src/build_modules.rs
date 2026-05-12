@@ -228,8 +228,7 @@ impl<'a> BuildModules<'a> {
         // side-effects-cache gate has a chance of firing — on
         // either the READ side (prefetch surfaced cache rows) or
         // the WRITE side (the install will be populating new
-        // cache entries after a successful build). When neither
-        // applies the graph construction is dead work.
+        // cache entries after a successful build).
         //
         // The graph is bounded to the *forward closure of
         // `requires_build` snapshots* via `build_deps_subgraph`.
@@ -239,9 +238,10 @@ impl<'a> BuildModules<'a> {
         // `calc_dep_state` only recurses into a snapshot's own
         // children, so the closure-bounded graph produces the
         // exact same cache keys as the full graph for every
-        // root we'll query. Saves the O(|snapshots|) walk for
-        // pure-JS installs without postinstalls (#424 cold-install
-        // benchmark catches the unbounded cost).
+        // root we'll query. A pure-JS install with no
+        // `requires_build` snapshots feeds in an empty root
+        // iterator and the function returns immediately —
+        // O(0) walk for that path.
         //
         // Mirrors upstream's per-install `DepsStateCache` at
         // <https://github.com/pnpm/pnpm/blob/7e3145f9fc/building/during-install/src/index.ts#L74>.
@@ -252,13 +252,9 @@ impl<'a> BuildModules<'a> {
         let read_gate_active = side_effects_cache
             && engine_name.is_some()
             && side_effects_maps_by_snapshot.is_some_and(|m| !m.is_empty());
-        let any_requires_build = requires_build_map.values().any(|&v| v);
-        let write_gate_active = side_effects_cache_write
-            && engine_name.is_some()
-            && store_index_writer.is_some()
-            && any_requires_build;
-        let cache_gate_active =
-            (read_gate_active || write_gate_active) && packages.is_some() && any_requires_build;
+        let write_gate_active =
+            side_effects_cache_write && engine_name.is_some() && store_index_writer.is_some();
+        let cache_gate_active = (read_gate_active || write_gate_active) && packages.is_some();
         let dep_graph = cache_gate_active.then(|| {
             let roots = requires_build_map
                 .iter()
