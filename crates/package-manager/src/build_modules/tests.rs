@@ -901,6 +901,97 @@ async fn write_path_disabled_skips_upload() {
     assert!(row.side_effects.is_none(), "write disabled must NOT populate side_effects");
 }
 
+/// Mirrors upstream's `'uploading errors do not interrupt
+/// installation'` at <https://github.com/pnpm/pnpm/blob/7e3145f9fc/installing/deps-installer/test/install/sideEffects.ts#L166-L186>.
+///
+/// Upstream stubs `opts.storeController.upload` to throw and
+/// asserts the install completes (the postinstall ran, the
+/// generated file is on disk) but the SQLite row's `side_effects`
+/// stays empty.
+///
+/// Pacquet has no DI seam to stub `upload`, but we can reach the
+/// same property by handing `BuildModules` a `store_dir` that has
+/// no `index.db` yet. The WRITE-path's `StoreIndex::open_readonly_in`
+/// call returns an error (no `index.db` to read), `upload` surfaces
+/// it as `UploadError::OpenIndex`, `BuildModules` swallows it with
+/// a `tracing::warn!` (matching upstream's `try { … } catch { logger.warn }`),
+/// and the build completes. The postinstall-created file is on disk;
+/// no row has been written so there's nothing to assert "side_effects
+/// stays empty" on — the absence is the assertion.
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn upload_error_does_not_interrupt_install() {
+    use pacquet_store_dir::{StoreDir, StoreIndexWriter};
+
+    let pkg_key = key("@pnpm/postinstall-modifies-source", "1.0.0");
+    let integrity_str = "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let snapshots = HashMap::from([(pkg_key.clone(), SnapshotEntry::default())]);
+    let packages: HashMap<pacquet_lockfile::PackageKey, pacquet_lockfile::PackageMetadata> =
+        HashMap::from([(
+            pkg_key.without_peer(),
+            pacquet_lockfile::PackageMetadata {
+                resolution: pacquet_lockfile::LockfileResolution::Registry(
+                    pacquet_lockfile::RegistryResolution {
+                        integrity: integrity_str.parse().expect("parse integrity"),
+                    },
+                ),
+                engines: None,
+                cpu: None,
+                os: None,
+                libc: None,
+                deprecated: None,
+                has_bin: None,
+                prepare: None,
+                bundled_dependencies: None,
+                peer_dependencies: None,
+                peer_dependencies_meta: None,
+            },
+        )]);
+    let importers = root_importers(&[("@pnpm/postinstall-modifies-source", "1.0.0")]);
+    let policy = AllowBuildPolicy::new(rules([]), true);
+
+    // Crucially: we do NOT call `store_dir.init()` and we do NOT
+    // seed an index row. The WRITE path's `StoreIndex::open_readonly_in`
+    // will fail because the file doesn't exist.
+    let store_root = tempdir().expect("create store dir");
+    let store_dir = StoreDir::from(store_root.path().to_path_buf());
+    let virtual_store_dir = tempdir().expect("create vstore dir");
+    let modules_dir = tempdir().expect("create modules dir");
+    let lockfile_dir = tempdir().expect("create lockfile dir");
+
+    let pkg_dir = create_postinstall_modifies_source_fixture(virtual_store_dir.path(), &pkg_key);
+    let (writer, writer_task) = StoreIndexWriter::spawn(&store_dir);
+
+    BuildModules {
+        virtual_store_dir: virtual_store_dir.path(),
+        modules_dir: modules_dir.path(),
+        lockfile_dir: lockfile_dir.path(),
+        snapshots: Some(&snapshots),
+        packages: Some(&packages),
+        importers: &importers,
+        allow_build_policy: &policy,
+        side_effects_maps_by_snapshot: None,
+        engine_name: Some("darwin;arm64;node20"),
+        side_effects_cache: true,
+        side_effects_cache_write: true,
+        store_dir: Some(&store_dir),
+        store_index_writer: Some(&writer),
+    }
+    .run::<SilentReporter>()
+    .expect("upload failure must not propagate; install continues");
+
+    drop(writer);
+    writer_task.await.expect("await writer").expect("writer succeeds");
+
+    // The postinstall-generated artifact is on disk — proves the
+    // build ran end-to-end and the swallowed upload error didn't
+    // short-circuit the loop.
+    assert!(
+        pkg_dir.join("generated.txt").exists(),
+        "postinstall-created file must be present after a swallowed upload failure",
+    );
+}
+
 /// sha-512 hex helper for fixture-building. Pacquet's `CafsFileInfo`
 /// stores digests as raw hex (no `sha512-` prefix); using the same
 /// shape here keeps the test's pre-seeded base row in lockstep with
