@@ -232,6 +232,15 @@ impl<'a> BuildModules<'a> {
         // applies the O(|snapshots|) graph construction is dead
         // work.
         //
+        // The WRITE side additionally requires at least one
+        // `requires_build` snapshot, because the upload site is
+        // gated on that bit per-snapshot — a pure-JS install
+        // with no postinstalls / no `binding.gyp` produces zero
+        // upload calls regardless of how `side_effects_cache_write`
+        // is set, and walking the graph for that case is dead work
+        // (the cold-install benchmark catches this — see the
+        // pnpm/pacquet#424 review).
+        //
         // Mirrors upstream's per-install `DepsStateCache` at
         // <https://github.com/pnpm/pnpm/blob/7e3145f9fc/building/during-install/src/index.ts#L74>.
         // The cache memoizes per-node hash across diamond-shaped
@@ -241,8 +250,10 @@ impl<'a> BuildModules<'a> {
         let read_gate_active = side_effects_cache
             && engine_name.is_some()
             && side_effects_maps_by_snapshot.is_some_and(|m| !m.is_empty());
-        let write_gate_active =
-            side_effects_cache_write && engine_name.is_some() && store_index_writer.is_some();
+        let write_gate_active = side_effects_cache_write
+            && engine_name.is_some()
+            && store_index_writer.is_some()
+            && requires_build_map.values().any(|&v| v);
         let cache_gate_active = (read_gate_active || write_gate_active) && packages.is_some();
         let dep_graph = cache_gate_active.then(|| {
             crate::build_deps_graph(
