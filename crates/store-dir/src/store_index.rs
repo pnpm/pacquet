@@ -48,7 +48,7 @@ pub type SharedReadonlyStoreIndex = Arc<Mutex<StoreIndex>>;
 /// commit fsync across the batch, and leaves tokio's blocking pool alone
 /// (one writer thread, not one per tarball).
 pub struct StoreIndexWriter {
-    tx: tokio::sync::mpsc::UnboundedSender<(String, PackageFilesIndex)>,
+    tx: tokio::sync::mpsc::UnboundedSender<WriteMsg>,
     /// One-shot log guard for the "channel closed" case in [`Self::queue`].
     /// A dead writer (task panicked, [`StoreIndex::open`] failed) means
     /// every subsequent `queue` call fails — without this guard that
@@ -57,6 +57,37 @@ pub struct StoreIndexWriter {
     /// subsequent installs will still observe the missing index rows
     /// and re-download, which is the only actionable signal anyway.
     warn_on_send_failure: AtomicBool,
+}
+
+/// Messages the writer task processes in arrival order. Coalesced
+/// per-`key` inside each batch so multiple mutations to the same
+/// store-index row apply against the same in-memory `PackageFilesIndex`
+/// before the batch's `INSERT OR REPLACE` flush.
+enum WriteMsg {
+    /// Wholesale replace the row at `key`. Used by the prefetch /
+    /// download path that already has the full `PackageFilesIndex`
+    /// in hand.
+    Replace { key: String, value: PackageFilesIndex },
+    /// Read-modify-write the row at `key`: load the existing row
+    /// (from the same writer task's pending state or, on a miss,
+    /// from SQLite), compute the diff between `current_files` and
+    /// the row's `files`, insert `(cache_key → diff)` into
+    /// `side_effects`, and re-queue the row. Used by
+    /// [`crate::upload()`] to seed the side-effects cache after a
+    /// successful postinstall.
+    ///
+    /// Routing R/M/W through the writer task is the simplest way
+    /// to make multi-snapshot uploads against the same row
+    /// commutative — every read happens after every previously-
+    /// queued write for the same key (committed in this batch or
+    /// in a prior one). Doing it on the caller thread with a
+    /// readonly handle would let a second upload re-read the
+    /// pre-mutation state and overwrite the first.
+    SideEffectsUpload {
+        key: String,
+        cache_key: String,
+        current_files: HashMap<String, CafsFileInfo>,
+    },
 }
 
 /// Batch cap for [`StoreIndexWriter`]. Big enough that a 1352-snapshot
@@ -90,10 +121,10 @@ impl StoreIndexWriter {
         store_dir: &StoreDir,
     ) -> (Arc<StoreIndexWriter>, tokio::task::JoinHandle<Result<(), StoreIndexError>>) {
         let v11_dir = store_dir.v11();
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(String, PackageFilesIndex)>();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<WriteMsg>();
         let handle = tokio::task::spawn_blocking(move || -> Result<(), StoreIndexError> {
             let mut index = StoreIndex::open(&v11_dir)?;
-            let mut batch: Vec<(String, PackageFilesIndex)> = Vec::with_capacity(MAX_BATCH_SIZE);
+            let mut batch: Vec<WriteMsg> = Vec::with_capacity(MAX_BATCH_SIZE);
             while let Some(first) = rx.blocking_recv() {
                 batch.push(first);
                 // Drain whatever else is already queued to maximize batch
@@ -112,7 +143,20 @@ impl StoreIndexWriter {
                         Err(_) => break,
                     }
                 }
-                if let Err(error) = index.set_many(batch.drain(..)) {
+                // Coalesce the batch by key. Multiple writes for the
+                // same store-index row arriving in the same batch get
+                // applied in order against a single in-memory
+                // `PackageFilesIndex` value, which then flushes once.
+                // This is what makes two `SideEffectsUpload`s for the
+                // same row commutative: each builds on the previous
+                // one's mutation rather than re-reading the pre-batch
+                // state from SQLite.
+                let mut pending: HashMap<String, PackageFilesIndex> =
+                    HashMap::with_capacity(batch.len());
+                for msg in batch.drain(..) {
+                    apply_write_msg(&mut index, &mut pending, msg);
+                }
+                if let Err(error) = index.set_many(pending.drain()) {
                     // Drop the batch and keep going. One failed flush
                     // (e.g. a disk-full hiccup) shouldn't silently drop
                     // the rest of the install's entries; the next install
@@ -124,14 +168,93 @@ impl StoreIndexWriter {
                         ?error,
                         "batched store-index write failed; dropping this batch and continuing",
                     );
-                    batch.clear();
                 }
             }
             Ok(())
         });
         (Arc::new(StoreIndexWriter { tx, warn_on_send_failure: AtomicBool::new(true) }), handle)
     }
+}
 
+/// Fold one queued `WriteMsg` into the batch's in-flight
+/// `pending` map. Pure function on `(&mut StoreIndex, &mut
+/// HashMap, WriteMsg)` so the writer-task closure stays a thin
+/// drain loop; correctness of each variant lives here.
+///
+/// `Replace` is a straight overwrite. `SideEffectsUpload` does
+/// the read-modify-write: it loads the row from `pending` (if a
+/// prior message in this batch already touched it) or from
+/// SQLite, then layers the diff on top. Three short-circuit
+/// branches log and skip without removing the row from
+/// `pending`, so a same-batch `Replace` for the same key still
+/// flushes — see the docs on
+/// [`WriteMsg::SideEffectsUpload`].
+fn apply_write_msg(
+    index: &mut StoreIndex,
+    pending: &mut HashMap<String, PackageFilesIndex>,
+    msg: WriteMsg,
+) {
+    match msg {
+        WriteMsg::Replace { key, value } => {
+            pending.insert(key, value);
+        }
+        WriteMsg::SideEffectsUpload { key, cache_key, current_files } => {
+            let Some(row) = load_pending_row(index, pending, &key) else { return };
+            if row.algo != crate::upload::HASH_ALGORITHM {
+                tracing::warn!(
+                    target: "pacquet::store_index",
+                    key = %key,
+                    row_algo = %row.algo,
+                    "algo mismatch on base row; skip side-effects upload",
+                );
+                // Row stays in `pending` for the flush — only
+                // the side-effects mutation is suppressed.
+                return;
+            }
+            let diff = crate::upload::calculate_diff(&row.files, &current_files);
+            row.side_effects.get_or_insert_with(HashMap::new).insert(cache_key, diff);
+        }
+    }
+}
+
+/// Return a mutable reference to the `PackageFilesIndex` row for
+/// `key`, loading from SQLite when this is the row's first
+/// sighting in the batch. Returns `None` (and logs at `debug!` /
+/// `warn!` as appropriate) when no base row exists or the SQLite
+/// read fails — both cases mean the caller should skip the
+/// side-effects mutation without disturbing `pending`.
+fn load_pending_row<'a>(
+    index: &mut StoreIndex,
+    pending: &'a mut HashMap<String, PackageFilesIndex>,
+    key: &str,
+) -> Option<&'a mut PackageFilesIndex> {
+    use std::collections::hash_map::Entry;
+    match pending.entry(key.to_string()) {
+        Entry::Occupied(o) => Some(o.into_mut()),
+        Entry::Vacant(v) => match index.get(key) {
+            Ok(Some(r)) => Some(v.insert(r)),
+            Ok(None) => {
+                tracing::debug!(
+                    target: "pacquet::store_index",
+                    key = %key,
+                    "no base row for side-effects upload; skip",
+                );
+                None
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "pacquet::store_index",
+                    ?error,
+                    key = %key,
+                    "failed to read base row for side-effects upload",
+                );
+                None
+            }
+        },
+    }
+}
+
+impl StoreIndexWriter {
     /// Queue one `(key, value)` to be flushed in the next transaction.
     ///
     /// Silently drops the entry if the writer task has exited (closed
@@ -143,7 +266,32 @@ impl StoreIndexWriter {
     /// snapshot install that's a thousand identical warnings drowning
     /// out real diagnostics.
     pub fn queue(&self, key: String, value: PackageFilesIndex) {
-        if let Err(error) = self.tx.send((key, value))
+        self.send_msg(WriteMsg::Replace { key, value });
+    }
+
+    /// Queue a side-effects R/M/W: the writer task loads the row,
+    /// computes [`crate::calculate_diff`] against the existing
+    /// `files`, inserts `(cache_key → diff)` into the row's
+    /// `side_effects` map, and re-flushes. Routing this through
+    /// the writer's batch loop is what keeps multiple uploads for
+    /// the same row commutative — see the doc-comment on the
+    /// `WriteMsg::SideEffectsUpload` variant for the rationale.
+    ///
+    /// If no base row exists at `key`, the upload is silently
+    /// skipped (matches upstream's
+    /// [`if (!existingFilesIndex) return`](https://github.com/pnpm/pnpm/blob/7e3145f9fc/worker/src/start.ts#L344-L353)
+    /// bail-out at the same gate).
+    pub fn queue_side_effects_upload(
+        &self,
+        key: String,
+        cache_key: String,
+        current_files: HashMap<String, CafsFileInfo>,
+    ) {
+        self.send_msg(WriteMsg::SideEffectsUpload { key, cache_key, current_files });
+    }
+
+    fn send_msg(&self, msg: WriteMsg) {
+        if let Err(error) = self.tx.send(msg)
             && self.warn_on_send_failure.swap(false, Ordering::Relaxed)
         {
             tracing::warn!(
@@ -582,8 +730,17 @@ pub struct PackageFilesIndex {
     /// Map of in-tarball path → CAFS file metadata.
     pub files: HashMap<String, CafsFileInfo>,
 
-    /// Side-effect overlays applied after post-install scripts. Populated by
-    /// the build-side-effects cache; pacquet does not yet write this.
+    /// Side-effect overlays applied after post-install scripts. Populated
+    /// by the build-side-effects cache (WRITE path).
+    ///
+    /// Pacquet's on-disk byte stability for this field comes from
+    /// the msgpackr-records encoder
+    /// (`crate::msgpackr_records::encode_package_files_index`),
+    /// which iterates the map in sorted-key order before emitting.
+    /// The serde `Serialize` impl below is never reached on the
+    /// write path — `StoreIndex::set_many` always routes through
+    /// the bespoke encoder — but is kept for the read path's
+    /// round-trip through `rmp_serde::from_slice`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub side_effects: Option<HashMap<String, SideEffectsDiff>>,
 }
@@ -632,6 +789,11 @@ fn serialize_checked_at<S: serde::Serializer>(
 }
 
 /// Value of [`PackageFilesIndex::side_effects`].
+///
+/// Byte stability of the `added` field on the wire is provided by
+/// the bespoke encoder in `msgpackr_records.rs` (it iterates the
+/// map in sorted-key order). The derived serde `Serialize` impl
+/// is unused on the write path.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SideEffectsDiff {

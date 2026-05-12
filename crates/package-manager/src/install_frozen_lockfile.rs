@@ -10,6 +10,7 @@ use pacquet_lockfile::{PackageKey, PackageMetadata, ProjectSnapshot, SnapshotEnt
 use pacquet_network::ThrottledClient;
 use pacquet_package_manifest::DependencyGroup;
 use pacquet_reporter::{IgnoredScriptsLog, LogEvent, LogLevel, Reporter, Stage, StageLog};
+use pacquet_store_dir::StoreIndexWriter;
 use std::{collections::HashMap, path::Path, sync::atomic::AtomicU8};
 
 /// This subroutine installs dependencies from a frozen lockfile.
@@ -74,6 +75,18 @@ where
 
         // TODO: check if the lockfile is out-of-date
 
+        // Spawn the batched store-index writer here so it lives
+        // across both the prefetch/download phase (consumers in
+        // `CreateVirtualStore`) and the build phase (the new
+        // side-effects-cache WRITE-path upload site in
+        // `BuildModules`). We drop the orchestrator's clone and
+        // await the join handle at the end of `run`, so the final
+        // batch flushes once every queued row from both phases has
+        // been processed. A writer open / task failure is degraded
+        // to a `warn!` and the install still succeeds — pacquet's
+        // existing best-effort stance on cache writes.
+        let (store_index_writer, writer_task) = StoreIndexWriter::spawn(&config.store_dir);
+
         let CreateVirtualStoreOutput { package_manifests, side_effects_maps_by_snapshot } =
             CreateVirtualStore {
                 http_client,
@@ -82,6 +95,7 @@ where
                 snapshots,
                 logged_methods,
                 requester,
+                store_index_writer: &store_index_writer,
             }
             .run::<R>()
             .await
@@ -151,7 +165,10 @@ where
             allow_build_policy: &allow_build_policy,
             side_effects_maps_by_snapshot: Some(&side_effects_maps_by_snapshot),
             engine_name: engine_name.as_deref(),
-            side_effects_cache: config.side_effects_cache,
+            side_effects_cache: config.side_effects_cache_read(),
+            side_effects_cache_write: config.side_effects_cache_write(),
+            store_dir: Some(&config.store_dir),
+            store_index_writer: Some(&store_index_writer),
         }
         .run::<R>()
         .map_err(InstallFrozenLockfileError::BuildModules)?;
@@ -164,6 +181,27 @@ where
             level: LogLevel::Debug,
             package_names: ignored_builds,
         }));
+
+        // Drop the orchestrator's clone of the writer so the channel
+        // closes once every per-snapshot clone has also been dropped;
+        // then await the task so the final batch flushes before
+        // returning. Swallow any error with `warn!` — the install is
+        // complete and a missed cache write just forces a re-fetch
+        // on the next install.
+        drop(store_index_writer);
+        match writer_task.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::warn!(
+                target: "pacquet::install",
+                ?error,
+                "store-index writer task returned an error; some rows may not be persisted",
+            ),
+            Err(error) => tracing::warn!(
+                target: "pacquet::install",
+                ?error,
+                "store-index writer task panicked; some rows may not be persisted",
+            ),
+        }
 
         Ok(())
     }

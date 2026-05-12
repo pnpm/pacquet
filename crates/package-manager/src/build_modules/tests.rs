@@ -214,6 +214,9 @@ fn build_modules_collects_ignored_builds() {
         side_effects_maps_by_snapshot: None,
         engine_name: None,
         side_effects_cache: true,
+        side_effects_cache_write: false,
+        store_dir: None,
+        store_index_writer: None,
     }
     .run::<SilentReporter>()
     .expect("run BuildModules");
@@ -257,6 +260,9 @@ fn build_modules_excludes_explicit_deny_from_ignored() {
         side_effects_maps_by_snapshot: None,
         engine_name: None,
         side_effects_cache: true,
+        side_effects_cache_write: false,
+        store_dir: None,
+        store_index_writer: None,
     }
     .run::<SilentReporter>()
     .expect("run BuildModules");
@@ -327,6 +333,9 @@ fn do_not_fail_on_optional_dep_with_failing_postinstall() {
         side_effects_maps_by_snapshot: None,
         engine_name: None,
         side_effects_cache: true,
+        side_effects_cache_write: false,
+        store_dir: None,
+        store_index_writer: None,
     }
     .run::<RecordingReporter>()
     .expect("optional build failure must NOT abort the install");
@@ -445,6 +454,9 @@ fn using_side_effects_cache_skips_rebuild() {
         side_effects_maps_by_snapshot: Some(&side_effects_maps),
         engine_name: Some(engine),
         side_effects_cache: true,
+        side_effects_cache_write: false,
+        store_dir: None,
+        store_index_writer: None,
     }
     .run::<RecordingReporter>()
     .expect("install must succeed when the cache hit skips the rebuild");
@@ -498,6 +510,9 @@ fn side_effects_cache_disabled_bypasses_the_gate() {
         side_effects_maps_by_snapshot: Some(&side_effects_maps),
         engine_name: Some("darwin;arm64;node20"),
         side_effects_cache: false,
+        side_effects_cache_write: false,
+        store_dir: None,
+        store_index_writer: None,
     }
     .run::<SilentReporter>()
     .expect_err("with cache disabled, the failing postinstall must run and the install must fail");
@@ -544,6 +559,9 @@ fn fail_when_failing_postinstall_is_required() {
         side_effects_maps_by_snapshot: None,
         engine_name: None,
         side_effects_cache: true,
+        side_effects_cache_write: false,
+        store_dir: None,
+        store_index_writer: None,
     }
     .run::<SilentReporter>()
     .expect_err("required build failure must propagate");
@@ -609,4 +627,449 @@ fn ignored_scripts_event_carries_returned_names() {
         ),
         "captured: {captured:?}",
     );
+}
+
+/// Materialize a package fixture whose postinstall touches a
+/// marker file. After the script runs, the package directory has
+/// a file (`generated.txt`) that the original tarball didn't, so
+/// the WRITE-path diff produces a non-empty `added` entry under
+/// the snapshot's cache key.
+#[cfg(unix)]
+fn create_postinstall_modifies_source_fixture(
+    virtual_store_dir: &Path,
+    key: &PackageKey,
+) -> PathBuf {
+    let key_str = key.without_peer().to_string();
+    let name_version = key_str.strip_prefix('/').unwrap_or(&key_str);
+    let at_idx = name_version.rfind('@').unwrap_or(name_version.len());
+    let pkg_name = &name_version[..at_idx];
+    let store_name = name_version.replace('/', "+");
+    let pkg_dir = virtual_store_dir.join(&store_name).join("node_modules").join(pkg_name);
+    fs::create_dir_all(&pkg_dir).expect("create pkg dir");
+    // Bake the pristine `index.js` into the directory before the
+    // postinstall runs. The WRITE-path diff compares the
+    // post-build directory against the pre-seeded `files` map,
+    // so this file must appear in both — the postinstall only
+    // adds `generated.txt` on top.
+    fs::write(pkg_dir.join("index.js"), "module.exports = 'hi'\n").expect("write index.js");
+    let manifest = serde_json::json!({
+        "name": pkg_name,
+        "version": name_version[at_idx + 1..].to_string(),
+        "scripts": { "postinstall": "echo touched > generated.txt" },
+    });
+    fs::write(pkg_dir.join("package.json"), manifest.to_string()).expect("write manifest");
+    pkg_dir
+}
+
+/// Mirrors upstream's `'a postinstall script does not modify the
+/// original sources added to the store'` at
+/// <https://github.com/pnpm/pnpm/blob/7e3145f9fc/installing/deps-installer/test/install/sideEffects.ts#L189-L223>.
+///
+/// After a successful postinstall, `BuildModules` re-CAFS the
+/// built directory, diffs against the pristine `PackageFilesIndex.files`
+/// row pre-seeded in the store, and queues a mutation so the row's
+/// `side_effects[cache_key]` carries the post-build files that
+/// differ from the base. The base CAS blob is left untouched — the
+/// digest the store-index row holds for `index.js` matches the
+/// pristine content, not the post-build content.
+///
+/// Unix-gated because the fixture uses `sh -c` semantics for the
+/// `postinstall` script. Windows shell selection is exercised
+/// separately by `pacquet_executor::select_shell`.
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn write_path_populates_side_effects_row() {
+    use pacquet_store_dir::{
+        CafsFileInfo, HASH_ALGORITHM, PackageFilesIndex, StoreDir, StoreIndex, StoreIndexWriter,
+        store_index_key,
+    };
+
+    let pkg_key = key("@pnpm/postinstall-modifies-source", "1.0.0");
+    let integrity_str = "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let snapshots = HashMap::from([(pkg_key.clone(), SnapshotEntry::default())]);
+    let packages: HashMap<pacquet_lockfile::PackageKey, pacquet_lockfile::PackageMetadata> =
+        HashMap::from([(
+            pkg_key.without_peer(),
+            pacquet_lockfile::PackageMetadata {
+                resolution: pacquet_lockfile::LockfileResolution::Registry(
+                    pacquet_lockfile::RegistryResolution {
+                        integrity: integrity_str.parse().expect("parse integrity"),
+                    },
+                ),
+                engines: None,
+                cpu: None,
+                os: None,
+                libc: None,
+                deprecated: None,
+                has_bin: None,
+                prepare: None,
+                bundled_dependencies: None,
+                peer_dependencies: None,
+                peer_dependencies_meta: None,
+            },
+        )]);
+    let importers = root_importers(&[("@pnpm/postinstall-modifies-source", "1.0.0")]);
+    let policy = AllowBuildPolicy::new(rules([]), true);
+
+    let store_root = tempdir().expect("create store dir");
+    let store_dir = StoreDir::from(store_root.path().to_path_buf());
+    store_dir.init().expect("init store");
+    let virtual_store_dir = tempdir().expect("create vstore dir");
+    let modules_dir = tempdir().expect("create modules dir");
+    let lockfile_dir = tempdir().expect("create lockfile dir");
+
+    create_postinstall_modifies_source_fixture(virtual_store_dir.path(), &pkg_key);
+
+    // Pre-seed the base PackageFilesIndex row that the WRITE
+    // path will mutate. The base captures only `index.js`; the
+    // postinstall creates `generated.txt` on top, so the diff's
+    // `added` map should have exactly the `generated.txt` entry.
+    let files_index_file = store_index_key(integrity_str, &pkg_key.without_peer().to_string());
+    let mut base_files = HashMap::new();
+    base_files.insert(
+        "index.js".to_string(),
+        CafsFileInfo {
+            // The pristine content's actual digest is irrelevant
+            // for this test — the WRITE path doesn't compare it
+            // against on-disk CAS, just against the post-build
+            // hashes from `add_files_from_dir`. So long as it
+            // matches what `add_files_from_dir` will compute for
+            // `module.exports = 'hi'\n`, the diff for `index.js`
+            // stays empty (= no spurious entry in `added`).
+            digest: sha512_hex(b"module.exports = 'hi'\n"),
+            mode: 0o644,
+            size: b"module.exports = 'hi'\n".len() as u64,
+            checked_at: None,
+        },
+    );
+    let base_row = PackageFilesIndex {
+        manifest: None,
+        requires_build: Some(true),
+        algo: HASH_ALGORITHM.to_string(),
+        files: base_files,
+        side_effects: None,
+    };
+    {
+        let mut index = StoreIndex::open_in(&store_dir).expect("open index for seed");
+        index
+            .set_many(std::iter::once((files_index_file.clone(), base_row)))
+            .expect("seed base row");
+    }
+
+    // Spawn the writer task once we've seeded the base row, so
+    // the seed and the WRITE-path mutation don't race.
+    let (writer, writer_task) = StoreIndexWriter::spawn(&store_dir);
+
+    let engine = "darwin;arm64;node20";
+    let dep_graph = crate::build_deps_graph(&snapshots, &packages);
+    let mut state_cache = pacquet_graph_hasher::DepsStateCache::new();
+    let expected_cache_key = pacquet_graph_hasher::calc_dep_state(
+        &dep_graph,
+        &mut state_cache,
+        &pkg_key,
+        &pacquet_graph_hasher::CalcDepStateOptions {
+            engine_name: engine,
+            patch_file_hash: None,
+            include_dep_graph_hash: true,
+        },
+    );
+
+    BuildModules {
+        virtual_store_dir: virtual_store_dir.path(),
+        modules_dir: modules_dir.path(),
+        lockfile_dir: lockfile_dir.path(),
+        snapshots: Some(&snapshots),
+        packages: Some(&packages),
+        importers: &importers,
+        allow_build_policy: &policy,
+        side_effects_maps_by_snapshot: None,
+        engine_name: Some(engine),
+        side_effects_cache: true,
+        side_effects_cache_write: true,
+        store_dir: Some(&store_dir),
+        store_index_writer: Some(&writer),
+    }
+    .run::<SilentReporter>()
+    .expect("build modules must complete cleanly");
+
+    // Drop our writer handle and wait for the task to flush the
+    // queued WRITE-path mutation before reading the row back.
+    drop(writer);
+    writer_task.await.expect("await writer").expect("writer succeeds");
+
+    let index = StoreIndex::open_readonly_in(&store_dir).expect("open index for read");
+    let row = index.get(&files_index_file).expect("get row").expect("row present");
+    let side_effects = row.side_effects.expect("side_effects populated");
+    let diff = side_effects.get(&expected_cache_key).expect("entry for cache key");
+    let added = diff.added.as_ref().expect("added present");
+    assert!(
+        added.contains_key("generated.txt"),
+        "added map should record the postinstall-created file: {added:?}",
+    );
+    assert!(
+        !added.contains_key("index.js"),
+        "pristine index.js must NOT appear in `added` (its digest matches base): {added:?}",
+    );
+}
+
+/// Counterpart of the WRITE-path test: with `side_effects_cache_write
+/// = false`, the same fixture's row must come out of `BuildModules`
+/// with `side_effects = None`. Mirrors upstream's gate on
+/// `opts.sideEffectsCacheWrite` at `building/during-install/src/index.ts:198`.
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn write_path_disabled_skips_upload() {
+    use pacquet_store_dir::{
+        HASH_ALGORITHM, PackageFilesIndex, StoreDir, StoreIndex, StoreIndexWriter, store_index_key,
+    };
+
+    let pkg_key = key("@pnpm/postinstall-modifies-source", "1.0.0");
+    let integrity_str = "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let snapshots = HashMap::from([(pkg_key.clone(), SnapshotEntry::default())]);
+    let packages: HashMap<pacquet_lockfile::PackageKey, pacquet_lockfile::PackageMetadata> =
+        HashMap::from([(
+            pkg_key.without_peer(),
+            pacquet_lockfile::PackageMetadata {
+                resolution: pacquet_lockfile::LockfileResolution::Registry(
+                    pacquet_lockfile::RegistryResolution {
+                        integrity: integrity_str.parse().expect("parse integrity"),
+                    },
+                ),
+                engines: None,
+                cpu: None,
+                os: None,
+                libc: None,
+                deprecated: None,
+                has_bin: None,
+                prepare: None,
+                bundled_dependencies: None,
+                peer_dependencies: None,
+                peer_dependencies_meta: None,
+            },
+        )]);
+    let importers = root_importers(&[("@pnpm/postinstall-modifies-source", "1.0.0")]);
+    let policy = AllowBuildPolicy::new(rules([]), true);
+
+    let store_root = tempdir().expect("create store dir");
+    let store_dir = StoreDir::from(store_root.path().to_path_buf());
+    store_dir.init().expect("init store");
+    let virtual_store_dir = tempdir().expect("create vstore dir");
+    let modules_dir = tempdir().expect("create modules dir");
+    let lockfile_dir = tempdir().expect("create lockfile dir");
+
+    create_postinstall_modifies_source_fixture(virtual_store_dir.path(), &pkg_key);
+
+    let files_index_file = store_index_key(integrity_str, &pkg_key.without_peer().to_string());
+    let base_row = PackageFilesIndex {
+        manifest: None,
+        requires_build: Some(true),
+        algo: HASH_ALGORITHM.to_string(),
+        files: HashMap::new(),
+        side_effects: None,
+    };
+    {
+        let mut index = StoreIndex::open_in(&store_dir).expect("open index for seed");
+        index
+            .set_many(std::iter::once((files_index_file.clone(), base_row)))
+            .expect("seed base row");
+    }
+    let (writer, writer_task) = StoreIndexWriter::spawn(&store_dir);
+
+    BuildModules {
+        virtual_store_dir: virtual_store_dir.path(),
+        modules_dir: modules_dir.path(),
+        lockfile_dir: lockfile_dir.path(),
+        snapshots: Some(&snapshots),
+        packages: Some(&packages),
+        importers: &importers,
+        allow_build_policy: &policy,
+        side_effects_maps_by_snapshot: None,
+        engine_name: Some("darwin;arm64;node20"),
+        side_effects_cache: true,
+        side_effects_cache_write: false,
+        store_dir: Some(&store_dir),
+        store_index_writer: Some(&writer),
+    }
+    .run::<SilentReporter>()
+    .expect("build modules must complete cleanly");
+
+    drop(writer);
+    writer_task.await.expect("await writer").expect("writer succeeds");
+
+    let index = StoreIndex::open_readonly_in(&store_dir).expect("open index for read");
+    let row = index.get(&files_index_file).expect("get row").expect("row present");
+    assert!(row.side_effects.is_none(), "write disabled must NOT populate side_effects");
+}
+
+/// Mirrors upstream's `'uploading errors do not interrupt
+/// installation'` at <https://github.com/pnpm/pnpm/blob/7e3145f9fc/installing/deps-installer/test/install/sideEffects.ts#L166-L186>.
+///
+/// Upstream stubs `opts.storeController.upload` to throw and
+/// asserts the install completes (the postinstall ran, the
+/// generated file is on disk) but the SQLite row's `side_effects`
+/// stays empty.
+///
+/// Pacquet has no DI seam for the upload, but the WRITE path's
+/// only failure point is `add_files_from_dir`, which surfaces as
+/// `UploadError::AddFilesFromDir`. We force that failure by having
+/// the postinstall script create a 0-permission file in the
+/// package directory: `add_files_from_dir` then fails to `fs::read`
+/// it, returning an error that `BuildModules` swallows with
+/// `tracing::warn!` (matching upstream's `try { … } catch { logger.warn }`).
+/// The install completes, the postinstall-generated artifact is on
+/// disk, and the build keeps going.
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn upload_error_does_not_interrupt_install() {
+    use pacquet_store_dir::{
+        HASH_ALGORITHM, PackageFilesIndex, StoreDir, StoreIndex, StoreIndexWriter, store_index_key,
+    };
+
+    let pkg_key = key("@pnpm/postinstall-modifies-source", "1.0.0");
+    let integrity_str = "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let snapshots = HashMap::from([(pkg_key.clone(), SnapshotEntry::default())]);
+    let packages: HashMap<pacquet_lockfile::PackageKey, pacquet_lockfile::PackageMetadata> =
+        HashMap::from([(
+            pkg_key.without_peer(),
+            pacquet_lockfile::PackageMetadata {
+                resolution: pacquet_lockfile::LockfileResolution::Registry(
+                    pacquet_lockfile::RegistryResolution {
+                        integrity: integrity_str.parse().expect("parse integrity"),
+                    },
+                ),
+                engines: None,
+                cpu: None,
+                os: None,
+                libc: None,
+                deprecated: None,
+                has_bin: None,
+                prepare: None,
+                bundled_dependencies: None,
+                peer_dependencies: None,
+                peer_dependencies_meta: None,
+            },
+        )]);
+    let importers = root_importers(&[("@pnpm/postinstall-modifies-source", "1.0.0")]);
+    let policy = AllowBuildPolicy::new(rules([]), true);
+
+    let store_root = tempdir().expect("create store dir");
+    let store_dir = StoreDir::from(store_root.path().to_path_buf());
+    store_dir.init().expect("init store");
+    let virtual_store_dir = tempdir().expect("create vstore dir");
+    let modules_dir = tempdir().expect("create modules dir");
+    let lockfile_dir = tempdir().expect("create lockfile dir");
+
+    // Fixture variant: postinstall produces a regular file (to
+    // prove the script ran end-to-end) AND a 0-permission file
+    // (to force `add_files_from_dir` to fail on `fs::read`).
+    let pkg_dir = create_postinstall_with_unreadable_fixture(virtual_store_dir.path(), &pkg_key);
+
+    // Pre-seed a base row so we can assert that the swallowed
+    // upload error leaves the row's `side_effects` field
+    // untouched — matches upstream's `filesIndex2.sideEffects
+    // toBeFalsy()` at sideEffects.ts:186.
+    let files_index_file = store_index_key(integrity_str, &pkg_key.without_peer().to_string());
+    let base_row = PackageFilesIndex {
+        manifest: None,
+        requires_build: Some(true),
+        algo: HASH_ALGORITHM.to_string(),
+        files: HashMap::new(),
+        side_effects: None,
+    };
+    {
+        let mut index = StoreIndex::open_in(&store_dir).expect("open index for seed");
+        index
+            .set_many(std::iter::once((files_index_file.clone(), base_row)))
+            .expect("seed base row");
+    }
+
+    let (writer, writer_task) = StoreIndexWriter::spawn(&store_dir);
+
+    BuildModules {
+        virtual_store_dir: virtual_store_dir.path(),
+        modules_dir: modules_dir.path(),
+        lockfile_dir: lockfile_dir.path(),
+        snapshots: Some(&snapshots),
+        packages: Some(&packages),
+        importers: &importers,
+        allow_build_policy: &policy,
+        side_effects_maps_by_snapshot: None,
+        engine_name: Some("darwin;arm64;node20"),
+        side_effects_cache: true,
+        side_effects_cache_write: true,
+        store_dir: Some(&store_dir),
+        store_index_writer: Some(&writer),
+    }
+    .run::<SilentReporter>()
+    .expect("upload failure must not propagate; install continues");
+
+    drop(writer);
+    writer_task.await.expect("await writer").expect("writer succeeds");
+
+    // The postinstall-generated artifact is on disk — proves the
+    // build ran end-to-end and the swallowed upload error didn't
+    // short-circuit the loop.
+    assert!(
+        pkg_dir.join("generated.txt").exists(),
+        "postinstall-created file must be present after a swallowed upload failure",
+    );
+
+    // The base row stays untouched: the `add_files_from_dir`
+    // error fired before `queue_side_effects_upload` ran, so the
+    // writer task never saw a `SideEffectsUpload` for this row.
+    // Mirrors upstream's `filesIndex2.sideEffects toBeFalsy()` at
+    // sideEffects.ts:186.
+    let index = StoreIndex::open_readonly_in(&store_dir).expect("open index for read");
+    let row = index.get(&files_index_file).expect("get row").expect("base row present");
+    assert!(
+        row.side_effects.is_none(),
+        "swallowed upload error must leave `side_effects` unmodified",
+    );
+
+    // Restore perms so the tempdir cleanup can remove the file.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(pkg_dir.join("unreadable"), fs::Permissions::from_mode(0o644));
+    }
+}
+
+/// Variant of `create_postinstall_modifies_source_fixture` whose
+/// postinstall additionally produces a 0-permission file. The
+/// WRITE-path walker (`add_files_from_dir`) then fails on
+/// `fs::read("unreadable")` with `EACCES`, surfacing as
+/// `UploadError::AddFilesFromDir(ReadFile { … })` — a real upload
+/// error that `BuildModules` must swallow.
+#[cfg(unix)]
+fn create_postinstall_with_unreadable_fixture(
+    virtual_store_dir: &Path,
+    key: &PackageKey,
+) -> PathBuf {
+    let key_str = key.without_peer().to_string();
+    let name_version = key_str.strip_prefix('/').unwrap_or(&key_str);
+    let at_idx = name_version.rfind('@').unwrap_or(name_version.len());
+    let pkg_name = &name_version[..at_idx];
+    let store_name = name_version.replace('/', "+");
+    let pkg_dir = virtual_store_dir.join(&store_name).join("node_modules").join(pkg_name);
+    fs::create_dir_all(&pkg_dir).expect("create pkg dir");
+    fs::write(pkg_dir.join("index.js"), "module.exports = 'hi'\n").expect("write index.js");
+    let manifest = serde_json::json!({
+        "name": pkg_name,
+        "version": name_version[at_idx + 1..].to_string(),
+        "scripts": {
+            "postinstall": "echo touched > generated.txt && : > unreadable && chmod 000 unreadable"
+        },
+    });
+    fs::write(pkg_dir.join("package.json"), manifest.to_string()).expect("write manifest");
+    pkg_dir
+}
+
+/// sha-512 hex helper for fixture-building. Pacquet's `CafsFileInfo`
+/// stores digests as raw hex (no `sha512-` prefix); using the same
+/// shape here keeps the test's pre-seeded base row in lockstep with
+/// what `add_files_from_dir` will compute.
+fn sha512_hex(buf: &[u8]) -> String {
+    use sha2::{Digest, Sha512};
+    let digest = Sha512::digest(buf);
+    format!("{digest:x}")
 }

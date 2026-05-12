@@ -74,6 +74,11 @@ pub struct CreateVirtualStore<'a> {
     pub logged_methods: &'a AtomicU8,
     /// Install root, threaded into reporter `requester` fields.
     pub requester: &'a str,
+    /// Shared store-index writer for the install. Owned by
+    /// `InstallFrozenLockfile`, threaded down here for the cold-batch
+    /// download path's `InstallPackageBySnapshot` and also reused by
+    /// `BuildModules` for the side-effects-cache WRITE path.
+    pub store_index_writer: &'a std::sync::Arc<StoreIndexWriter>,
 }
 
 /// Error type of [`CreateVirtualStore`].
@@ -110,6 +115,7 @@ impl<'a> CreateVirtualStore<'a> {
             snapshots,
             logged_methods,
             requester,
+            store_index_writer,
         } = self;
 
         let Some(snapshots) = snapshots else {
@@ -199,24 +205,18 @@ impl<'a> CreateVirtualStore<'a> {
             };
         let store_index_ref = store_index.as_ref();
 
-        // Spawn the batched store-index writer. A single `spawn_blocking`
-        // task owns the writable SQLite connection for the whole install;
-        // every successfully extracted tarball just sends a row to it and
-        // the task flushes them in batched transactions. The old per-
-        // tarball `StoreIndex::open` + solo-INSERT pattern dominated
-        // install wall time on slow-metadata filesystems (#263) because
-        // each open is ~15 ms of metadata work on APFS and tokio's
-        // blocking pool grew to 500+ threads to service them.
+        // The batched store-index writer is now owned by the caller
+        // (`InstallFrozenLockfile::run`) so it survives past
+        // `CreateVirtualStore::run` and gets reused by the build
+        // phase's side-effects-cache WRITE path. Pacquet's original
+        // pattern was to spawn it here and drain it before returning,
+        // but the build phase needs to queue rows after the install
+        // path finishes — see pnpm/pnpm@7e3145f9fc:building/during-install/src/index.ts:198-216.
         //
-        // We drop our own copy of the `Arc<StoreIndexWriter>` after the
-        // `try_join_all` below so the channel can close once every tarball
-        // task has dropped its clone; then `.await` on the join handle
-        // waits for the final batch to flush before returning. A writer-
-        // side `JoinError` or open failure is surfaced at `warn!` and
-        // degraded to "no writer" — the install still succeeds, missing
-        // rows just force a re-download on the next install.
-        let (store_index_writer, writer_task) = StoreIndexWriter::spawn(store_dir);
-        let store_index_writer_ref = Some(&store_index_writer);
+        // The cold-batch download path uses the same writer through
+        // `InstallPackageBySnapshot.store_index_writer`, so the design
+        // is unchanged from the writer's perspective.
+        let store_index_writer_ref = Some(store_index_writer);
 
         // Install-scoped `verifiedFilesCache`. One `Arc<DashSet>` lives
         // for the duration of the install; every per-snapshot fetch
@@ -444,24 +444,11 @@ impl<'a> CreateVirtualStore<'a> {
                 .await?;
         }
 
-        // Drop the orchestration's sender so the channel closes once every
-        // per-tarball clone has also dropped; then wait for the writer task
-        // to flush its final batch. Swallow any error with `warn!` — we've
-        // already done the install and cache-miss degradation is fine.
-        drop(store_index_writer);
-        match writer_task.await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => tracing::warn!(
-                target: "pacquet::install",
-                ?error,
-                "store-index writer task returned an error; some rows may not be persisted",
-            ),
-            Err(error) => tracing::warn!(
-                target: "pacquet::install",
-                ?error,
-                "store-index writer task panicked; some rows may not be persisted",
-            ),
-        }
+        // The writer is owned by the caller now. They drop their
+        // sender and await the join handle after the build phase
+        // finishes, so the final batch flushes after every queued
+        // row from both the download path and the WRITE-path
+        // upload.
 
         Ok(CreateVirtualStoreOutput { package_manifests, side_effects_maps_by_snapshot })
     }

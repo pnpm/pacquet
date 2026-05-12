@@ -163,6 +163,20 @@ pub struct BuildModules<'a> {
     /// gate is bypassed entirely and every `requires_build`
     /// snapshot runs its scripts.
     pub side_effects_cache: bool,
+    /// Mirrors upstream's `sideEffectsCacheWrite` at
+    /// <https://github.com/pnpm/pnpm/blob/7e3145f9fc/config/reader/src/index.ts#L615>.
+    /// When `true`, a successful postinstall triggers a re-CAFS of
+    /// the built package directory and a queued mutation of the
+    /// matching `PackageFilesIndex.sideEffects` row.
+    pub side_effects_cache_write: bool,
+    /// Store-dir handle for the WRITE path's `add_files_from_dir`
+    /// call. `None` short-circuits the upload site entirely — used
+    /// by unit tests that don't set up a CAFS.
+    pub store_dir: Option<&'a pacquet_store_dir::StoreDir>,
+    /// Shared batched writer for the side-effects upload's
+    /// read-modify-write of the existing `PackageFilesIndex` row.
+    /// `None` short-circuits the upload site.
+    pub store_index_writer: Option<&'a std::sync::Arc<pacquet_store_dir::StoreIndexWriter>>,
 }
 
 impl<'a> BuildModules<'a> {
@@ -184,6 +198,9 @@ impl<'a> BuildModules<'a> {
             side_effects_maps_by_snapshot,
             engine_name,
             side_effects_cache,
+            side_effects_cache_write,
+            store_dir,
+            store_index_writer,
         } = self;
 
         let Some(snapshots) = snapshots else { return Ok(Vec::new()) };
@@ -208,27 +225,47 @@ impl<'a> BuildModules<'a> {
             .collect();
 
         // Build the dep graph + state cache only when the
-        // side-effects-cache gate has a chance of firing. Otherwise
-        // the O(|snapshots|) graph construction is dead work — when
-        // `config.side_effects_cache` is off, or no Node major was
-        // detected, or the prefetch surfaced no cache rows, the
-        // gate below short-circuits before ever consulting the
-        // graph.
+        // side-effects-cache gate has a chance of firing — on
+        // either the READ side (prefetch surfaced cache rows) or
+        // the WRITE side (the install will be populating new
+        // cache entries after a successful build).
+        //
+        // The graph is bounded to the *forward closure of
+        // `requires_build` snapshots* via `build_deps_subgraph`.
+        // The upload-site and gate-check loops only ever compute
+        // cache keys for `requires_build` snapshots (the
+        // `continue` at the top of the chunk loop), and
+        // `calc_dep_state` only recurses into a snapshot's own
+        // children, so the closure-bounded graph produces the
+        // exact same cache keys as the full graph for every
+        // root we'll query. A pure-JS install with no
+        // `requires_build` snapshots feeds in an empty root
+        // iterator and the function returns immediately —
+        // O(0) walk for that path.
         //
         // Mirrors upstream's per-install `DepsStateCache` at
-        // <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L74>.
+        // <https://github.com/pnpm/pnpm/blob/7e3145f9fc/building/during-install/src/index.ts#L74>.
         // The cache memoizes per-node hash across diamond-shaped
         // subgraphs so the recursive walk stays linear in
-        // |snapshots| even when the same dep is reachable through
+        // |closure| even when the same dep is reachable through
         // many parents.
-        let cache_gate_active = side_effects_cache
+        let read_gate_active = side_effects_cache
             && engine_name.is_some()
-            && side_effects_maps_by_snapshot.is_some_and(|m| !m.is_empty())
-            && packages.is_some();
+            && side_effects_maps_by_snapshot.is_some_and(|m| !m.is_empty());
+        let write_gate_active = side_effects_cache_write
+            && engine_name.is_some()
+            && store_index_writer.is_some()
+            && store_dir.is_some();
+        let cache_gate_active = (read_gate_active || write_gate_active) && packages.is_some();
         let dep_graph = cache_gate_active.then(|| {
-            crate::build_deps_graph(
+            let roots = requires_build_map
+                .iter()
+                .filter(|&(_, &requires_build)| requires_build)
+                .map(|(key, _)| key.clone());
+            crate::build_deps_subgraph(
                 snapshots,
                 packages.expect("`cache_gate_active` requires packages: Some"),
+                roots,
             )
         });
         let mut deps_state_cache: pacquet_graph_hasher::DepsStateCache<PackageKey> =
@@ -262,22 +299,20 @@ impl<'a> BuildModules<'a> {
                     Some(true) => {}
                 }
 
-                // Side-effects-cache `is_built` gate. Mirrors
-                // upstream's `!node.isBuilt` filter at
-                // <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L73-L77>.
-                // We're already past the policy gate, so this
-                // snapshot would otherwise run its scripts — but if
-                // the prefetch surfaced a matching side-effects-cache
-                // entry, the build is already represented on disk
-                // (pnpm seeded it on a previous install) and we
-                // can skip.
-                if side_effects_cache
-                    && let Some(maps_by_snapshot) = side_effects_maps_by_snapshot
-                    && let Some(maps) = maps_by_snapshot.get(&snapshot_key)
-                    && let Some(graph) = dep_graph.as_ref()
-                    && let Some(engine) = engine_name
-                {
-                    let cache_key = pacquet_graph_hasher::calc_dep_state(
+                // Compute the side-effects cache key once per
+                // snapshot, before the `is_built` gate. The same
+                // value is later consumed by the WRITE-path upload
+                // call after `run_postinstall_hooks` succeeds, so
+                // recomputing it there would just duplicate work —
+                // `deps_state_cache` makes the second call free
+                // anyway, but routing through one `let` keeps the
+                // gate-side and write-side keys provably identical.
+                //
+                // `None` when the cache gate can't fire (no engine,
+                // no graph, etc.); both downstream consumers
+                // short-circuit on `None`.
+                let cache_key = (dep_graph.as_ref().zip(engine_name)).map(|(graph, engine)| {
+                    pacquet_graph_hasher::calc_dep_state(
                         graph,
                         &mut deps_state_cache,
                         &snapshot_key,
@@ -298,16 +333,31 @@ impl<'a> BuildModules<'a> {
                             // `building/during-install/src/index.ts:202`.
                             include_dep_graph_hash: true,
                         },
+                    )
+                });
+
+                // Side-effects-cache `is_built` gate. Mirrors
+                // upstream's `!node.isBuilt` filter at
+                // <https://github.com/pnpm/pnpm/blob/7e3145f9fc/building/during-install/src/index.ts#L73-L77>.
+                // We're already past the policy gate, so this
+                // snapshot would otherwise run its scripts — but if
+                // the prefetch surfaced a matching side-effects-cache
+                // entry, the build is already represented on disk
+                // (pnpm seeded it on a previous install) and we
+                // can skip.
+                if side_effects_cache
+                    && let Some(maps_by_snapshot) = side_effects_maps_by_snapshot
+                    && let Some(maps) = maps_by_snapshot.get(&snapshot_key)
+                    && let Some(key) = cache_key.as_deref()
+                    && maps.contains_key(key)
+                {
+                    tracing::debug!(
+                        target: "pacquet::build",
+                        ?snapshot_key,
+                        cache_key = key,
+                        "side-effects cache hit; skipping build",
                     );
-                    if maps.contains_key(&cache_key) {
-                        tracing::debug!(
-                            target: "pacquet::build",
-                            ?snapshot_key,
-                            cache_key,
-                            "side-effects cache hit; skipping build",
-                        );
-                        continue;
-                    }
+                    continue;
                 }
 
                 let pkg_dir = virtual_store_dir_for_key(virtual_store_dir, &snapshot_key);
@@ -363,6 +413,55 @@ impl<'a> BuildModules<'a> {
                         continue;
                     }
                     return Err(BuildModulesError::LifecycleScript(err));
+                }
+
+                // Side-effects-cache WRITE path. Mirrors
+                // `<https://github.com/pnpm/pnpm/blob/7e3145f9fc/building/during-install/src/index.ts#L198-L216>`:
+                // after a successful `run_postinstall_hooks`,
+                // re-hash the package directory and queue a
+                // `PackageFilesIndex.sideEffects[cache_key] = diff`
+                // mutation so a future install can skip the
+                // rebuild.
+                //
+                // Gated on every precondition for a meaningful
+                // upload: write enabled, cache_key composable
+                // (engine + graph present), `packages` map
+                // available for the integrity lookup, and the
+                // metadata row carries an integrity (registry /
+                // tarball resolutions — git / directory have no
+                // integrity and pnpm doesn't cache those either).
+                //
+                // All errors are swallowed with a `tracing::warn!`,
+                // matching upstream's `try { upload } catch (err) {
+                // logger.warn(...) }` at lines 208-215. A failed
+                // upload doesn't fail the install: the next install
+                // re-runs the build.
+                if side_effects_cache_write
+                    && let Some(writer) = store_index_writer
+                    && let Some(store) = store_dir
+                    && let Some(cache_key) = cache_key.as_deref()
+                    && let Some(packages) = packages
+                    && let Some(metadata) = packages.get(&metadata_key)
+                    && let Some(integrity) = metadata.resolution.integrity()
+                {
+                    let files_index_file = pacquet_store_dir::store_index_key(
+                        &integrity.to_string(),
+                        &metadata_key.to_string(),
+                    );
+                    if let Err(err) = pacquet_store_dir::upload(
+                        store,
+                        &pkg_dir,
+                        &files_index_file,
+                        cache_key,
+                        writer,
+                    ) {
+                        tracing::warn!(
+                            target: "pacquet::build",
+                            ?err,
+                            dep_path = %snapshot_key,
+                            "side-effects cache upload failed; build proceeds",
+                        );
+                    }
                 }
             }
         }

@@ -2070,6 +2070,7 @@ dependencies = [
  "reflink-copy",
  "serde-saphyr",
  "serde_json",
+ "sha2",
  "ssri",
  "tempfile",
  "text-block-macros",
@@ -2145,6 +2146,7 @@ version = "0.0.1"
 dependencies = [
  "dashmap",
  "derive_more",
+ "dunce",
  "miette 7.6.0",
  "pacquet-fs",
  "pipe-trait",

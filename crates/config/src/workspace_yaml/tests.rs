@@ -142,6 +142,52 @@ fn parses_side_effects_cache_from_yaml_and_applies() {
     assert!(!config.side_effects_cache, "yaml override wins");
 }
 
+/// `sideEffectsCacheReadonly` is pnpm's read-only flag for the
+/// side-effects cache. Same camelCase + `apply_to` wiring as
+/// `sideEffectsCache`. Default is `false`, so flipping it on via
+/// yaml must end at `config.side_effects_cache_readonly == true`.
+#[test]
+fn parses_side_effects_cache_readonly_from_yaml_and_applies() {
+    let yaml = "sideEffectsCacheReadonly: true\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    assert_eq!(settings.side_effects_cache_readonly, Some(true));
+
+    let mut config = Config::new();
+    assert!(!config.side_effects_cache_readonly, "the default is `false`");
+    settings.apply_to(&mut config, Path::new("/irrelevant"));
+    assert!(config.side_effects_cache_readonly, "yaml override wins");
+}
+
+/// READ / WRITE gate helpers must combine the two knobs the way
+/// upstream's [`config/reader/src/index.ts`](https://github.com/pnpm/pnpm/blob/7e3145f9fc/config/reader/src/index.ts#L614-L615)
+/// does for the canonical state combinations:
+///
+/// - default (`cache=true`, `readonly=false`)  → read=on, write=on
+/// - cache off  (`cache=false`, `readonly=false`) → read=off, write=off
+/// - readonly on (`cache=true`, `readonly=true`)  → read=on, write=off
+/// - cache off + readonly on                      → read=on, write=off
+#[test]
+fn side_effects_cache_gates_truth_table() {
+    let mut config = Config::new();
+    assert!(config.side_effects_cache_read());
+    assert!(config.side_effects_cache_write());
+
+    config.side_effects_cache = false;
+    config.side_effects_cache_readonly = false;
+    assert!(!config.side_effects_cache_read());
+    assert!(!config.side_effects_cache_write());
+
+    config.side_effects_cache = true;
+    config.side_effects_cache_readonly = true;
+    assert!(config.side_effects_cache_read());
+    assert!(!config.side_effects_cache_write());
+
+    config.side_effects_cache = false;
+    config.side_effects_cache_readonly = true;
+    assert!(config.side_effects_cache_read());
+    assert!(!config.side_effects_cache_write());
+}
+
 #[test]
 fn apply_leaves_unset_fields_alone() {
     let yaml = "storeDir: /s\n";

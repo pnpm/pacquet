@@ -51,6 +51,7 @@ pub struct WorkspaceSettings {
     pub resolve_peers_from_workspace_root: Option<bool>,
     pub verify_store_integrity: Option<bool>,
     pub side_effects_cache: Option<bool>,
+    pub side_effects_cache_readonly: Option<bool>,
     pub fetch_retries: Option<u32>,
     pub fetch_retry_factor: Option<u32>,
     pub fetch_retry_mintimeout: Option<u64>,
@@ -142,7 +143,8 @@ impl WorkspaceSettings {
             lockfile, prefer_frozen_lockfile, lockfile_include_tarball_url,
             auto_install_peers, dedupe_peer_dependents, strict_peer_dependencies,
             resolve_peers_from_workspace_root, verify_store_integrity,
-            side_effects_cache, fetch_retries, fetch_retry_factor,
+            side_effects_cache, side_effects_cache_readonly,
+            fetch_retries, fetch_retry_factor,
             fetch_retry_mintimeout, fetch_retry_maxtimeout,
         }
 
