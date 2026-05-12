@@ -174,6 +174,26 @@ pub struct Config {
     #[default = true]
     pub verify_store_integrity: bool,
 
+    /// Whether to consult the side-effects cache (`PackageFilesIndex.sideEffects`)
+    /// when importing a package. When `true` (pnpm's default), a
+    /// matching cache entry — keyed by [`pacquet_graph_hasher::engine_name`]
+    /// extended with the dep-graph and patch hashes — means the
+    /// package is treated as already built: the cached overlay
+    /// (added files minus deleted files on top of the base CAFS
+    /// map) is used as the import payload and the lifecycle scripts
+    /// are skipped. When `false`, the cache is ignored and the
+    /// build runs every time.
+    ///
+    /// Mirrors pnpm's `side-effects-cache` (camelCase
+    /// `sideEffectsCache`) — see
+    /// [`config/config/src/index.ts`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/config/src/index.ts).
+    /// Pacquet honors this flag for the read path only; the
+    /// write path (populating the cache after a postinstall)
+    /// is a separate follow-up — see #397 item 10's PR description.
+    #[default = true]
+    #[serde(default = "bool_true", deserialize_with = "deserialize_bool")]
+    pub side_effects_cache: bool,
+
     /// How many times pacquet retries a failed tarball fetch on transient
     /// errors before giving up. Mirrors pnpm's `fetchRetries` (default
     /// `2`, matching `config/config/src/index.ts`). The value is the count
