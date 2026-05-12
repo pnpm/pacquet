@@ -160,5 +160,78 @@ pub fn resolve_child_concurrency_with_parallelism(option: Option<i32>, paralleli
     }
 }
 
+/// Default `unsafePerm` matching upstream's
+/// [`extendBuildOptions`](https://github.com/pnpm/pnpm/blob/94240bc046/building/after-install/src/extendBuildOptions.ts#L83-L86):
+///
+/// ```ts
+/// unsafePerm: process.platform === 'win32' ||
+///   process.platform === 'cygwin' ||
+///   !process.setgid ||
+///   process.getuid?.() !== 0,
+/// ```
+///
+/// Truth table:
+/// - Windows (or Cygwin) → `true`. POSIX privilege drop doesn't
+///   apply; upstream's `process.platform === 'win32' ||
+///   process.platform === 'cygwin'` branch fires unconditionally.
+/// - POSIX, not running as root → `true`. Nothing to drop from.
+/// - POSIX, running as root → `false`. Lifecycle scripts will run
+///   under TMPDIR isolation to `node_modules/.tmp`.
+///
+/// Pacquet's executor doesn't currently consume `unsafe_perm` to
+/// actually drop uid/gid (upstream's own [`@pnpm/npm-lifecycle`
+/// implementation](https://github.com/pnpm/npm-lifecycle/blob/d2d8e790/index.js#L236-L239)
+/// is a no-op in practice because `opts.user` / `opts.group` are
+/// never populated), but the TMPDIR-isolation side of the flag is
+/// honored — see `pacquet_executor::make_env`.
+///
+/// Rust's `cfg!(windows)` covers Windows and Cygwin (Cygwin builds
+/// target `windows-gnu`), so the upstream `process.platform ===
+/// 'cygwin'` branch is implicitly handled. The `!process.setgid`
+/// branch in upstream is a Node-version compatibility check for
+/// older Node where `setgid` doesn't exist; it doesn't translate
+/// to Rust (libc's `setgid` is always available on POSIX hosts
+/// where libc compiles).
+pub fn default_unsafe_perm() -> bool {
+    if cfg!(windows) {
+        return true;
+    }
+    is_unsafe_perm_posix(unsafe { posix_getuid() })
+}
+
+/// Pure-logic helper exposed for tests so the POSIX branch can be
+/// exercised under both root and non-root uids without root
+/// privileges. Mirrors the POSIX half of [`default_unsafe_perm`].
+pub fn is_unsafe_perm_posix(uid: u32) -> bool {
+    // `unsafe_perm = true` means "do NOT drop privileges". Drop
+    // only when we *are* root (uid == 0).
+    uid != 0
+}
+
+/// POSIX `getuid()` wrapper. Returns 0 on Windows (the caller
+/// short-circuits on Windows before reaching this, but the stub
+/// keeps the function callable from non-Windows test code without
+/// `cfg` gating at every call site).
+///
+/// # Safety
+///
+/// `libc::getuid` is documented as always-safe (it reads a kernel
+/// field, has no side effects, and cannot fail). The `unsafe`
+/// marker here is the standard Rust FFI requirement, not a sign of
+/// per-call invariants.
+#[cfg(unix)]
+unsafe fn posix_getuid() -> u32 {
+    unsafe { libc::getuid() as u32 }
+}
+
+/// Stub for non-POSIX builds — `default_unsafe_perm` never
+/// reaches this branch on Windows because it short-circuits to
+/// `true` first. The stub exists so the function signature
+/// resolves on every target without `cfg` gating in the caller.
+#[cfg(not(unix))]
+unsafe fn posix_getuid() -> u32 {
+    0
+}
+
 #[cfg(test)]
 mod tests;

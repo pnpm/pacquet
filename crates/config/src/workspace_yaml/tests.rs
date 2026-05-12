@@ -313,10 +313,12 @@ fn rejects_invalid_scripts_prepend_node_path() {
     serde_saphyr::from_str::<WorkspaceSettings>(yaml).expect_err("must reject");
 }
 
-/// `unsafePerm` from yaml flips the default-`true` field. Mirrors
-/// upstream's [`Config.unsafePerm: boolean`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/Config.ts).
-/// Pacquet's auto-root-detect default is a follow-up — for now,
-/// yaml override is the only way to flip the flag on POSIX.
+/// `unsafePerm: false` from yaml propagates to `Config.unsafe_perm`
+/// on POSIX. Mirrors upstream's [`Config.unsafePerm: boolean`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/Config.ts).
+/// The starting `Config::new()` value depends on the runtime uid
+/// (see [`default_unsafe_perm`]) — `true` for non-root, `false`
+/// for root. Either way, `apply_to` with `Some(false)` ends in
+/// `false`.
 #[test]
 fn parses_unsafe_perm_from_yaml_and_applies() {
     // POSIX-only: the Windows force-override below would mask this
@@ -329,7 +331,6 @@ fn parses_unsafe_perm_from_yaml_and_applies() {
     assert_eq!(settings.unsafe_perm, Some(false));
 
     let mut config = Config::new();
-    assert!(config.unsafe_perm, "default is true");
     settings.apply_to(&mut config, Path::new("/irrelevant"));
     assert!(!config.unsafe_perm, "yaml override wins on POSIX");
 }
