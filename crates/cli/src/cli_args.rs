@@ -13,7 +13,7 @@ use pacquet_executor::execute_shell;
 use pacquet_package_manifest::PackageManifest;
 use pacquet_reporter::{NdjsonReporter, SilentReporter};
 use run::RunArgs;
-use std::{env, path::PathBuf};
+use std::path::PathBuf;
 use store::StoreCommand;
 
 /// Experimental package manager for node.js written in rust.
@@ -88,11 +88,19 @@ impl CliArgs {
             .into_diagnostic()
             .wrap_err_with(|| format!("canonicalizing the `--dir` argument: {}", dir.display()))?;
         let manifest_path = || dir.join("package.json");
+        // Resolve `.npmrc` / `pnpm-workspace.yaml` from the canonicalized
+        // `--dir` rather than the process cwd, matching pnpm 11 (which
+        // builds its `localPrefix` from `cliOptions.dir`, not `cwd`) —
+        // see [`loadNpmrcConfig`](https://github.com/pnpm/pnpm/blob/1819226b51/config/reader/src/loadNpmrcFiles.ts#L48-L50).
         let config = || -> miette::Result<&'static mut Config> {
-            Config::current(env::current_dir, home::home_dir, Default::default)
-                .map(Config::leak)
-                .map_err(miette::Report::new)
-                .wrap_err("load configuration")
+            Config::current(
+                || Ok::<_, std::convert::Infallible>(dir.clone()),
+                home::home_dir,
+                Default::default,
+            )
+            .map(Config::leak)
+            .map_err(miette::Report::new)
+            .wrap_err("load configuration")
         };
         // `require_lockfile` is the "this subcommand cannot run without a
         // lockfile loaded" signal, used by `State::init` to override
