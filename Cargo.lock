@@ -1899,7 +1899,9 @@ version = "0.0.1"
 dependencies = [
  "derive_more",
  "home",
+ "indexmap",
  "miette 7.6.0",
+ "pacquet-patching",
  "pacquet-store-dir",
  "pipe-trait",
  "pretty_assertions",
@@ -2058,6 +2060,7 @@ dependencies = [
  "pacquet-modules-yaml",
  "pacquet-network",
  "pacquet-package-manifest",
+ "pacquet-patching",
  "pacquet-registry",
  "pacquet-registry-mock",
  "pacquet-reporter",
@@ -2091,6 +2094,19 @@ dependencies = [
  "serde",
  "serde_json",
  "strum",
+ "tempfile",
+]
+
+[[package]]
+name = "pacquet-patching"
+version = "0.0.1"
+dependencies = [
+ "derive_more",
+ "indexmap",
+ "miette 7.6.0",
+ "node-semver",
+ "pretty_assertions",
+ "sha2",
  "tempfile",
 ]
 

@@ -4,11 +4,13 @@ mod npmrc_auth;
 mod test_env_guard;
 mod workspace_yaml;
 
+use indexmap::IndexMap;
+use pacquet_patching::{PatchGroupRecord, ResolvePatchedDependenciesError, resolve_and_group};
 use pacquet_store_dir::StoreDir;
 use pipe_trait::Pipe;
 use serde::Deserialize;
 use smart_default::SmartDefault;
-use std::{fs, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf};
 
 use crate::defaults::{
     default_fetch_retries, default_fetch_retry_factor, default_fetch_retry_maxtimeout,
@@ -240,6 +242,46 @@ pub struct Config {
     /// see [`Config::fetch_retries`].
     #[default(_code = "default_fetch_retry_maxtimeout()")]
     pub fetch_retry_maxtimeout: u64,
+
+    /// Directory containing the nearest ancestor `pnpm-workspace.yaml`.
+    /// Set by [`WorkspaceSettings::apply_to`] when yaml was found, so
+    /// later install-time code (notably [`resolve_and_group`] for
+    /// `patchedDependencies`) can resolve relative paths against the
+    /// same dir pnpm does. `None` when no `pnpm-workspace.yaml` exists
+    /// anywhere up the tree — in that case there are no patches /
+    /// allowBuilds settings to resolve either.
+    pub workspace_dir: Option<PathBuf>,
+
+    /// Raw `patchedDependencies` from `pnpm-workspace.yaml`: keys are
+    /// `name[@version]`, values are patch file paths (relative to
+    /// `workspace_dir` or absolute). Consumed by
+    /// [`Config::resolved_patched_dependencies`] which performs the
+    /// path resolution and SHA-256 hashing.
+    ///
+    /// [`IndexMap`] preserves user-specified order so range entries
+    /// land in `PatchGroup.range` in the same order they appear in
+    /// yaml — matching upstream's JS-object iteration and keeping
+    /// `PATCH_KEY_CONFLICT` diagnostics aligned.
+    ///
+    /// pnpm v11 reads `patchedDependencies` from `pnpm-workspace.yaml`
+    /// only — see upstream's
+    /// [`addSettingsFromWorkspaceManifestToConfig`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/index.ts#L803-L831).
+    pub patched_dependencies: Option<IndexMap<String, String>>,
+
+    /// `pnpm.allowBuilds` from `pnpm-workspace.yaml`: package names
+    /// (or `name@version` keys) that are allowed to run lifecycle
+    /// scripts. pnpm 11 denies scripts by default; the allow-list is
+    /// the opt-in mechanism. Consumed by `AllowBuildPolicy::from_config`
+    /// in `pacquet-package-manager`.
+    ///
+    /// Default empty. Mirrors upstream's
+    /// [`createAllowBuildFunction`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/policy/src/index.ts).
+    pub allow_builds: HashMap<String, bool>,
+
+    /// `dangerouslyAllowAllBuilds` from `pnpm-workspace.yaml`. When
+    /// `true`, every package may run lifecycle scripts regardless of
+    /// `allow_builds`. Default `false` to match pnpm v11.
+    pub dangerously_allow_all_builds: bool,
 }
 
 impl Config {
@@ -270,6 +312,33 @@ impl Config {
     /// sense if it really does block writes.
     pub fn side_effects_cache_write(&self) -> bool {
         self.side_effects_cache && !self.side_effects_cache_readonly
+    }
+
+    /// Resolve relative patch file paths in
+    /// [`Config::patched_dependencies`] against
+    /// [`Config::workspace_dir`], compute SHA-256 hashes, and bucket
+    /// the entries into a [`PatchGroupRecord`].
+    ///
+    /// Mirrors the workspace-dir half of upstream's
+    /// [`getOptionsFromPnpmSettings`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/getOptionsFromRootManifest.ts#L28-L46)
+    /// composed with the
+    /// [`calcPatchHashes` step](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/installing/deps-installer/src/install/index.ts#L468-L488).
+    ///
+    /// Returns `Ok(None)` when either field is unset (no yaml
+    /// found or no `patchedDependencies` key). Returns `Err(_)`
+    /// when any patch file can't be hashed or any key has an
+    /// invalid semver range.
+    ///
+    /// IO-heavy; call once per install rather than at every site
+    /// that needs the resolved record.
+    pub fn resolved_patched_dependencies(
+        &self,
+    ) -> Result<Option<PatchGroupRecord>, ResolvePatchedDependenciesError> {
+        let (Some(workspace_dir), Some(raw)) = (&self.workspace_dir, &self.patched_dependencies)
+        else {
+            return Ok(None);
+        };
+        resolve_and_group(workspace_dir, raw)
     }
 
     /// Build the runtime config by layering:

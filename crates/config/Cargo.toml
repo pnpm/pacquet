@@ -11,10 +11,12 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
+pacquet-patching  = { workspace = true }
 pacquet-store-dir = { workspace = true }
 
 derive_more   = { workspace = true }
 home          = { workspace = true }
+indexmap      = { workspace = true }
 miette        = { workspace = true }
 pipe-trait    = { workspace = true }
 serde         = { workspace = true }

@@ -188,6 +188,94 @@ fn side_effects_cache_gates_truth_table() {
     assert!(!config.side_effects_cache_write());
 }
 
+/// `patchedDependencies` in `pnpm-workspace.yaml` is a string→string
+/// map where keys carry an optional `@version` suffix and values are
+/// patch-file paths. pacquet captures it raw on `WorkspaceSettings`;
+/// path resolution + hashing + grouping happen at install time via
+/// `Config::resolved_patched_dependencies` (which delegates to
+/// `pacquet_patching::resolve_and_group`). This test guards the
+/// deserialization shape only — the camelCase rename, optionality,
+/// and value-as-string-path.
+#[test]
+fn parses_patched_dependencies_from_yaml() {
+    let yaml = r#"
+patchedDependencies:
+  "lodash@4.17.21": patches/lodash@4.17.21.patch
+  "foo@^1.0.0": patches/foo.patch
+  bar: patches/bar.patch
+"#;
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    let map = settings.patched_dependencies.expect("field present");
+    assert_eq!(map.get("lodash@4.17.21").map(String::as_str), Some("patches/lodash@4.17.21.patch"));
+    assert_eq!(map.get("foo@^1.0.0").map(String::as_str), Some("patches/foo.patch"));
+    assert_eq!(map.get("bar").map(String::as_str), Some("patches/bar.patch"));
+}
+
+#[test]
+fn patched_dependencies_absent_yields_none() {
+    let yaml = "storeDir: /s\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    assert!(settings.patched_dependencies.is_none());
+}
+
+/// `apply_to` records the workspace dir on `Config.workspace_dir`
+/// (needed by `Config::resolved_patched_dependencies` so patch
+/// file paths resolve against the same dir as upstream) and pushes
+/// the raw map verbatim.
+#[test]
+fn apply_pushes_patched_dependencies_and_workspace_dir() {
+    let yaml = r#"
+patchedDependencies:
+  "lodash@4.17.21": patches/lodash@4.17.21.patch
+"#;
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    let mut config = Config::new();
+    let base = Path::new("/workspace/root");
+    settings.apply_to(&mut config, base);
+
+    assert_eq!(config.workspace_dir.as_deref(), Some(base));
+    let map = config.patched_dependencies.expect("present");
+    assert_eq!(map.get("lodash@4.17.21").map(String::as_str), Some("patches/lodash@4.17.21.patch"));
+}
+
+/// `allowBuilds` is a map of `name[@version]` → bool. Same camelCase
+/// rename + `apply_to` wiring as the other yaml-sourced settings.
+/// pnpm 10+ moved this out of `package.json#pnpm` (matches
+/// pnpm/pacquet#397 item 5).
+#[test]
+fn parses_allow_builds_from_yaml_and_applies() {
+    let yaml = r#"
+allowBuilds:
+  esbuild: true
+  "foo@1.0.0": true
+  bar: false
+"#;
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    let raw = settings.allow_builds.clone().expect("field present");
+    assert_eq!(raw.get("esbuild").copied(), Some(true));
+    assert_eq!(raw.get("foo@1.0.0").copied(), Some(true));
+    assert_eq!(raw.get("bar").copied(), Some(false));
+
+    let mut config = Config::new();
+    assert!(config.allow_builds.is_empty(), "default is empty");
+    settings.apply_to(&mut config, Path::new("/irrelevant"));
+    assert_eq!(config.allow_builds.get("esbuild").copied(), Some(true));
+}
+
+/// `dangerouslyAllowAllBuilds` is a single boolean — default `false`
+/// to match pnpm 11.
+#[test]
+fn parses_dangerously_allow_all_builds_from_yaml_and_applies() {
+    let yaml = "dangerouslyAllowAllBuilds: true\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    assert_eq!(settings.dangerously_allow_all_builds, Some(true));
+
+    let mut config = Config::new();
+    assert!(!config.dangerously_allow_all_builds, "default is false");
+    settings.apply_to(&mut config, Path::new("/irrelevant"));
+    assert!(config.dangerously_allow_all_builds);
+}
+
 #[test]
 fn apply_leaves_unset_fields_alone() {
     let yaml = "storeDir: /s\n";

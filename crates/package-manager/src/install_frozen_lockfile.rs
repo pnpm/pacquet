@@ -9,6 +9,9 @@ use pacquet_config::Config;
 use pacquet_lockfile::{PackageKey, PackageMetadata, ProjectSnapshot, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_package_manifest::DependencyGroup;
+use pacquet_patching::{
+    ExtendedPatchInfo, PatchKeyConflictError, ResolvePatchedDependenciesError, get_patch_info,
+};
 use pacquet_reporter::{IgnoredScriptsLog, LogEvent, LogLevel, Reporter, Stage, StageLog};
 use pacquet_store_dir::StoreIndexWriter;
 use std::{collections::HashMap, path::Path, sync::atomic::AtomicU8};
@@ -54,6 +57,17 @@ pub enum InstallFrozenLockfileError {
 
     #[diagnostic(transparent)]
     BuildModules(#[error(source)] BuildModulesError),
+
+    #[diagnostic(transparent)]
+    ResolvePatchedDependencies(#[error(source)] ResolvePatchedDependenciesError),
+
+    /// Surfaces upstream's `ERR_PNPM_PATCH_KEY_CONFLICT` when more
+    /// than one configured version range matches a snapshot. Mirrors
+    /// pnpm's behavior of refusing to silently pick one — the user
+    /// must add an exact-version entry to disambiguate. See
+    /// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/patching/config/src/getPatchInfo.ts#L5-L19>.
+    #[diagnostic(transparent)]
+    PatchKeyConflict(#[error(source)] PatchKeyConflictError),
 }
 
 impl<'a, DependencyGroupList> InstallFrozenLockfile<'a, DependencyGroupList>
@@ -153,7 +167,55 @@ where
         }));
 
         let manifest_dir = Path::new(requester);
-        let allow_build_policy = AllowBuildPolicy::from_manifest(manifest_dir);
+        let allow_build_policy = AllowBuildPolicy::from_config(config);
+
+        // Resolve `pnpm-workspace.yaml`'s `patchedDependencies` once
+        // per install. Yields `None` when nothing is configured (no
+        // yaml, no key, or empty map). Mirrors upstream's single
+        // `calcPatchHashes` + `groupPatchedDependencies` call at
+        // <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/installing/deps-installer/src/install/index.ts#L468-L488>.
+        let patch_groups = config
+            .resolved_patched_dependencies()
+            .map_err(InstallFrozenLockfileError::ResolvePatchedDependencies)?;
+
+        // Look every snapshot up against the resolved record and
+        // build a per-snapshot map keyed by the peer-stripped
+        // `PackageKey` (patches are configured at name+version
+        // granularity, not per peer-resolution variant). `None` when
+        // no patches are configured at all; an empty map when patches
+        // exist but match nothing in the current install.
+        //
+        // Mirrors upstream's per-node lookup at
+        // <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/pkg-manager/resolve-dependencies/src/resolveDependencies.ts#L1482>,
+        // adapted for pacquet's lockfile-driven flow: pnpm computes
+        // `node.patch` during resolution, pacquet computes it after
+        // lockfile load.
+        let patches: Option<HashMap<PackageKey, ExtendedPatchInfo>> =
+            match (patch_groups.as_ref(), snapshots) {
+                (Some(groups), Some(snaps)) => {
+                    let mut map = HashMap::new();
+                    for key in snaps.keys() {
+                        let metadata_key = key.without_peer();
+                        let metadata_key_str = metadata_key.to_string();
+                        let (name, version) =
+                            crate::build_modules::parse_name_version_from_key(&metadata_key_str);
+                        // Propagate `ERR_PNPM_PATCH_KEY_CONFLICT` rather
+                        // than silently skipping the snapshot. Upstream
+                        // fails the install here so the user adds an
+                        // exact-version entry to disambiguate — silently
+                        // dropping the patch would leave the package
+                        // unpatched (and the cache key unchanged) without
+                        // any signal.
+                        if let Some(info) = get_patch_info(Some(groups), &name, &version)
+                            .map_err(InstallFrozenLockfileError::PatchKeyConflict)?
+                        {
+                            map.insert(metadata_key, info.clone());
+                        }
+                    }
+                    Some(map)
+                }
+                _ => None,
+            };
 
         let ignored_builds = BuildModules {
             virtual_store_dir: &config.virtual_store_dir,
@@ -169,6 +231,7 @@ where
             side_effects_cache_write: config.side_effects_cache_write(),
             store_dir: Some(&config.store_dir),
             store_index_writer: Some(&store_index_writer),
+            patches: patches.as_ref(),
         }
         .run::<R>()
         .map_err(InstallFrozenLockfileError::BuildModules)?;

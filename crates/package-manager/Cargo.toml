@@ -20,6 +20,7 @@ pacquet-network          = { workspace = true }
 pacquet-config           = { workspace = true }
 pacquet-graph-hasher     = { workspace = true }
 pacquet-package-manifest = { workspace = true }
+pacquet-patching         = { workspace = true }
 pacquet-registry         = { workspace = true }
 pacquet-reporter         = { workspace = true }
 pacquet-store-dir        = { workspace = true }
