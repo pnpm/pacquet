@@ -1,6 +1,6 @@
 use std::{
     env,
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     path::{self, Path, PathBuf},
 };
 
@@ -77,12 +77,28 @@ pub fn extend_path(
         }
     }
 
-    env::join_paths(joined).unwrap_or_else(|_| {
-        // join_paths only errors if a component contains the platform
-        // separator. Fall back to the original PATH so we never spawn
-        // with an empty PATH.
-        original_path.cloned().unwrap_or_default()
-    })
+    join_paths_lossy(&joined)
+}
+
+/// Join `paths` with the platform PATH separator (`;` on Windows,
+/// `:` elsewhere). Mirrors upstream's
+/// `pathArr.join(process.platform === 'win32' ? ';' : ':')` at
+/// <https://github.com/pnpm/npm-lifecycle/blob/d2d8e790/lib/extendPath.js#L26>
+/// exactly — including the lack of validation. If a path component
+/// itself contains the separator the spawned shell sees an embedded
+/// entry, which is the same behavior the upstream string-join
+/// produces. `std::env::join_paths` would have erred and dropped
+/// the entire computed PATH in that case.
+fn join_paths_lossy(paths: &[PathBuf]) -> OsString {
+    let sep: &OsStr = if cfg!(windows) { OsStr::new(";") } else { OsStr::new(":") };
+    let mut out = OsString::new();
+    for (i, p) in paths.iter().enumerate() {
+        if i > 0 {
+            out.push(sep);
+        }
+        out.push(p);
+    }
+    out
 }
 
 /// Returns the sequence of `node_modules/.bin` directories implied by

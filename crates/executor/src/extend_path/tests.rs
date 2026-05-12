@@ -169,6 +169,33 @@ fn scripts_prepend_node_path_always_appends_dirname_of_node() {
     );
 }
 
+/// Regression: a path component containing the platform separator
+/// must not cause `extend_path` to drop the computed entries.
+/// Upstream's `pathArr.join(':')` produces the embedded-separator
+/// string verbatim; pacquet must match. Skipping on Windows where
+/// `;` is far less likely to appear in real paths, but the
+/// invariant holds there too.
+#[cfg(unix)]
+#[test]
+fn separator_in_path_component_does_not_drop_other_entries() {
+    // A bin path that itself contains a colon — exotic, but valid
+    // on POSIX. `env::join_paths` would reject it; the naive join
+    // mirrors upstream by embedding it verbatim.
+    let wd = Path::new("/proj");
+    let weird = PathBuf::from("/tmp/a:b/.bin");
+    let path = extend_path(
+        wd,
+        None,
+        None,
+        std::slice::from_ref(&weird),
+        ScriptsPrependNodePath::Never,
+        None,
+    );
+    let s = path.to_string_lossy();
+    assert!(s.contains("/proj/node_modules/.bin"), "wd .bin must survive: {s:?}");
+    assert!(s.contains("/tmp/a:b/.bin"), "the weird extra path must survive verbatim: {s:?}");
+}
+
 /// Tri-state: `Never` and `WarnOnly` both skip the actual prepend
 /// (mirroring the `cfgsetting === true` gate at lib/extendPath.js:32).
 /// `WarnOnly` would emit a warning upstream; pacquet's reporter-side
