@@ -1,6 +1,6 @@
 use clap::Subcommand;
 use miette::Context;
-use pacquet_npmrc::Npmrc;
+use pacquet_config::Config;
 
 #[derive(Debug, Subcommand)]
 pub enum StoreCommand {
@@ -21,7 +21,10 @@ pub enum StoreCommand {
 impl StoreCommand {
     /// Execute the subcommand. `config` is fallible so a malformed
     /// `pnpm-workspace.yaml` surfaces as a hard error here too.
-    pub fn run<'a>(self, config: impl FnOnce() -> miette::Result<&'a Npmrc>) -> miette::Result<()> {
+    pub fn run<'a>(
+        self,
+        config: impl FnOnce() -> miette::Result<&'a Config>,
+    ) -> miette::Result<()> {
         match self {
             StoreCommand::Store => {
                 panic!("Not implemented")

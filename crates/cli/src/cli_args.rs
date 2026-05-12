@@ -8,8 +8,8 @@ use add::AddArgs;
 use clap::{Parser, Subcommand, ValueEnum};
 use install::InstallArgs;
 use miette::{Context, IntoDiagnostic};
+use pacquet_config::Config;
 use pacquet_executor::execute_shell;
-use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::PackageManifest;
 use pacquet_reporter::{NdjsonReporter, SilentReporter};
 use run::RunArgs;
@@ -88,9 +88,9 @@ impl CliArgs {
             .into_diagnostic()
             .wrap_err_with(|| format!("canonicalizing the `--dir` argument: {}", dir.display()))?;
         let manifest_path = || dir.join("package.json");
-        let npmrc = || -> miette::Result<&'static mut Npmrc> {
-            Npmrc::current(env::current_dir, home::home_dir, Default::default)
-                .map(Npmrc::leak)
+        let npmrc = || -> miette::Result<&'static mut Config> {
+            Config::current(env::current_dir, home::home_dir, Default::default)
+                .map(Config::leak)
                 .map_err(miette::Report::new)
                 .wrap_err("load configuration")
         };

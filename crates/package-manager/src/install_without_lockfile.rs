@@ -8,8 +8,8 @@ use derive_more::{Display, Error};
 use futures_util::future;
 use miette::Diagnostic;
 use pacquet_cmd_shim::{LinkBinsError, RealApi, link_bins};
+use pacquet_config::Config;
 use pacquet_network::ThrottledClient;
-use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::PackageVersion;
 use pacquet_reporter::{LogEvent, LogLevel, Reporter, Stage, StageLog};
@@ -38,7 +38,7 @@ pub struct InstallWithoutLockfile<'a, DependencyGroupList> {
     pub tarball_mem_cache: &'a MemCache,
     pub resolved_packages: &'a ResolvedPackages,
     pub http_client: &'a ThrottledClient,
-    pub config: &'static Npmrc,
+    pub config: &'static Config,
     pub manifest: &'a PackageManifest,
     pub dependency_groups: DependencyGroupList,
     /// Install-scoped dedupe state for `pnpm:package-import-method`.

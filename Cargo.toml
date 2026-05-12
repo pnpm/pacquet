@@ -24,7 +24,7 @@ pacquet-package-manager  = { path = "crates/package-manager" }
 pacquet-lockfile         = { path = "crates/lockfile" }
 pacquet-modules-yaml     = { path = "crates/modules-yaml" }
 pacquet-network          = { path = "crates/network" }
-pacquet-npmrc            = { path = "crates/npmrc" }
+pacquet-config           = { path = "crates/config" }
 pacquet-executor         = { path = "crates/executor" }
 pacquet-diagnostics      = { path = "crates/diagnostics" }
 pacquet-store-dir        = { path = "crates/store-dir" }

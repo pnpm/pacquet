@@ -1,5 +1,5 @@
 use super::NpmrcAuth;
-use crate::Npmrc;
+use crate::Config;
 use pretty_assertions::assert_eq;
 
 #[test]
@@ -8,14 +8,14 @@ fn picks_up_registry_and_normalises_trailing_slash() {
     let auth = NpmrcAuth::from_ini(ini);
     assert_eq!(auth.registry.as_deref(), Some("https://r.example"));
 
-    let mut npmrc = Npmrc::new();
+    let mut npmrc = Config::new();
     auth.apply_to(&mut npmrc);
     assert_eq!(npmrc.registry, "https://r.example/");
 }
 
 #[test]
 fn preserves_existing_trailing_slash() {
-    let mut npmrc = Npmrc::new();
+    let mut npmrc = Config::new();
     NpmrcAuth::from_ini("registry=https://r.example/\n").apply_to(&mut npmrc);
     assert_eq!(npmrc.registry, "https://r.example/");
 }
@@ -26,10 +26,10 @@ fn ignores_non_auth_keys() {
     // from pnpm-workspace.yaml now. Writing them to .npmrc should be a
     // no-op.
     //
-    // `Npmrc::new()` reads `PNPM_HOME` / `XDG_DATA_HOME` to compute
+    // `Config::new()` reads `PNPM_HOME` / `XDG_DATA_HOME` to compute
     // `store_dir`, and the env-mutating tests in `custom_deserializer`
     // toggle those vars under `EnvGuard`. Hold the same lock so a
-    // parallel test can't change the env between the two `Npmrc::new()`
+    // parallel test can't change the env between the two `Config::new()`
     // snapshots compared below. Proper fix is dependency injection —
     // see the TODO on `default_store_dir`.
     let _g = crate::test_env_guard::EnvGuard::snapshot(["PNPM_HOME", "XDG_DATA_HOME"]);
@@ -39,8 +39,8 @@ lockfile=false
 hoist=false
 node-linker=hoisted
 ";
-    let npmrc_before = Npmrc::new();
-    let mut npmrc = Npmrc::new();
+    let npmrc_before = Config::new();
+    let mut npmrc = Config::new();
     NpmrcAuth::from_ini(ini).apply_to(&mut npmrc);
     assert_eq!(npmrc.store_dir, npmrc_before.store_dir);
     assert_eq!(npmrc.lockfile, npmrc_before.lockfile);

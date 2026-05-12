@@ -1,4 +1,4 @@
-use crate::{NodeLinker, Npmrc, PackageImportMethod};
+use crate::{Config, NodeLinker, PackageImportMethod};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_store_dir::StoreDir;
@@ -19,7 +19,7 @@ use std::{
 /// settings — works out of the box.
 ///
 /// Every field is `Option` because the yaml is strictly additive on top of
-/// [`Npmrc`]: anything left unset falls through to whatever `.npmrc` provided
+/// [`Config`]: anything left unset falls through to whatever `.npmrc` provided
 /// (or the hard-coded default).
 ///
 /// See <https://pnpm.io/settings> for the canonical key list.
@@ -127,7 +127,7 @@ impl WorkspaceSettings {
     /// are resolved against `base_dir` if relative — mirroring `.npmrc`'s
     /// resolve-against-cwd behaviour but anchored at the workspace root
     /// where the yaml was found, which is what pnpm does.
-    pub fn apply_to(self, npmrc: &mut Npmrc, base_dir: &Path) {
+    pub fn apply_to(self, npmrc: &mut Config, base_dir: &Path) {
         macro_rules! apply {
             ($($field:ident),* $(,)?) => {$(
                 if let Some(v) = self.$field {

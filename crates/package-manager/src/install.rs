@@ -6,13 +6,13 @@ use crate::{
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
+use pacquet_config::{Config, NodeLinker};
 use pacquet_lockfile::Lockfile;
 use pacquet_modules_yaml::{
     DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH, IncludedDependencies, LayoutVersion, Modules,
     NodeLinker as ModulesNodeLinker, RealApi, WriteModulesError, write_modules_manifest,
 };
 use pacquet_network::ThrottledClient;
-use pacquet_npmrc::{NodeLinker, Npmrc};
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_reporter::{
     ContextLog, LogEvent, LogLevel, PackageManifestLog, PackageManifestMessage, Reporter, Stage,
@@ -29,7 +29,7 @@ where
     pub tarball_mem_cache: &'a MemCache,
     pub resolved_packages: &'a ResolvedPackages,
     pub http_client: &'a ThrottledClient,
-    pub config: &'static Npmrc,
+    pub config: &'static Config,
     pub manifest: &'a PackageManifest,
     pub lockfile: Option<&'a Lockfile>,
     pub dependency_groups: DependencyGroupList,
@@ -235,7 +235,7 @@ where
     }
 }
 
-/// Translate pacquet's [`Npmrc::node_linker`] into the
+/// Translate pacquet's [`Config::node_linker`] into the
 /// [`pacquet_modules_yaml::NodeLinker`] enum used on disk. The two
 /// enums share the same variant set (`isolated`, `hoisted`, `pnp`),
 /// matching upstream's `nodeLinker` string.
@@ -256,7 +256,7 @@ fn map_node_linker(linker: &NodeLinker) -> ModulesNodeLinker {
 /// `allowBuilds`) default to empty / unset, which is exactly what
 /// upstream produces for a single-importer install with no skipped
 /// optional deps and no build allowlist.
-fn build_modules_manifest(config: &Npmrc, included: IncludedDependencies) -> Modules {
+fn build_modules_manifest(config: &Config, included: IncludedDependencies) -> Modules {
     Modules {
         hoist_pattern: Some(config.hoist_pattern.clone()),
         included,

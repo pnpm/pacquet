@@ -5,9 +5,9 @@ use crate::{
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
+use pacquet_config::Config;
 use pacquet_lockfile::{PackageKey, PackageMetadata, ProjectSnapshot, SnapshotEntry};
 use pacquet_network::ThrottledClient;
-use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::DependencyGroup;
 use pacquet_reporter::{IgnoredScriptsLog, LogEvent, LogLevel, Reporter, Stage, StageLog};
 use std::{collections::HashMap, path::Path, sync::atomic::AtomicU8};
@@ -27,7 +27,7 @@ where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
     pub http_client: &'a ThrottledClient,
-    pub config: &'static Npmrc,
+    pub config: &'static Config,
     pub importers: &'a HashMap<String, ProjectSnapshot>,
     pub packages: Option<&'a HashMap<PackageKey, PackageMetadata>>,
     pub snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,

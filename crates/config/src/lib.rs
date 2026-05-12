@@ -61,7 +61,7 @@ pub enum PackageImportMethod {
 
 #[derive(Debug, Deserialize, SmartDefault)]
 #[serde(rename_all = "kebab-case")]
-pub struct Npmrc {
+pub struct Config {
     /// When true, all dependencies are hoisted to node_modules/.pnpm/node_modules.
     /// This makes unlisted dependencies accessible to all packages inside node_modules.
     #[default = true]
@@ -184,7 +184,7 @@ pub struct Npmrc {
     /// Matches pnpm's `verifyStoreIntegrity` camelCase key in
     /// `pnpm-workspace.yaml` (same `true` default as pnpm's
     /// `installing/deps-installer/src/install/extendInstallOptions.ts`).
-    /// Only `pnpm-workspace.yaml` is wired up today — [`Npmrc::current`]
+    /// Only `pnpm-workspace.yaml` is wired up today — [`Config::current`]
     /// applies auth/registry from `.npmrc` and reads project-structural
     /// settings from `pnpm-workspace.yaml`, matching pnpm 11's own
     /// split. A `verify-store-integrity=…` line in `.npmrc` is
@@ -209,7 +209,7 @@ pub struct Npmrc {
     /// `fetch-retries=…` line in `.npmrc` is ignored upstream and is
     /// ignored here too. The kebab-case serde attribute is kept so test
     /// fixtures that round-trip a partial config through
-    /// `serde_ini::from_str` still parse; [`Npmrc::current`] applies the
+    /// `serde_ini::from_str` still parse; [`Config::current`] applies the
     /// auth subset from `.npmrc` and reads project-structural settings
     /// from `pnpm-workspace.yaml`.
     #[default(_code = "default_fetch_retries()")]
@@ -219,27 +219,27 @@ pub struct Npmrc {
     /// Exponential-backoff growth factor between retry attempts. Mirrors
     /// pnpm's `fetchRetryFactor` (default `10`). Successive backoff is
     /// `min(fetch_retry_mintimeout * factor^attempt, fetch_retry_maxtimeout)`.
-    /// Yaml-only — see [`Npmrc::fetch_retries`].
+    /// Yaml-only — see [`Config::fetch_retries`].
     #[default(_code = "default_fetch_retry_factor()")]
     #[serde(default = "default_fetch_retry_factor", deserialize_with = "deserialize_u32")]
     pub fetch_retry_factor: u32,
 
     /// Floor in milliseconds for the wait between retries. Mirrors pnpm's
     /// `fetchRetryMintimeout` (default `10000` — 10 s). Yaml-only — see
-    /// [`Npmrc::fetch_retries`].
+    /// [`Config::fetch_retries`].
     #[default(_code = "default_fetch_retry_mintimeout()")]
     #[serde(default = "default_fetch_retry_mintimeout", deserialize_with = "deserialize_u64")]
     pub fetch_retry_mintimeout: u64,
 
     /// Cap in milliseconds on the wait between retries. Mirrors pnpm's
     /// `fetchRetryMaxtimeout` (default `60000` — 1 min). Yaml-only —
-    /// see [`Npmrc::fetch_retries`].
+    /// see [`Config::fetch_retries`].
     #[default(_code = "default_fetch_retry_maxtimeout()")]
     #[serde(default = "default_fetch_retry_maxtimeout", deserialize_with = "deserialize_u64")]
     pub fetch_retry_maxtimeout: u64,
 }
 
-impl Npmrc {
+impl Config {
     pub fn new() -> Self {
         Self::default()
     }
@@ -271,7 +271,7 @@ impl Npmrc {
     where
         CurrentDir: FnOnce() -> Result<PathBuf, Error>,
         HomeDir: FnOnce() -> Option<PathBuf>,
-        Default: FnOnce() -> Npmrc,
+        Default: FnOnce() -> Config,
     {
         let mut npmrc = default();
 
@@ -320,7 +320,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
 
-    use super::{NodeLinker, Npmrc, PackageImportMethod, fs};
+    use super::{Config, NodeLinker, PackageImportMethod, fs};
     use crate::{custom_deserializer::default_store_dir, test_env_guard::EnvGuard};
     use pacquet_store_dir::StoreDir;
     use pipe_trait::Pipe;
@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     pub fn have_default_values() {
-        let value = Npmrc::new();
+        let value = Config::new();
         assert_eq!(value.node_linker, NodeLinker::default());
         assert_eq!(value.package_import_method, PackageImportMethod::default());
         assert!(value.prefer_frozen_lockfile);
@@ -343,25 +343,25 @@ mod tests {
 
     #[test]
     pub fn parse_package_import_method() {
-        let value: Npmrc = serde_ini::from_str("package-import-method=hardlink").unwrap();
+        let value: Config = serde_ini::from_str("package-import-method=hardlink").unwrap();
         assert_eq!(value.package_import_method, PackageImportMethod::Hardlink);
     }
 
     #[test]
     pub fn parse_node_linker() {
-        let value: Npmrc = serde_ini::from_str("node-linker=hoisted").unwrap();
+        let value: Config = serde_ini::from_str("node-linker=hoisted").unwrap();
         assert_eq!(value.node_linker, NodeLinker::Hoisted);
     }
 
     #[test]
     pub fn parse_bool() {
-        let value: Npmrc = serde_ini::from_str("prefer-frozen-lockfile=false").unwrap();
+        let value: Config = serde_ini::from_str("prefer-frozen-lockfile=false").unwrap();
         assert!(!value.prefer_frozen_lockfile);
     }
 
     #[test]
     pub fn parse_u64() {
-        let value: Npmrc = serde_ini::from_str("modules-cache-max-age=1000").unwrap();
+        let value: Config = serde_ini::from_str("modules-cache-max-age=1000").unwrap();
         assert_eq!(value.modules_cache_max_age, 1000);
     }
 
@@ -371,7 +371,7 @@ mod tests {
     /// pacquet to behave identically out of the box.
     #[test]
     pub fn fetch_retries_defaults_match_pnpm() {
-        let value = Npmrc::new();
+        let value = Config::new();
         assert_eq!(value.fetch_retries, 2);
         assert_eq!(value.fetch_retry_factor, 10);
         assert_eq!(value.fetch_retry_mintimeout, 10_000);
@@ -386,7 +386,7 @@ mod tests {
         unsafe {
             env::set_var("PNPM_HOME", "/hello"); // TODO: change this to dependency injection
         }
-        let value: Npmrc = serde_ini::from_str("").unwrap();
+        let value: Config = serde_ini::from_str("").unwrap();
         assert_eq!(display_store_dir(&value.store_dir), "/hello/store");
     }
 
@@ -406,13 +406,13 @@ mod tests {
             env::remove_var("PNPM_HOME"); // TODO: change this to dependency injection
             env::set_var("XDG_DATA_HOME", "/hello");
         }
-        let value: Npmrc = serde_ini::from_str("").unwrap();
+        let value: Config = serde_ini::from_str("").unwrap();
         assert_eq!(display_store_dir(&value.store_dir), "/hello/pnpm/store");
     }
 
     #[test]
     pub fn should_use_relative_virtual_store_dir() {
-        let value: Npmrc = serde_ini::from_str("virtual-store-dir=node_modules/.pacquet").unwrap();
+        let value: Config = serde_ini::from_str("virtual-store-dir=node_modules/.pacquet").unwrap();
         assert_eq!(
             value.virtual_store_dir,
             env::current_dir().unwrap().join("node_modules/.pacquet"),
@@ -422,16 +422,17 @@ mod tests {
     #[test]
     #[cfg(not(target_os = "windows"))]
     pub fn should_use_absolute_virtual_store_dir() {
-        let value: Npmrc = serde_ini::from_str("virtual-store-dir=/node_modules/.pacquet").unwrap();
+        let value: Config =
+            serde_ini::from_str("virtual-store-dir=/node_modules/.pacquet").unwrap();
         assert_eq!(value.virtual_store_dir, Path::new("/node_modules/.pacquet"));
     }
 
     #[test]
     pub fn add_slash_to_registry_end() {
-        let without_slash: Npmrc = serde_ini::from_str("registry=https://yagiz.co").unwrap();
+        let without_slash: Config = serde_ini::from_str("registry=https://yagiz.co").unwrap();
         assert_eq!(without_slash.registry, "https://yagiz.co/");
 
-        let without_slash: Npmrc = serde_ini::from_str("registry=https://yagiz.co/").unwrap();
+        let without_slash: Config = serde_ini::from_str("registry=https://yagiz.co/").unwrap();
         assert_eq!(without_slash.registry, "https://yagiz.co/");
     }
 
@@ -440,10 +441,10 @@ mod tests {
         let tmp = tempdir().unwrap();
         fs::write(tmp.path().join(".npmrc"), "registry=https://cwd.example")
             .expect("write to .npmrc");
-        let config = Npmrc::current(
+        let config = Config::current(
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || unreachable!("shouldn't reach home dir"),
-            Npmrc::new,
+            Config::new,
         )
         .expect("workspace yaml absent => no error");
         assert_eq!(config.registry, "https://cwd.example/");
@@ -457,9 +458,9 @@ mod tests {
         let tmp = tempdir().unwrap();
         let non_auth_ini = "symlink=false\nlockfile=true\nhoist=false\nnode-linker=hoisted\n";
         fs::write(tmp.path().join(".npmrc"), non_auth_ini).expect("write to .npmrc");
-        let defaults = Npmrc::new();
+        let defaults = Config::new();
         let config =
-            Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new)
+            Config::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
                 .expect("workspace yaml absent => no error");
         assert_eq!(config.symlink, defaults.symlink);
         assert_eq!(config.lockfile, defaults.lockfile);
@@ -478,9 +479,9 @@ mod tests {
         let tmp = tempdir().unwrap();
         let ini = "fetch-retries=99\nfetch-retry-factor=99\nfetch-retry-mintimeout=99\nfetch-retry-maxtimeout=99\n";
         fs::write(tmp.path().join(".npmrc"), ini).expect("write to .npmrc");
-        let defaults = Npmrc::new();
+        let defaults = Config::new();
         let config =
-            Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new)
+            Config::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
                 .expect("workspace yaml absent => no error");
         assert_eq!(config.fetch_retries, defaults.fetch_retries);
         assert_eq!(config.fetch_retry_factor, defaults.fetch_retry_factor);
@@ -494,7 +495,7 @@ mod tests {
         // write invalid utf-8 value to npmrc
         fs::write(tmp.path().join(".npmrc"), b"Hello \xff World").expect("write to .npmrc");
         let config =
-            Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new)
+            Config::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
                 .expect("workspace yaml absent => no error");
         assert!(config.symlink); // default — invalid .npmrc is silently ignored
     }
@@ -505,10 +506,10 @@ mod tests {
         let home_dir = tempdir().unwrap();
         fs::write(home_dir.path().join(".npmrc"), "registry=https://home.example")
             .expect("write to .npmrc");
-        let config = Npmrc::current(
+        let config = Config::current(
             || current_dir.path().to_path_buf().pipe(Ok::<_, ()>),
             || home_dir.path().to_path_buf().pipe(Some),
-            Npmrc::new,
+            Config::new,
         )
         .expect("workspace yaml absent => no error");
         assert_eq!(config.registry, "https://home.example/");
@@ -524,10 +525,10 @@ mod tests {
             .expect("write to .npmrc");
         fs::write(tmp.path().join("pnpm-workspace.yaml"), "registry: https://from-yaml.test\n")
             .expect("write to pnpm-workspace.yaml");
-        let config = Npmrc::current(
+        let config = Config::current(
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
             || unreachable!("shouldn't reach home dir"),
-            Npmrc::new,
+            Config::new,
         )
         .expect("yaml is valid");
         assert_eq!(config.registry, "https://from-yaml.test/");
@@ -542,7 +543,7 @@ mod tests {
             .expect("write to pnpm-workspace.yaml");
         // No `.npmrc` anywhere, but a parent dir has `pnpm-workspace.yaml` —
         // the yaml should still be applied.
-        let config = Npmrc::current(|| nested.clone().pipe(Ok::<_, ()>), || None, Npmrc::new)
+        let config = Config::current(|| nested.clone().pipe(Ok::<_, ()>), || None, Config::new)
             .expect("yaml is valid");
         assert!(!config.symlink);
     }
@@ -551,7 +552,7 @@ mod tests {
     pub fn test_current_folder_fallback_to_default() {
         let current_dir = tempdir().unwrap();
         let home_dir = tempdir().unwrap();
-        let config = Npmrc::current(
+        let config = Config::current(
             || current_dir.path().to_path_buf().pipe(Ok::<_, ()>),
             || home_dir.path().to_path_buf().pipe(Some),
             || serde_ini::from_str("symlink=false").unwrap(),
@@ -562,7 +563,7 @@ mod tests {
 
     /// Pnpm's
     /// [`workspace-manifest-reader`](https://github.com/pnpm/pnpm/blob/8eb1be4988/workspace/workspace-manifest-reader/src/index.ts)
-    /// fails the process on invalid yaml. `Npmrc::current` must do the
+    /// fails the process on invalid yaml. `Config::current` must do the
     /// same instead of silently falling back to defaults.
     #[test]
     pub fn invalid_workspace_yaml_propagates_error() {
@@ -571,7 +572,7 @@ mod tests {
         fs::write(tmp.path().join("pnpm-workspace.yaml"), ": : :\n")
             .expect("write to pnpm-workspace.yaml");
         let result =
-            Npmrc::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Npmrc::new);
+            Config::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new);
         let err = result.expect_err("invalid yaml should error");
         assert!(
             matches!(err, crate::LoadWorkspaceYamlError::ParseYaml { .. }),

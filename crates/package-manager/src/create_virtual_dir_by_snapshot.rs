@@ -1,8 +1,8 @@
 use crate::{CreateCasFilesError, SymlinkPackageError, create_cas_files, create_symlink_layout};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
+use pacquet_config::PackageImportMethod;
 use pacquet_lockfile::{PackageKey, SnapshotEntry};
-use pacquet_npmrc::PackageImportMethod;
 use pacquet_reporter::{
     LogEvent, LogLevel, PackageImportMethod as WireImportMethod, ProgressLog, ProgressMessage,
     Reporter,

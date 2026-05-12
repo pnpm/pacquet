@@ -1,6 +1,6 @@
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_npmrc::PackageImportMethod;
+use pacquet_config::PackageImportMethod;
 use pacquet_reporter::{
     LogEvent, LogLevel, PackageImportMethod as WireImportMethod, PackageImportMethodLog, Reporter,
 };

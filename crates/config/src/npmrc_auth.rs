@@ -1,4 +1,4 @@
-use crate::Npmrc;
+use crate::Config;
 
 /// Narrow subset of `.npmrc` that pacquet currently reads.
 ///
@@ -54,7 +54,7 @@ impl NpmrcAuth {
     /// Apply the parsed auth settings onto `npmrc`, leaving unset fields
     /// alone and doing the same trailing-slash normalisation the ini
     /// deserializer used to perform via `deserialize_registry`.
-    pub fn apply_to(self, npmrc: &mut Npmrc) {
+    pub fn apply_to(self, npmrc: &mut Config) {
         if let Some(registry) = self.registry {
             npmrc.registry =
                 if registry.ends_with('/') { registry } else { format!("{registry}/") };

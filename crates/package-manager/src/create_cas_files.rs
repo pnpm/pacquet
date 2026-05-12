@@ -1,7 +1,7 @@
 use crate::{LinkFileError, link_file};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_npmrc::PackageImportMethod;
+use pacquet_config::PackageImportMethod;
 use pacquet_reporter::Reporter;
 use rayon::prelude::*;
 use std::{

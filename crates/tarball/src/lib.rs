@@ -102,7 +102,7 @@ fn walk_reqwest_chain(error: &reqwest::Error) -> String {
 ///   as pnpm.
 ///
 /// If a caller wants stricter validation (warn / reject these
-/// configs), it belongs above the `Npmrc` boundary, alongside any
+/// configs), it belongs above the `Config` boundary, alongside any
 /// other npmrc sanity checks pnpm grows over time.
 ///
 /// Defaults (via [`SmartDefault`]) match pnpm's
