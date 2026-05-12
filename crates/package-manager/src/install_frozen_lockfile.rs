@@ -9,7 +9,9 @@ use pacquet_config::Config;
 use pacquet_lockfile::{PackageKey, PackageMetadata, ProjectSnapshot, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_package_manifest::DependencyGroup;
-use pacquet_patching::{ExtendedPatchInfo, ResolvePatchedDependenciesError, get_patch_info};
+use pacquet_patching::{
+    ExtendedPatchInfo, PatchKeyConflictError, ResolvePatchedDependenciesError, get_patch_info,
+};
 use pacquet_reporter::{IgnoredScriptsLog, LogEvent, LogLevel, Reporter, Stage, StageLog};
 use pacquet_store_dir::StoreIndexWriter;
 use std::{collections::HashMap, path::Path, sync::atomic::AtomicU8};
@@ -58,6 +60,14 @@ pub enum InstallFrozenLockfileError {
 
     #[diagnostic(transparent)]
     ResolvePatchedDependencies(#[error(source)] ResolvePatchedDependenciesError),
+
+    /// Surfaces upstream's `ERR_PNPM_PATCH_KEY_CONFLICT` when more
+    /// than one configured version range matches a snapshot. Mirrors
+    /// pnpm's behavior of refusing to silently pick one — the user
+    /// must add an exact-version entry to disambiguate. See
+    /// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/patching/config/src/getPatchInfo.ts#L5-L19>.
+    #[diagnostic(transparent)]
+    PatchKeyConflict(#[error(source)] PatchKeyConflictError),
 }
 
 impl<'a, DependencyGroupList> InstallFrozenLockfile<'a, DependencyGroupList>
@@ -181,19 +191,31 @@ where
         // `node.patch` during resolution, pacquet computes it after
         // lockfile load.
         let patches: Option<HashMap<PackageKey, ExtendedPatchInfo>> =
-            patch_groups.as_ref().zip(snapshots).map(|(groups, snaps)| {
-                let mut map = HashMap::new();
-                for key in snaps.keys() {
-                    let metadata_key = key.without_peer();
-                    let metadata_key_str = metadata_key.to_string();
-                    let (name, version) =
-                        crate::build_modules::parse_name_version_from_key(&metadata_key_str);
-                    if let Ok(Some(info)) = get_patch_info(Some(groups), &name, &version) {
-                        map.insert(metadata_key, info.clone());
+            match (patch_groups.as_ref(), snapshots) {
+                (Some(groups), Some(snaps)) => {
+                    let mut map = HashMap::new();
+                    for key in snaps.keys() {
+                        let metadata_key = key.without_peer();
+                        let metadata_key_str = metadata_key.to_string();
+                        let (name, version) =
+                            crate::build_modules::parse_name_version_from_key(&metadata_key_str);
+                        // Propagate `ERR_PNPM_PATCH_KEY_CONFLICT` rather
+                        // than silently skipping the snapshot. Upstream
+                        // fails the install here so the user adds an
+                        // exact-version entry to disambiguate — silently
+                        // dropping the patch would leave the package
+                        // unpatched (and the cache key unchanged) without
+                        // any signal.
+                        if let Some(info) = get_patch_info(Some(groups), &name, &version)
+                            .map_err(InstallFrozenLockfileError::PatchKeyConflict)?
+                        {
+                            map.insert(metadata_key, info.clone());
+                        }
                     }
+                    Some(map)
                 }
-                map
-            });
+                _ => None,
+            };
 
         let ignored_builds = BuildModules {
             virtual_store_dir: &config.virtual_store_dir,

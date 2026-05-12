@@ -191,10 +191,11 @@ fn side_effects_cache_gates_truth_table() {
 /// `patchedDependencies` in `pnpm-workspace.yaml` is a string→string
 /// map where keys carry an optional `@version` suffix and values are
 /// patch-file paths. pacquet captures it raw on `WorkspaceSettings`;
-/// path resolution + hashing + grouping are deferred to
-/// `pacquet_patching::resolve_and_group` (slice B will wire that
-/// onto `Config`). This test guards the deserialization shape only —
-/// the camelCase rename, optionality, and value-as-string-path.
+/// path resolution + hashing + grouping happen at install time via
+/// `Config::resolved_patched_dependencies` (which delegates to
+/// `pacquet_patching::resolve_and_group`). This test guards the
+/// deserialization shape only — the camelCase rename, optionality,
+/// and value-as-string-path.
 #[test]
 fn parses_patched_dependencies_from_yaml() {
     let yaml = r#"
