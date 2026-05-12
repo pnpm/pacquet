@@ -4,12 +4,13 @@ mod npmrc_auth;
 mod test_env_guard;
 mod workspace_yaml;
 
+use indexmap::IndexMap;
 use pacquet_patching::{PatchGroupRecord, ResolvePatchedDependenciesError, resolve_and_group};
 use pacquet_store_dir::StoreDir;
 use pipe_trait::Pipe;
 use serde::Deserialize;
 use smart_default::SmartDefault;
-use std::{collections::BTreeMap, collections::HashMap, fs, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf};
 
 use crate::defaults::{
     default_fetch_retries, default_fetch_retry_factor, default_fetch_retry_maxtimeout,
@@ -257,10 +258,15 @@ pub struct Config {
     /// [`Config::resolved_patched_dependencies`] which performs the
     /// path resolution and SHA-256 hashing.
     ///
+    /// [`IndexMap`] preserves user-specified order so range entries
+    /// land in `PatchGroup.range` in the same order they appear in
+    /// yaml — matching upstream's JS-object iteration and keeping
+    /// `PATCH_KEY_CONFLICT` diagnostics aligned.
+    ///
     /// pnpm v11 reads `patchedDependencies` from `pnpm-workspace.yaml`
     /// only — see upstream's
     /// [`addSettingsFromWorkspaceManifestToConfig`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/index.ts#L803-L831).
-    pub patched_dependencies: Option<BTreeMap<String, String>>,
+    pub patched_dependencies: Option<IndexMap<String, String>>,
 
     /// `pnpm.allowBuilds` from `pnpm-workspace.yaml`: package names
     /// (or `name@version` keys) that are allowed to run lifecycle

@@ -13,6 +13,19 @@ fn entries(keys: &[&str]) -> Vec<(String, PatchInput)> {
     keys.iter().map(|k| (k.to_string(), input(ZERO_HASH))).collect()
 }
 
+/// `all_patch_keys` iteration order is part of the contract —
+/// `verify_patches` uses it to build the unused-patch list that
+/// surfaces in `ERR_PNPM_UNUSED_PATCH`. The order is:
+///
+/// 1. Outer: alphabetical by package name (`PatchGroupRecord` is a
+///    `BTreeMap`).
+/// 2. Within a group: exact versions (alphabetical by version
+///    string, also `BTreeMap`), then ranges (insertion order, `Vec`),
+///    then the wildcard.
+///
+/// Assert the order directly rather than sorting — sorting would
+/// hide regressions in [`all_patch_keys`]. Flagged in slice A
+/// review.
 #[test]
 fn all_keys_yields_every_configured_key() {
     let groups = group_patched_dependencies(entries(&[
@@ -24,9 +37,8 @@ fn all_keys_yields_every_configured_key() {
     ]))
     .unwrap();
 
-    let mut keys: Vec<&str> = all_patch_keys(&groups).collect();
-    keys.sort();
-    assert_eq!(keys, vec!["bar@3.0.0", "baz", "foo", "foo@1.0.0", "foo@^2.0.0"]);
+    let keys: Vec<&str> = all_patch_keys(&groups).collect();
+    assert_eq!(keys, vec!["bar@3.0.0", "baz", "foo@1.0.0", "foo@^2.0.0", "foo"]);
 }
 
 #[test]

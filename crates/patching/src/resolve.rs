@@ -2,8 +2,8 @@ use crate::group::{PatchInput, PatchNonSemverRangeError, group_patched_dependenc
 use crate::hash::{CalcPatchHashError, create_hex_hash_from_file};
 use crate::types::PatchGroupRecord;
 use derive_more::{Display, Error};
+use indexmap::IndexMap;
 use miette::Diagnostic;
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// Error resolving `patchedDependencies` against a workspace dir.
@@ -34,7 +34,13 @@ impl From<PatchNonSemverRangeError> for ResolvePatchedDependenciesError {
 /// `raw` is the `patchedDependencies` map as it appears in
 /// `pnpm-workspace.yaml`: keys are `name[@version]` (e.g.
 /// `lodash@4.17.21`) and values are patch file paths, either
-/// relative to `workspace_dir` or absolute.
+/// relative to `workspace_dir` or absolute. The map's iteration
+/// order is preserved end-to-end into [`PatchGroup::range`], so
+/// the order in `PATCH_KEY_CONFLICT` diagnostics matches the order
+/// the user wrote in yaml — matching pnpm's JS-object iteration
+/// behavior. [`IndexMap`] is required for that; a [`BTreeMap`]
+/// would sort the keys and reorder ranges alphabetically, which
+/// surfaced as a review comment from Copilot during slice A.
 ///
 /// Ports the workspace-dir-resolution + grouping half of upstream's
 /// [`getOptionsFromPnpmSettings`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/getOptionsFromRootManifest.ts#L28-L46)
@@ -50,9 +56,12 @@ impl From<PatchNonSemverRangeError> for ResolvePatchedDependenciesError {
 ///
 /// Returns `Ok(None)` when `raw` is empty so callers don't have to
 /// special-case an empty grouping.
+///
+/// [`BTreeMap`]: std::collections::BTreeMap
+/// [`PatchGroup::range`]: crate::PatchGroup::range
 pub fn resolve_and_group(
     workspace_dir: &Path,
-    raw: &BTreeMap<String, String>,
+    raw: &IndexMap<String, String>,
 ) -> Result<Option<PatchGroupRecord>, ResolvePatchedDependenciesError> {
     if raw.is_empty() {
         return Ok(None);

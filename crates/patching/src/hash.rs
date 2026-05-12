@@ -14,12 +14,6 @@ pub enum CalcPatchHashError {
         #[error(source)]
         source: io::Error,
     },
-    #[display("Patch file {} is not valid UTF-8", path.display())]
-    NotUtf8 {
-        path: PathBuf,
-        #[error(source)]
-        source: std::string::FromUtf8Error,
-    },
 }
 
 /// SHA-256 hex digest of one patch file, with CRLF normalized to LF.
@@ -32,11 +26,17 @@ pub enum CalcPatchHashError {
 /// and committed without `.gitattributes` would otherwise hash
 /// differently than the same file on POSIX, and the resulting
 /// `patch_hash` would change between platforms.
+///
+/// Invalid UTF-8 byte sequences are replaced with the Unicode
+/// replacement character (U+FFFD) before hashing, matching Node.js
+/// [`fs.readFile(path, 'utf8')`](https://nodejs.org/api/buffer.html)
+/// which upstream uses in `readNormalizedFile`. Erroring on invalid
+/// bytes would diverge from pnpm: a patch file with stray non-UTF-8
+/// bytes would work under pnpm but fail under pacquet.
 pub fn create_hex_hash_from_file(path: &Path) -> Result<String, CalcPatchHashError> {
     let bytes = fs::read(path)
         .map_err(|source| CalcPatchHashError::ReadFile { path: path.to_path_buf(), source })?;
-    let text = String::from_utf8(bytes)
-        .map_err(|source| CalcPatchHashError::NotUtf8 { path: path.to_path_buf(), source })?;
+    let text = String::from_utf8_lossy(&bytes);
     let normalized = text.replace("\r\n", "\n");
     let mut hasher = Sha256::new();
     hasher.update(normalized.as_bytes());
@@ -128,15 +128,23 @@ mod tests {
         let err = create_hex_hash_from_file(&missing).unwrap_err();
         // Just confirm the error variant; `io::Error` formatting is
         // platform-specific.
-        assert!(matches!(err, super::CalcPatchHashError::ReadFile { .. }));
+        assert!(matches!(err, super::CalcPatchHashError::ReadFile { .. }), "got: {err:?}");
     }
 
+    /// Invalid UTF-8 bytes are replaced with U+FFFD rather than
+    /// erroring, matching Node.js `fs.readFile(path, 'utf8')` which
+    /// upstream uses in
+    /// [`readNormalizedFile`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/crypto/hash/src/index.ts#L36-L39).
+    /// Three stray invalid bytes hash as three U+FFFD chars (each
+    /// encoded as `0xEF 0xBF 0xBD` in UTF-8). The expected digest is
+    /// the SHA-256 of those nine bytes, cross-checked against
+    /// `printf '\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd' | shasum -a 256`.
     #[test]
-    fn non_utf8_errors() {
+    fn non_utf8_uses_replacement_char_and_does_not_error() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("invalid.patch");
         fs::write(&path, [0xffu8, 0xfeu8, 0xfdu8]).unwrap();
-        let err = create_hex_hash_from_file(&path).unwrap_err();
-        assert!(matches!(err, super::CalcPatchHashError::NotUtf8 { .. }));
+        let hash = create_hex_hash_from_file(&path).expect("lossy decoding must not error");
+        assert_eq!(hash, "a73f4cb996ceb6ee097888d897ae1004c9b1faab6c97629214139b9639aaf1af");
     }
 }

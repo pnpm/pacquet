@@ -1899,6 +1899,7 @@ version = "0.0.1"
 dependencies = [
  "derive_more",
  "home",
+ "indexmap",
  "miette 7.6.0",
  "pacquet-patching",
  "pacquet-store-dir",
@@ -2101,6 +2102,7 @@ name = "pacquet-patching"
 version = "0.0.1"
 dependencies = [
  "derive_more",
+ "indexmap",
  "miette 7.6.0",
  "node-semver",
  "pretty_assertions",

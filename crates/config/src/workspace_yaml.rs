@@ -1,11 +1,12 @@
 use crate::{Config, NodeLinker, PackageImportMethod};
 use derive_more::{Display, Error};
+use indexmap::IndexMap;
 use miette::Diagnostic;
 use pacquet_store_dir::StoreDir;
 use pipe_trait::Pipe;
 use serde::Deserialize;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     fs,
     io::{self, ErrorKind},
     path::{Path, PathBuf},
@@ -74,11 +75,19 @@ pub struct WorkspaceSettings {
     /// [`pacquet_patching::resolve_and_group`] so the yaml layer
     /// stays pure data.
     ///
+    /// [`IndexMap`] (not [`BTreeMap`]) — pnpm's JS-object iteration
+    /// preserves the user's order, and that order leaks into
+    /// `PATCH_KEY_CONFLICT` diagnostics that list matched ranges.
+    /// Sorting the keys here would surface as a divergence in
+    /// error messages.
+    ///
     /// pnpm 10+ moved `patchedDependencies` out of
     /// `package.json#pnpm` into `pnpm-workspace.yaml`; pacquet
     /// matches that. The legacy `package.json#pnpm.patchedDependencies`
     /// shape is no longer consulted.
-    pub patched_dependencies: Option<BTreeMap<String, String>>,
+    ///
+    /// [`BTreeMap`]: std::collections::BTreeMap
+    pub patched_dependencies: Option<IndexMap<String, String>>,
 
     /// Map of `name[@version]` → `true` / `false`. Drives pnpm 11's
     /// default-deny build policy: a package's lifecycle scripts only
