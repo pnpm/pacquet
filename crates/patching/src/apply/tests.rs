@@ -152,6 +152,41 @@ new file mode 100644
     assert_eq!(after, "first line\nsecond line\n");
 }
 
+/// Target-file reads use lossy UTF-8 decoding, matching Node's
+/// `fs.readFile(..., 'utf8')` and the patch-file reader. A target
+/// file with stray non-UTF-8 bytes must NOT cause `Modify` to
+/// fail with `InvalidData` — those bytes round-trip through
+/// `String::from_utf8_lossy` as U+FFFD before
+/// [`diffy::apply`] sees them.
+///
+/// The patch context here is the U+FFFD chars themselves, so we
+/// can construct a real patch that applies cleanly against the
+/// lossy-decoded target. Flagged by Copilot during review of
+/// pacquet#427.
+#[test]
+fn modify_target_with_invalid_utf8_bytes_does_not_error() {
+    let patched = tempdir().unwrap();
+    // Three invalid UTF-8 bytes that lossy-decode to three U+FFFD
+    // chars (`\xEF\xBF\xBD` each).
+    fs::write(patched.path().join("blob.txt"), [0xffu8, 0xfeu8, 0xfdu8, b'\n']).unwrap();
+    let patch_dir = tempdir().unwrap();
+    let patch = write_patch(
+        patch_dir.path(),
+        "\
+diff --git a/blob.txt b/blob.txt
+--- a/blob.txt
++++ b/blob.txt
+@@ -1 +1,2 @@
+ \u{fffd}\u{fffd}\u{fffd}
++added line
+",
+    );
+
+    apply_patch_to_dir(patched.path(), &patch).expect("lossy decoding must allow apply");
+    let after = fs::read_to_string(patched.path().join("blob.txt")).unwrap();
+    assert!(after.contains("added line"), "got: {after:?}");
+}
+
 /// `..` in a patch path is rejected — a malicious or
 /// misconfigured patch must not be able to read/write/delete
 /// outside `patched_dir`. CodeRabbit flagged this as Critical

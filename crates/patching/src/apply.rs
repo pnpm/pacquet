@@ -154,8 +154,14 @@ fn apply_one_file(
     match operation {
         FileOperation::Modify { modified, .. } => {
             let target = resolve_target(Path::new(modified.as_ref()))?;
-            let original = fs::read_to_string(&target)
+            // Read as bytes and lossy-decode so non-UTF-8 bytes
+            // turn into U+FFFD rather than failing the patch.
+            // Matches how the patch file itself is read (see
+            // [`apply_patch_to_dir`]) and Node `fs.readFile(..., 'utf8')`,
+            // which upstream's patch-package uses end-to-end.
+            let bytes = fs::read(&target)
                 .map_err(|source| failed(format!("read {}: {source}", target.display())))?;
+            let original = String::from_utf8_lossy(&bytes).into_owned();
             let text_patch = file_patch
                 .patch()
                 .as_text()
@@ -199,8 +205,13 @@ fn apply_one_file(
             // would otherwise silently delete the wrong file.
             // diffy::apply on a delete patch produces the empty
             // string when every hunk matches.
-            let original = fs::read_to_string(&target)
+            //
+            // Lossy UTF-8 decoding for the same reason as the
+            // `Modify` branch above: match the patch-file reader
+            // and Node's `fs.readFile(..., 'utf8')`.
+            let bytes = fs::read(&target)
                 .map_err(|source| failed(format!("read {}: {source}", target.display())))?;
+            let original = String::from_utf8_lossy(&bytes).into_owned();
             let text_patch = file_patch
                 .patch()
                 .as_text()

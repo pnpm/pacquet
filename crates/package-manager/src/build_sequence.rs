@@ -22,11 +22,16 @@ use std::collections::{HashMap, HashSet};
 /// `binding.gyp` / `.hooks/`). Mirrors the role of `node.requiresBuild`
 /// upstream, which the worker computes from the extracted package contents.
 ///
-/// `patches` is the resolved [`pacquet_patching::PatchGroupRecord`]
-/// per-snapshot lookup map (keyed by peer-stripped [`PackageKey`]);
-/// presence of a key here mirrors upstream's `node.patch != null` and
-/// makes the snapshot a build candidate even when `requires_build`
-/// is false. Mirrors upstream's
+/// `patches` is the per-snapshot lookup map produced by
+/// `InstallFrozenLockfile::run` from
+/// [`pacquet_patching::resolve_and_group`] + per-snapshot
+/// [`pacquet_patching::get_patch_info`]: keys are peer-stripped
+/// [`PackageKey`]s, values are the matched
+/// [`pacquet_patching::ExtendedPatchInfo`]. `None` when no
+/// `patchedDependencies` is configured. Presence of a key here
+/// mirrors upstream's `node.patch != null` and makes the snapshot
+/// a build candidate even when `requires_build` is false. Mirrors
+/// upstream's
 /// [`getSubgraphToBuild`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/buildSequence.ts#L40-L67).
 pub fn build_sequence(
     requires_build: &HashMap<PackageKey, bool>,
