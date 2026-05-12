@@ -19,6 +19,18 @@ Before writing code for a feature, bug fix, or behavior change:
 1. Find the equivalent code in `pnpm/pnpm` on `main`
    (https://github.com/pnpm/pnpm). The TypeScript source lives under `pnpm/`
    (workspaces such as `pnpm/lockfile/`, `pnpm/store/`, `pnpm/cli/`, etc.).
+   **Always confirm you are looking at the latest, most up-to-date version
+   of `main` before reading.** Local clones drift, and an outdated checkout
+   leads to porting decisions based on stale upstream behavior. If you have
+   a local clone, run `git fetch origin && git log -1 origin/main` and
+   compare the SHA against
+   `git ls-remote https://github.com/pnpm/pnpm.git refs/heads/main`
+   (or fetch the latest before reading). If you are reading on GitHub,
+   open the file from
+   `https://github.com/pnpm/pnpm/blob/main/...` (which always resolves to
+   the tip of `main`) rather than from a permalinked SHA you happened to
+   have on hand. The permalink rule below applies when *citing* upstream
+   code; while *researching* it, you want the freshest `main`.
 2. Read the upstream implementation — logic, edge cases, config resolution,
    error messages, file/lockfile formats, and existing tests.
 3. Port the behavior faithfully. Prefer structural similarity (same function
