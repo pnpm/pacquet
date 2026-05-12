@@ -92,10 +92,12 @@ pub fn calculate_diff(
 ) -> SideEffectsDiff {
     let mut added: HashMap<String, CafsFileInfo> = HashMap::new();
     let mut deleted: Vec<String> = Vec::new();
-    // `BTreeSet` so iteration order is deterministic — `deleted`
-    // ends up sorted lexicographically and `added`, while still a
-    // `HashMap`, gets built in a stable order which makes the
-    // resulting msgpack payload byte-stable for the same input.
+    // `BTreeSet` so iteration order is deterministic. The returned
+    // `deleted` vector ends up sorted lexicographically; byte-
+    // stability of the eventual msgpack payload is provided
+    // separately by `SideEffectsDiff.added`'s sorted-map
+    // serializer (see `serialize_sorted_map_opt` in `store_index.rs`),
+    // since `HashMap` iteration on its own remains unordered.
     let all_files: BTreeSet<&str> = base.keys().chain(current.keys()).map(String::as_str).collect();
     for file in all_files {
         match (base.get(file), current.get(file)) {

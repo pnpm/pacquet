@@ -909,15 +909,15 @@ async fn write_path_disabled_skips_upload() {
 /// generated file is on disk) but the SQLite row's `side_effects`
 /// stays empty.
 ///
-/// Pacquet has no DI seam to stub `upload`, but we can reach the
-/// same property by handing `BuildModules` a `store_dir` that has
-/// no `index.db` yet. The WRITE-path's `StoreIndex::open_readonly_in`
-/// call returns an error (no `index.db` to read), `upload` surfaces
-/// it as `UploadError::OpenIndex`, `BuildModules` swallows it with
-/// a `tracing::warn!` (matching upstream's `try { … } catch { logger.warn }`),
-/// and the build completes. The postinstall-created file is on disk;
-/// no row has been written so there's nothing to assert "side_effects
-/// stays empty" on — the absence is the assertion.
+/// Pacquet has no DI seam for the upload, but the WRITE path's
+/// only failure point is `add_files_from_dir`, which surfaces as
+/// `UploadError::AddFilesFromDir`. We force that failure by having
+/// the postinstall script create a 0-permission file in the
+/// package directory: `add_files_from_dir` then fails to `fs::read`
+/// it, returning an error that `BuildModules` swallows with
+/// `tracing::warn!` (matching upstream's `try { … } catch { logger.warn }`).
+/// The install completes, the postinstall-generated artifact is on
+/// disk, and the build keeps going.
 #[cfg(unix)]
 #[tokio::test(flavor = "current_thread")]
 async fn upload_error_does_not_interrupt_install() {
@@ -950,16 +950,17 @@ async fn upload_error_does_not_interrupt_install() {
     let importers = root_importers(&[("@pnpm/postinstall-modifies-source", "1.0.0")]);
     let policy = AllowBuildPolicy::new(rules([]), true);
 
-    // Crucially: we do NOT call `store_dir.init()` and we do NOT
-    // seed an index row. The WRITE path's `StoreIndex::open_readonly_in`
-    // will fail because the file doesn't exist.
     let store_root = tempdir().expect("create store dir");
     let store_dir = StoreDir::from(store_root.path().to_path_buf());
+    store_dir.init().expect("init store");
     let virtual_store_dir = tempdir().expect("create vstore dir");
     let modules_dir = tempdir().expect("create modules dir");
     let lockfile_dir = tempdir().expect("create lockfile dir");
 
-    let pkg_dir = create_postinstall_modifies_source_fixture(virtual_store_dir.path(), &pkg_key);
+    // Fixture variant: postinstall produces a regular file (to
+    // prove the script ran end-to-end) AND a 0-permission file
+    // (to force `add_files_from_dir` to fail on `fs::read`).
+    let pkg_dir = create_postinstall_with_unreadable_fixture(virtual_store_dir.path(), &pkg_key);
     let (writer, writer_task) = StoreIndexWriter::spawn(&store_dir);
 
     BuildModules {
@@ -990,6 +991,43 @@ async fn upload_error_does_not_interrupt_install() {
         pkg_dir.join("generated.txt").exists(),
         "postinstall-created file must be present after a swallowed upload failure",
     );
+
+    // Restore perms so the tempdir cleanup can remove the file.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(pkg_dir.join("unreadable"), fs::Permissions::from_mode(0o644));
+    }
+}
+
+/// Variant of `create_postinstall_modifies_source_fixture` whose
+/// postinstall additionally produces a 0-permission file. The
+/// WRITE-path walker (`add_files_from_dir`) then fails on
+/// `fs::read("unreadable")` with `EACCES`, surfacing as
+/// `UploadError::AddFilesFromDir(ReadFile { … })` — a real upload
+/// error that `BuildModules` must swallow.
+#[cfg(unix)]
+fn create_postinstall_with_unreadable_fixture(
+    virtual_store_dir: &Path,
+    key: &PackageKey,
+) -> PathBuf {
+    let key_str = key.without_peer().to_string();
+    let name_version = key_str.strip_prefix('/').unwrap_or(&key_str);
+    let at_idx = name_version.rfind('@').unwrap_or(name_version.len());
+    let pkg_name = &name_version[..at_idx];
+    let store_name = name_version.replace('/', "+");
+    let pkg_dir = virtual_store_dir.join(&store_name).join("node_modules").join(pkg_name);
+    fs::create_dir_all(&pkg_dir).expect("create pkg dir");
+    fs::write(pkg_dir.join("index.js"), "module.exports = 'hi'\n").expect("write index.js");
+    let manifest = serde_json::json!({
+        "name": pkg_name,
+        "version": name_version[at_idx + 1..].to_string(),
+        "scripts": {
+            "postinstall": "echo touched > generated.txt && : > unreadable && chmod 000 unreadable"
+        },
+    });
+    fs::write(pkg_dir.join("package.json"), manifest.to_string()).expect("write manifest");
+    pkg_dir
 }
 
 /// sha-512 hex helper for fixture-building. Pacquet's `CafsFileInfo`

@@ -4,7 +4,7 @@ use miette::Diagnostic;
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -696,9 +696,16 @@ pub struct PackageFilesIndex {
     /// Map of in-tarball path → CAFS file metadata.
     pub files: HashMap<String, CafsFileInfo>,
 
-    /// Side-effect overlays applied after post-install scripts. Populated by
-    /// the build-side-effects cache; pacquet does not yet write this.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Side-effect overlays applied after post-install scripts. Populated
+    /// by the build-side-effects cache (WRITE path).
+    ///
+    /// Serialized through [`serialize_sorted_map`] so the msgpack
+    /// bytes are stable across runs even though the field's type is
+    /// `HashMap`. Without that, two installs that produce the same
+    /// logical overlay can produce two different row payloads,
+    /// which prevents byte-identical store-index files from being
+    /// reproduced and makes diff-debugging harder.
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "serialize_sorted_map_opt")]
     pub side_effects: Option<HashMap<String, SideEffectsDiff>>,
 }
 
@@ -746,13 +753,40 @@ fn serialize_checked_at<S: serde::Serializer>(
 }
 
 /// Value of [`PackageFilesIndex::side_effects`].
+///
+/// `added` round-trips through [`serialize_sorted_map`] so the
+/// msgpack bytes are stable for the same logical overlay — same
+/// rationale as the parent struct's `side_effects` field.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SideEffectsDiff {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "serialize_sorted_map_opt")]
     pub added: Option<HashMap<String, CafsFileInfo>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deleted: Option<Vec<String>>,
+}
+
+/// `serialize_with` helper for `Option<HashMap<String, V>>` —
+/// converts the map to a `BTreeMap` (sorted by key) before
+/// emitting. Used on the WRITE-path side-effects fields so the
+/// resulting msgpack payload is byte-stable for the same logical
+/// overlay.
+fn serialize_sorted_map_opt<S, V>(
+    value: &Option<HashMap<String, V>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+    V: serde::Serialize,
+{
+    use serde::Serialize;
+    match value {
+        Some(map) => {
+            let sorted: BTreeMap<&String, &V> = map.iter().collect();
+            sorted.serialize(serializer)
+        }
+        None => serializer.serialize_none(),
+    }
 }
 
 #[cfg(test)]
