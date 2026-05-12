@@ -4,7 +4,7 @@ use miette::Diagnostic;
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -154,63 +154,7 @@ impl StoreIndexWriter {
                 let mut pending: HashMap<String, PackageFilesIndex> =
                     HashMap::with_capacity(batch.len());
                 for msg in batch.drain(..) {
-                    match msg {
-                        WriteMsg::Replace { key, value } => {
-                            pending.insert(key, value);
-                        }
-                        WriteMsg::SideEffectsUpload { key, cache_key, current_files } => {
-                            // Use a `entry()` flow so the row stays
-                            // in `pending` across every short-circuit
-                            // branch — a same-batch `Replace` for
-                            // this same key still needs to land
-                            // regardless of whether the side-effects
-                            // mutation runs.
-                            use std::collections::hash_map::Entry;
-                            let entry = pending.entry(key.clone());
-                            // `or_insert_with` populates from SQLite
-                            // when this is the row's first sighting
-                            // in the batch.
-                            let row = match entry {
-                                Entry::Occupied(o) => o.into_mut(),
-                                Entry::Vacant(v) => match index.get(&key) {
-                                    Ok(Some(r)) => v.insert(r),
-                                    Ok(None) => {
-                                        tracing::debug!(
-                                            target: "pacquet::store_index",
-                                            key = %key,
-                                            "no base row for side-effects upload; skip",
-                                        );
-                                        continue;
-                                    }
-                                    Err(error) => {
-                                        tracing::warn!(
-                                            target: "pacquet::store_index",
-                                            ?error,
-                                            key = %key,
-                                            "failed to read base row for side-effects upload",
-                                        );
-                                        continue;
-                                    }
-                                },
-                            };
-                            if row.algo != crate::upload::HASH_ALGORITHM {
-                                tracing::warn!(
-                                    target: "pacquet::store_index",
-                                    key = %key,
-                                    row_algo = %row.algo,
-                                    "algo mismatch on base row; skip side-effects upload",
-                                );
-                                // Row stays in `pending` for the
-                                // flush — only the side-effects
-                                // mutation is suppressed.
-                                continue;
-                            }
-                            let diff = crate::upload::calculate_diff(&row.files, &current_files);
-                            row.side_effects
-                                .get_or_insert_with(HashMap::new)
-                                .insert(cache_key, diff);
-                        }
-                    }
+                    apply_write_msg(&mut index, &mut pending, msg);
                 }
                 if let Err(error) = index.set_many(pending.drain()) {
                     // Drop the batch and keep going. One failed flush
@@ -230,7 +174,87 @@ impl StoreIndexWriter {
         });
         (Arc::new(StoreIndexWriter { tx, warn_on_send_failure: AtomicBool::new(true) }), handle)
     }
+}
 
+/// Fold one queued `WriteMsg` into the batch's in-flight
+/// `pending` map. Pure function on `(&mut StoreIndex, &mut
+/// HashMap, WriteMsg)` so the writer-task closure stays a thin
+/// drain loop; correctness of each variant lives here.
+///
+/// `Replace` is a straight overwrite. `SideEffectsUpload` does
+/// the read-modify-write: it loads the row from `pending` (if a
+/// prior message in this batch already touched it) or from
+/// SQLite, then layers the diff on top. Three short-circuit
+/// branches log and skip without removing the row from
+/// `pending`, so a same-batch `Replace` for the same key still
+/// flushes — see the docs on
+/// [`WriteMsg::SideEffectsUpload`].
+fn apply_write_msg(
+    index: &mut StoreIndex,
+    pending: &mut HashMap<String, PackageFilesIndex>,
+    msg: WriteMsg,
+) {
+    match msg {
+        WriteMsg::Replace { key, value } => {
+            pending.insert(key, value);
+        }
+        WriteMsg::SideEffectsUpload { key, cache_key, current_files } => {
+            let Some(row) = load_pending_row(index, pending, &key) else { return };
+            if row.algo != crate::upload::HASH_ALGORITHM {
+                tracing::warn!(
+                    target: "pacquet::store_index",
+                    key = %key,
+                    row_algo = %row.algo,
+                    "algo mismatch on base row; skip side-effects upload",
+                );
+                // Row stays in `pending` for the flush — only
+                // the side-effects mutation is suppressed.
+                return;
+            }
+            let diff = crate::upload::calculate_diff(&row.files, &current_files);
+            row.side_effects.get_or_insert_with(HashMap::new).insert(cache_key, diff);
+        }
+    }
+}
+
+/// Return a mutable reference to the `PackageFilesIndex` row for
+/// `key`, loading from SQLite when this is the row's first
+/// sighting in the batch. Returns `None` (and logs at `debug!` /
+/// `warn!` as appropriate) when no base row exists or the SQLite
+/// read fails — both cases mean the caller should skip the
+/// side-effects mutation without disturbing `pending`.
+fn load_pending_row<'a>(
+    index: &mut StoreIndex,
+    pending: &'a mut HashMap<String, PackageFilesIndex>,
+    key: &str,
+) -> Option<&'a mut PackageFilesIndex> {
+    use std::collections::hash_map::Entry;
+    match pending.entry(key.to_string()) {
+        Entry::Occupied(o) => Some(o.into_mut()),
+        Entry::Vacant(v) => match index.get(key) {
+            Ok(Some(r)) => Some(v.insert(r)),
+            Ok(None) => {
+                tracing::debug!(
+                    target: "pacquet::store_index",
+                    key = %key,
+                    "no base row for side-effects upload; skip",
+                );
+                None
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "pacquet::store_index",
+                    ?error,
+                    key = %key,
+                    "failed to read base row for side-effects upload",
+                );
+                None
+            }
+        },
+    }
+}
+
+impl StoreIndexWriter {
     /// Queue one `(key, value)` to be flushed in the next transaction.
     ///
     /// Silently drops the entry if the writer task has exited (closed
@@ -709,13 +733,15 @@ pub struct PackageFilesIndex {
     /// Side-effect overlays applied after post-install scripts. Populated
     /// by the build-side-effects cache (WRITE path).
     ///
-    /// Serialized through `serialize_sorted_map_opt` so the msgpack
-    /// bytes are stable across runs even though the field's type is
-    /// `HashMap`. Without that, two installs that produce the same
-    /// logical overlay can produce two different row payloads,
-    /// which prevents byte-identical store-index files from being
-    /// reproduced and makes diff-debugging harder.
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "serialize_sorted_map_opt")]
+    /// Pacquet's on-disk byte stability for this field comes from
+    /// the msgpackr-records encoder
+    /// (`crate::msgpackr_records::encode_package_files_index`),
+    /// which iterates the map in sorted-key order before emitting.
+    /// The serde `Serialize` impl below is never reached on the
+    /// write path — `StoreIndex::set_many` always routes through
+    /// the bespoke encoder — but is kept for the read path's
+    /// round-trip through `rmp_serde::from_slice`.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub side_effects: Option<HashMap<String, SideEffectsDiff>>,
 }
 
@@ -764,39 +790,17 @@ fn serialize_checked_at<S: serde::Serializer>(
 
 /// Value of [`PackageFilesIndex::side_effects`].
 ///
-/// `added` round-trips through `serialize_sorted_map_opt` so the
-/// msgpack bytes are stable for the same logical overlay — same
-/// rationale as the parent struct's `side_effects` field.
+/// Byte stability of the `added` field on the wire is provided by
+/// the bespoke encoder in `msgpackr_records.rs` (it iterates the
+/// map in sorted-key order). The derived serde `Serialize` impl
+/// is unused on the write path.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SideEffectsDiff {
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "serialize_sorted_map_opt")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub added: Option<HashMap<String, CafsFileInfo>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deleted: Option<Vec<String>>,
-}
-
-/// `serialize_with` helper for `Option<HashMap<String, V>>` —
-/// converts the map to a `BTreeMap` (sorted by key) before
-/// emitting. Used on the WRITE-path side-effects fields so the
-/// resulting msgpack payload is byte-stable for the same logical
-/// overlay.
-fn serialize_sorted_map_opt<S, V>(
-    value: &Option<HashMap<String, V>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-    V: serde::Serialize,
-{
-    use serde::Serialize;
-    match value {
-        Some(map) => {
-            let sorted: BTreeMap<&String, &V> = map.iter().collect();
-            sorted.serialize(serializer)
-        }
-        None => serializer.serialize_none(),
-    }
 }
 
 #[cfg(test)]

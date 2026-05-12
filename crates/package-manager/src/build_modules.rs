@@ -252,8 +252,10 @@ impl<'a> BuildModules<'a> {
         let read_gate_active = side_effects_cache
             && engine_name.is_some()
             && side_effects_maps_by_snapshot.is_some_and(|m| !m.is_empty());
-        let write_gate_active =
-            side_effects_cache_write && engine_name.is_some() && store_index_writer.is_some();
+        let write_gate_active = side_effects_cache_write
+            && engine_name.is_some()
+            && store_index_writer.is_some()
+            && store_dir.is_some();
         let cache_gate_active = (read_gate_active || write_gate_active) && packages.is_some();
         let dep_graph = cache_gate_active.then(|| {
             let roots = requires_build_map

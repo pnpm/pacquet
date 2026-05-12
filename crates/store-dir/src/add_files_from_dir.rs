@@ -73,8 +73,16 @@ pub enum AddFilesFromDirError {
 /// `includeNodeModules` defaults to `false` and pacquet has no
 /// caller that flips it).
 ///
-/// Cycle-safe: traversal carries the set of canonical directory
-/// paths already visited, mirroring upstream's `ctx.visited`.
+/// Cycle-safe: `WalkCtx.visited` is a *recursion-stack* set —
+/// each canonical directory path is inserted when we descend
+/// into it and removed when we return. A symlink pointing back
+/// at an ancestor of the current branch finds the ancestor's
+/// canonical path in `visited` and bails. Mirrors upstream's
+/// [`ctx.visited`](https://github.com/pnpm/pnpm/blob/7e3145f9fc/store/cafs/src/addFilesFromDir.ts#L121-L173)
+/// semantics: same directory can be visited twice if reached
+/// through two distinct paths (e.g. a shared subgraph), but
+/// cycles still terminate because the path-to-root is never
+/// re-entered.
 pub fn add_files_from_dir(
     store_dir: &StoreDir,
     pkg_root: &Path,

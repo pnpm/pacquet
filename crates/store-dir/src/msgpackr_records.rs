@@ -769,20 +769,40 @@ fn encode_pkg_files_index_value(
     if let Some(manifest) = &idx.manifest {
         encode_json_value(w, state, manifest)?;
     }
+    // Iterate the file map in sorted-key order so the emitted
+    // msgpack bytes are byte-stable across runs. `HashMap`'s
+    // iteration is randomised, which would make every row pacquet
+    // writes appear "changed" on byte-diff even when the logical
+    // content is identical. Sorting here matches what msgpackr-on-
+    // JS effectively delivers via `Object` insertion order on
+    // deterministic input (npm tarballs walk files in directory
+    // order, which is sorted on most filesystems).
     write_map_header(w, idx.files.len());
-    for (name, info) in &idx.files {
+    for (name, info) in sorted_by_key(&idx.files) {
         write_str(w, name);
         encode_cafs_file_info(w, state, info)?;
     }
     if let Some(se) = &idx.side_effects {
         write_map_header(w, se.len());
-        for (platform, diff) in se {
+        for (platform, diff) in sorted_by_key(se) {
             write_str(w, platform);
             encode_side_effects_diff(w, state, diff)?;
         }
     }
 
     Ok(())
+}
+
+/// Sort a `HashMap` by key into a `Vec` of `(key, value)`
+/// references. Used by the msgpackr-records encoder so every map
+/// it writes — `PackageFilesIndex.files`, `…side_effects`,
+/// `SideEffectsDiff.added` — comes out in lexicographic key
+/// order. Without this the row payload depends on
+/// `HashMap`'s randomised iteration and isn't reproducible.
+fn sorted_by_key<V>(map: &HashMap<String, V>) -> Vec<(&String, &V)> {
+    let mut entries: Vec<(&String, &V)> = map.iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+    entries
 }
 
 /// Emit one JSON value as msgpack inside an active records stream.
@@ -941,7 +961,7 @@ fn encode_side_effects_diff(
 
     if let Some(added) = &diff.added {
         write_map_header(w, added.len());
-        for (name, info) in added {
+        for (name, info) in sorted_by_key(added) {
             write_str(w, name);
             encode_cafs_file_info(w, state, info)?;
         }
