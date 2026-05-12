@@ -5,6 +5,7 @@ mod msgpackr_records;
 mod prune;
 mod store_dir;
 mod store_index;
+mod upload;
 
 pub use add_files_from_dir::*;
 pub use cas_file::*;
@@ -13,3 +14,4 @@ pub use msgpackr_records::*;
 pub use prune::*;
 pub use store_dir::*;
 pub use store_index::*;
+pub use upload::*;
