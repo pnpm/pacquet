@@ -2095,6 +2095,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pacquet-patching"
+version = "0.0.1"
+dependencies = [
+ "derive_more",
+ "miette 7.6.0",
+ "node-semver",
+ "pretty_assertions",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "pacquet-registry"
 version = "0.0.1"
 dependencies = [
