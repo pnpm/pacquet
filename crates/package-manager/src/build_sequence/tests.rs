@@ -61,7 +61,7 @@ fn root_importers(deps: &[(&str, &str)]) -> HashMap<String, ProjectSnapshot> {
 
 #[test]
 fn empty_inputs() {
-    let chunks = build_sequence(&HashMap::new(), &HashMap::new(), &HashMap::new());
+    let chunks = build_sequence(&HashMap::new(), None, &HashMap::new(), &HashMap::new());
     dbg!(&chunks);
     assert!(chunks.is_empty(), "empty inputs ⇒ no chunks: {chunks:?}");
 }
@@ -75,7 +75,7 @@ fn no_requires_build_yields_empty() {
     let requires_build = requires([(key("a", "1.0.0"), false), (key("b", "1.0.0"), false)]);
     let importers = root_importers(&[("a", "1.0.0")]);
 
-    let chunks = build_sequence(&requires_build, &snapshots, &importers);
+    let chunks = build_sequence(&requires_build, None, &snapshots, &importers);
     dbg!(&chunks);
     assert!(chunks.is_empty(), "no requires_build ⇒ no chunks: {chunks:?}");
 }
@@ -92,7 +92,7 @@ fn leaf_with_requires_build_runs_first() {
     let requires_build = requires([(key("a", "1.0.0"), false), (key("b", "1.0.0"), true)]);
     let importers = root_importers(&[("a", "1.0.0")]);
 
-    let chunks = build_sequence(&requires_build, &snapshots, &importers);
+    let chunks = build_sequence(&requires_build, None, &snapshots, &importers);
     assert_eq!(chunks, vec![vec![key("b", "1.0.0")], vec![key("a", "1.0.0")]]);
 }
 
@@ -111,7 +111,7 @@ fn deep_chain_orders_leaf_first() {
     ]);
     let importers = root_importers(&[("a", "1.0.0")]);
 
-    let chunks = build_sequence(&requires_build, &snapshots, &importers);
+    let chunks = build_sequence(&requires_build, None, &snapshots, &importers);
     assert_eq!(
         chunks,
         vec![vec![key("c", "1.0.0")], vec![key("b", "1.0.0")], vec![key("a", "1.0.0")]],
@@ -136,7 +136,7 @@ fn unrelated_subgraph_excluded() {
     ]);
     let importers = root_importers(&[("a", "1.0.0")]);
 
-    let chunks = build_sequence(&requires_build, &snapshots, &importers);
+    let chunks = build_sequence(&requires_build, None, &snapshots, &importers);
     let flat: Vec<_> = chunks.into_iter().flatten().collect();
     dbg!(&flat);
     assert!(flat.contains(&key("a", "1.0.0")), "ancestor of build leaf must appear: {flat:?}");
@@ -165,7 +165,7 @@ fn parallel_build_leaves_share_chunk() {
     ]);
     let importers = root_importers(&[("root", "1.0.0")]);
 
-    let chunks = build_sequence(&requires_build, &snapshots, &importers);
+    let chunks = build_sequence(&requires_build, None, &snapshots, &importers);
     assert_eq!(chunks.len(), 2);
     let mut leaves = chunks[0].clone();
     leaves.sort_by_key(|k| k.to_string());

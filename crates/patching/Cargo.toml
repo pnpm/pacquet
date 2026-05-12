@@ -12,6 +12,7 @@ repository.workspace  = true
 
 [dependencies]
 derive_more = { workspace = true }
+diffy       = { workspace = true }
 indexmap    = { workspace = true }
 miette      = { workspace = true }
 node-semver = { workspace = true }

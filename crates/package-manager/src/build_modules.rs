@@ -7,6 +7,7 @@ use pacquet_executor::{
 };
 use pacquet_lockfile::{PackageKey, ProjectSnapshot, SnapshotEntry};
 use pacquet_package_manifest::pkg_requires_build;
+use pacquet_patching::{PatchApplyError, apply_patch_to_dir};
 use pacquet_reporter::{
     LogEvent, LogLevel, Reporter, SkippedOptionalDependencyLog, SkippedOptionalPackage,
     SkippedOptionalReason,
@@ -21,6 +22,23 @@ use std::{
 pub enum BuildModulesError {
     #[diagnostic(transparent)]
     LifecycleScript(#[error(source)] LifecycleScriptError),
+
+    #[diagnostic(transparent)]
+    PatchApply(#[error(source)] PatchApplyError),
+
+    /// Mirrors upstream's
+    /// [`ERR_PNPM_PATCH_FILE_PATH_MISSING`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L172-L176)
+    /// — fired when a snapshot's resolved patch carries a hash but
+    /// no `patch_file_path`. The hash-without-path shape can come
+    /// from the lockfile when no live config provides the path, so
+    /// the user must add an entry to `patchedDependencies` in
+    /// `pnpm-workspace.yaml` to bring the file back into scope.
+    #[display("Cannot apply patch for {dep_path}: patch file path is missing")]
+    #[diagnostic(
+        code(ERR_PNPM_PATCH_FILE_PATH_MISSING),
+        help("Ensure the package is listed in patchedDependencies configuration")
+    )]
+    PatchFilePathMissing { dep_path: String },
 }
 
 /// Build policy derived from `allowBuilds` and
@@ -135,10 +153,16 @@ pub struct BuildModules<'a> {
     /// [`pacquet_patching::get_patch_info`]. `None` when no
     /// `patchedDependencies` is configured.
     ///
-    /// Slice B uses this only for the side-effects-cache key
-    /// (`patch_file_hash` in [`pacquet_graph_hasher::CalcDepStateOptions`]).
-    /// The build trigger and actual patch application land in slice C
-    /// — see pnpm/pacquet#397 item 9.
+    /// Drives three things, mirroring upstream's
+    /// [`during-install`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts)
+    /// flow:
+    ///
+    /// 1. Build trigger — a snapshot with a patch entry becomes a
+    ///    build candidate even when `requires_build` is false.
+    /// 2. Side-effects-cache key — `patch_file_hash` carries the
+    ///    SHA-256 hex into [`pacquet_graph_hasher::CalcDepStateOptions`].
+    /// 3. Patch application — the patch is applied to the extracted
+    ///    package dir before postinstall hooks run.
     pub patches: Option<&'a HashMap<PackageKey, pacquet_patching::ExtendedPatchInfo>>,
 }
 
@@ -235,7 +259,7 @@ impl<'a> BuildModules<'a> {
         let mut deps_state_cache: pacquet_graph_hasher::DepsStateCache<PackageKey> =
             pacquet_graph_hasher::DepsStateCache::new();
 
-        let chunks = build_sequence(&requires_build_map, snapshots, importers);
+        let chunks = build_sequence(&requires_build_map, patches, snapshots, importers);
 
         // Collect peer-stripped keys so the final list is unique and
         // sorted lexicographically — matches `dedupePackageNamesFromIgnoredBuilds`.
@@ -243,24 +267,55 @@ impl<'a> BuildModules<'a> {
 
         for chunk in chunks {
             for snapshot_key in chunk {
-                // Ancestors-of-build packages are included in the sequence
-                // but only run scripts when they themselves require a build.
-                if !requires_build_map.get(&snapshot_key).copied().unwrap_or(false) {
+                let metadata_key = snapshot_key.without_peer();
+                // Look up against the peer-stripped key because
+                // patches are configured at the (name, version)
+                // granularity in `pnpm-workspace.yaml`, not per
+                // peer-resolution variant.
+                let patch = patches.and_then(|map| map.get(&metadata_key));
+                let has_patch = patch.is_some();
+                let requires_build =
+                    requires_build_map.get(&snapshot_key).copied().unwrap_or(false);
+
+                // Ancestors of a build/patch candidate are included
+                // in the sequence (so the topo order stays correct)
+                // but only run scripts / apply patches when they
+                // themselves are candidates. Mirrors upstream's
+                // chunk filter at
+                // <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L73-L77>.
+                if !requires_build && !has_patch {
                     continue;
                 }
 
-                let metadata_key = snapshot_key.without_peer();
                 let (name, version) = parse_name_version_from_key(&metadata_key.to_string());
-                match allow_build_policy.check(&name, &version) {
-                    Some(false) => continue,
-                    None => {
-                        // "Not in allowBuilds" — surfaced as `pnpm:ignored-scripts`.
-                        // Explicit `false` is silently skipped (above), matching
-                        // upstream's switch in `building/during-install/src/index.ts:88-101`.
-                        ignored_builds.insert(metadata_key.to_string());
-                        continue;
+
+                // Mirrors upstream's `if (node.requiresBuild) { allowBuild(...) }`
+                // at lines 88-101: the allowBuilds gate only applies
+                // when the node has scripts to run. A patched-only
+                // package skips this check entirely and proceeds to
+                // patch application below.
+                //
+                // `false` / `None` from the policy set
+                // `should_run_scripts = false` (NOT `continue`), so
+                // the patch still gets applied even when scripts
+                // are disallowed. Matches upstream's `ignoreScripts
+                // = true; break` pattern.
+                let mut should_run_scripts = requires_build;
+                if requires_build {
+                    match allow_build_policy.check(&name, &version) {
+                        Some(false) => {
+                            should_run_scripts = false;
+                        }
+                        None => {
+                            // "Not in allowBuilds" — surfaced as
+                            // `pnpm:ignored-scripts`. Explicit
+                            // `false` is silently denied (above),
+                            // matching upstream's switch.
+                            ignored_builds.insert(metadata_key.to_string());
+                            should_run_scripts = false;
+                        }
+                        Some(true) => {}
                     }
-                    Some(true) => {}
                 }
 
                 // Compute the side-effects cache key once per
@@ -275,17 +330,6 @@ impl<'a> BuildModules<'a> {
                 // `None` when the cache gate can't fire (no engine,
                 // no graph, etc.); both downstream consumers
                 // short-circuit on `None`.
-                // Snapshot's resolved patch metadata, if any. Slice B
-                // uses this only for the side-effects-cache key —
-                // build trigger + actual patch application land in
-                // slice C of pnpm/pacquet#397 item 9.
-                //
-                // Look up against the peer-stripped key
-                // (`metadata_key`) because patches are configured at
-                // the (name, version) granularity in
-                // `pnpm-workspace.yaml`, not per peer-resolution
-                // variant.
-                let patch = patches.and_then(|map| map.get(&metadata_key));
                 let cache_key = (dep_graph.as_ref().zip(engine_name)).map(|(graph, engine)| {
                     pacquet_graph_hasher::calc_dep_state(
                         graph,
@@ -302,14 +346,14 @@ impl<'a> BuildModules<'a> {
                             // key entirely, matching upstream when
                             // `depNode.patch == null`.
                             patch_file_hash: patch.map(|p| p.hash.as_str()),
-                            // `hasSideEffects` upstream — for a
-                            // `requires_build = true` snapshot
-                            // that's reached this point, the only
-                            // way the script can have side effects
-                            // is to actually run, so the bit is
-                            // true. Matches
-                            // `building/during-install/src/index.ts:202`.
-                            include_dep_graph_hash: true,
+                            // Mirrors `includeDepGraphHash: hasSideEffects`
+                            // at upstream line 202. A patched-only
+                            // snapshot (no scripts will run) leaves
+                            // the deps-hash off so the cache key
+                            // stays stable across dep-graph changes
+                            // that don't affect this package's
+                            // patched output.
+                            include_dep_graph_hash: should_run_scripts,
                         },
                     )
                 });
@@ -345,64 +389,102 @@ impl<'a> BuildModules<'a> {
 
                 let optional = snapshots.get(&snapshot_key).is_some_and(|entry| entry.optional);
 
-                let result = run_postinstall_hooks::<R>(RunPostinstallHooks {
-                    dep_path: &snapshot_key.to_string(),
-                    pkg_root: &pkg_dir,
-                    root_modules_dir: modules_dir,
-                    init_cwd: lockfile_dir,
-                    extra_bin_paths: &extra_bin_paths,
-                    extra_env: &extra_env,
-                    node_execpath: None,
-                    npm_execpath: None,
-                    node_gyp_path: None,
-                    user_agent: None,
-                    // Hard-coded until the `unsafe-perm` config knob
-                    // is plumbed through. `true` skips both the
-                    // TMPDIR creation and the uid/gid drop, matching
-                    // pacquet's behavior before any of this landed.
-                    unsafe_perm: true,
-                    node_gyp_bin: None,
-                    scripts_prepend_node_path: ScriptsPrependNodePath::Never,
-                    script_shell: None,
-                    optional,
-                });
+                // Apply the patch before running postinstall hooks.
+                // Mirrors upstream at
+                // <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L171-L178>:
+                // ```
+                // if (depNode.patch) {
+                //   if (!depNode.patch.patchFilePath) throw PATCH_FILE_PATH_MISSING
+                //   isPatched = applyPatchToDir(...)
+                // }
+                // ```
+                // `is_patched` feeds the cache-write gate below
+                // (`is_patched || has_side_effects`), matching
+                // upstream's line 199 condition.
+                let is_patched = if let Some(p) = patch {
+                    let patch_file_path = p.patch_file_path.as_deref().ok_or_else(|| {
+                        BuildModulesError::PatchFilePathMissing {
+                            dep_path: snapshot_key.to_string(),
+                        }
+                    })?;
+                    apply_patch_to_dir(&pkg_dir, patch_file_path)
+                        .map_err(BuildModulesError::PatchApply)?;
+                    true
+                } else {
+                    false
+                };
 
-                if let Err(err) = result {
-                    if optional {
-                        // Mirrors `building/during-install/src/index.ts:226-238`:
-                        // a build failure on an optional dep is logged
-                        // through the `pnpm:skipped-optional-dependency`
-                        // channel and swallowed so the install can
-                        // continue. The `package.id` field upstream is
-                        // `depNode.dir`; we use the same.
-                        R::emit(&LogEvent::SkippedOptionalDependency(
-                            SkippedOptionalDependencyLog {
-                                level: LogLevel::Debug,
-                                details: Some(err.to_string()),
-                                package: SkippedOptionalPackage {
-                                    id: pkg_dir.to_string_lossy().into_owned(),
-                                    name: name.clone(),
-                                    version: version.clone(),
-                                },
-                                prefix: lockfile_dir.to_string_lossy().into_owned(),
-                                reason: SkippedOptionalReason::BuildFailure,
-                            },
-                        ));
-                        continue;
+                let has_side_effects = if should_run_scripts {
+                    let result = run_postinstall_hooks::<R>(RunPostinstallHooks {
+                        dep_path: &snapshot_key.to_string(),
+                        pkg_root: &pkg_dir,
+                        root_modules_dir: modules_dir,
+                        init_cwd: lockfile_dir,
+                        extra_bin_paths: &extra_bin_paths,
+                        extra_env: &extra_env,
+                        node_execpath: None,
+                        npm_execpath: None,
+                        node_gyp_path: None,
+                        user_agent: None,
+                        // Hard-coded until the `unsafe-perm` config knob
+                        // is plumbed through. `true` skips both the
+                        // TMPDIR creation and the uid/gid drop, matching
+                        // pacquet's behavior before any of this landed.
+                        unsafe_perm: true,
+                        node_gyp_bin: None,
+                        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+                        script_shell: None,
+                        optional,
+                    });
+
+                    match result {
+                        Ok(ran) => ran,
+                        Err(err) => {
+                            if optional {
+                                // Mirrors `building/during-install/src/index.ts:226-238`:
+                                // a build failure on an optional dep is logged
+                                // through the `pnpm:skipped-optional-dependency`
+                                // channel and swallowed so the install can
+                                // continue. The `package.id` field upstream is
+                                // `depNode.dir`; we use the same.
+                                R::emit(&LogEvent::SkippedOptionalDependency(
+                                    SkippedOptionalDependencyLog {
+                                        level: LogLevel::Debug,
+                                        details: Some(err.to_string()),
+                                        package: SkippedOptionalPackage {
+                                            id: pkg_dir.to_string_lossy().into_owned(),
+                                            name: name.clone(),
+                                            version: version.clone(),
+                                        },
+                                        prefix: lockfile_dir.to_string_lossy().into_owned(),
+                                        reason: SkippedOptionalReason::BuildFailure,
+                                    },
+                                ));
+                                continue;
+                            }
+                            return Err(BuildModulesError::LifecycleScript(err));
+                        }
                     }
-                    return Err(BuildModulesError::LifecycleScript(err));
-                }
+                } else {
+                    false
+                };
 
                 // Side-effects-cache WRITE path. Mirrors
-                // `<https://github.com/pnpm/pnpm/blob/7e3145f9fc/building/during-install/src/index.ts#L198-L216>`:
-                // after a successful `run_postinstall_hooks`,
+                // `<https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L198-L216>`:
+                // after a successful `run_postinstall_hooks` (or a
+                // patch application that mutated the dir),
                 // re-hash the package directory and queue a
                 // `PackageFilesIndex.sideEffects[cache_key] = diff`
                 // mutation so a future install can skip the
                 // rebuild.
                 //
-                // Gated on every precondition for a meaningful
-                // upload: write enabled, cache_key composable
+                // Upstream's gate is `(isPatched || hasSideEffects)
+                // && opts.sideEffectsCacheWrite`. Pacquet mirrors
+                // that — a patched-only snapshot still uploads its
+                // post-patch state so subsequent installs hit the
+                // cache.
+                //
+                // The other preconditions: cache_key composable
                 // (engine + graph present), `packages` map
                 // available for the integrity lookup, and the
                 // metadata row carries an integrity (registry /
@@ -414,7 +496,8 @@ impl<'a> BuildModules<'a> {
                 // logger.warn(...) }` at lines 208-215. A failed
                 // upload doesn't fail the install: the next install
                 // re-runs the build.
-                if side_effects_cache_write
+                if (is_patched || has_side_effects)
+                    && side_effects_cache_write
                     && let Some(writer) = store_index_writer
                     && let Some(store) = store_dir
                     && let Some(cache_key) = cache_key.as_deref()

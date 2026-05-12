@@ -40,7 +40,7 @@ impl From<PatchNonSemverRangeError> for ResolvePatchedDependenciesError {
 /// the user wrote in yaml — matching pnpm's JS-object iteration
 /// behavior. [`IndexMap`] is required for that; a [`BTreeMap`]
 /// would sort the keys and reorder ranges alphabetically, which
-/// surfaced as a review comment from Copilot during slice A.
+/// surfaced as a review comment from Copilot on pacquet#425.
 ///
 /// Ports the workspace-dir-resolution + grouping half of upstream's
 /// [`getOptionsFromPnpmSettings`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/getOptionsFromRootManifest.ts#L28-L46)

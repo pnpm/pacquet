@@ -1,0 +1,177 @@
+use crate::apply::{PatchApplyError, apply_patch_to_dir};
+use pretty_assertions::assert_eq;
+use std::fs;
+use tempfile::tempdir;
+
+/// Mirrors the upstream `is-positive` fixture at
+/// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/installing/deps-restorer/test/fixtures/simple-with-patch/patches/is-positive.patch>:
+/// a single-hunk Modify on `index.js`.
+const IS_POSITIVE_PATCH: &str = "\
+diff --git a/index.js b/index.js
+index 8e020cac3320e72cb40e66b4c4573cc51c55e1e4..8be55d95c50a2a28e021e586ce5b928d9fea140e 100644
+--- a/index.js
++++ b/index.js
+@@ -7,3 +7,5 @@ module.exports = function (n) {
+
+ \treturn n >= 0;
+ };
++
++// a change
+";
+
+/// The upstream `is-positive@1.0.0` `index.js` body the patch
+/// applies against. Six lines before the modified region, three
+/// lines of context. Indentation uses tabs because the file
+/// upstream's patch was authored against uses tabs.
+const IS_POSITIVE_INDEX_JS: &str = "\
+'use strict';
+module.exports = function (n) {
+\tif (typeof n !== 'number') {
+\t\tthrow new TypeError('Expected a number');
+\t}
+
+\treturn n >= 0;
+};
+";
+
+/// `is-positive`'s `index.js` after the upstream patch lands:
+/// trailing blank line plus a `// a change` comment.
+const IS_POSITIVE_INDEX_JS_PATCHED: &str = "\
+'use strict';
+module.exports = function (n) {
+\tif (typeof n !== 'number') {
+\t\tthrow new TypeError('Expected a number');
+\t}
+
+\treturn n >= 0;
+};
+
+// a change
+";
+
+fn write_patch(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
+    let path = dir.join("patch.patch");
+    fs::write(&path, body).expect("write patch");
+    path
+}
+
+/// Happy path: applying the upstream is-positive patch over
+/// is-positive's actual `index.js` produces the expected output.
+/// Mirrors upstream's
+/// [`'install with patchedDependencies'`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/installing/deps-installer/test/install/patch.ts)
+/// happy-path coverage at the unit level.
+#[test]
+fn applies_modify_against_existing_file() {
+    let patched = tempdir().unwrap();
+    fs::write(patched.path().join("index.js"), IS_POSITIVE_INDEX_JS).unwrap();
+    let patch_dir = tempdir().unwrap();
+    let patch = write_patch(patch_dir.path(), IS_POSITIVE_PATCH);
+
+    apply_patch_to_dir(patched.path(), &patch).expect("apply must succeed");
+
+    let after = fs::read_to_string(patched.path().join("index.js")).unwrap();
+    assert_eq!(after, IS_POSITIVE_INDEX_JS_PATCHED);
+}
+
+/// `ERR_PNPM_PATCH_NOT_FOUND` for a missing patch file. Mirrors
+/// upstream's
+/// [`if (err.code === 'ENOENT') throw new PnpmError('PATCH_NOT_FOUND', ...)`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/patching/apply-patch/src/index.ts).
+#[test]
+fn missing_patch_file_errors_patch_not_found() {
+    let patched = tempdir().unwrap();
+    let missing = patched.path().join("does-not-exist.patch");
+    let err = apply_patch_to_dir(patched.path(), &missing).expect_err("must fail");
+    assert!(matches!(err, PatchApplyError::PatchNotFound { .. }), "got: {err:?}");
+}
+
+/// `ERR_PNPM_INVALID_PATCH` when the patch body can't be parsed —
+/// e.g. truncated hunk header. Mirrors upstream's `catch (err) ...
+/// throw new PnpmError('INVALID_PATCH', ...)` branch.
+#[test]
+fn malformed_patch_errors_invalid_patch() {
+    let patched = tempdir().unwrap();
+    fs::write(patched.path().join("file.txt"), "hello\n").unwrap();
+    let patch_dir = tempdir().unwrap();
+    let patch = write_patch(
+        patch_dir.path(),
+        "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ THIS IS NOT A HUNK HEADER\n",
+    );
+
+    let err = apply_patch_to_dir(patched.path(), &patch).expect_err("must fail");
+    assert!(matches!(err, PatchApplyError::InvalidPatch { .. }), "got: {err:?}");
+}
+
+/// `ERR_PNPM_PATCH_FAILED` when a hunk can't be applied — e.g. the
+/// context doesn't match the on-disk file. Mirrors upstream's
+/// `if (!success) throw new PnpmError('PATCH_FAILED', ...)`.
+#[test]
+fn unmatching_hunk_errors_patch_failed() {
+    let patched = tempdir().unwrap();
+    // Write a file whose contents diverge from the patch's context
+    // lines so diffy's apply can't locate the hunk.
+    fs::write(patched.path().join("index.js"), "totally different contents\n").unwrap();
+    let patch_dir = tempdir().unwrap();
+    let patch = write_patch(patch_dir.path(), IS_POSITIVE_PATCH);
+
+    let err = apply_patch_to_dir(patched.path(), &patch).expect_err("must fail");
+    assert!(matches!(err, PatchApplyError::PatchFailed { .. }), "got: {err:?}");
+}
+
+/// `ERR_PNPM_PATCH_FAILED` when the target file is missing. The
+/// patch refers to `index.js` but the patched dir is empty.
+#[test]
+fn missing_target_file_errors_patch_failed() {
+    let patched = tempdir().unwrap();
+    let patch_dir = tempdir().unwrap();
+    let patch = write_patch(patch_dir.path(), IS_POSITIVE_PATCH);
+
+    let err = apply_patch_to_dir(patched.path(), &patch).expect_err("must fail");
+    assert!(matches!(err, PatchApplyError::PatchFailed { .. }), "got: {err:?}");
+}
+
+/// File creation: a patch that adds a brand-new file (`--- /dev/null`).
+#[test]
+fn applies_create_for_new_file() {
+    let patched = tempdir().unwrap();
+    let patch_dir = tempdir().unwrap();
+    let patch = write_patch(
+        patch_dir.path(),
+        "\
+diff --git a/created.txt b/created.txt
+new file mode 100644
+--- /dev/null
++++ b/created.txt
+@@ -0,0 +1,2 @@
++first line
++second line
+",
+    );
+
+    apply_patch_to_dir(patched.path(), &patch).expect("apply must succeed");
+    let after = fs::read_to_string(patched.path().join("created.txt")).unwrap();
+    assert_eq!(after, "first line\nsecond line\n");
+}
+
+/// File deletion: a patch that removes an existing file
+/// (`+++ /dev/null`). The target is unlinked.
+#[test]
+fn applies_delete_for_removed_file() {
+    let patched = tempdir().unwrap();
+    let target = patched.path().join("to-delete.txt");
+    fs::write(&target, "going away\n").unwrap();
+    let patch_dir = tempdir().unwrap();
+    let patch = write_patch(
+        patch_dir.path(),
+        "\
+diff --git a/to-delete.txt b/to-delete.txt
+deleted file mode 100644
+--- a/to-delete.txt
++++ /dev/null
+@@ -1 +0,0 @@
+-going away
+",
+    );
+
+    apply_patch_to_dir(patched.path(), &patch).expect("apply must succeed");
+    assert!(!target.exists(), "deleted target must be gone");
+}
