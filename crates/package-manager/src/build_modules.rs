@@ -42,6 +42,19 @@ pub enum BuildModulesError {
         help("Ensure the package is listed in patchedDependencies configuration")
     )]
     PatchFilePathMissing { dep_path: String },
+
+    /// `ThreadPoolBuilder::build()` failed — most likely the OS
+    /// refused to spawn the requested number of worker threads
+    /// (`EAGAIN` / RLIMIT_NPROC). Surfaced as a structured error
+    /// rather than a panic so the install path can return cleanly.
+    #[display("Failed to build the per-install rayon thread pool: {source}")]
+    #[diagnostic(
+        code(ERR_PACQUET_BUILD_THREAD_POOL),
+        help(
+            "Lower childConcurrency in pnpm-workspace.yaml, or raise the process's RLIMIT_NPROC."
+        )
+    )]
+    ThreadPoolBuild { source: rayon::ThreadPoolBuildError },
 }
 
 /// Build policy derived from `allowBuilds` and
@@ -352,10 +365,16 @@ impl<'a> BuildModules<'a> {
         //
         // Mirrors upstream's
         // [`runGroups(getWorkspaceConcurrency(opts.childConcurrency), groups)`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L124).
+        // `ThreadPoolBuilder::build()` is fallible — the OS may
+        // refuse the spawn (`EAGAIN` / RLIMIT_NPROC) on a host
+        // already near its process-thread limit. Surface that as
+        // [`BuildModulesError::ThreadPoolBuild`] so the install
+        // returns cleanly with a remediation hint instead of
+        // panicking inside the binary.
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(child_concurrency.max(1) as usize)
             .build()
-            .expect("build the rayon pool for the chunk member dispatch");
+            .map_err(|source| BuildModulesError::ThreadPoolBuild { source })?;
 
         for chunk in chunks {
             // The closure runs once per chunk; `try_for_each`
@@ -392,7 +411,14 @@ impl<'a> BuildModules<'a> {
             })?;
         }
 
-        let ignored_builds = ignored_builds.into_inner().expect("ignored_builds mutex poisoned");
+        // If a chunk worker panicked while holding the
+        // `ignored_builds` lock, rayon's `try_for_each` will have
+        // already propagated the panic (or returned an Err) — so a
+        // poisoned mutex here can only mean the protected state is
+        // mid-insertion. A `BTreeSet::insert` is one atomic
+        // operation from the data-structure's POV (no torn writes),
+        // so the canonical poison-recovery pattern is safe.
+        let ignored_builds = ignored_builds.into_inner().unwrap_or_else(|e| e.into_inner());
         Ok(ignored_builds.into_iter().collect())
     }
 }
@@ -466,9 +492,13 @@ fn build_one_snapshot<R: Reporter>(
                 // `pnpm:ignored-scripts`. Explicit `false` is
                 // silently denied (above), matching upstream's
                 // switch.
+                // Poison-recover: see the equivalent call site at
+                // the end of `BuildModules::run` for the safety
+                // argument (BTreeSet insertion is atomic from the
+                // data-structure's POV).
                 ignored_builds
                     .lock()
-                    .expect("ignored_builds mutex")
+                    .unwrap_or_else(|e| e.into_inner())
                     .insert(metadata_key.to_string());
                 should_run_scripts = false;
             }
@@ -492,7 +522,12 @@ fn build_one_snapshot<R: Reporter>(
     // a per-task cache would defeat the memoization for
     // diamond-shaped subgraphs.
     let cache_key = (dep_graph.zip(engine_name)).map(|(graph, engine)| {
-        let mut cache_guard = deps_state_cache.lock().expect("deps_state_cache mutex");
+        // Poison-recover: `calc_dep_state` mutates the cache by
+        // inserting one entry per recursive walk node, each
+        // insert atomic from `HashMap`'s POV. A panic mid-walk
+        // leaves the map in a usable state — the worst case is
+        // an unfinished sub-walk that the next caller will redo.
+        let mut cache_guard = deps_state_cache.lock().unwrap_or_else(|e| e.into_inner());
         pacquet_graph_hasher::calc_dep_state(
             graph,
             &mut cache_guard,

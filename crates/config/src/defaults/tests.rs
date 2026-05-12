@@ -1,4 +1,4 @@
-use super::default_store_dir;
+use super::{default_store_dir, resolve_child_concurrency};
 use crate::test_env_guard::EnvGuard;
 use pacquet_store_dir::StoreDir;
 use pretty_assertions::assert_eq;
@@ -44,6 +44,18 @@ fn test_default_store_dir_with_xdg_env() {
     }
     let store_dir = default_store_dir();
     assert_eq!(display_store_dir(&store_dir), "/tmp/xdg_data_home/pnpm/store");
+}
+
+/// `resolve_child_concurrency(Some(i32::MIN))` must not panic.
+/// A naive `(-n) as u32` overflows in debug builds when
+/// `n == i32::MIN` because the negation itself overflows;
+/// `unsigned_abs` is the safe path. Bounds the result against
+/// the same `[1, parallelism]` envelope as the negative-offset
+/// path normally produces.
+#[test]
+fn resolve_child_concurrency_handles_i32_min() {
+    let result = resolve_child_concurrency(Some(i32::MIN));
+    assert!(result >= 1, "must floor at 1 even for i32::MIN");
 }
 
 #[cfg(windows)]

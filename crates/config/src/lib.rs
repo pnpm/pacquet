@@ -43,7 +43,11 @@ pub enum NodeLinker {
 /// Tri-state mirror of `pacquet_executor::ScriptsPrependNodePath`
 /// with serde wiring. The executor crate keeps its own enum free of
 /// serde so config concerns don't leak into the spawn-path. Converted
-/// at the BuildModules call site via [`From`].
+/// at the `BuildModules` call site (see `install_frozen_lockfile.rs`)
+/// via an explicit `match`; no `From` impl exists because neither
+/// crate depends on the other, and adding such a dep just for the
+/// conversion would invert the layering. Both enums share the same
+/// three variants so the match is exhaustive and one-line per arm.
 ///
 /// Deserializes the upstream `scriptsPrependNodePath: boolean | 'warn-only'`
 /// yaml shape ([`Config.scriptsPrependNodePath`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/Config.ts#L108)).

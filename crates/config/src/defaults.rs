@@ -135,10 +135,11 @@ pub fn resolve_child_concurrency(option: Option<i32>) -> u32 {
     match option {
         None => default_child_concurrency(),
         Some(n) if n > 0 => n as u32,
-        Some(n) => {
-            let offset = (-n) as u32;
-            available_parallelism().saturating_sub(offset).max(1)
-        }
+        // `unsigned_abs` instead of `(-n) as u32` — the latter
+        // panics in debug builds on `n == i32::MIN` (negation
+        // overflow); the former returns `i32::MAX as u32 + 1`
+        // safely.
+        Some(n) => available_parallelism().saturating_sub(n.unsigned_abs()).max(1),
     }
 }
 
