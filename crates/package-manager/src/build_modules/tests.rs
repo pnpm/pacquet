@@ -434,7 +434,7 @@ fn using_side_effects_cache_skips_rebuild() {
     let mut side_effects_maps = std::collections::HashMap::new();
     side_effects_maps.insert(pkg_key.clone(), std::sync::Arc::new(overlay));
 
-    let ignored = BuildModules {
+    BuildModules {
         virtual_store_dir: virtual_store_dir.path(),
         modules_dir: modules_dir.path(),
         lockfile_dir: lockfile_dir.path(),
