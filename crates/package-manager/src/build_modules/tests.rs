@@ -3,7 +3,9 @@ use pacquet_lockfile::{
     PackageKey, PkgName, PkgVerPeer, ProjectSnapshot, ResolvedDependencyMap,
     ResolvedDependencySpec, SnapshotEntry,
 };
-use pacquet_reporter::{IgnoredScriptsLog, LogEvent, Reporter, SilentReporter};
+use pacquet_reporter::{
+    IgnoredScriptsLog, LogEvent, Reporter, SilentReporter, SkippedOptionalReason,
+};
 use pretty_assertions::assert_eq;
 use std::{
     collections::HashMap,
@@ -257,6 +259,121 @@ fn build_modules_excludes_explicit_deny_from_ignored() {
         vec!["ignored@1.0.0".to_string()],
         "explicit-false must NOT appear in ignored set: {ignored:?}",
     );
+}
+
+/// Optional dep whose postinstall fails must be reported through the
+/// `pnpm:skipped-optional-dependency` channel (reason `build_failure`)
+/// and NOT abort the install. Mirrors upstream
+/// `building/during-install/src/index.ts:218-240`.
+///
+/// Unix-gated because the test script (`exit 1`) and the spawn shell
+/// pacquet picks (`cmd /d /s /c` on Windows) don't agree on basic
+/// exit-code semantics across this test's surface — same gating
+/// pattern as the lifecycle spawn tests in `crate::executor::lifecycle::tests`.
+#[cfg(unix)]
+#[test]
+fn optional_dep_build_failure_is_swallowed_and_reported() {
+    static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+    EVENTS.lock().expect("lock").clear();
+
+    struct RecordingReporter;
+    impl Reporter for RecordingReporter {
+        fn emit(event: &LogEvent) {
+            EVENTS.lock().expect("lock").push(event.clone());
+        }
+    }
+
+    let mut optional_snapshot = SnapshotEntry::default();
+    optional_snapshot.optional = true;
+    let snapshots = HashMap::from([(key("flaky", "1.0.0"), optional_snapshot)]);
+    let importers = root_importers(&[("flaky", "1.0.0")]);
+    // `dangerouslyAllowAllBuilds` so the policy lets the failing
+    // script through to actually run; this test exercises the
+    // build-failure path, not the policy gate.
+    let policy = AllowBuildPolicy::new(rules([]), true);
+
+    let virtual_store_dir = tempdir().expect("create temp dir");
+    let modules_dir = tempdir().expect("create temp dir");
+    let lockfile_dir = tempdir().expect("create temp dir");
+
+    create_failing_pkg(virtual_store_dir.path(), &key("flaky", "1.0.0"));
+
+    let ignored = BuildModules {
+        virtual_store_dir: virtual_store_dir.path(),
+        modules_dir: modules_dir.path(),
+        lockfile_dir: lockfile_dir.path(),
+        snapshots: Some(&snapshots),
+        importers: &importers,
+        allow_build_policy: &policy,
+    }
+    .run::<RecordingReporter>()
+    .expect("optional build failure must NOT abort the install");
+    dbg!(&ignored);
+
+    let captured = EVENTS.lock().expect("lock").clone();
+    dbg!(&captured);
+    let skipped_event = captured
+        .iter()
+        .find_map(|e| match e {
+            LogEvent::SkippedOptionalDependency(log) => Some(log),
+            _ => None,
+        })
+        .expect("must emit pnpm:skipped-optional-dependency");
+    assert_eq!(skipped_event.reason, SkippedOptionalReason::BuildFailure);
+    assert_eq!(skipped_event.package.name, "flaky");
+    assert_eq!(skipped_event.package.version, "1.0.0");
+    assert!(skipped_event.details.is_some(), "details must carry the error toString");
+}
+
+/// Symmetric: a NON-optional dep with the same failing postinstall
+/// must propagate the error as `BuildModulesError::LifecycleScript`.
+/// Mirrors upstream's `throw err` at
+/// `building/during-install/src/index.ts:240`.
+#[cfg(unix)]
+#[test]
+fn non_optional_dep_build_failure_propagates() {
+    let snapshots = HashMap::from([(key("required", "1.0.0"), SnapshotEntry::default())]);
+    let importers = root_importers(&[("required", "1.0.0")]);
+    let policy = AllowBuildPolicy::new(rules([]), true);
+
+    let virtual_store_dir = tempdir().expect("create temp dir");
+    let modules_dir = tempdir().expect("create temp dir");
+    let lockfile_dir = tempdir().expect("create temp dir");
+
+    create_failing_pkg(virtual_store_dir.path(), &key("required", "1.0.0"));
+
+    let err = BuildModules {
+        virtual_store_dir: virtual_store_dir.path(),
+        modules_dir: modules_dir.path(),
+        lockfile_dir: lockfile_dir.path(),
+        snapshots: Some(&snapshots),
+        importers: &importers,
+        allow_build_policy: &policy,
+    }
+    .run::<SilentReporter>()
+    .expect_err("non-optional build failure must propagate");
+    eprintln!("ERR: {err}");
+    assert!(matches!(err, crate::build_modules::BuildModulesError::LifecycleScript(_)));
+}
+
+/// Helper: materialize a package whose `postinstall` exits non-zero.
+/// Mirrors `create_buildable_pkg` but with a script that fails so
+/// the run actually exercises the error path.
+fn create_failing_pkg(virtual_store_dir: &Path, key: &PackageKey) -> PathBuf {
+    let key_str = key.without_peer().to_string();
+    let name_version = key_str.strip_prefix('/').unwrap_or(&key_str);
+    let at_idx = name_version.rfind('@').unwrap_or(name_version.len());
+    let pkg_name = &name_version[..at_idx];
+    let store_name = name_version.replace('/', "+");
+    let pkg_dir = virtual_store_dir.join(&store_name).join("node_modules").join(pkg_name);
+    fs::create_dir_all(&pkg_dir).expect("create pkg dir");
+    let manifest = serde_json::json!({
+        "name": pkg_name,
+        "version": name_version[at_idx + 1..].to_string(),
+        "scripts": { "postinstall": "exit 1" },
+    });
+    fs::write(pkg_dir.join("package.json"), manifest.to_string()).expect("write manifest");
+    pkg_dir
 }
 
 /// Recording fake confirms `pnpm:ignored-scripts` is the right channel
