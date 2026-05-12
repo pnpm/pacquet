@@ -249,6 +249,22 @@ impl Config {
         let mut config = default();
 
         let cwd = current_dir().ok();
+        // Re-anchor the path-valued defaults (`modules_dir`,
+        // `virtual_store_dir`) onto the caller-supplied cwd. SmartDefault
+        // populates them via [`defaults::default_modules_dir`] /
+        // [`defaults::default_virtual_store_dir`], which both anchor at
+        // `env::current_dir()`. That diverges from `cwd` whenever the
+        // caller passed a different directory (notably
+        // `pacquet --dir <path>` from elsewhere), so without this fixup
+        // pacquet would load config from `<path>` while still installing
+        // to the process-cwd `node_modules`. Matches pnpm 11, whose
+        // `modulesDir`/`virtualStoreDir` defaults are resolved against
+        // `pnpmConfig.dir`.
+        if let Some(start) = &cwd {
+            config.modules_dir = start.join("node_modules");
+            config.virtual_store_dir = start.join("node_modules/.pnpm");
+        }
+
         // Read the nearest .npmrc (cwd first, home second) and apply only
         // the auth/network subset. Everything else is intentionally ignored.
         let auth_source = cwd
