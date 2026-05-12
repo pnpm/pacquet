@@ -8,7 +8,7 @@
 //! [`worker/src/start.ts:312-383`](https://github.com/pnpm/pnpm/blob/7e3145f9fc/worker/src/start.ts#L312-L383).
 //! Used by the side-effects-cache WRITE path: after a postinstall
 //! script modifies the package directory, this function rehashes
-//! the directory so [`upload`](crate::upload) can diff it against
+//! the directory so [`upload`](crate::upload()) can diff it against
 //! the pristine `PackageFilesIndex.files` row and seed the cache.
 
 use crate::{CafsFileInfo, StoreDir, WriteCasFileError};
@@ -21,7 +21,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Result of [`add_files_from_dir`]. The map's key is the file's
+/// Result of [`add_files_from_dir()`]. The map's key is the file's
 /// path *relative to `pkg_root`*, with forward-slash separators —
 /// matching upstream's `${relativeDir}/${file.name}` shape so the
 /// resulting `FilesIndex` round-trips through pnpm without
@@ -31,7 +31,7 @@ pub struct AddedFiles {
     pub files: HashMap<String, CafsFileInfo>,
 }
 
-/// Error type of [`add_files_from_dir`].
+/// Error type of [`add_files_from_dir()`].
 #[derive(Debug, Display, Error, Diagnostic)]
 #[non_exhaustive]
 pub enum AddFilesFromDirError {

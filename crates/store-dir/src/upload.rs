@@ -20,7 +20,7 @@ use std::{
     sync::Arc,
 };
 
-/// Error type of [`upload`].
+/// Error type of [`upload()`].
 #[derive(Debug, Display, Error, Diagnostic)]
 #[non_exhaustive]
 pub enum UploadError {
@@ -109,7 +109,7 @@ pub fn upload(
 /// `pnpm/pnpm@7e3145f9fc:worker/src/start.ts:411-434`.
 ///
 /// `base`     — the pristine `PackageFilesIndex.files` map (pre-build).
-/// `current`  — the rehashed map produced by [`add_files_from_dir`].
+/// `current`  — the rehashed map produced by [`add_files_from_dir()`].
 ///
 /// Returns a [`SideEffectsDiff`] whose `added` entry covers files
 /// present in `current` that either don't appear in `base` or whose
