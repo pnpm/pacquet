@@ -26,7 +26,6 @@ smart-default = { workspace = true }
 ssri          = { workspace = true }
 tokio         = { workspace = true, features = ["sync"] }
 tracing       = { workspace = true }
-walkdir       = { workspace = true }
 
 # Enable `sha2`'s `asm` feature on non-MSVC targets only. The feature
 # activates the `sha2-asm` crate (hand-written `.S` assembly files for

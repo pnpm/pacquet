@@ -9,13 +9,13 @@
 //! [`worker/src/start.ts:312-383`](https://github.com/pnpm/pnpm/blob/7e3145f9fc/worker/src/start.ts#L312-L383).
 
 use crate::{
-    AddFilesFromDirError, CafsFileInfo, SideEffectsDiff, StoreDir, StoreIndex, StoreIndexError,
-    StoreIndexWriter, add_files_from_dir,
+    AddFilesFromDirError, CafsFileInfo, SideEffectsDiff, StoreDir, StoreIndexWriter,
+    add_files_from_dir,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap},
     path::Path,
     sync::Arc,
 };
@@ -26,18 +26,6 @@ use std::{
 pub enum UploadError {
     #[diagnostic(transparent)]
     AddFilesFromDir(#[error(source)] AddFilesFromDirError),
-
-    #[diagnostic(transparent)]
-    OpenIndex(#[error(source)] StoreIndexError),
-
-    #[diagnostic(transparent)]
-    ReadIndex(#[error(source)] StoreIndexError),
-
-    #[display(
-        "side-effects cache digest algorithm mismatch: row has {row_algo:?}, want {expected:?}"
-    )]
-    #[diagnostic(code(pacquet_store_dir::upload::algo_mismatch))]
-    AlgoMismatch { row_algo: String, expected: String },
 }
 
 /// Digest algorithm pacquet writes into `PackageFilesIndex.algo`.
@@ -47,27 +35,27 @@ pub enum UploadError {
 /// guard.
 pub const HASH_ALGORITHM: &str = "sha512";
 
-/// Re-hash the built package directory, compute the diff against
-/// the existing `PackageFilesIndex.files`, and re-queue the row
-/// with `side_effects[side_effects_cache_key] = diff`.
+/// Re-hash the built package directory and queue a side-effects
+/// R/M/W against the row at `files_index_file`.
 ///
-/// Behaviour mirrors `pnpm/pnpm@7e3145f9fc:worker/src/start.ts:342-371`:
+/// The actual load-existing → apply-diff → write-back happens
+/// inside the writer task ([`StoreIndexWriter::queue_side_effects_upload`])
+/// so concurrent uploads for the same row stay commutative — a
+/// second upload to the same row builds on the first's mutation
+/// rather than racing against a stale read.
 ///
-/// - If no existing row is found under `files_index_file`, returns
-///   `Ok(())` without writing — upstream's `if (!existingFilesIndex) return`
-///   bail-out. The base row will be populated by some other code path
-///   (or never, if the package was already in CAFS); the next install
-///   re-runs the build.
-/// - If the existing row's `algo` differs from the constant
-///   [`HASH_ALGORITHM`], returns `Err(UploadError::AlgoMismatch)`.
-/// - Otherwise inserts `(side_effects_cache_key → diff)` into the
-///   row's `side_effects` map (creating the map if absent) and
-///   re-queues the row via `writer.queue`.
+/// Behaviour at the writer side mirrors `pnpm/pnpm@7e3145f9fc:worker/src/start.ts:342-371`:
 ///
-/// `requires_build` is left as-is on the existing row.  Upstream
-/// recomputes it from `(manifest, filesMap)` when the field is
-/// `None`; pacquet's row already carries a real value from the
-/// download path so this is a no-op for the typical case.
+/// - No base row at `files_index_file` → silent skip (upstream's
+///   `if (!existingFilesIndex) return`).
+/// - Existing row's `algo` differs from [`HASH_ALGORITHM`] → log
+///   at `warn!` and skip (upstream's `ALGO_MISMATCH` error,
+///   demoted to a warning here because at this point in the
+///   install we've already done the build and the cache write is
+///   best-effort).
+/// - Otherwise the row's `side_effects[side_effects_cache_key] =
+///   diff` is set and the mutated row gets re-queued for the
+///   batch flush.
 pub fn upload(
     store_dir: &StoreDir,
     built_pkg_location: &Path,
@@ -77,31 +65,11 @@ pub fn upload(
 ) -> Result<(), UploadError> {
     let added =
         add_files_from_dir(store_dir, built_pkg_location).map_err(UploadError::AddFilesFromDir)?;
-
-    let index = StoreIndex::open_readonly_in(store_dir).map_err(UploadError::OpenIndex)?;
-    let Some(mut existing) = index.get(files_index_file).map_err(UploadError::ReadIndex)? else {
-        tracing::debug!(
-            target: "pacquet::upload",
-            files_index_file,
-            "no existing package_index row; skipping side-effects upload",
-        );
-        return Ok(());
-    };
-
-    if existing.algo != HASH_ALGORITHM {
-        return Err(UploadError::AlgoMismatch {
-            row_algo: existing.algo.clone(),
-            expected: HASH_ALGORITHM.to_string(),
-        });
-    }
-
-    let diff = calculate_diff(&existing.files, &added.files);
-    existing
-        .side_effects
-        .get_or_insert_with(HashMap::new)
-        .insert(side_effects_cache_key.to_string(), diff);
-
-    writer.queue(files_index_file.to_string(), existing);
+    writer.queue_side_effects_upload(
+        files_index_file.to_string(),
+        side_effects_cache_key.to_string(),
+        added.files,
+    );
     Ok(())
 }
 
@@ -124,7 +92,11 @@ pub fn calculate_diff(
 ) -> SideEffectsDiff {
     let mut added: HashMap<String, CafsFileInfo> = HashMap::new();
     let mut deleted: Vec<String> = Vec::new();
-    let all_files: HashSet<&str> = base.keys().chain(current.keys()).map(String::as_str).collect();
+    // `BTreeSet` so iteration order is deterministic — `deleted`
+    // ends up sorted lexicographically and `added`, while still a
+    // `HashMap`, gets built in a stable order which makes the
+    // resulting msgpack payload byte-stable for the same input.
+    let all_files: BTreeSet<&str> = base.keys().chain(current.keys()).map(String::as_str).collect();
     for file in all_files {
         match (base.get(file), current.get(file)) {
             (Some(_), None) => deleted.push(file.to_string()),

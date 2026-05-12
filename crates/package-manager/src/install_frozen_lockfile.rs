@@ -165,7 +165,7 @@ where
             allow_build_policy: &allow_build_policy,
             side_effects_maps_by_snapshot: Some(&side_effects_maps_by_snapshot),
             engine_name: engine_name.as_deref(),
-            side_effects_cache: config.side_effects_cache,
+            side_effects_cache: config.side_effects_cache_read(),
             side_effects_cache_write: config.side_effects_cache_write(),
             store_dir: Some(&config.store_dir),
             store_index_writer: Some(&store_index_writer),

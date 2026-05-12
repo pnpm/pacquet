@@ -164,10 +164,14 @@ fn directory_cycle_terminates() {
 }
 
 /// Walking a missing root surfaces a structured error rather than
-/// silently returning an empty map.
+/// silently returning an empty map. Use a tempdir subpath so the
+/// "missing" assertion works on every platform (Windows would not
+/// guarantee `/this/does/not/exist/anywhere` is missing).
 #[test]
 fn missing_root_errors() {
     let (_tmp, store_dir) = make_store();
-    let err = add_files_from_dir(&store_dir, Path::new("/this/does/not/exist/anywhere"));
+    let parent = tempdir().expect("create tempdir");
+    let missing = parent.path().join("does-not-exist");
+    let err = add_files_from_dir(&store_dir, &missing);
     assert!(matches!(err, Err(AddFilesFromDirError::CanonicalizeRoot { .. })));
 }

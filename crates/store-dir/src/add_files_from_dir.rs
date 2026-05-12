@@ -123,6 +123,14 @@ fn walk(
             .map_err(|source| AddFilesFromDirError::Stat { path: absolute.clone(), source })?;
 
         let mut next_real_dir: Option<PathBuf> = None;
+        // Path to use for the read/stat after this branch:
+        // - regular file or directory: the original entry path.
+        // - symlink to a file: the *resolved* target path. Reading
+        //   from the resolved path closes a TOCTOU where the
+        //   symlink could be retargeted between the containment
+        //   check and the read, otherwise letting us ingest data
+        //   from outside `pkg_root`.
+        let mut read_path = absolute.clone();
         let mut symlink_target_meta: Option<fs::Metadata> = None;
 
         if file_type.is_symlink() {
@@ -143,6 +151,7 @@ fn walk(
                 next_real_dir = Some(real);
             } else {
                 symlink_target_meta = Some(meta);
+                read_path = real;
             }
         } else if file_type.is_dir() {
             next_real_dir = Some(current_real_path.join(&*name));
@@ -160,21 +169,25 @@ fn walk(
                 continue;
             }
             ctx.visited.insert(real_dir.clone());
-            walk(ctx, &absolute, &relative_subpath, &real_dir)?;
+            // Recurse via the resolved directory so a symlinked
+            // sub-directory's contents are walked from the canonical
+            // path. Matches the TOCTOU rationale above for file
+            // reads.
+            walk(ctx, &real_dir, &relative_subpath, &real_dir)?;
             ctx.visited.remove(&real_dir);
             continue;
         }
 
         let meta = match symlink_target_meta {
             Some(m) => m,
-            None => fs::metadata(&absolute)
-                .map_err(|source| AddFilesFromDirError::Stat { path: absolute.clone(), source })?,
+            None => fs::metadata(&read_path)
+                .map_err(|source| AddFilesFromDirError::Stat { path: read_path.clone(), source })?,
         };
         if !meta.is_file() {
             continue;
         }
-        let buffer = fs::read(&absolute)
-            .map_err(|source| AddFilesFromDirError::ReadFile { path: absolute.clone(), source })?;
+        let buffer = fs::read(&read_path)
+            .map_err(|source| AddFilesFromDirError::ReadFile { path: read_path.clone(), source })?;
         let mode = file_mode_from(&meta);
         let executable = is_executable(mode);
         let (_path, hash) = ctx
