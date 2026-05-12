@@ -241,6 +241,7 @@ impl<'a> BuildModules<'a> {
                     node_gyp_bin: None,
                     scripts_prepend_node_path: ScriptsPrependNodePath::Never,
                     script_shell: None,
+                    optional,
                 });
 
                 if let Err(err) = result {

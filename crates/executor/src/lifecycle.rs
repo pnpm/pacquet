@@ -111,6 +111,16 @@ pub struct RunPostinstallHooks<'a> {
     /// `/usr/local/bin/bash`). `None` means use the platform default
     /// (`sh -c` on POSIX, `cmd /d /s /c` on Windows).
     pub script_shell: Option<&'a Path>,
+    /// Whether the dep is reachable only through optional edges
+    /// (`snapshots[<key>].optional` in the v9 lockfile). Stamped
+    /// into the `pnpm:lifecycle` `Script` and `Exit` events so
+    /// downstream reporters can dispatch correctly, mirroring
+    /// upstream's `lifecycleLogger.debug({ optional, … })` at
+    /// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/exec/lifecycle/src/runLifecycleHook.ts#L102>.
+    /// Does NOT affect failure handling — `BuildModules` consults the
+    /// same flag independently to decide whether to swallow a build
+    /// failure (see #397 item 6).
+    pub optional: bool,
 }
 
 /// Run the preinstall, install, and postinstall lifecycle scripts for
@@ -208,7 +218,7 @@ fn run_lifecycle_hook<R: Reporter>(
         level: LogLevel::Debug,
         message: LifecycleMessage::Script {
             dep_path: opts.dep_path.to_string(),
-            optional: false,
+            optional: opts.optional,
             script: script.to_string(),
             stage: stage.to_string(),
             wd: pkg_root_str.clone(),
@@ -333,7 +343,7 @@ fn run_lifecycle_hook<R: Reporter>(
         message: LifecycleMessage::Exit {
             dep_path: opts.dep_path.to_string(),
             exit_code: status.code().unwrap_or(-1),
-            optional: false,
+            optional: opts.optional,
             stage: stage.to_string(),
             wd: pkg_root_str,
         },

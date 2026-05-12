@@ -530,14 +530,26 @@ pub struct IgnoredScriptsLog {
     pub package_names: Vec<String>,
 }
 
-/// `pnpm:skipped-optional-dependency` payload. The full upstream
-/// `SkippedOptionalDependencyMessage` is a discriminated union over
-/// `reason`; pacquet currently only emits the `build_failure`
-/// variant, so this struct models that shape directly. Other
-/// reasons (`unsupported_engine`, `unsupported_platform`,
-/// `resolution_failure`) will need their own variants when the
-/// corresponding emit sites land. `parents` is a TODO upstream
-/// too — see `during-install/src/index.ts:227` — so it's omitted.
+/// `pnpm:skipped-optional-dependency` payload.
+///
+/// Upstream's `SkippedOptionalDependencyMessage` is a discriminated
+/// union over `reason` with two distinct `package` shapes:
+/// `build_failure` / `unsupported_engine` / `unsupported_platform`
+/// all carry `package: { id, name, version }`; `resolution_failure`
+/// carries `package: { name?, version?, bareSpecifier }` with no
+/// `id`. This struct models only the **first** shape — the three
+/// reasons that share `{ id, name, version }`. The
+/// `ResolutionFailure` variant in [`SkippedOptionalReason`] is
+/// declared for forward compatibility on the enum side, but its
+/// distinct `package` shape means a `ResolutionFailure` emit will
+/// require a sibling struct (or a `#[serde(untagged)]` enum
+/// substituting for `SkippedOptionalDependencyLog`) — not just
+/// flipping the `reason` value. Refactoring is deferred until
+/// pacquet actually has a resolver-time emit site to produce that
+/// payload.
+///
+/// `parents` is a TODO upstream too (see
+/// `during-install/src/index.ts:227`) and is omitted here.
 #[derive(Debug, Clone, Serialize)]
 pub struct SkippedOptionalDependencyLog {
     pub level: LogLevel,

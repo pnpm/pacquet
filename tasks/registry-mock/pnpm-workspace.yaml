@@ -3,9 +3,10 @@ allowBuilds:
 
 # Verdaccio's CJS deps (notably `@verdaccio/signature` requiring
 # `@verdaccio/config`) don't resolve correctly under pnpm's strict
-# isolation when running the `@pnpm/registry-mock` binary from a
-# nested install. Hoisting the dep tree here matches what pnpm's own
-# test harness implicitly does via its programmatic-API entry, and
-# keeps the launch path simple (Rust calls the CLI binary; verdaccio
-# resolves its deps from a flat node_modules).
+# isolation when verdaccio is invoked from a nested install. The
+# Rust launcher spawns `node launch.mjs` which calls
+# `@pnpm/registry-mock`'s programmatic `start()` API, which in turn
+# spawns verdaccio — a flat `node_modules` ensures verdaccio's
+# transitive CJS requires resolve no matter where in the tree
+# they're loaded from.
 nodeLinker: hoisted

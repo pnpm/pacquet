@@ -633,7 +633,7 @@ fn skipped_optional_omits_absent_details() {
         .expect("serialize envelope")
         .pipe_as_ref(serde_json::from_str)
         .expect("parse JSON");
-    assert!(json.get("details").is_none(), "details must be omitted when absent, got {json:?}",);
+    assert!(json.get("details").is_none(), "details must be omitted when absent, got {json:?}");
 }
 
 /// All four reason variants serialize as the snake_case strings

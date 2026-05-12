@@ -276,8 +276,9 @@ fn build_modules_excludes_explicit_deny_from_ignored() {
 ///
 /// Unix-gated because the upstream script (`echo hello && echo world && exit 1`)
 /// is POSIX shell syntax. The cmd-on-Windows path picks a different
-/// shell — `crate::executor::shell` covers the shell-selection
-/// branches in isolation.
+/// shell — `pacquet_executor::select_shell` (tested in the executor
+/// crate's `shell::tests`) covers the shell-selection branches in
+/// isolation.
 #[cfg(unix)]
 #[test]
 fn do_not_fail_on_optional_dep_with_failing_postinstall() {

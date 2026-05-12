@@ -14,7 +14,7 @@
 // the CLI launch fails on a modern host Node. The programmatic
 // `start()` does.
 //
-// Pacquet's Rust launcher (`crates/tasks/registry-mock/src/node_registry_mock.rs`)
+// Pacquet's Rust launcher (`tasks/registry-mock/src/node_registry_mock.rs`)
 // invokes this script via `node`. Calling pattern:
 //   `node launch.mjs prepare`              — publish fixtures
 //   `node launch.mjs` (or any other arg)   — launch the server; port
@@ -42,17 +42,25 @@ const server = start({
   listen,
 })
 
+// Shell-convention exit code when the child was killed by a signal:
+// 128 + signal number. Anything Node knows the number for; fall
+// back to 1 otherwise.
+const SIGNAL_NUMBERS = { SIGHUP: 1, SIGINT: 2, SIGTERM: 15 }
+
 server.on('exit', (code, signal) => {
-  if (signal) {
-    process.kill(process.pid, signal)
-    return
+  if (signal != null) {
+    process.exit(128 + (SIGNAL_NUMBERS[signal] ?? 1))
+  } else {
+    process.exit(code ?? 0)
   }
-  process.exit(code ?? 0)
 })
 
-// Forward the usual termination signals so the supervising Rust
-// process can shut the server down cleanly.
-for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+// Forward the usual termination signals to the child so it can shut
+// down cleanly. The child's `exit` handler above is what actually
+// terminates the wrapper — we do NOT re-raise the signal to ourselves
+// (re-raising would either hit our own handler in a loop or, after
+// removing it, race with the child's exit propagation).
+for (const sig of Object.keys(SIGNAL_NUMBERS)) {
   process.on(sig, () => {
     if (!server.killed) server.kill(sig)
   })

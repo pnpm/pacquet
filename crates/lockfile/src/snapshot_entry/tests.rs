@@ -34,5 +34,11 @@ fn optional_defaults_false_and_omits_when_false() {
     assert!(!entry.optional, "default must be false when absent");
 
     let out = serialize_yaml::to_string(&entry).expect("serialize");
-    assert!(!out.contains("optional"), "false must not be serialized:\n{out}");
+    // Match the exact key spelling (`optional:` followed by a space
+    // or a newline) so a future fixture containing
+    // `optionalDependencies:` doesn't fool this assertion.
+    assert!(
+        !out.contains("optional: ") && !out.contains("optional:\n"),
+        "the `optional` key must not be serialized when false:\n{out}",
+    );
 }
