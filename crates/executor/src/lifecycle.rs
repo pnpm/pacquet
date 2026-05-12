@@ -96,9 +96,10 @@ pub struct RunPostinstallHooks<'a> {
     /// (typically `"pacquet/<version>"`); `None` skips the stamp.
     pub user_agent: Option<&'a str>,
     /// When `false`, a per-package `node_modules/.tmp` directory is
-    /// created and exposed as `TMPDIR`. Pacquet currently passes
-    /// `true` everywhere — item #14 (`unsafe-perm` uid/gid drop)
-    /// will revisit this.
+    /// created and exposed as `TMPDIR`, and (on POSIX) lifecycle
+    /// scripts run with a dropped uid/gid. Pacquet does not yet
+    /// surface the privilege drop, so callers currently pass
+    /// `true` everywhere.
     pub unsafe_perm: bool,
     /// Bundled `node-gyp` shim directory prepended to `PATH`. Pacquet
     /// does not ship one yet; callers pass `None`.

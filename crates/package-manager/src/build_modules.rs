@@ -228,19 +228,13 @@ impl<'a> BuildModules<'a> {
                     npm_execpath: None,
                     node_gyp_path: None,
                     user_agent: None,
-                    // Item #14 will replace this with a config-driven
-                    // value once `unsafePerm` plumbing lands. Setting
-                    // true here keeps current behavior (no TMPDIR
-                    // creation, no uid/gid drop).
+                    // Hard-coded until the `unsafe-perm` config knob
+                    // is plumbed through. `true` skips both the
+                    // TMPDIR creation and the uid/gid drop, matching
+                    // pacquet's behavior before any of this landed.
                     unsafe_perm: true,
-                    // Pacquet does not bundle a node-gyp shim yet.
                     node_gyp_bin: None,
-                    // Item #15 in #397 will surface `scriptsPrependNodePath`
-                    // from config; today the safe default is `Never`.
                     scripts_prepend_node_path: ScriptsPrependNodePath::Never,
-                    // `scriptShell` / `shell-emulator` plumbing through the
-                    // package-manager config is its own follow-up — pass
-                    // `None` here to use the platform default.
                     script_shell: None,
                 })
                 .map_err(BuildModulesError::LifecycleScript)?;
