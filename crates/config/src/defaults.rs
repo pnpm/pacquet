@@ -105,5 +105,42 @@ pub fn default_fetch_retry_maxtimeout() -> u64 {
     60_000
 }
 
+/// Default `childConcurrency` matching upstream's
+/// [`getDefaultWorkspaceConcurrency`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/concurrency.ts#L21-L23):
+/// `min(4, availableParallelism())`. Read at runtime so `cargo test`
+/// and overrides via yaml still resolve to a usable value on
+/// 1-core sandboxes.
+pub fn default_child_concurrency() -> u32 {
+    available_parallelism().min(4)
+}
+
+/// Available CPU parallelism, mirroring upstream's
+/// [`getAvailableParallelism`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/concurrency.ts#L5-L13).
+/// Floors at 1.
+pub fn available_parallelism() -> u32 {
+    std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(1).max(1)
+}
+
+/// Resolve `childConcurrency` from a possibly-negative yaml value
+/// to a concrete `u32`. Mirrors upstream's
+/// [`getWorkspaceConcurrency`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/concurrency.ts#L25-L34):
+///
+/// - `None` → default (`min(4, parallelism)`).
+/// - Positive `n` → `n`.
+/// - Zero or negative `n` → `max(1, parallelism - |n|)`.
+///
+/// The negative-offset semantics let users say "use all cores minus
+/// N" without hardcoding the core count.
+pub fn resolve_child_concurrency(option: Option<i32>) -> u32 {
+    match option {
+        None => default_child_concurrency(),
+        Some(n) if n > 0 => n as u32,
+        Some(n) => {
+            let offset = (-n) as u32;
+            available_parallelism().saturating_sub(offset).max(1)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;
