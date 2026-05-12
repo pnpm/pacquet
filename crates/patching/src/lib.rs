@@ -15,7 +15,7 @@
 //! 2. `pacquet-config` exposes
 //!    [`Config::resolved_patched_dependencies`][crate-config] and the
 //!    install pipeline (`InstallFrozenLockfile::run`) calls it once
-//!    per install, looks each snapshot up with [`get_patch_info`],
+//!    per install, looks each snapshot up with [`get_patch_info()`],
 //!    and threads the resulting map into `BuildModules`.
 //! 3. `BuildModules` passes the per-snapshot
 //!    [`ExtendedPatchInfo::hash`] into
