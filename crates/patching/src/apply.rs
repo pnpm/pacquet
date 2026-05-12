@@ -1,7 +1,7 @@
 use derive_more::{Display, Error};
 use diffy::patch_set::{FileOperation, ParseOptions, PatchSet};
 use miette::Diagnostic;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::{fs, io};
 
 /// Error from [`apply_patch_to_dir`].
@@ -68,7 +68,18 @@ pub enum PatchApplyError {
 ///
 /// File paths in the patch are stripped one level
 /// (`diffy::FileOperation::strip_prefix(1)`) to drop the conventional
-/// `a/` and `b/` prefixes git uses.
+/// `a/` and `b/` prefixes git uses, then validated against
+/// `patched_dir`: absolute paths, `..` segments, and (on Windows)
+/// drive prefixes / root components are rejected as
+/// `ERR_PNPM_PATCH_FAILED`. A patch file is attacker-controlled
+/// data — an `a/../../outside` header would otherwise let it
+/// read, write, or delete outside the package directory.
+///
+/// `Create` refuses to overwrite an existing file (matches `patch`
+/// and `git apply` semantics for `--- /dev/null` hunks). `Delete`
+/// validates the hunks via `diffy::apply` and only unlinks when the
+/// result is empty — a stale patch would otherwise silently delete
+/// a file whose contents diverged from what the patch expects.
 pub fn apply_patch_to_dir(
     patched_dir: &Path,
     patch_file_path: &Path,
@@ -124,9 +135,25 @@ fn apply_one_file(
         message,
     };
 
+    // Reject patch paths that try to escape `patched_dir`: absolute
+    // paths, `..` segments, and (on Windows) drive-letter prefixes
+    // and root components. A patch is attacker-controlled data —
+    // an `a/../../outside` header could otherwise read, write, or
+    // delete files outside the package directory.
+    let resolve_target = |rel: &Path| -> Result<PathBuf, PatchApplyError> {
+        if rel.is_absolute()
+            || rel.components().any(|c| {
+                matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_))
+            })
+        {
+            return Err(failed(format!("patch path escapes target dir: {}", rel.display(),)));
+        }
+        Ok(patched_dir.join(rel))
+    };
+
     match operation {
         FileOperation::Modify { modified, .. } => {
-            let target = patched_dir.join(modified.as_ref());
+            let target = resolve_target(Path::new(modified.as_ref()))?;
             let original = fs::read_to_string(&target)
                 .map_err(|source| failed(format!("read {}: {source}", target.display())))?;
             let text_patch = file_patch
@@ -139,7 +166,18 @@ fn apply_one_file(
                 .map_err(|source| failed(format!("write {}: {source}", target.display())))?;
         }
         FileOperation::Create(path) => {
-            let target = patched_dir.join(path.as_ref());
+            let target = resolve_target(Path::new(path.as_ref()))?;
+            // A "new file" patch (`--- /dev/null`) means upstream
+            // expects the target NOT to exist. Refusing to overwrite
+            // matches `patch`'s and `git apply`'s behavior — silently
+            // clobbering a real file would be a data-loss footgun if
+            // the patch was authored against the wrong base.
+            if target.try_exists().unwrap_or(false) {
+                return Err(failed(format!(
+                    "cannot create {}: target already exists",
+                    target.display(),
+                )));
+            }
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent).map_err(|source| {
                     failed(format!("create parent of {}: {source}", target.display()))
@@ -155,14 +193,29 @@ fn apply_one_file(
                 .map_err(|source| failed(format!("write {}: {source}", target.display())))?;
         }
         FileOperation::Delete(path) => {
-            let target = patched_dir.join(path.as_ref());
-            match fs::remove_file(&target) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                Err(source) => {
-                    return Err(failed(format!("delete {}: {source}", target.display())));
-                }
+            let target = resolve_target(Path::new(path.as_ref()))?;
+            // Validate that the existing file matches the patch
+            // before unlinking — a stale or wrong-target patch
+            // would otherwise silently delete the wrong file.
+            // diffy::apply on a delete patch produces the empty
+            // string when every hunk matches.
+            let original = fs::read_to_string(&target)
+                .map_err(|source| failed(format!("read {}: {source}", target.display())))?;
+            let text_patch = file_patch
+                .patch()
+                .as_text()
+                .ok_or_else(|| failed("binary patch is not supported".to_string()))?;
+            let after = diffy::apply(&original, text_patch)
+                .map_err(|source| failed(format!("apply to {}: {source}", target.display())))?;
+            if !after.is_empty() {
+                return Err(failed(format!(
+                    "delete patch left {} non-empty after apply ({} bytes remain)",
+                    target.display(),
+                    after.len(),
+                )));
             }
+            fs::remove_file(&target)
+                .map_err(|source| failed(format!("delete {}: {source}", target.display())))?;
         }
         FileOperation::Rename { .. } | FileOperation::Copy { .. } => {
             return Err(failed(

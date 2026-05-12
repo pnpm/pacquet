@@ -152,6 +152,134 @@ new file mode 100644
     assert_eq!(after, "first line\nsecond line\n");
 }
 
+/// `..` in a patch path is rejected — a malicious or
+/// misconfigured patch must not be able to read/write/delete
+/// outside `patched_dir`. CodeRabbit flagged this as Critical
+/// during review of pacquet#427.
+#[test]
+fn parent_dir_segment_in_modify_errors() {
+    let patched = tempdir().unwrap();
+    let patch_dir = tempdir().unwrap();
+    let patch = write_patch(
+        patch_dir.path(),
+        "\
+diff --git a/../escape.txt b/../escape.txt
+--- a/../escape.txt
++++ b/../escape.txt
+@@ -1 +1 @@
+-existing
++modified
+",
+    );
+    let err = apply_patch_to_dir(patched.path(), &patch).expect_err("must reject ..");
+    let PatchApplyError::PatchFailed { message, .. } = err else {
+        panic!("expected PatchFailed, got: {err:?}");
+    };
+    assert!(message.contains("escapes target dir"), "got: {message}");
+}
+
+#[test]
+fn parent_dir_segment_in_create_errors() {
+    let patched = tempdir().unwrap();
+    let patch_dir = tempdir().unwrap();
+    let patch = write_patch(
+        patch_dir.path(),
+        "\
+diff --git a/../planted.txt b/../planted.txt
+new file mode 100644
+--- /dev/null
++++ b/../planted.txt
+@@ -0,0 +1 @@
++pwned
+",
+    );
+    let err = apply_patch_to_dir(patched.path(), &patch).expect_err("must reject ..");
+    let PatchApplyError::PatchFailed { message, .. } = err else {
+        panic!("expected PatchFailed, got: {err:?}");
+    };
+    assert!(message.contains("escapes target dir"), "got: {message}");
+}
+
+#[test]
+fn parent_dir_segment_in_delete_errors() {
+    let patched = tempdir().unwrap();
+    let patch_dir = tempdir().unwrap();
+    let patch = write_patch(
+        patch_dir.path(),
+        "\
+diff --git a/../victim.txt b/../victim.txt
+deleted file mode 100644
+--- a/../victim.txt
++++ /dev/null
+@@ -1 +0,0 @@
+-going away
+",
+    );
+    let err = apply_patch_to_dir(patched.path(), &patch).expect_err("must reject ..");
+    let PatchApplyError::PatchFailed { message, .. } = err else {
+        panic!("expected PatchFailed, got: {err:?}");
+    };
+    assert!(message.contains("escapes target dir"), "got: {message}");
+}
+
+/// `Create` refuses to overwrite an existing file. Matches `patch`
+/// and `git apply` semantics for `--- /dev/null` hunks. Flagged by
+/// Copilot during review of pacquet#427.
+#[test]
+fn create_on_existing_file_errors() {
+    let patched = tempdir().unwrap();
+    let target = patched.path().join("already-here.txt");
+    fs::write(&target, "i was here first\n").unwrap();
+    let patch_dir = tempdir().unwrap();
+    let patch = write_patch(
+        patch_dir.path(),
+        "\
+diff --git a/already-here.txt b/already-here.txt
+new file mode 100644
+--- /dev/null
++++ b/already-here.txt
+@@ -0,0 +1 @@
++overwriting
+",
+    );
+    let err = apply_patch_to_dir(patched.path(), &patch).expect_err("must refuse overwrite");
+    let PatchApplyError::PatchFailed { message, .. } = err else {
+        panic!("expected PatchFailed, got: {err:?}");
+    };
+    assert!(message.contains("already exists"), "got: {message}");
+    // The original file must be untouched.
+    assert_eq!(fs::read_to_string(&target).unwrap(), "i was here first\n");
+}
+
+/// `Delete` validates hunks before unlinking. A stale patch (one
+/// whose `-` lines don't match the actual file content) must NOT
+/// silently remove the file. Flagged by Copilot during review of
+/// pacquet#427.
+#[test]
+fn delete_with_mismatching_hunks_errors_without_unlinking() {
+    let patched = tempdir().unwrap();
+    let target = patched.path().join("to-delete.txt");
+    // The patch expects the file to contain "going away\n", but
+    // the actual file diverges. A correct implementation must
+    // refuse to delete.
+    fs::write(&target, "actually different content\n").unwrap();
+    let patch_dir = tempdir().unwrap();
+    let patch = write_patch(
+        patch_dir.path(),
+        "\
+diff --git a/to-delete.txt b/to-delete.txt
+deleted file mode 100644
+--- a/to-delete.txt
++++ /dev/null
+@@ -1 +0,0 @@
+-going away
+",
+    );
+    let err = apply_patch_to_dir(patched.path(), &patch).expect_err("must refuse mismatch");
+    assert!(matches!(err, PatchApplyError::PatchFailed { .. }), "got: {err:?}");
+    assert!(target.exists(), "file must NOT be unlinked when the patch doesn't match");
+}
+
 /// File deletion: a patch that removes an existing file
 /// (`+++ /dev/null`). The target is unlinked.
 #[test]
