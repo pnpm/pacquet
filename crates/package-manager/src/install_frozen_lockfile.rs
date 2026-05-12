@@ -1,7 +1,7 @@
 use crate::{
     AllowBuildPolicy, BuildModules, BuildModulesError, CreateVirtualStore, CreateVirtualStoreError,
     CreateVirtualStoreOutput, LinkVirtualStoreBins, LinkVirtualStoreBinsError,
-    SymlinkDirectDependencies, SymlinkDirectDependenciesError,
+    SymlinkDirectDependencies, SymlinkDirectDependenciesError, VersionPolicyError,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
@@ -68,6 +68,13 @@ pub enum InstallFrozenLockfileError {
     /// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/patching/config/src/getPatchInfo.ts#L5-L19>.
     #[diagnostic(transparent)]
     PatchKeyConflict(#[error(source)] PatchKeyConflictError),
+
+    /// Surfaces upstream's `ERR_PNPM_INVALID_VERSION_UNION` /
+    /// `ERR_PNPM_NAME_PATTERN_IN_VERSION_UNION` when an
+    /// `allowBuilds` key in `pnpm-workspace.yaml` can't be parsed.
+    /// See <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/version-policy/src/index.ts#L60-L80>.
+    #[diagnostic(transparent)]
+    VersionPolicy(#[error(source)] VersionPolicyError),
 }
 
 impl<'a, DependencyGroupList> InstallFrozenLockfile<'a, DependencyGroupList>
@@ -167,7 +174,8 @@ where
         }));
 
         let manifest_dir = Path::new(requester);
-        let allow_build_policy = AllowBuildPolicy::from_config(config);
+        let allow_build_policy = AllowBuildPolicy::from_config(config)
+            .map_err(InstallFrozenLockfileError::VersionPolicy)?;
 
         // Resolve `pnpm-workspace.yaml`'s `patchedDependencies` once
         // per install. Yields `None` when nothing is configured (no
