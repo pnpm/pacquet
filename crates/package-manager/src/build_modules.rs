@@ -262,22 +262,20 @@ impl<'a> BuildModules<'a> {
                     Some(true) => {}
                 }
 
-                // Side-effects-cache `is_built` gate. Mirrors
-                // upstream's `!node.isBuilt` filter at
-                // <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L73-L77>.
-                // We're already past the policy gate, so this
-                // snapshot would otherwise run its scripts — but if
-                // the prefetch surfaced a matching side-effects-cache
-                // entry, the build is already represented on disk
-                // (pnpm seeded it on a previous install) and we
-                // can skip.
-                if side_effects_cache
-                    && let Some(maps_by_snapshot) = side_effects_maps_by_snapshot
-                    && let Some(maps) = maps_by_snapshot.get(&snapshot_key)
-                    && let Some(graph) = dep_graph.as_ref()
-                    && let Some(engine) = engine_name
-                {
-                    let cache_key = pacquet_graph_hasher::calc_dep_state(
+                // Compute the side-effects cache key once per
+                // snapshot, before the `is_built` gate. The same
+                // value is later consumed by the WRITE-path upload
+                // call after `run_postinstall_hooks` succeeds, so
+                // recomputing it there would just duplicate work —
+                // `deps_state_cache` makes the second call free
+                // anyway, but routing through one `let` keeps the
+                // gate-side and write-side keys provably identical.
+                //
+                // `None` when the cache gate can't fire (no engine,
+                // no graph, etc.); both downstream consumers
+                // short-circuit on `None`.
+                let cache_key = (dep_graph.as_ref().zip(engine_name)).map(|(graph, engine)| {
+                    pacquet_graph_hasher::calc_dep_state(
                         graph,
                         &mut deps_state_cache,
                         &snapshot_key,
@@ -298,16 +296,31 @@ impl<'a> BuildModules<'a> {
                             // `building/during-install/src/index.ts:202`.
                             include_dep_graph_hash: true,
                         },
+                    )
+                });
+
+                // Side-effects-cache `is_built` gate. Mirrors
+                // upstream's `!node.isBuilt` filter at
+                // <https://github.com/pnpm/pnpm/blob/7e3145f9fc/building/during-install/src/index.ts#L73-L77>.
+                // We're already past the policy gate, so this
+                // snapshot would otherwise run its scripts — but if
+                // the prefetch surfaced a matching side-effects-cache
+                // entry, the build is already represented on disk
+                // (pnpm seeded it on a previous install) and we
+                // can skip.
+                if side_effects_cache
+                    && let Some(maps_by_snapshot) = side_effects_maps_by_snapshot
+                    && let Some(maps) = maps_by_snapshot.get(&snapshot_key)
+                    && let Some(key) = cache_key.as_deref()
+                    && maps.contains_key(key)
+                {
+                    tracing::debug!(
+                        target: "pacquet::build",
+                        ?snapshot_key,
+                        cache_key = key,
+                        "side-effects cache hit; skipping build",
                     );
-                    if maps.contains_key(&cache_key) {
-                        tracing::debug!(
-                            target: "pacquet::build",
-                            ?snapshot_key,
-                            cache_key,
-                            "side-effects cache hit; skipping build",
-                        );
-                        continue;
-                    }
+                    continue;
                 }
 
                 let pkg_dir = virtual_store_dir_for_key(virtual_store_dir, &snapshot_key);
