@@ -1,13 +1,16 @@
+use crate::make_env::{EnvOptions, build_env};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_package_manifest::{PackageManifestError, safe_read_package_json_from_dir};
 use pacquet_reporter::{
     LifecycleLog, LifecycleMessage, LifecycleStdio, LogEvent, LogLevel, Reporter,
 };
+use serde_json::Value;
 use std::{
     collections::HashMap,
     env,
     ffi::OsString,
+    fs,
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
@@ -63,6 +66,27 @@ pub struct RunPostinstallHooks<'a> {
     pub init_cwd: &'a Path,
     pub extra_bin_paths: &'a [PathBuf],
     pub extra_env: &'a HashMap<String, String>,
+    /// Path to a `node` binary for `npm_node_execpath` / `NODE`. When
+    /// `None`, [`build_env`](crate::build_env) falls back to looking
+    /// `node` up on `PATH`. Required for native postinstalls that
+    /// shell out via `$NODE`.
+    pub node_execpath: Option<&'a Path>,
+    /// Path written into `npm_execpath` so postinstalls can re-invoke
+    /// the package manager. When `None`, `std::env::current_exe()`
+    /// is used.
+    pub npm_execpath: Option<&'a Path>,
+    /// Bundled `node-gyp` wrapper path written into
+    /// `npm_config_node_gyp`. Pacquet does not ship one yet, so
+    /// callers pass `None`.
+    pub node_gyp_path: Option<&'a Path>,
+    /// Value written into `npm_config_user_agent`. Caller-supplied
+    /// (typically `"pacquet/<version>"`); `None` skips the stamp.
+    pub user_agent: Option<&'a str>,
+    /// When `false`, a per-package `node_modules/.tmp` directory is
+    /// created and exposed as `TMPDIR`. Pacquet currently passes
+    /// `true` everywhere — item #14 (`unsafe-perm` uid/gid drop)
+    /// will revisit this.
+    pub unsafe_perm: bool,
 }
 
 /// Run the preinstall, install, and postinstall lifecycle scripts for
@@ -95,7 +119,7 @@ pub fn run_postinstall_hooks<R: Reporter>(
     if let Some(script) = get_script("preinstall")
         && script != "npx only-allow pnpm"
     {
-        run_lifecycle_hook::<R>("preinstall", script, &opts)?;
+        run_lifecycle_hook::<R>("preinstall", script, &opts, &manifest)?;
         ran_any = true;
     }
 
@@ -109,14 +133,14 @@ pub fn run_postinstall_hooks<R: Reporter>(
     if let Some(script) = &install_script
         && script != "npx only-allow pnpm"
     {
-        run_lifecycle_hook::<R>("install", script, &opts)?;
+        run_lifecycle_hook::<R>("install", script, &opts, &manifest)?;
         ran_any = true;
     }
 
     if let Some(script) = get_script("postinstall")
         && script != "npx only-allow pnpm"
     {
-        run_lifecycle_hook::<R>("postinstall", script, &opts)?;
+        run_lifecycle_hook::<R>("postinstall", script, &opts, &manifest)?;
         ran_any = true;
     }
 
@@ -135,6 +159,7 @@ fn run_lifecycle_hook<R: Reporter>(
     stage: &str,
     script: &str,
     opts: &RunPostinstallHooks<'_>,
+    manifest: &Value,
 ) -> Result<(), LifecycleScriptError> {
     tracing::debug!(
         target: "pacquet::lifecycle",
@@ -147,7 +172,7 @@ fn run_lifecycle_hook<R: Reporter>(
     let pkg_root_str = opts.pkg_root.to_string_lossy().into_owned();
 
     // Mirrors `lifecycleLogger.debug({ depPath, optional, script, stage, wd })`
-    // at <https://github.com/pnpm/pnpm/blob/80037699fb/exec/lifecycle/src/runLifecycleHook.ts#L102>.
+    // at <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/exec/lifecycle/src/runLifecycleHook.ts#L102>.
     R::emit(&LogEvent::Lifecycle(LifecycleLog {
         level: LogLevel::Debug,
         message: LifecycleMessage::Script {
@@ -159,21 +184,49 @@ fn run_lifecycle_hook<R: Reporter>(
         },
     }));
 
+    let env_opts = EnvOptions {
+        stage,
+        script,
+        pkg_root: opts.pkg_root,
+        init_cwd: opts.init_cwd,
+        script_src_dir: opts.pkg_root,
+        node_execpath: opts.node_execpath,
+        npm_execpath: opts.npm_execpath,
+        node_gyp_path: opts.node_gyp_path,
+        user_agent: opts.user_agent,
+        unsafe_perm: opts.unsafe_perm,
+        extra_env: opts.extra_env,
+    };
+    let built = build_env(&env_opts, manifest, env::vars().collect());
+
+    if let Some(tmpdir) = &built.tmpdir {
+        // Mirrors index.js:97-102 — create the dir, swallow EEXIST,
+        // propagate everything else as a spawn error.
+        if let Err(e) = fs::create_dir_all(tmpdir)
+            && e.kind() != std::io::ErrorKind::AlreadyExists
+        {
+            return Err(LifecycleScriptError::Spawn {
+                dep_path: opts.dep_path.to_string(),
+                stage: stage.to_string(),
+                source: e,
+            });
+        }
+    }
+
     let path_env = build_path_env(opts.pkg_root, opts.extra_bin_paths);
 
     let mut cmd = Command::new("sh");
     cmd.arg("-c")
         .arg(script)
         .current_dir(opts.pkg_root)
+        // Stripping inherited env so leftover npm_* keys from a wrapping
+        // invocation cannot leak in. `build_env` already folded the
+        // surviving parent keys into `built.env`.
+        .env_clear()
+        .envs(&built.env)
         .env("PATH", &path_env)
-        .env("INIT_CWD", opts.init_cwd)
-        .env("PNPM_SCRIPT_SRC_DIR", opts.pkg_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-
-    for (key, value) in opts.extra_env {
-        cmd.env(key, value);
-    }
 
     let mut child = cmd.spawn().map_err(|e| LifecycleScriptError::Spawn {
         dep_path: opts.dep_path.to_string(),

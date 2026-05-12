@@ -1,6 +1,8 @@
 mod lifecycle;
+mod make_env;
 
 pub use lifecycle::{LifecycleScriptError, RunPostinstallHooks, run_postinstall_hooks};
+pub use make_env::{EnvBuild, EnvOptions, build_env};
 
 use derive_more::{Display, Error};
 use miette::Diagnostic;

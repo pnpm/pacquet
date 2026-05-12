@@ -40,6 +40,11 @@ fn lifecycle_emits_script_stdio_and_exit_in_order() {
         init_cwd: pkg_root,
         extra_bin_paths: &extra_bin_paths,
         extra_env: &extra_env,
+        node_execpath: None,
+        npm_execpath: None,
+        node_gyp_path: None,
+        user_agent: None,
+        unsafe_perm: true,
     };
 
     let ran = run_postinstall_hooks::<RecordingReporter>(opts).expect("postinstall");
@@ -135,6 +140,11 @@ fn lifecycle_emits_exit_with_nonzero_code_on_failure() {
         init_cwd: pkg_root,
         extra_bin_paths: &extra_bin_paths,
         extra_env: &extra_env,
+        node_execpath: None,
+        npm_execpath: None,
+        node_gyp_path: None,
+        user_agent: None,
+        unsafe_perm: true,
     };
 
     let err = run_postinstall_hooks::<RecordingReporter>(opts).expect_err("script must fail");
@@ -176,6 +186,11 @@ fn lifecycle_runs_under_silent_reporter() {
         init_cwd: pkg_root,
         extra_bin_paths: &extra_bin_paths,
         extra_env: &extra_env,
+        node_execpath: None,
+        npm_execpath: None,
+        node_gyp_path: None,
+        user_agent: None,
+        unsafe_perm: true,
     };
 
     let ran = run_postinstall_hooks::<SilentReporter>(opts).expect("postinstall");
@@ -201,10 +216,97 @@ fn missing_manifest_returns_false() {
         init_cwd: pkg_root,
         extra_bin_paths: &extra_bin_paths,
         extra_env: &extra_env,
+        node_execpath: None,
+        npm_execpath: None,
+        node_gyp_path: None,
+        user_agent: None,
+        unsafe_perm: true,
     };
 
     let ran = run_postinstall_hooks::<SilentReporter>(opts).expect("missing manifest is OK");
     assert!(!ran, "missing manifest must report no scripts ran: ran={ran}");
+}
+
+/// End-to-end check that the spawned child sees `npm_lifecycle_event`,
+/// `npm_lifecycle_script`, `INIT_CWD`, `npm_package_name`, and
+/// `npm_package_version`, and does NOT see leaked `npm_config_*` keys
+/// from this process's env. Adapts the upstream test at
+/// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/exec/lifecycle/test/index.ts#L65-L77>
+/// to a file-dump model so we don't need an IPC fixture.
+#[test]
+fn child_sees_stamped_npm_package_and_no_leaked_npm_config() {
+    // SAFETY: this test mutates the process's own env to seed a
+    // would-be-leaked `npm_config_*` key. nextest runs each test in
+    // its own thread, so concurrent reads from `env::vars()` in
+    // sibling tests could observe this. Wrapping in `unsafe` is
+    // unavoidable since stdlib's set/remove are `unsafe` to call.
+    unsafe {
+        std::env::set_var("npm_config_should_be_stripped", "leak");
+    }
+
+    let dir = tempdir().expect("create temp dir");
+    let pkg_root = dir.path();
+    let dump_path = pkg_root.join("env.dump");
+
+    let manifest = serde_json::json!({
+        "name": "stamp-target",
+        "version": "9.9.9",
+        "config": { "myKey": "myValue" },
+        "scripts": {
+            // Write a handful of env vars to the dump file; using
+            // printf so the line endings are deterministic across
+            // shells.
+            "postinstall": format!(
+                "printf 'stage=%s\\nscript=%s\\nname=%s\\nver=%s\\nconfig=%s\\ninit_cwd=%s\\nleak=%s\\n' \"$npm_lifecycle_event\" \"$npm_lifecycle_script\" \"$npm_package_name\" \"$npm_package_version\" \"$npm_package_config_myKey\" \"$INIT_CWD\" \"$npm_config_should_be_stripped\" > {}",
+                dump_path.display(),
+            ),
+        },
+    });
+    fs::write(pkg_root.join("package.json"), manifest.to_string()).expect("write manifest");
+
+    let extra_env: HashMap<String, String> = HashMap::new();
+    let extra_bin_paths: Vec<std::path::PathBuf> = vec![];
+    let opts = RunPostinstallHooks {
+        dep_path: "/stamp-target@9.9.9",
+        pkg_root,
+        root_modules_dir: pkg_root,
+        init_cwd: pkg_root,
+        extra_bin_paths: &extra_bin_paths,
+        extra_env: &extra_env,
+        node_execpath: None,
+        npm_execpath: None,
+        node_gyp_path: None,
+        user_agent: None,
+        unsafe_perm: true,
+    };
+
+    let ran = run_postinstall_hooks::<SilentReporter>(opts).expect("postinstall");
+    assert!(ran);
+
+    unsafe {
+        std::env::remove_var("npm_config_should_be_stripped");
+    }
+
+    let dumped = fs::read_to_string(&dump_path).expect("read env dump");
+    let dump = &dumped;
+    dbg!(dump);
+
+    let expected_init_cwd = pkg_root.to_string_lossy();
+    let expected_pairs = [
+        ("stage", "postinstall"),
+        ("name", "stamp-target"),
+        ("ver", "9.9.9"),
+        ("config", "myValue"),
+        ("init_cwd", expected_init_cwd.as_ref()),
+        ("leak", ""), // stripped — child sees empty string
+    ];
+    for (k, v) in expected_pairs {
+        let line = format!("{k}={v}\n");
+        assert!(dump.contains(&line), "missing line {line:?} in dump:\n{dump}");
+    }
+    // `script=` line contains the actual script body; just check the
+    // key is there with the printf prefix.
+    assert!(dump.contains("script=printf"), "missing script= line in dump:\n{dump}");
 }
 
 /// Malformed `package.json` surfaces as a `ReadManifest` error wrapping
@@ -228,6 +330,11 @@ fn malformed_manifest_propagates_error() {
         init_cwd: pkg_root,
         extra_bin_paths: &extra_bin_paths,
         extra_env: &extra_env,
+        node_execpath: None,
+        npm_execpath: None,
+        node_gyp_path: None,
+        user_agent: None,
+        unsafe_perm: true,
     };
 
     let err = run_postinstall_hooks::<SilentReporter>(opts).expect_err("malformed JSON must fail");

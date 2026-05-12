@@ -222,6 +222,15 @@ impl<'a> BuildModules<'a> {
                     init_cwd: lockfile_dir,
                     extra_bin_paths: &extra_bin_paths,
                     extra_env: &extra_env,
+                    node_execpath: None,
+                    npm_execpath: None,
+                    node_gyp_path: None,
+                    user_agent: None,
+                    // Item #14 will replace this with a config-driven
+                    // value once `unsafePerm` plumbing lands. Setting
+                    // true here keeps current behavior (no TMPDIR
+                    // creation, no uid/gid drop).
+                    unsafe_perm: true,
                 })
                 .map_err(BuildModulesError::LifecycleScript)?;
             }
