@@ -33,8 +33,8 @@ pub type DepsStateCache<K> = HashMap<K, String>;
 /// Inputs to [`calc_dep_state`]. Mirrors the option bag at
 /// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/deps/graph-hasher/src/index.ts#L29-L33>.
 pub struct CalcDepStateOptions<'a> {
-    /// Output of [`crate::engine_name`] — the platform / arch / node
-    /// version prefix. Always part of the result.
+    /// Output of [`crate::engine_name()`] — the platform / arch /
+    /// node version prefix. Always part of the result.
     pub engine_name: &'a str,
     /// SHA-256 hex of the patch file for this package (when present).
     /// Appended as `;patch=<hash>`.
