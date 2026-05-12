@@ -34,6 +34,7 @@ fn snap(deps: &[(&str, &str)]) -> SnapshotEntry {
         optional_dependencies: None,
         transitive_peer_dependencies: None,
         patched: None,
+        optional: false,
     }
 }
 

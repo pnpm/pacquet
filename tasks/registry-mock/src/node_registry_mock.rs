@@ -1,25 +1,25 @@
 use crate::registry_mock;
-use pipe_trait::Pipe;
-use std::{
-    env, iter,
-    path::{Path, PathBuf},
-    sync::OnceLock,
-};
-use which::which_in;
+use std::{path::PathBuf, process::Command, sync::OnceLock};
 
-static NODE_REGISTRY_MOCK: OnceLock<PathBuf> = OnceLock::new();
+static LAUNCH_SCRIPT: OnceLock<PathBuf> = OnceLock::new();
 
-fn init() -> PathBuf {
-    let bin = registry_mock().join("node_modules").join(".bin");
-    let paths = env::var_os("PATH")
-        .unwrap_or_default()
-        .pipe_ref(env::split_paths)
-        .chain(iter::once(bin))
-        .pipe(env::join_paths)
-        .expect("append node_modules/.bin to PATH");
-    which_in("registry-mock", Some(paths), ".").expect("find registry-mock binary")
+/// Path to the `launch.mjs` wrapper that drives `@pnpm/registry-mock`
+/// via its programmatic API. The wrapper is required because the
+/// package's default CLI export does not thread `useNodeVersion`
+/// through — and verdaccio 5.33 (the version v6 of `@pnpm/registry-mock`
+/// bundles) rejects its 64-character storage secret on Node 22+, so
+/// running it under the host Node fails. Pacquet pins
+/// `useNodeVersion: '20.16.0'` in the wrapper to match pnpm's jest
+/// `globalSetup` shape.
+fn launch_script() -> &'static PathBuf {
+    LAUNCH_SCRIPT.get_or_init(|| registry_mock().join("launch.mjs"))
 }
 
-pub fn node_registry_mock() -> &'static Path {
-    NODE_REGISTRY_MOCK.get_or_init(init)
+/// Returns a [`Command`] pre-populated with `node <launch.mjs>`. The
+/// caller appends `prepare` (to publish fixtures) or omits the arg
+/// (to launch the server) and any environment / stdio setup.
+pub fn node_registry_mock() -> Command {
+    let mut cmd = Command::new("node");
+    cmd.arg(launch_script());
+    cmd
 }

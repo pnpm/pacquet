@@ -107,6 +107,7 @@ pub fn build_package_snapshot(
         optional_dependencies: None,
         transitive_peer_dependencies: None,
         patched: None,
+        optional: false,
     };
 
     Ok(BuiltSnapshot { package_key, metadata, snapshot })

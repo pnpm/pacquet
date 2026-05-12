@@ -6,7 +6,10 @@ use pacquet_executor::{
 };
 use pacquet_lockfile::{PackageKey, ProjectSnapshot, SnapshotEntry};
 use pacquet_package_manifest::pkg_requires_build;
-use pacquet_reporter::Reporter;
+use pacquet_reporter::{
+    LogEvent, LogLevel, Reporter, SkippedOptionalDependencyLog, SkippedOptionalPackage,
+    SkippedOptionalReason,
+};
 use std::{
     collections::{BTreeSet, HashMap},
     fs,
@@ -217,7 +220,9 @@ impl<'a> BuildModules<'a> {
                     continue;
                 }
 
-                run_postinstall_hooks::<R>(RunPostinstallHooks {
+                let optional = snapshots.get(&snapshot_key).is_some_and(|entry| entry.optional);
+
+                let result = run_postinstall_hooks::<R>(RunPostinstallHooks {
                     dep_path: &snapshot_key.to_string(),
                     pkg_root: &pkg_dir,
                     root_modules_dir: modules_dir,
@@ -236,8 +241,34 @@ impl<'a> BuildModules<'a> {
                     node_gyp_bin: None,
                     scripts_prepend_node_path: ScriptsPrependNodePath::Never,
                     script_shell: None,
-                })
-                .map_err(BuildModulesError::LifecycleScript)?;
+                    optional,
+                });
+
+                if let Err(err) = result {
+                    if optional {
+                        // Mirrors `building/during-install/src/index.ts:226-238`:
+                        // a build failure on an optional dep is logged
+                        // through the `pnpm:skipped-optional-dependency`
+                        // channel and swallowed so the install can
+                        // continue. The `package.id` field upstream is
+                        // `depNode.dir`; we use the same.
+                        R::emit(&LogEvent::SkippedOptionalDependency(
+                            SkippedOptionalDependencyLog {
+                                level: LogLevel::Debug,
+                                details: Some(err.to_string()),
+                                package: SkippedOptionalPackage {
+                                    id: pkg_dir.to_string_lossy().into_owned(),
+                                    name: name.clone(),
+                                    version: version.clone(),
+                                },
+                                prefix: lockfile_dir.to_string_lossy().into_owned(),
+                                reason: SkippedOptionalReason::BuildFailure,
+                            },
+                        ));
+                        continue;
+                    }
+                    return Err(BuildModulesError::LifecycleScript(err));
+                }
             }
         }
 

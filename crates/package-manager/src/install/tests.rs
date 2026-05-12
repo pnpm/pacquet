@@ -649,3 +649,79 @@ async fn install_writes_modules_yaml() {
 
     drop(dir);
 }
+
+/// Ports `'do not fail on an optional dependency that has a non-optional
+/// dependency with a failing postinstall script'` at
+/// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/installing/deps-installer/test/install/optionalDependencies.ts#L563-L572>.
+///
+/// Resolves `@pnpm.e2e/has-failing-postinstall-dep@1.0.0` as an
+/// optional dependency through the live registry-mock instance. The
+/// transitive `@pnpm.e2e/failing-postinstall@1.0.0` has a
+/// `postinstall` that exits non-zero. Pacquet's
+/// `frozen_lockfile=false` path stops at extraction (script execution
+/// lives behind `BuildModules` in the frozen-lockfile branch —
+/// `BuildModules` itself is unit-tested against the same fixture in
+/// `crate::build_modules::tests::do_not_fail_on_optional_dep_with_failing_postinstall`).
+/// This test pins the fetch + extract behavior on the optional edge:
+/// both packages must land in the virtual store and the install must
+/// NOT abort, matching the upstream expectation that `addDependenciesToPackage`
+/// resolves.
+#[tokio::test]
+async fn install_optional_failing_postinstall_dep_via_registry_mock_succeeds() {
+    let mock_instance = AutoMockInstance::load_or_init();
+
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let mut manifest = PackageManifest::create_if_needed(manifest_path.clone()).unwrap();
+    manifest
+        .add_dependency("@pnpm.e2e/has-failing-postinstall-dep", "1.0.0", DependencyGroup::Optional)
+        .unwrap();
+    manifest.save().unwrap();
+
+    let mut config = Npmrc::new();
+    config.store_dir = store_dir.into();
+    config.modules_dir = modules_dir.to_path_buf();
+    config.virtual_store_dir = virtual_store_dir.to_path_buf();
+    config.registry = mock_instance.url();
+    let config = config.leak();
+
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: None,
+        dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
+        frozen_lockfile: false,
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await
+    .expect("optional dep with failing transitive postinstall must NOT abort the install");
+
+    // Both the wrapper and the transitive must reach the virtual store.
+    assert!(
+        is_symlink_or_junction(
+            &project_root.join("node_modules/@pnpm.e2e/has-failing-postinstall-dep"),
+        )
+        .unwrap(),
+        "wrapper symlink missing",
+    );
+    assert!(
+        project_root
+            .join("node_modules/.pacquet/@pnpm.e2e+has-failing-postinstall-dep@1.0.0")
+            .is_dir(),
+        "wrapper virtual-store dir missing",
+    );
+    assert!(
+        project_root.join("node_modules/.pacquet/@pnpm.e2e+failing-postinstall@1.0.0").is_dir(),
+        "transitive `failing-postinstall` must be extracted to the virtual store",
+    );
+
+    drop((dir, mock_instance));
+}
