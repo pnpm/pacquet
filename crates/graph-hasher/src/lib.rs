@@ -17,8 +17,8 @@ mod dep_state;
 mod engine_name;
 mod object_hasher;
 
-pub use dep_state::{CalcDepStateOptions, DepsStateCache, calc_dep_state};
-pub use engine_name::engine_name;
+pub use dep_state::{CalcDepStateOptions, DepsGraphNode, DepsStateCache, calc_dep_state};
+pub use engine_name::{detect_node_major, engine_name};
 pub use object_hasher::{hash_object, hash_object_with_encoding, hash_object_without_sorting};
 
 /// Hex/base64 encoding option for [`hash_object_with_encoding`].

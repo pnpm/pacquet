@@ -2053,6 +2053,7 @@ dependencies = [
  "pacquet-config",
  "pacquet-executor",
  "pacquet-fs",
+ "pacquet-graph-hasher",
  "pacquet-lockfile",
  "pacquet-modules-yaml",
  "pacquet-network",
