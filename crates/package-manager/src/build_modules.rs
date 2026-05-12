@@ -1,6 +1,7 @@
 use crate::build_sequence::build_sequence;
 use derive_more::{Display, Error};
 use miette::Diagnostic;
+use pacquet_config::Config;
 use pacquet_executor::{
     LifecycleScriptError, RunPostinstallHooks, ScriptsPrependNodePath, run_postinstall_hooks,
 };
@@ -12,7 +13,6 @@ use pacquet_reporter::{
 };
 use std::{
     collections::{BTreeSet, HashMap},
-    fs,
     path::{Path, PathBuf},
 };
 
@@ -23,10 +23,11 @@ pub enum BuildModulesError {
     LifecycleScript(#[error(source)] LifecycleScriptError),
 }
 
-/// Build policy derived from `pnpm.allowBuilds` in the project manifest.
+/// Build policy derived from `allowBuilds` and
+/// `dangerouslyAllowAllBuilds` in `pnpm-workspace.yaml`.
 ///
 /// Ports pnpm's `createAllowBuildFunction` from
-/// `https://github.com/pnpm/pnpm/blob/7e91e4b35f/building/policy/src/index.ts`.
+/// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/policy/src/index.ts>.
 ///
 /// The tri-state return from [`AllowBuildPolicy::check`]:
 /// - `Some(true)`: explicitly allowed, run scripts
@@ -39,72 +40,22 @@ pub struct AllowBuildPolicy {
 }
 
 impl AllowBuildPolicy {
-    /// Build a policy from already-parsed `pnpm.allowBuilds` rules and
-    /// `pnpm.dangerouslyAllowAllBuilds`. Pure constructor — no IO — so
-    /// the policy logic is tested directly with in-memory inputs (mirrors
-    /// upstream's `createAllowBuildFunction(opts)` in
-    /// <https://github.com/pnpm/pnpm/blob/80037699fb/building/policy/src/index.ts>).
+    /// Build a policy from already-parsed `allowBuilds` rules and
+    /// `dangerouslyAllowAllBuilds`. Pure constructor — no IO — so
+    /// the policy logic is tested directly with in-memory inputs
+    /// (mirrors upstream's `createAllowBuildFunction(opts)` in
+    /// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/policy/src/index.ts>).
     pub fn new(rules: HashMap<String, bool>, dangerously_allow_all: bool) -> Self {
         Self { rules, dangerously_allow_all }
     }
 
-    /// Read `pnpm.allowBuilds` and `pnpm.dangerouslyAllowAllBuilds`
-    /// from a project's `package.json` and build a policy.
-    ///
-    /// pnpm 11 denies lifecycle scripts by default. Packages must be
-    /// explicitly listed in `allowBuilds` to run their scripts.
-    ///
-    /// IO and JSON parse errors are tolerated and surface as the empty
-    /// default policy (with a warning). Upstream sources these settings
-    /// from `Config` (npmrc/workspace), so there is no upstream behavior
-    /// to mirror for a manifest-read failure here. See pnpm/pacquet#397
-    /// item 5 for the longer-term config-source migration.
-    pub fn from_manifest(manifest_dir: &Path) -> Self {
-        let manifest_path = manifest_dir.join("package.json");
-        let text = match fs::read_to_string(&manifest_path) {
-            Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Self::default(),
-            Err(e) => {
-                tracing::warn!(
-                    target: "pacquet::build",
-                    path = %manifest_path.display(),
-                    error = %e,
-                    "failed to read package.json for build policy",
-                );
-                return Self::default();
-            }
-        };
-        let manifest: serde_json::Value = match serde_json::from_str(&text) {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!(
-                    target: "pacquet::build",
-                    path = %manifest_path.display(),
-                    error = %e,
-                    "failed to parse package.json for build policy",
-                );
-                return Self::default();
-            }
-        };
-
-        let pnpm = manifest.get("pnpm");
-
-        let dangerously_allow_all = pnpm
-            .and_then(|v| v.get("dangerouslyAllowAllBuilds"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-
-        let allow_builds = pnpm.and_then(|v| v.get("allowBuilds")).and_then(|v| v.as_object());
-
-        let rules: HashMap<String, bool> = allow_builds
-            .map(|obj| {
-                obj.iter()
-                    .filter_map(|(key, value)| value.as_bool().map(|v| (key.clone(), v)))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        Self::new(rules, dangerously_allow_all)
+    /// Build the policy from a resolved [`Config`]. Reads
+    /// `allow_builds` and `dangerously_allow_all_builds`, which are
+    /// populated by [`pacquet_config::WorkspaceSettings::apply_to`]
+    /// from `pnpm-workspace.yaml`. pnpm v11 stopped reading these
+    /// from `package.json#pnpm` — see pnpm/pacquet#397 item 5.
+    pub fn from_config(config: &Config) -> Self {
+        Self::new(config.allow_builds.clone(), config.dangerously_allow_all_builds)
     }
 
     /// Check whether a package is allowed to run build scripts.
@@ -177,6 +128,18 @@ pub struct BuildModules<'a> {
     /// read-modify-write of the existing `PackageFilesIndex` row.
     /// `None` short-circuits the upload site.
     pub store_index_writer: Option<&'a std::sync::Arc<pacquet_store_dir::StoreIndexWriter>>,
+    /// Per-snapshot resolved patch metadata. Keyed by the snapshot's
+    /// peer-stripped `PackageKey`, value is the matching
+    /// `ExtendedPatchInfo` (hash + absolute path) computed by
+    /// [`pacquet_patching::resolve_and_group`] + per-snapshot
+    /// [`pacquet_patching::get_patch_info`]. `None` when no
+    /// `patchedDependencies` is configured.
+    ///
+    /// Slice B uses this only for the side-effects-cache key
+    /// (`patch_file_hash` in [`pacquet_graph_hasher::CalcDepStateOptions`]).
+    /// The build trigger and actual patch application land in slice C
+    /// — see pnpm/pacquet#397 item 9.
+    pub patches: Option<&'a HashMap<PackageKey, pacquet_patching::ExtendedPatchInfo>>,
 }
 
 impl<'a> BuildModules<'a> {
@@ -201,6 +164,7 @@ impl<'a> BuildModules<'a> {
             side_effects_cache_write,
             store_dir,
             store_index_writer,
+            patches,
         } = self;
 
         let Some(snapshots) = snapshots else { return Ok(Vec::new()) };
@@ -311,6 +275,17 @@ impl<'a> BuildModules<'a> {
                 // `None` when the cache gate can't fire (no engine,
                 // no graph, etc.); both downstream consumers
                 // short-circuit on `None`.
+                // Snapshot's resolved patch metadata, if any. Slice B
+                // uses this only for the side-effects-cache key —
+                // build trigger + actual patch application land in
+                // slice C of pnpm/pacquet#397 item 9.
+                //
+                // Look up against the peer-stripped key
+                // (`metadata_key`) because patches are configured at
+                // the (name, version) granularity in
+                // `pnpm-workspace.yaml`, not per peer-resolution
+                // variant.
+                let patch = patches.and_then(|map| map.get(&metadata_key));
                 let cache_key = (dep_graph.as_ref().zip(engine_name)).map(|(graph, engine)| {
                     pacquet_graph_hasher::calc_dep_state(
                         graph,
@@ -318,12 +293,15 @@ impl<'a> BuildModules<'a> {
                         &snapshot_key,
                         &pacquet_graph_hasher::CalcDepStateOptions {
                             engine_name: engine,
-                            // Patch-hash plumbing arrives with
-                            // `patchedDependencies` (#397 item 9).
-                            // Until then there's nothing to append,
-                            // matching upstream's behavior when
+                            // Mirrors upstream's
+                            // `patchFileHash: depNode.patch?.hash`
+                            // at
+                            // <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L201>.
+                            // `None` for unpatched snapshots leaves
+                            // the `;patch=...` segment off the cache
+                            // key entirely, matching upstream when
                             // `depNode.patch == null`.
-                            patch_file_hash: None,
+                            patch_file_hash: patch.map(|p| p.hash.as_str()),
                             // `hasSideEffects` upstream — for a
                             // `requires_build = true` snapshot
                             // that's reached this point, the only
@@ -490,7 +468,7 @@ fn virtual_store_dir_for_key(virtual_store_dir: &Path, key: &PackageKey) -> Path
 
 /// Parse `name` and `version` from a lockfile snapshot key like
 /// `/@pnpm.e2e/install-script-example@1.0.0`.
-fn parse_name_version_from_key(key: &str) -> (String, String) {
+pub(crate) fn parse_name_version_from_key(key: &str) -> (String, String) {
     let s = key.strip_prefix('/').unwrap_or(key);
     match s.rfind('@') {
         Some(idx) if idx > 0 => (s[..idx].to_string(), s[idx + 1..].to_string()),

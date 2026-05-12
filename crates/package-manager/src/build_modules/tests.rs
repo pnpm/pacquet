@@ -1,4 +1,5 @@
 use super::{AllowBuildPolicy, BuildModules, parse_name_version_from_key};
+use pacquet_config::Config;
 use pacquet_lockfile::{
     PackageKey, PkgName, PkgVerPeer, ProjectSnapshot, ResolvedDependencyMap,
     ResolvedDependencySpec, SnapshotEntry,
@@ -101,32 +102,26 @@ fn dangerously_allow_all_overrides_deny() {
     assert_eq!(policy.check("@pnpm.e2e/pkg", "1.0.0"), Some(true));
 }
 
-// The next two tests exercise `from_manifest` end-to-end: missing manifest
-// folds to the empty default, and a real `package.json` round-trips through
-// the parser into the same logic the in-memory tests above cover.
+// The next two tests exercise `from_config` end-to-end: an empty Config
+// folds to the default policy (deny everything), and a Config populated by
+// `pnpm-workspace.yaml` round-trips through the same logic the in-memory
+// tests above cover. The `package.json` reader was removed in pacquet
+// pnpm/pacquet#397 item 5 — settings come from `pnpm-workspace.yaml` only.
 
 #[test]
-fn missing_manifest_denies_all() {
-    let dir = tempdir().expect("create temp dir");
-    let policy = AllowBuildPolicy::from_manifest(dir.path());
+fn empty_config_denies_all() {
+    let policy = AllowBuildPolicy::from_config(&Config::new());
     assert_eq!(policy.check("anything", "1.0.0"), None);
 }
 
 #[test]
-fn from_manifest_parses_pnpm_section() {
-    let dir = tempdir().expect("create temp dir");
-    let manifest = serde_json::json!({
-        "pnpm": {
-            "dangerouslyAllowAllBuilds": false,
-            "allowBuilds": {
-                "@pnpm.e2e/install-script-example": true,
-                "@pnpm.e2e/bad-package": false,
-            },
-        },
-    });
-    fs::write(dir.path().join("package.json"), manifest.to_string()).expect("write manifest");
+fn from_config_consumes_allow_builds_and_dangerously_allow_all_builds() {
+    let mut config = Config::new();
+    config.dangerously_allow_all_builds = false;
+    config.allow_builds.insert("@pnpm.e2e/install-script-example".to_string(), true);
+    config.allow_builds.insert("@pnpm.e2e/bad-package".to_string(), false);
 
-    let policy = AllowBuildPolicy::from_manifest(dir.path());
+    let policy = AllowBuildPolicy::from_config(&config);
     assert_eq!(policy.check("@pnpm.e2e/install-script-example", "1.0.0"), Some(true));
     assert_eq!(policy.check("@pnpm.e2e/bad-package", "1.0.0"), Some(false));
     assert_eq!(policy.check("@pnpm.e2e/unrelated", "1.0.0"), None);
@@ -217,6 +212,7 @@ fn build_modules_collects_ignored_builds() {
         side_effects_cache_write: false,
         store_dir: None,
         store_index_writer: None,
+        patches: None,
     }
     .run::<SilentReporter>()
     .expect("run BuildModules");
@@ -263,6 +259,7 @@ fn build_modules_excludes_explicit_deny_from_ignored() {
         side_effects_cache_write: false,
         store_dir: None,
         store_index_writer: None,
+        patches: None,
     }
     .run::<SilentReporter>()
     .expect("run BuildModules");
@@ -336,6 +333,7 @@ fn do_not_fail_on_optional_dep_with_failing_postinstall() {
         side_effects_cache_write: false,
         store_dir: None,
         store_index_writer: None,
+        patches: None,
     }
     .run::<RecordingReporter>()
     .expect("optional build failure must NOT abort the install");
@@ -457,6 +455,7 @@ fn using_side_effects_cache_skips_rebuild() {
         side_effects_cache_write: false,
         store_dir: None,
         store_index_writer: None,
+        patches: None,
     }
     .run::<RecordingReporter>()
     .expect("install must succeed when the cache hit skips the rebuild");
@@ -513,6 +512,7 @@ fn side_effects_cache_disabled_bypasses_the_gate() {
         side_effects_cache_write: false,
         store_dir: None,
         store_index_writer: None,
+        patches: None,
     }
     .run::<SilentReporter>()
     .expect_err("with cache disabled, the failing postinstall must run and the install must fail");
@@ -562,6 +562,7 @@ fn fail_when_failing_postinstall_is_required() {
         side_effects_cache_write: false,
         store_dir: None,
         store_index_writer: None,
+        patches: None,
     }
     .run::<SilentReporter>()
     .expect_err("required build failure must propagate");
@@ -788,6 +789,7 @@ async fn write_path_populates_side_effects_row() {
         side_effects_cache_write: true,
         store_dir: Some(&store_dir),
         store_index_writer: Some(&writer),
+        patches: None,
     }
     .run::<SilentReporter>()
     .expect("build modules must complete cleanly");
@@ -889,6 +891,7 @@ async fn write_path_disabled_skips_upload() {
         side_effects_cache_write: false,
         store_dir: Some(&store_dir),
         store_index_writer: Some(&writer),
+        patches: None,
     }
     .run::<SilentReporter>()
     .expect("build modules must complete cleanly");
@@ -999,6 +1002,7 @@ async fn upload_error_does_not_interrupt_install() {
         side_effects_cache_write: true,
         store_dir: Some(&store_dir),
         store_index_writer: Some(&writer),
+        patches: None,
     }
     .run::<SilentReporter>()
     .expect("upload failure must not propagate; install continues");
@@ -1072,4 +1076,150 @@ fn sha512_hex(buf: &[u8]) -> String {
     use sha2::{Digest, Sha512};
     let digest = Sha512::digest(buf);
     format!("{digest:x}")
+}
+
+/// Slice B of pacquet#397 item 9: when `BuildModules.patches`
+/// contains an entry for a snapshot, the side-effects-cache key
+/// computed for that snapshot must include the `;patch=<hash>`
+/// segment that
+/// [`pacquet_graph_hasher::CalcDepStateOptions::patch_file_hash`]
+/// appends.
+///
+/// Drive this through the WRITE path so the test can read the
+/// cache key back out of the persisted row — the key shape is
+/// the contract upstream relies on
+/// (<https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L199-L204>).
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn write_path_cache_key_includes_patch_hash() {
+    use pacquet_patching::ExtendedPatchInfo;
+    use pacquet_store_dir::{
+        CafsFileInfo, HASH_ALGORITHM, PackageFilesIndex, StoreDir, StoreIndex, StoreIndexWriter,
+        store_index_key,
+    };
+
+    let pkg_key = key("@pnpm/postinstall-modifies-source", "1.0.0");
+    let integrity_str = "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let snapshots = HashMap::from([(pkg_key.clone(), SnapshotEntry::default())]);
+    let packages: HashMap<pacquet_lockfile::PackageKey, pacquet_lockfile::PackageMetadata> =
+        HashMap::from([(
+            pkg_key.without_peer(),
+            pacquet_lockfile::PackageMetadata {
+                resolution: pacquet_lockfile::LockfileResolution::Registry(
+                    pacquet_lockfile::RegistryResolution {
+                        integrity: integrity_str.parse().expect("parse integrity"),
+                    },
+                ),
+                engines: None,
+                cpu: None,
+                os: None,
+                libc: None,
+                deprecated: None,
+                has_bin: None,
+                prepare: None,
+                bundled_dependencies: None,
+                peer_dependencies: None,
+                peer_dependencies_meta: None,
+            },
+        )]);
+    let importers = root_importers(&[("@pnpm/postinstall-modifies-source", "1.0.0")]);
+    let policy = AllowBuildPolicy::new(rules([]), true);
+
+    let store_root = tempdir().expect("create store dir");
+    let store_dir = StoreDir::from(store_root.path().to_path_buf());
+    store_dir.init().expect("init store");
+    let virtual_store_dir = tempdir().expect("create vstore dir");
+    let modules_dir = tempdir().expect("create modules dir");
+    let lockfile_dir = tempdir().expect("create lockfile dir");
+
+    create_postinstall_modifies_source_fixture(virtual_store_dir.path(), &pkg_key);
+
+    let files_index_file = store_index_key(integrity_str, &pkg_key.without_peer().to_string());
+    let mut base_files = HashMap::new();
+    base_files.insert(
+        "index.js".to_string(),
+        CafsFileInfo {
+            digest: sha512_hex(b"module.exports = 'hi'\n"),
+            mode: 0o644,
+            size: b"module.exports = 'hi'\n".len() as u64,
+            checked_at: None,
+        },
+    );
+    let base_row = PackageFilesIndex {
+        manifest: None,
+        requires_build: Some(true),
+        algo: HASH_ALGORITHM.to_string(),
+        files: base_files,
+        side_effects: None,
+    };
+    {
+        let mut index = StoreIndex::open_in(&store_dir).expect("open index for seed");
+        index
+            .set_many(std::iter::once((files_index_file.clone(), base_row)))
+            .expect("seed base row");
+    }
+
+    let (writer, writer_task) = StoreIndexWriter::spawn(&store_dir);
+
+    // Build the patches map keyed by the same peer-stripped key
+    // `BuildModules::run` uses internally for the lookup.
+    let patch_hash = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+    let patches: HashMap<PackageKey, ExtendedPatchInfo> = HashMap::from([(
+        pkg_key.without_peer(),
+        ExtendedPatchInfo {
+            hash: patch_hash.to_string(),
+            patch_file_path: None,
+            key: "@pnpm/postinstall-modifies-source@1.0.0".to_string(),
+        },
+    )]);
+
+    let engine = "darwin;arm64;node20";
+    let dep_graph = crate::build_deps_graph(&snapshots, &packages);
+    let mut state_cache = pacquet_graph_hasher::DepsStateCache::new();
+    let expected_cache_key_with_patch = pacquet_graph_hasher::calc_dep_state(
+        &dep_graph,
+        &mut state_cache,
+        &pkg_key,
+        &pacquet_graph_hasher::CalcDepStateOptions {
+            engine_name: engine,
+            patch_file_hash: Some(patch_hash),
+            include_dep_graph_hash: true,
+        },
+    );
+    assert!(
+        expected_cache_key_with_patch.contains(";patch="),
+        "sanity: graph-hasher must emit ';patch=' for the patched options: {expected_cache_key_with_patch:?}",
+    );
+
+    BuildModules {
+        virtual_store_dir: virtual_store_dir.path(),
+        modules_dir: modules_dir.path(),
+        lockfile_dir: lockfile_dir.path(),
+        snapshots: Some(&snapshots),
+        packages: Some(&packages),
+        importers: &importers,
+        allow_build_policy: &policy,
+        side_effects_maps_by_snapshot: None,
+        engine_name: Some(engine),
+        side_effects_cache: true,
+        side_effects_cache_write: true,
+        store_dir: Some(&store_dir),
+        store_index_writer: Some(&writer),
+        patches: Some(&patches),
+    }
+    .run::<SilentReporter>()
+    .expect("build modules must complete cleanly");
+
+    drop(writer);
+    writer_task.await.expect("await writer").expect("writer succeeds");
+
+    let index = StoreIndex::open_readonly_in(&store_dir).expect("open index for read");
+    let row = index.get(&files_index_file).expect("get row").expect("row present");
+    let side_effects = row.side_effects.expect("side_effects populated");
+    assert!(
+        side_effects.contains_key(&expected_cache_key_with_patch),
+        "patched cache key must appear in side_effects map: \
+         expected key {expected_cache_key_with_patch:?}, got keys {:?}",
+        side_effects.keys().collect::<Vec<_>>(),
+    );
 }

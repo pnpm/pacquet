@@ -5,7 +5,7 @@ use pacquet_store_dir::StoreDir;
 use pipe_trait::Pipe;
 use serde::Deserialize;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fs,
     io::{self, ErrorKind},
     path::{Path, PathBuf},
@@ -71,14 +71,30 @@ pub struct WorkspaceSettings {
     /// Map of `name[@version]` → patch-file path (relative to the
     /// workspace dir or absolute). Read verbatim; relative-path
     /// resolution, file hashing, and grouping are deferred to
-    /// `pacquet_patching::resolve_and_group` so the yaml layer stays
-    /// pure data.
+    /// [`pacquet_patching::resolve_and_group`] so the yaml layer
+    /// stays pure data.
     ///
     /// pnpm 10+ moved `patchedDependencies` out of
     /// `package.json#pnpm` into `pnpm-workspace.yaml`; pacquet
     /// matches that. The legacy `package.json#pnpm.patchedDependencies`
     /// shape is no longer consulted.
     pub patched_dependencies: Option<BTreeMap<String, String>>,
+
+    /// Map of `name[@version]` → `true` / `false`. Drives pnpm 11's
+    /// default-deny build policy: a package's lifecycle scripts only
+    /// run when an entry here resolves to `true`. Mirrors upstream's
+    /// [`createAllowBuildFunction`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/policy/src/index.ts).
+    ///
+    /// pnpm 10+ moved `allowBuilds` out of `package.json#pnpm` into
+    /// `pnpm-workspace.yaml` alongside other install settings.
+    pub allow_builds: Option<HashMap<String, bool>>,
+
+    /// Bypass the [`allow_builds`] gate entirely — every package may
+    /// run lifecycle scripts. Same `pnpm-workspace.yaml` migration
+    /// as `allowBuilds`. Default `false`.
+    ///
+    /// [`allow_builds`]: Self::allow_builds
+    pub dangerously_allow_all_builds: Option<bool>,
 }
 
 /// Basename of the file pnpm reads; exported for test use.
@@ -182,6 +198,21 @@ impl WorkspaceSettings {
         }
         if let Some(v) = self.registry {
             config.registry = if v.ends_with('/') { v } else { format!("{v}/") };
+        }
+
+        // Anchor patch-file path resolution against the workspace dir
+        // (the yaml's parent), matching upstream's
+        // `getOptionsFromPnpmSettings(workspaceDir, ...)` at
+        // <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/getOptionsFromRootManifest.ts#L39-L46>.
+        config.workspace_dir = Some(base_dir.to_path_buf());
+        if let Some(v) = self.patched_dependencies {
+            config.patched_dependencies = Some(v);
+        }
+        if let Some(v) = self.allow_builds {
+            config.allow_builds = v;
+        }
+        if let Some(v) = self.dangerously_allow_all_builds {
+            config.dangerously_allow_all_builds = v;
         }
     }
 }
