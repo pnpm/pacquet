@@ -316,6 +316,75 @@ fn build_modules_collects_ignored_builds() {
     );
 }
 
+/// Parallel-path variant of [`build_modules_collects_ignored_builds`]
+/// running under `child_concurrency: 2` so the rayon
+/// `chunk.par_iter().try_for_each(...)` dispatch is actually
+/// exercised. The other `BuildModules` tests all run with
+/// `child_concurrency: 1`, which is the sequential codepath; this
+/// test pins the concurrent codepath against a fixture that places
+/// two policy-denied build candidates in the same chunk (no
+/// dependency edges between them, so the topo sort puts them both
+/// in chunk 0).
+///
+/// The assertion is the same sorted ignored-set as the sequential
+/// test — a regression that dropped the `pool.install` /
+/// `try_for_each` wrapping would still collect both names but in
+/// non-deterministic order on insertion. The
+/// `BTreeSet`-backed `ignored_builds` ordering hides that, so
+/// breakage would more likely show up as a lock contention bug
+/// (e.g. dropping the `Mutex` wrapping) which would manifest as a
+/// rustc / clippy error rather than a runtime failure; this test
+/// at least documents that the codepath is exercised.
+#[test]
+fn build_modules_collects_ignored_builds_under_concurrency() {
+    let snapshots = HashMap::from([
+        (key("zzz", "1.0.0"), SnapshotEntry::default()),
+        (key("aaa", "2.0.0"), SnapshotEntry::default()),
+    ]);
+    let importers = root_importers(&[("zzz", "1.0.0"), ("aaa", "2.0.0")]);
+    let policy = AllowBuildPolicy::default();
+
+    let virtual_store_dir = tempdir().expect("create temp dir");
+    let modules_dir = tempdir().expect("create temp dir");
+    let lockfile_dir = tempdir().expect("create temp dir");
+
+    create_buildable_pkg(virtual_store_dir.path(), &key("zzz", "1.0.0"));
+    create_buildable_pkg(virtual_store_dir.path(), &key("aaa", "2.0.0"));
+
+    let ignored = BuildModules {
+        virtual_store_dir: virtual_store_dir.path(),
+        modules_dir: modules_dir.path(),
+        lockfile_dir: lockfile_dir.path(),
+        snapshots: Some(&snapshots),
+        importers: &importers,
+        packages: None,
+        allow_build_policy: &policy,
+        side_effects_maps_by_snapshot: None,
+        engine_name: None,
+        side_effects_cache: true,
+        side_effects_cache_write: false,
+        store_dir: None,
+        store_index_writer: None,
+        patches: None,
+
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        unsafe_perm: true,
+        child_concurrency: 2,
+    }
+    .run::<SilentReporter>()
+    .expect("run BuildModules under concurrency");
+    dbg!(&ignored);
+
+    // Same expected output as the sequential test — both members of
+    // the same chunk insert into the `Mutex<BTreeSet>` concurrently
+    // and the BTreeSet's iteration order normalizes the result.
+    assert_eq!(
+        ignored,
+        vec!["aaa@2.0.0".to_string(), "zzz@1.0.0".to_string()],
+        "ignored set must be the same under concurrency 2 as under 1: {ignored:?}",
+    );
+}
+
 /// Explicit `false` in `allowBuilds` is silently skipped — it does NOT
 /// land in the ignored-scripts list. Mirrors upstream
 /// `building/during-install/src/index.ts:91-93`.
