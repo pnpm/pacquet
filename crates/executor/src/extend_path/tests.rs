@@ -34,7 +34,7 @@ fn node_gyp_comes_after_node_modules_dot_bin() {
             p.ends_with(&format!(
                 "project{}node_modules{}.bin",
                 std::path::MAIN_SEPARATOR,
-                std::path::MAIN_SEPARATOR
+                std::path::MAIN_SEPARATOR,
             ))
         })
         .unwrap_or_else(|| panic!("missing node_modules/.bin in {parts:?}"));

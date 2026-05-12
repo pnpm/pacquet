@@ -35,7 +35,9 @@ pub struct SelectedShell {
     pub args: Vec<OsString>,
     /// Whether Node's `windowsVerbatimArguments` flag would have
     /// fired for this combination. Used by the Windows caller to opt
-    /// into Rust's [`std::os::windows::process::CommandExt::raw_arg`].
+    /// into Rust's `std::os::windows::process::CommandExt::raw_arg`
+    /// (Windows-only API; not linked as an intra-doc reference
+    /// because rustdoc on non-Windows targets cannot resolve it).
     ///
     /// On non-Windows platforms the field is set but ignored —
     /// keeping the struct platform-independent simplifies tests.

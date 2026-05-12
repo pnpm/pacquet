@@ -80,9 +80,9 @@ pub struct RunPostinstallHooks<'a> {
     pub extra_bin_paths: &'a [PathBuf],
     pub extra_env: &'a HashMap<String, String>,
     /// Path to a `node` binary for `npm_node_execpath` / `NODE`. When
-    /// `None`, [`build_env`](crate::build_env) falls back to looking
-    /// `node` up on `PATH`. Required for native postinstalls that
-    /// shell out via `$NODE`.
+    /// `None`, [`crate::build_env`] falls back to looking `node` up
+    /// on `PATH`. Required for native postinstalls that shell out
+    /// via `$NODE`.
     pub node_execpath: Option<&'a Path>,
     /// Path written into `npm_execpath` so postinstalls can re-invoke
     /// the package manager. When `None`, `std::env::current_exe()`
