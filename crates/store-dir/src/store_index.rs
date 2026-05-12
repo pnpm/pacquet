@@ -73,7 +73,7 @@ enum WriteMsg {
     /// from SQLite), compute the diff between `current_files` and
     /// the row's `files`, insert `(cache_key → diff)` into
     /// `side_effects`, and re-queue the row. Used by
-    /// [`crate::upload`] to seed the side-effects cache after a
+    /// [`crate::upload()`] to seed the side-effects cache after a
     /// successful postinstall.
     ///
     /// Routing R/M/W through the writer task is the simplest way
