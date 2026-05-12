@@ -1,7 +1,9 @@
 use crate::build_sequence::build_sequence;
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_executor::{LifecycleScriptError, RunPostinstallHooks, run_postinstall_hooks};
+use pacquet_executor::{
+    LifecycleScriptError, RunPostinstallHooks, ScriptsPrependNodePath, run_postinstall_hooks,
+};
 use pacquet_lockfile::{PackageKey, ProjectSnapshot, SnapshotEntry};
 use pacquet_package_manifest::pkg_requires_build;
 use pacquet_reporter::Reporter;
@@ -231,6 +233,11 @@ impl<'a> BuildModules<'a> {
                     // true here keeps current behavior (no TMPDIR
                     // creation, no uid/gid drop).
                     unsafe_perm: true,
+                    // Pacquet does not bundle a node-gyp shim yet.
+                    node_gyp_bin: None,
+                    // Item #15 in #397 will surface `scriptsPrependNodePath`
+                    // from config; today the safe default is `Never`.
+                    scripts_prepend_node_path: ScriptsPrependNodePath::Never,
                 })
                 .map_err(BuildModulesError::LifecycleScript)?;
             }

@@ -1,4 +1,7 @@
-use crate::make_env::{EnvOptions, build_env};
+use crate::{
+    extend_path::{ScriptsPrependNodePath, extend_path},
+    make_env::{EnvOptions, build_env},
+};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_package_manifest::{PackageManifestError, safe_read_package_json_from_dir};
@@ -87,6 +90,12 @@ pub struct RunPostinstallHooks<'a> {
     /// `true` everywhere — item #14 (`unsafe-perm` uid/gid drop)
     /// will revisit this.
     pub unsafe_perm: bool,
+    /// Bundled `node-gyp` shim directory prepended to `PATH`. Pacquet
+    /// does not ship one yet; callers pass `None`.
+    pub node_gyp_bin: Option<&'a Path>,
+    /// Tri-state from `scriptsPrependNodePath` config. `Never` is the
+    /// safe default; `Always` appends `dirname(node)` to `PATH`.
+    pub scripts_prepend_node_path: ScriptsPrependNodePath,
 }
 
 /// Run the preinstall, install, and postinstall lifecycle scripts for
@@ -213,7 +222,18 @@ fn run_lifecycle_hook<R: Reporter>(
         }
     }
 
-    let path_env = build_path_env(opts.pkg_root, opts.extra_bin_paths);
+    // Mirrors the `env[PATH] = extendPath(...)` line in `lifecycle_`
+    // at index.js:116, with the original PATH coming from the
+    // (already-filtered) parent env captured during `build_env`.
+    let original_path = built.env.get("PATH").map(|v| OsString::from(v.as_str()));
+    let path_env = extend_path(
+        opts.pkg_root,
+        original_path.as_ref(),
+        opts.node_gyp_bin,
+        opts.extra_bin_paths,
+        opts.scripts_prepend_node_path,
+        opts.node_execpath,
+    );
 
     let mut cmd = Command::new("sh");
     cmd.arg("-c")
@@ -320,24 +340,6 @@ fn spawn_line_pump<R: Reporter>(
             }));
         }
     })
-}
-
-/// Build the `PATH` environment variable for lifecycle scripts.
-///
-/// Prepends the package's own `node_modules/.bin`, any extra bin paths
-/// (from the caller), and the system PATH.
-fn build_path_env(pkg_root: &Path, extra_bin_paths: &[PathBuf]) -> OsString {
-    let own_bin = pkg_root.join("node_modules/.bin");
-    let system_path = env::var_os("PATH").unwrap_or_default();
-
-    let mut paths: Vec<PathBuf> = Vec::with_capacity(2 + extra_bin_paths.len());
-    paths.push(own_bin);
-    paths.extend_from_slice(extra_bin_paths);
-    for path in env::split_paths(&system_path) {
-        paths.push(path);
-    }
-
-    env::join_paths(paths).unwrap_or(system_path)
 }
 
 #[cfg(test)]

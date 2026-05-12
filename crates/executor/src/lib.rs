@@ -1,6 +1,8 @@
+mod extend_path;
 mod lifecycle;
 mod make_env;
 
+pub use extend_path::{ScriptsPrependNodePath, extend_path};
 pub use lifecycle::{LifecycleScriptError, RunPostinstallHooks, run_postinstall_hooks};
 pub use make_env::{EnvBuild, EnvOptions, build_env};
 

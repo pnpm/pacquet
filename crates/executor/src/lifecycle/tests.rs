@@ -1,4 +1,5 @@
 use super::{LifecycleScriptError, RunPostinstallHooks, run_postinstall_hooks};
+use crate::extend_path::ScriptsPrependNodePath;
 use pacquet_package_manifest::PackageManifestError;
 use pacquet_reporter::{
     LifecycleMessage, LifecycleStdio, LogEvent, LogLevel, Reporter, SilentReporter,
@@ -45,6 +46,8 @@ fn lifecycle_emits_script_stdio_and_exit_in_order() {
         node_gyp_path: None,
         user_agent: None,
         unsafe_perm: true,
+        node_gyp_bin: None,
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
     };
 
     let ran = run_postinstall_hooks::<RecordingReporter>(opts).expect("postinstall");
@@ -145,6 +148,8 @@ fn lifecycle_emits_exit_with_nonzero_code_on_failure() {
         node_gyp_path: None,
         user_agent: None,
         unsafe_perm: true,
+        node_gyp_bin: None,
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
     };
 
     let err = run_postinstall_hooks::<RecordingReporter>(opts).expect_err("script must fail");
@@ -191,6 +196,8 @@ fn lifecycle_runs_under_silent_reporter() {
         node_gyp_path: None,
         user_agent: None,
         unsafe_perm: true,
+        node_gyp_bin: None,
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
     };
 
     let ran = run_postinstall_hooks::<SilentReporter>(opts).expect("postinstall");
@@ -221,6 +228,8 @@ fn missing_manifest_returns_false() {
         node_gyp_path: None,
         user_agent: None,
         unsafe_perm: true,
+        node_gyp_bin: None,
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
     };
 
     let ran = run_postinstall_hooks::<SilentReporter>(opts).expect("missing manifest is OK");
@@ -278,6 +287,8 @@ fn child_sees_stamped_npm_package_and_no_leaked_npm_config() {
         node_gyp_path: None,
         user_agent: None,
         unsafe_perm: true,
+        node_gyp_bin: None,
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
     };
 
     let ran = run_postinstall_hooks::<SilentReporter>(opts).expect("postinstall");
@@ -335,6 +346,8 @@ fn malformed_manifest_propagates_error() {
         node_gyp_path: None,
         user_agent: None,
         unsafe_perm: true,
+        node_gyp_bin: None,
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
     };
 
     let err = run_postinstall_hooks::<SilentReporter>(opts).expect_err("malformed JSON must fail");
