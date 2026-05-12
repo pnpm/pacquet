@@ -1943,6 +1943,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pacquet-graph-hasher"
+version = "0.0.1"
+dependencies = [
+ "base64 0.22.1",
+ "pretty_assertions",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "pacquet-integrated-benchmark"
 version = "0.0.0"
 dependencies = [
