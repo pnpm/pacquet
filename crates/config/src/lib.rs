@@ -174,6 +174,24 @@ pub struct Config {
     #[default = true]
     pub verify_store_integrity: bool,
 
+    /// Whether to consult the side-effects cache
+    /// (`PackageFilesIndex.sideEffects`) when importing a package.
+    /// Read from `pnpm-workspace.yaml`'s `sideEffectsCache` field
+    /// (camelCase, optional, defaults `true`). **Not yet acted on:**
+    /// the build phase doesn't currently gate the rebuild-skip on
+    /// this flag, and the WRITE path (populating the cache after a
+    /// postinstall) is also unimplemented. Both follow up
+    /// separately — tracked in pnpm/pacquet#421.
+    ///
+    /// Default `true`, matching pnpm's `side-effects-cache` at
+    /// [`config/config/src/index.ts`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/config/src/index.ts).
+    /// Wiring the config-source plumbing through now means
+    /// downstream callers can set `sideEffectsCache: false` in
+    /// `pnpm-workspace.yaml` today and have the value take effect
+    /// as soon as the read-path gate lands.
+    #[default = true]
+    pub side_effects_cache: bool,
+
     /// How many times pacquet retries a failed tarball fetch on transient
     /// errors before giving up. Mirrors pnpm's `fetchRetries` (default
     /// `2`, matching `config/config/src/index.ts`). The value is the count

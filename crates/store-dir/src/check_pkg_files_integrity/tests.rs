@@ -1,7 +1,8 @@
 use super::{VerifiedFilesCache, build_file_maps_from_index, check_pkg_files_integrity};
-use crate::{CafsFileInfo, PackageFilesIndex, StoreDir};
+use crate::{CafsFileInfo, PackageFilesIndex, SideEffectsDiff, StoreDir};
 use pretty_assertions::assert_eq;
 use sha2::{Digest, Sha512};
+use std::collections::HashMap;
 use std::{
     fs,
     io::Write,
@@ -320,4 +321,176 @@ impl CafsFileInfo {
             size: self.size,
         }
     }
+}
+
+/// No `side_effects` field on the index → `VerifyResult.side_effects_maps`
+/// is `None`. Distinguishes "this package never had a cache entry
+/// written" from "cache configured but empty for this key" — the
+/// importer treats the former as a regular non-built import.
+#[test]
+fn no_side_effects_yields_none() {
+    let tmp = tempdir().unwrap();
+    let store_dir = StoreDir::new(tmp.path());
+    let digest = sha512_hex(b"x");
+    let entry = index_with("sha512", vec![("a", info(&digest, 1, 0o644, None))]);
+    let result = build_file_maps_from_index(&store_dir, entry);
+    assert!(result.side_effects_maps.is_none());
+}
+
+/// One cache key, one `added` file, one `deleted` file: the
+/// overlay is `added` ∪ (base \ deleted) — entries in `added` win
+/// when both layers name the same filename. Mirrors upstream's
+/// [`applySideEffectsDiffWithMaps`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/store/create-cafs-store/src/index.ts#L103-L121).
+#[test]
+fn side_effects_overlay_adds_and_drops_correctly() {
+    let tmp = tempdir().unwrap();
+    let store_dir = StoreDir::new(tmp.path());
+    let base_digest = sha512_hex(b"base");
+    let added_digest = sha512_hex(b"added");
+    // base files: a.js, b.js. Side-effects for one cache key:
+    // add c.js, delete b.js. Overlay should land {a.js, c.js}.
+    let mut side_effects = HashMap::new();
+    let mut added = HashMap::new();
+    added.insert("c.js".to_string(), info(&added_digest, 5, 0o644, None));
+    side_effects.insert(
+        "darwin;arm64;node20;deps=fake".to_string(),
+        SideEffectsDiff { added: Some(added), deleted: Some(vec!["b.js".to_string()]) },
+    );
+    let entry = PackageFilesIndex {
+        manifest: None,
+        requires_build: None,
+        algo: "sha512".into(),
+        files: HashMap::from([
+            ("a.js".to_string(), info(&base_digest, 4, 0o644, None)),
+            ("b.js".to_string(), info(&base_digest, 4, 0o644, None)),
+        ]),
+        side_effects: Some(side_effects),
+    };
+    let result = build_file_maps_from_index(&store_dir, entry);
+    let maps = result.side_effects_maps.expect("populated");
+    let overlay = maps.get("darwin;arm64;node20;deps=fake").expect("entry exists");
+    assert!(overlay.contains_key("a.js"), "base survives: {overlay:?}");
+    assert!(overlay.contains_key("c.js"), "added overlays: {overlay:?}");
+    assert!(!overlay.contains_key("b.js"), "deleted drops: {overlay:?}");
+    assert_eq!(overlay.len(), 2);
+}
+
+/// `added` wins over `base` when the filenames collide. The base
+/// path is shadowed by the side-effects path.
+#[test]
+fn side_effects_overlay_added_shadows_base_on_collision() {
+    let tmp = tempdir().unwrap();
+    let store_dir = StoreDir::new(tmp.path());
+    let base_digest = sha512_hex(b"base");
+    let overlay_digest = sha512_hex(b"overlay-shadow");
+    let mut added = HashMap::new();
+    added.insert("collide.js".to_string(), info(&overlay_digest, 16, 0o644, None));
+    let mut side_effects = HashMap::new();
+    side_effects.insert("k1".to_string(), SideEffectsDiff { added: Some(added), deleted: None });
+    let entry = PackageFilesIndex {
+        manifest: None,
+        requires_build: None,
+        algo: "sha512".into(),
+        files: HashMap::from([("collide.js".to_string(), info(&base_digest, 4, 0o644, None))]),
+        side_effects: Some(side_effects),
+    };
+    let result = build_file_maps_from_index(&store_dir, entry);
+    let overlay = result.side_effects_maps.unwrap().remove("k1").unwrap();
+    let path = overlay.get("collide.js").expect("collide.js present");
+    // CAFS layout splits the digest as `<2-char prefix>/<rest>`, so the
+    // path won't contain the digest as a single contiguous substring.
+    // Verify by checking that the overlay digest's tail (post-prefix
+    // hex) appears in the path, and that the base digest's tail does
+    // NOT.
+    let path_str = path.to_string_lossy();
+    assert!(
+        path_str.contains(&overlay_digest[2..]),
+        "overlay digest tail should appear in CAFS path: {path:?}",
+    );
+    assert!(
+        !path_str.contains(&base_digest[2..]),
+        "base digest tail must NOT appear (shadowed): {path:?}",
+    );
+}
+
+/// A malformed digest inside an `added` overlay drops the **whole**
+/// cache_key entry — not just the single bad file. Mismatched
+/// overlays would otherwise turn a future `is_built = true` decision
+/// into a silent corruption (build skipped, required artifact
+/// missing). Other cache_key entries on the same package survive.
+#[test]
+fn side_effects_overlay_malformed_added_digest_drops_cache_key_entry() {
+    let tmp = tempdir().unwrap();
+    let store_dir = StoreDir::new(tmp.path());
+    let base_digest = sha512_hex(b"base");
+    let good_digest = sha512_hex(b"good-added");
+
+    let mut k_bad_added = HashMap::new();
+    // One good file alongside one bad one — the whole entry should
+    // still drop, not just the bad file.
+    k_bad_added.insert("good.js".to_string(), info(&good_digest, 4, 0o644, None));
+    k_bad_added.insert("bad.js".to_string(), info("not-hex", 4, 0o644, None));
+
+    let mut k_good_added = HashMap::new();
+    k_good_added.insert("ok.js".to_string(), info(&good_digest, 4, 0o644, None));
+
+    let mut side_effects = HashMap::new();
+    side_effects
+        .insert("k-bad".to_string(), SideEffectsDiff { added: Some(k_bad_added), deleted: None });
+    side_effects
+        .insert("k-good".to_string(), SideEffectsDiff { added: Some(k_good_added), deleted: None });
+
+    let entry = PackageFilesIndex {
+        manifest: None,
+        requires_build: None,
+        algo: "sha512".into(),
+        files: HashMap::from([("base.js".to_string(), info(&base_digest, 4, 0o644, None))]),
+        side_effects: Some(side_effects),
+    };
+    let result = build_file_maps_from_index(&store_dir, entry);
+    let maps = result.side_effects_maps.expect("populated");
+    assert!(!maps.contains_key("k-bad"), "k-bad must drop entirely on malformed digest");
+    assert!(maps.contains_key("k-good"), "k-good must survive: {maps:?}");
+}
+
+/// Multiple cache keys produce independent overlays. One entry's
+/// `added` doesn't bleed into another's.
+#[test]
+fn side_effects_overlay_keys_are_independent() {
+    let tmp = tempdir().unwrap();
+    let store_dir = StoreDir::new(tmp.path());
+    let base_digest = sha512_hex(b"base");
+    let added_k1 = sha512_hex(b"k1-added");
+    let added_k2 = sha512_hex(b"k2-added");
+    let mut side_effects = HashMap::new();
+    side_effects.insert(
+        "k1".to_string(),
+        SideEffectsDiff {
+            added: Some(HashMap::from([("a.js".to_string(), info(&added_k1, 1, 0o644, None))])),
+            deleted: None,
+        },
+    );
+    side_effects.insert(
+        "k2".to_string(),
+        SideEffectsDiff {
+            added: Some(HashMap::from([("b.js".to_string(), info(&added_k2, 1, 0o644, None))])),
+            deleted: None,
+        },
+    );
+    let entry = PackageFilesIndex {
+        manifest: None,
+        requires_build: None,
+        algo: "sha512".into(),
+        files: HashMap::from([("base.js".to_string(), info(&base_digest, 4, 0o644, None))]),
+        side_effects: Some(side_effects),
+    };
+    let result = build_file_maps_from_index(&store_dir, entry);
+    let maps = result.side_effects_maps.unwrap();
+    let k1 = maps.get("k1").unwrap();
+    let k2 = maps.get("k2").unwrap();
+    assert!(k1.contains_key("a.js") && !k1.contains_key("b.js"), "k1: {k1:?}");
+    assert!(k2.contains_key("b.js") && !k2.contains_key("a.js"), "k2: {k2:?}");
+    // Both share base.js.
+    assert!(k1.contains_key("base.js"));
+    assert!(k2.contains_key("base.js"));
 }

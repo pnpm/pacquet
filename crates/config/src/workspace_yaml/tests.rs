@@ -125,6 +125,23 @@ fn parses_verify_store_integrity_from_yaml_and_applies() {
     assert!(!config.verify_store_integrity, "yaml override wins");
 }
 
+/// `sideEffectsCache` is the side-effects cache READ-path knob from
+/// pnpm-workspace.yaml. Same shape as `verifyStoreIntegrity`:
+/// camelCase rename + `apply_to` wiring. Parsing a yaml that flips
+/// the default-true setting to false must end up at
+/// `config.side_effects_cache == false`.
+#[test]
+fn parses_side_effects_cache_from_yaml_and_applies() {
+    let yaml = "sideEffectsCache: false\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    assert_eq!(settings.side_effects_cache, Some(false));
+
+    let mut config = Config::new();
+    assert!(config.side_effects_cache, "the default is `true` to match pnpm");
+    settings.apply_to(&mut config, Path::new("/irrelevant"));
+    assert!(!config.side_effects_cache, "yaml override wins");
+}
+
 #[test]
 fn apply_leaves_unset_fields_alone() {
     let yaml = "storeDir: /s\n";

@@ -36,6 +36,7 @@ fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path)
         strict_peer_dependencies: false,
         resolve_peers_from_workspace_root: false,
         verify_store_integrity: true,
+        side_effects_cache: true,
         fetch_retries: 2,
         fetch_retry_factor: 10,
         fetch_retry_mintimeout: 10_000,
