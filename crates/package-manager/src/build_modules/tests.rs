@@ -921,7 +921,9 @@ async fn write_path_disabled_skips_upload() {
 #[cfg(unix)]
 #[tokio::test(flavor = "current_thread")]
 async fn upload_error_does_not_interrupt_install() {
-    use pacquet_store_dir::{StoreDir, StoreIndexWriter};
+    use pacquet_store_dir::{
+        HASH_ALGORITHM, PackageFilesIndex, StoreDir, StoreIndex, StoreIndexWriter, store_index_key,
+    };
 
     let pkg_key = key("@pnpm/postinstall-modifies-source", "1.0.0");
     let integrity_str = "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -961,6 +963,26 @@ async fn upload_error_does_not_interrupt_install() {
     // prove the script ran end-to-end) AND a 0-permission file
     // (to force `add_files_from_dir` to fail on `fs::read`).
     let pkg_dir = create_postinstall_with_unreadable_fixture(virtual_store_dir.path(), &pkg_key);
+
+    // Pre-seed a base row so we can assert that the swallowed
+    // upload error leaves the row's `side_effects` field
+    // untouched — matches upstream's `filesIndex2.sideEffects
+    // toBeFalsy()` at sideEffects.ts:186.
+    let files_index_file = store_index_key(integrity_str, &pkg_key.without_peer().to_string());
+    let base_row = PackageFilesIndex {
+        manifest: None,
+        requires_build: Some(true),
+        algo: HASH_ALGORITHM.to_string(),
+        files: HashMap::new(),
+        side_effects: None,
+    };
+    {
+        let mut index = StoreIndex::open_in(&store_dir).expect("open index for seed");
+        index
+            .set_many(std::iter::once((files_index_file.clone(), base_row)))
+            .expect("seed base row");
+    }
+
     let (writer, writer_task) = StoreIndexWriter::spawn(&store_dir);
 
     BuildModules {
@@ -990,6 +1012,18 @@ async fn upload_error_does_not_interrupt_install() {
     assert!(
         pkg_dir.join("generated.txt").exists(),
         "postinstall-created file must be present after a swallowed upload failure",
+    );
+
+    // The base row stays untouched: the `add_files_from_dir`
+    // error fired before `queue_side_effects_upload` ran, so the
+    // writer task never saw a `SideEffectsUpload` for this row.
+    // Mirrors upstream's `filesIndex2.sideEffects toBeFalsy()` at
+    // sideEffects.ts:186.
+    let index = StoreIndex::open_readonly_in(&store_dir).expect("open index for read");
+    let row = index.get(&files_index_file).expect("get row").expect("base row present");
+    assert!(
+        row.side_effects.is_none(),
+        "swallowed upload error must leave `side_effects` unmodified",
     );
 
     // Restore perms so the tempdir cleanup can remove the file.

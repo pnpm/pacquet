@@ -159,13 +159,21 @@ impl StoreIndexWriter {
                             pending.insert(key, value);
                         }
                         WriteMsg::SideEffectsUpload { key, cache_key, current_files } => {
-                            // Load from this batch's pending state
-                            // first; fall back to SQLite for the row's
-                            // first sighting in this batch.
-                            let mut row = match pending.remove(&key) {
-                                Some(r) => r,
-                                None => match index.get(&key) {
-                                    Ok(Some(r)) => r,
+                            // Use a `entry()` flow so the row stays
+                            // in `pending` across every short-circuit
+                            // branch — a same-batch `Replace` for
+                            // this same key still needs to land
+                            // regardless of whether the side-effects
+                            // mutation runs.
+                            use std::collections::hash_map::Entry;
+                            let entry = pending.entry(key.clone());
+                            // `or_insert_with` populates from SQLite
+                            // when this is the row's first sighting
+                            // in the batch.
+                            let row = match entry {
+                                Entry::Occupied(o) => o.into_mut(),
+                                Entry::Vacant(v) => match index.get(&key) {
+                                    Ok(Some(r)) => v.insert(r),
                                     Ok(None) => {
                                         tracing::debug!(
                                             target: "pacquet::store_index",
@@ -192,13 +200,15 @@ impl StoreIndexWriter {
                                     row_algo = %row.algo,
                                     "algo mismatch on base row; skip side-effects upload",
                                 );
+                                // Row stays in `pending` for the
+                                // flush — only the side-effects
+                                // mutation is suppressed.
                                 continue;
                             }
                             let diff = crate::upload::calculate_diff(&row.files, &current_files);
                             row.side_effects
                                 .get_or_insert_with(HashMap::new)
                                 .insert(cache_key, diff);
-                            pending.insert(key, row);
                         }
                     }
                 }
