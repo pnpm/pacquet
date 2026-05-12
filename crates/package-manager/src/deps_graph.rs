@@ -60,11 +60,11 @@ pub fn build_deps_graph(
 /// Returns the `pkg_id:<...>` string used as the `id` field in
 /// `calc_dep_graph_hash`'s `{ id, deps }` object.
 fn full_pkg_id_for(pkg_key: &PackageKey, resolution: &LockfileResolution) -> String {
+    // `PackageKey`'s `Display` impl produces `<name>@<ver>` — the
+    // same shape upstream's `pkgIdWithPatchHash` carries in pnpm
+    // v9 lockfiles. (Pre-v6 lockfiles used the `/<name>/<ver>`
+    // shape, but pacquet doesn't parse those.)
     let pkg_id = pkg_key.to_string();
-    // `PackageKey::to_string` produces `<name>@<ver>` (with a
-    // leading `/` for unscoped — strip it to match upstream's
-    // `pkgIdWithPatchHash` shape).
-    let pkg_id = pkg_id.strip_prefix('/').unwrap_or(&pkg_id).to_string();
     if let Some(integrity) = resolution.integrity() {
         return format!("{pkg_id}:{integrity}");
     }

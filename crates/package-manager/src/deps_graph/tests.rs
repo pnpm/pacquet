@@ -19,23 +19,17 @@ fn key(n: &str, v: &str) -> PackageKey {
     PackageKey::new(name(n), ver(v))
 }
 
-fn integrity(hex_tail: &str) -> Integrity {
-    // Build a valid-shaped sha512 integrity. Content is irrelevant
-    // since the adapter just stringifies it.
-    let body = format!(
-        "sha512-{}",
-        // Pad to a plausible base64 length.
-        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-    );
-    let _ = hex_tail;
-    body.parse().expect("parse integrity")
+fn integrity() -> Integrity {
+    // Valid-shaped sha512 integrity. Content is irrelevant since
+    // the adapter just stringifies it.
+    "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        .parse()
+        .expect("parse integrity")
 }
 
 fn registry_metadata() -> PackageMetadata {
     PackageMetadata {
-        resolution: LockfileResolution::Registry(RegistryResolution {
-            integrity: integrity("aaa"),
-        }),
+        resolution: LockfileResolution::Registry(RegistryResolution { integrity: integrity() }),
         engines: None,
         cpu: None,
         os: None,
@@ -61,7 +55,8 @@ fn registry_resolution_full_pkg_id_uses_integrity_verbatim() {
 
     let graph = build_deps_graph(&snapshots, &packages);
     let node = graph.get(&pkg).expect("graph node");
-    // The pkg_id portion is the snapshot key minus the leading `/`.
+    // `PackageKey`'s `Display` impl renders `<name>@<ver>`; the
+    // `full_pkg_id` prefixes that with the integrity verbatim.
     let expected_prefix = "@scope/foo@1.0.0:sha512-";
     assert!(
         node.full_pkg_id.starts_with(expected_prefix),
