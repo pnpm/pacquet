@@ -1,7 +1,9 @@
 use crate::build_sequence::build_sequence;
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_executor::{LifecycleScriptError, RunPostinstallHooks, run_postinstall_hooks};
+use pacquet_executor::{
+    LifecycleScriptError, RunPostinstallHooks, ScriptsPrependNodePath, run_postinstall_hooks,
+};
 use pacquet_lockfile::{PackageKey, ProjectSnapshot, SnapshotEntry};
 use pacquet_package_manifest::pkg_requires_build;
 use pacquet_reporter::Reporter;
@@ -222,6 +224,18 @@ impl<'a> BuildModules<'a> {
                     init_cwd: lockfile_dir,
                     extra_bin_paths: &extra_bin_paths,
                     extra_env: &extra_env,
+                    node_execpath: None,
+                    npm_execpath: None,
+                    node_gyp_path: None,
+                    user_agent: None,
+                    // Hard-coded until the `unsafe-perm` config knob
+                    // is plumbed through. `true` skips both the
+                    // TMPDIR creation and the uid/gid drop, matching
+                    // pacquet's behavior before any of this landed.
+                    unsafe_perm: true,
+                    node_gyp_bin: None,
+                    scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+                    script_shell: None,
                 })
                 .map_err(BuildModulesError::LifecycleScript)?;
             }

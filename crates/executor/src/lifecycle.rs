@@ -1,13 +1,20 @@
+use crate::{
+    extend_path::{ScriptsPrependNodePath, extend_path},
+    make_env::{EnvOptions, build_env, path_value},
+    shell::{ScriptShellError, select_shell},
+};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_package_manifest::{PackageManifestError, safe_read_package_json_from_dir};
 use pacquet_reporter::{
     LifecycleLog, LifecycleMessage, LifecycleStdio, LogEvent, LogLevel, Reporter,
 };
+use serde_json::Value;
 use std::{
     collections::HashMap,
     env,
     ffi::OsString,
+    fs,
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
@@ -49,6 +56,15 @@ pub enum LifecycleScriptError {
         #[error(source)]
         source: std::io::Error,
     },
+
+    #[display("Invalid script shell for {dep_path} {stage}: {source}")]
+    #[diagnostic(code(pacquet_executor::invalid_script_shell))]
+    ScriptShell {
+        dep_path: String,
+        stage: String,
+        #[error(source)]
+        source: ScriptShellError,
+    },
 }
 
 /// Options for [`run_postinstall_hooks`].
@@ -63,6 +79,38 @@ pub struct RunPostinstallHooks<'a> {
     pub init_cwd: &'a Path,
     pub extra_bin_paths: &'a [PathBuf],
     pub extra_env: &'a HashMap<String, String>,
+    /// Path to a `node` binary for `npm_node_execpath` / `NODE`. When
+    /// `None`, [`crate::build_env`] falls back to looking `node` up
+    /// on `PATH`. Required for native postinstalls that shell out
+    /// via `$NODE`.
+    pub node_execpath: Option<&'a Path>,
+    /// Path written into `npm_execpath` so postinstalls can re-invoke
+    /// the package manager. When `None`, `std::env::current_exe()`
+    /// is used.
+    pub npm_execpath: Option<&'a Path>,
+    /// Bundled `node-gyp` wrapper path written into
+    /// `npm_config_node_gyp`. Pacquet does not ship one yet, so
+    /// callers pass `None`.
+    pub node_gyp_path: Option<&'a Path>,
+    /// Value written into `npm_config_user_agent`. Caller-supplied
+    /// (typically `"pacquet/<version>"`); `None` skips the stamp.
+    pub user_agent: Option<&'a str>,
+    /// When `false`, a per-package `node_modules/.tmp` directory is
+    /// created and exposed as `TMPDIR`, and (on POSIX) lifecycle
+    /// scripts run with a dropped uid/gid. Pacquet does not yet
+    /// surface the privilege drop, so callers currently pass
+    /// `true` everywhere.
+    pub unsafe_perm: bool,
+    /// Bundled `node-gyp` shim directory prepended to `PATH`. Pacquet
+    /// does not ship one yet; callers pass `None`.
+    pub node_gyp_bin: Option<&'a Path>,
+    /// Tri-state from `scriptsPrependNodePath` config. `Never` is the
+    /// safe default; `Always` appends `dirname(node)` to `PATH`.
+    pub scripts_prepend_node_path: ScriptsPrependNodePath,
+    /// Custom shell from `scriptShell` config (e.g. `bash`,
+    /// `/usr/local/bin/bash`). `None` means use the platform default
+    /// (`sh -c` on POSIX, `cmd /d /s /c` on Windows).
+    pub script_shell: Option<&'a Path>,
 }
 
 /// Run the preinstall, install, and postinstall lifecycle scripts for
@@ -90,12 +138,18 @@ pub fn run_postinstall_hooks<R: Reporter>(
     let get_script =
         |name: &str| -> Option<&str> { scripts.and_then(|s| s.get(name)).and_then(|v| v.as_str()) };
 
+    // Snapshot the process env once for this package. Each of
+    // preinstall/install/postinstall reads from this snapshot, which
+    // keeps the three runs observably consistent and avoids three
+    // separate calls to `env::vars()` over a thread-shared global.
+    let parent_env: HashMap<String, String> = env::vars().collect();
+
     let mut ran_any = false;
 
     if let Some(script) = get_script("preinstall")
         && script != "npx only-allow pnpm"
     {
-        run_lifecycle_hook::<R>("preinstall", script, &opts)?;
+        run_lifecycle_hook::<R>("preinstall", script, &opts, &manifest, &parent_env)?;
         ran_any = true;
     }
 
@@ -109,14 +163,14 @@ pub fn run_postinstall_hooks<R: Reporter>(
     if let Some(script) = &install_script
         && script != "npx only-allow pnpm"
     {
-        run_lifecycle_hook::<R>("install", script, &opts)?;
+        run_lifecycle_hook::<R>("install", script, &opts, &manifest, &parent_env)?;
         ran_any = true;
     }
 
     if let Some(script) = get_script("postinstall")
         && script != "npx only-allow pnpm"
     {
-        run_lifecycle_hook::<R>("postinstall", script, &opts)?;
+        run_lifecycle_hook::<R>("postinstall", script, &opts, &manifest, &parent_env)?;
         ran_any = true;
     }
 
@@ -135,6 +189,8 @@ fn run_lifecycle_hook<R: Reporter>(
     stage: &str,
     script: &str,
     opts: &RunPostinstallHooks<'_>,
+    manifest: &Value,
+    parent_env: &HashMap<String, String>,
 ) -> Result<(), LifecycleScriptError> {
     tracing::debug!(
         target: "pacquet::lifecycle",
@@ -147,7 +203,7 @@ fn run_lifecycle_hook<R: Reporter>(
     let pkg_root_str = opts.pkg_root.to_string_lossy().into_owned();
 
     // Mirrors `lifecycleLogger.debug({ depPath, optional, script, stage, wd })`
-    // at <https://github.com/pnpm/pnpm/blob/80037699fb/exec/lifecycle/src/runLifecycleHook.ts#L102>.
+    // at <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/exec/lifecycle/src/runLifecycleHook.ts#L102>.
     R::emit(&LogEvent::Lifecycle(LifecycleLog {
         level: LogLevel::Debug,
         message: LifecycleMessage::Script {
@@ -159,21 +215,85 @@ fn run_lifecycle_hook<R: Reporter>(
         },
     }));
 
-    let path_env = build_path_env(opts.pkg_root, opts.extra_bin_paths);
+    let env_opts = EnvOptions {
+        stage,
+        script,
+        pkg_root: opts.pkg_root,
+        init_cwd: opts.init_cwd,
+        script_src_dir: opts.pkg_root,
+        node_execpath: opts.node_execpath,
+        npm_execpath: opts.npm_execpath,
+        node_gyp_path: opts.node_gyp_path,
+        user_agent: opts.user_agent,
+        unsafe_perm: opts.unsafe_perm,
+        extra_env: opts.extra_env,
+    };
+    let built = build_env(&env_opts, manifest, parent_env.clone());
 
-    let mut cmd = Command::new("sh");
-    cmd.arg("-c")
+    if let Some(tmpdir) = &built.tmpdir {
+        // `fs::create_dir_all` is idempotent for existing
+        // directories (it returns `Ok(())`), so the upstream
+        // `EEXIST` swallow at index.js:97-102 doesn't translate.
+        // Treat any error here — including `AlreadyExists`, which
+        // signals a *file* at that path — as a real spawn failure.
+        fs::create_dir_all(tmpdir).map_err(|e| LifecycleScriptError::Spawn {
+            dep_path: opts.dep_path.to_string(),
+            stage: stage.to_string(),
+            source: e,
+        })?;
+    }
+
+    // Mirrors the `env[PATH] = extendPath(...)` line in `lifecycle_`
+    // at index.js:116, with the original PATH coming from the
+    // (already-filtered) parent env captured during `build_env`.
+    // Lookup is case-insensitive because Windows preserves the
+    // system casing (typically `Path`) on env keys.
+    let original_path = path_value(&built.env).map(OsString::from);
+    let path_env = extend_path(
+        opts.pkg_root,
+        original_path.as_ref(),
+        opts.node_gyp_bin,
+        opts.extra_bin_paths,
+        opts.scripts_prepend_node_path,
+        opts.node_execpath,
+    );
+
+    // Pick the shell up front so a misconfigured `scriptShell` fails
+    // before we touch the filesystem (TMPDIR etc. already created
+    // above — that's a minor leak, but matches upstream where
+    // `makeEnv` runs before the `runCmd_` shell pick anyway).
+    let shell = select_shell(opts.script_shell, cfg!(windows)).map_err(|source| {
+        LifecycleScriptError::ScriptShell {
+            dep_path: opts.dep_path.to_string(),
+            stage: stage.to_string(),
+            source,
+        }
+    })?;
+
+    // Drop any inherited PATH-like key (`Path` on Windows, `PATH`
+    // on POSIX) from the env map before spawning — otherwise on
+    // Windows the spawn would see both that and the explicit `PATH`
+    // we set below, and `Command::env` deduplicates them with an
+    // unspecified winner.
+    let mut child_env = built.env;
+    child_env.retain(|k, _| !k.eq_ignore_ascii_case("PATH"));
+    child_env.insert("PATH".to_string(), path_env.to_string_lossy().into_owned());
+
+    let mut cmd = Command::new(&shell.program);
+    cmd.args(&shell.args)
         .arg(script)
         .current_dir(opts.pkg_root)
-        .env("PATH", &path_env)
-        .env("INIT_CWD", opts.init_cwd)
-        .env("PNPM_SCRIPT_SRC_DIR", opts.pkg_root)
+        // Stripping inherited env so leftover npm_* keys from a wrapping
+        // invocation cannot leak in. `build_env` already folded the
+        // surviving parent keys into `built.env`.
+        .env_clear()
+        .envs(&child_env)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-
-    for (key, value) in opts.extra_env {
-        cmd.env(key, value);
-    }
+    // `windowsVerbatimArguments` from `npm-lifecycle/index.js:251`.
+    // Wire up Rust's equivalent (`raw_arg` on Windows) when we have a
+    // way to test it. For now the field signals intent for follow-up.
+    let _ = shell.windows_verbatim_args;
 
     let mut child = cmd.spawn().map_err(|e| LifecycleScriptError::Spawn {
         dep_path: opts.dep_path.to_string(),
@@ -267,24 +387,6 @@ fn spawn_line_pump<R: Reporter>(
             }));
         }
     })
-}
-
-/// Build the `PATH` environment variable for lifecycle scripts.
-///
-/// Prepends the package's own `node_modules/.bin`, any extra bin paths
-/// (from the caller), and the system PATH.
-fn build_path_env(pkg_root: &Path, extra_bin_paths: &[PathBuf]) -> OsString {
-    let own_bin = pkg_root.join("node_modules/.bin");
-    let system_path = env::var_os("PATH").unwrap_or_default();
-
-    let mut paths: Vec<PathBuf> = Vec::with_capacity(2 + extra_bin_paths.len());
-    paths.push(own_bin);
-    paths.extend_from_slice(extra_bin_paths);
-    for path in env::split_paths(&system_path) {
-        paths.push(path);
-    }
-
-    env::join_paths(paths).unwrap_or(system_path)
 }
 
 #[cfg(test)]
