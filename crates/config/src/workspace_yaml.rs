@@ -5,6 +5,7 @@ use pacquet_store_dir::StoreDir;
 use pipe_trait::Pipe;
 use serde::Deserialize;
 use std::{
+    collections::BTreeMap,
     fs,
     io::{self, ErrorKind},
     path::{Path, PathBuf},
@@ -27,6 +28,16 @@ use std::{
 /// `catalogs`, `onlyBuiltDependencies`, `allowBuilds`, …) are silently
 /// ignored — serde drops them since the struct doesn't use
 /// `deny_unknown_fields`.
+///
+/// pnpm v11 also reads `patchedDependencies` (and the other install
+/// settings such as `allowBuilds`) from this file rather than from
+/// `package.json`'s `pnpm` field — see upstream's
+/// [`addSettingsFromWorkspaceManifestToConfig`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/index.ts#L803-L831),
+/// which calls `getOptionsFromPnpmSettings` with the workspace
+/// manifest. The misleadingly-named
+/// [`getOptionsFromRootManifest.ts`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/reader/src/getOptionsFromRootManifest.ts)
+/// is wrapped at that call site, so its `manifestDir` parameter
+/// actually carries the *workspace* dir.
 #[derive(Debug, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct WorkspaceSettings {
@@ -56,6 +67,18 @@ pub struct WorkspaceSettings {
     pub fetch_retry_factor: Option<u32>,
     pub fetch_retry_mintimeout: Option<u64>,
     pub fetch_retry_maxtimeout: Option<u64>,
+
+    /// Map of `name[@version]` → patch-file path (relative to the
+    /// workspace dir or absolute). Read verbatim; relative-path
+    /// resolution, file hashing, and grouping are deferred to
+    /// `pacquet_patching::resolve_and_group` so the yaml layer stays
+    /// pure data.
+    ///
+    /// pnpm 10+ moved `patchedDependencies` out of
+    /// `package.json#pnpm` into `pnpm-workspace.yaml`; pacquet
+    /// matches that. The legacy `package.json#pnpm.patchedDependencies`
+    /// shape is no longer consulted.
+    pub patched_dependencies: Option<BTreeMap<String, String>>,
 }
 
 /// Basename of the file pnpm reads; exported for test use.

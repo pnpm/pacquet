@@ -188,6 +188,35 @@ fn side_effects_cache_gates_truth_table() {
     assert!(!config.side_effects_cache_write());
 }
 
+/// `patchedDependencies` in `pnpm-workspace.yaml` is a string→string
+/// map where keys carry an optional `@version` suffix and values are
+/// patch-file paths. pacquet captures it raw on `WorkspaceSettings`;
+/// path resolution + hashing + grouping are deferred to
+/// `pacquet_patching::resolve_and_group` (slice B will wire that
+/// onto `Config`). This test guards the deserialization shape only —
+/// the camelCase rename, optionality, and value-as-string-path.
+#[test]
+fn parses_patched_dependencies_from_yaml() {
+    let yaml = r#"
+patchedDependencies:
+  "lodash@4.17.21": patches/lodash@4.17.21.patch
+  "foo@^1.0.0": patches/foo.patch
+  bar: patches/bar.patch
+"#;
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    let map = settings.patched_dependencies.expect("field present");
+    assert_eq!(map.get("lodash@4.17.21").map(String::as_str), Some("patches/lodash@4.17.21.patch"));
+    assert_eq!(map.get("foo@^1.0.0").map(String::as_str), Some("patches/foo.patch"));
+    assert_eq!(map.get("bar").map(String::as_str), Some("patches/bar.patch"));
+}
+
+#[test]
+fn patched_dependencies_absent_yields_none() {
+    let yaml = "storeDir: /s\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    assert!(settings.patched_dependencies.is_none());
+}
+
 #[test]
 fn apply_leaves_unset_fields_alone() {
     let yaml = "storeDir: /s\n";

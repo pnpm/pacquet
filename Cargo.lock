@@ -2102,7 +2102,6 @@ dependencies = [
  "miette 7.6.0",
  "node-semver",
  "pretty_assertions",
- "serde_json",
  "sha2",
  "tempfile",
 ]
