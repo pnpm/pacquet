@@ -9,8 +9,9 @@ use sha2::{Digest, Sha256};
 /// (sorted keys, sha256, base64).
 ///
 /// The bytestream the library writes before hashing is described in
-/// [`serialize`] below — it must match pnpm's byte-for-byte because
-/// the result is persisted on disk and shared with pnpm.
+/// the (private) `serialize` helper below — it must match pnpm's
+/// byte-for-byte because the result is persisted on disk and shared
+/// with pnpm.
 ///
 /// `undefined` in JS maps to no Rust value here; the upstream
 /// short-circuit `hashUnknown(undefined)` returns 44 zero characters
@@ -63,24 +64,24 @@ fn serialize(out: &mut Vec<u8>, value: &Value, sort: bool) {
             // index.js:327-329 — `number:<n.toString()>`. JS
             // `Number.prototype.toString()` for integers gives the
             // plain decimal repr; for floats it produces the
-            // shortest round-trippable form. Pacquet's inputs only
-            // ever hit the integer path in practice (the upstream
-            // tests use `1`, `2`, `3`); `n.to_string()` from
-            // `serde_json::Number` matches for that case.
+            // shortest round-trippable form. Pacquet's cache-key
+            // inputs only ever hit the integer path in practice
+            // (`hash_object` is called by `calc_dep_graph_hash`
+            // with strings + nested objects of strings; the
+            // upstream `hashObject` test cases use integer
+            // literals `1`, `2`, `3`). `n.to_string()` from
+            // `serde_json::Number` matches for integers; for
+            // non-integer floats `serde_json`'s `f64` formatting
+            // can diverge from JS's "shortest round-trippable"
+            // (ECMA-262 §7.1.12.1). If a caller ever passes a
+            // non-integer in the hot path, the divergence would
+            // break cross-tool cache-key parity — add the
+            // JS-compatible float formatter (e.g. the `ryu` crate
+            // gated on a check) before that lands.
             out.extend_from_slice(b"number:");
             out.extend_from_slice(n.to_string().as_bytes());
         }
-        Value::String(s) => {
-            // index.js:304-307. `string:<length>:<value>` — length
-            // is UTF-16 code units (JS `.length`), not bytes and
-            // not Unicode codepoints. For ASCII strings, all three
-            // agree.
-            let utf16_len: usize = s.encode_utf16().count();
-            out.extend_from_slice(b"string:");
-            out.extend_from_slice(utf16_len.to_string().as_bytes());
-            out.push(b':');
-            out.extend_from_slice(s.as_bytes());
-        }
+        Value::String(s) => serialize_str(out, s),
         Value::Array(arr) => {
             // index.js:257-291 — `array:<N>:` then each entry.
             // pnpm's `hashObject` *does* sort arrays in the
@@ -120,8 +121,24 @@ fn serialize(out: &mut Vec<u8>, value: &Value, sort: bool) {
 }
 
 fn write_pair(out: &mut Vec<u8>, key: &str, value: &Value, sort: bool) {
-    serialize(out, &Value::String(key.to_string()), sort);
+    // `serialize` for a `Value::String` would force a per-key
+    // `Value::String(key.to_string())` allocation. Inline the
+    // string framing instead so hashing a 1000-key object doesn't
+    // allocate 1000 short-lived Strings on the hot path.
+    serialize_str(out, key);
     out.push(b':');
     serialize(out, value, sort);
     out.push(b',');
+}
+
+/// Emit the `string:<utf16_len>:<value>` framing from object-hash's
+/// `_string` arm (index.js:304-307). `length` is UTF-16 code units
+/// (JS `.length`), not bytes and not Unicode codepoints. For ASCII
+/// strings all three agree.
+fn serialize_str(out: &mut Vec<u8>, s: &str) {
+    let utf16_len: usize = s.encode_utf16().count();
+    out.extend_from_slice(b"string:");
+    out.extend_from_slice(utf16_len.to_string().as_bytes());
+    out.push(b':');
+    out.extend_from_slice(s.as_bytes());
 }

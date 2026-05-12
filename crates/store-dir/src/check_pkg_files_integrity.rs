@@ -67,8 +67,9 @@ pub type FilesMap = HashMap<String, PathBuf>;
 /// the base `files_map` with the entry's `added` overlay applied on
 /// top of it and `deleted` entries dropped. Mirrors
 /// [`PackageFilesResponse.sideEffectsMaps`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/store/create-cafs-store/src/index.ts#L83-L100)
-/// — the importer looks up the entry by [`pacquet_graph_hasher::engine_name`]
-/// (or its full `engine;deps=…;patch=…` extension) to decide whether
+/// — the importer looks up the entry by the dep-state cache key
+/// (`<engine>` or `<engine>;deps=…;patch=…`, produced by
+/// `pacquet-graph-hasher`'s `calc_dep_state`) to decide whether
 /// the package is already built.
 #[derive(Debug)]
 pub struct VerifyResult {
@@ -236,9 +237,14 @@ fn build_side_effects_maps(
                 overlay.insert(filename, path);
             }
         }
-        let deleted_set = deleted.unwrap_or_default();
+        // Promote `deleted` to a `HashSet` once per cache key so
+        // the `base_files` walk stays linear in `|base|` instead of
+        // `O(|base| * |deleted|)`. Pnpm's TS side keeps `deleted`
+        // as a `Set` for the same reason.
+        let deleted_set: std::collections::HashSet<String> =
+            deleted.unwrap_or_default().into_iter().collect();
         for (filename, path) in base_files {
-            if !deleted_set.iter().any(|d| d == filename) && !overlay.contains_key(filename) {
+            if !deleted_set.contains(filename) && !overlay.contains_key(filename) {
                 overlay.insert(filename.clone(), path.clone());
             }
         }

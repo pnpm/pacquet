@@ -17,11 +17,10 @@
 /// `node --version` or reading `npm_node_execpath`) is policy and
 /// doesn't belong in this hasher crate.
 ///
-/// `platform` and `arch` default to the running host via
-/// [`pacquet_platform`](#) (or here, the static
-/// `std::env::consts` constants mapped through Node's naming
-/// scheme). Production callers can pass `None` to get the host
-/// values; tests can pin both for cache-key round-trip.
+/// `platform` and `arch` default to the running host via the
+/// static `std::env::consts` constants mapped through Node's
+/// naming scheme. Production callers can pass `None` to get the
+/// host values; tests can pin both for cache-key round-trip.
 pub fn engine_name(node_major: u32, platform: Option<&str>, arch: Option<&str>) -> String {
     let platform = platform.unwrap_or_else(|| host_platform());
     let arch = arch.unwrap_or_else(|| host_arch());
@@ -44,15 +43,22 @@ fn host_platform() -> &'static str {
 
 /// Map `std::env::consts::ARCH` to Node's `process.arch` naming.
 /// Node uses `x64` / `arm64` / `ia32` / `arm` / `s390x` / `ppc64`
-/// / `riscv64`. Rust uses `x86_64` / `aarch64` / `x86` / `arm`
-/// / `s390x` / `powerpc64` / `riscv64`. Mappings below mirror what
-/// Node itself does on each target.
+/// / `ppc64` (LE, same string) / `loong64` / `riscv64`. Rust uses
+/// `x86_64` / `aarch64` / `x86` / `arm` / `s390x` / `powerpc64` /
+/// `powerpc64le` / `loongarch64` / `riscv64`. Mappings below mirror
+/// what Node itself emits on each target — anything left as
+/// passthrough (e.g. `arm`, `s390x`, `riscv64`) already matches
+/// between the two naming schemes.
 fn host_arch() -> &'static str {
     match std::env::consts::ARCH {
         "x86_64" => "x64",
         "aarch64" => "arm64",
         "x86" => "ia32",
-        "powerpc64" => "ppc64",
+        // Node calls big-endian and little-endian POWER both
+        // `ppc64`; only big-endian gets `endianness === 'BE'` to
+        // distinguish them. Rust's two arch values both map here.
+        "powerpc64" | "powerpc64le" => "ppc64",
+        "loongarch64" => "loong64",
         other => other,
     }
 }
