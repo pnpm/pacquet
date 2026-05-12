@@ -26,18 +26,17 @@ fn node_gyp_comes_after_node_modules_dot_bin() {
     let wd = Path::new("/Users/x/project");
     let node_gyp = PathBuf::from("/lib/node-gyp-bin");
     let extra: Vec<PathBuf> = vec![];
-    let path = extend_path(
-        wd,
-        None,
-        Some(&node_gyp),
-        &extra,
-        ScriptsPrependNodePath::Never,
-        None,
-    );
+    let path = extend_path(wd, None, Some(&node_gyp), &extra, ScriptsPrependNodePath::Never, None);
     let parts = segments(&path);
     let bin_idx = parts
         .iter()
-        .position(|p| p.ends_with(&format!("project{}node_modules{}.bin", std::path::MAIN_SEPARATOR, std::path::MAIN_SEPARATOR)))
+        .position(|p| {
+            p.ends_with(&format!(
+                "project{}node_modules{}.bin",
+                std::path::MAIN_SEPARATOR,
+                std::path::MAIN_SEPARATOR
+            ))
+        })
         .unwrap_or_else(|| panic!("missing node_modules/.bin in {parts:?}"));
     let gyp_idx = parts
         .iter()
@@ -94,14 +93,7 @@ fn extra_bin_paths_come_after_bins_and_node_gyp() {
     let wd = Path::new("/proj");
     let node_gyp = PathBuf::from("/bundled/node-gyp-bin");
     let extra: Vec<PathBuf> = vec![PathBuf::from("/extra/one"), PathBuf::from("/extra/two")];
-    let path = extend_path(
-        wd,
-        None,
-        Some(&node_gyp),
-        &extra,
-        ScriptsPrependNodePath::Never,
-        None,
-    );
+    let path = extend_path(wd, None, Some(&node_gyp), &extra, ScriptsPrependNodePath::Never, None);
     let parts = segments(&path);
     let bin_idx = parts.iter().position(|p| p.contains("proj") && p.ends_with(".bin")).unwrap();
     let gyp_idx = parts.iter().position(|p| p.contains("node-gyp-bin")).unwrap();

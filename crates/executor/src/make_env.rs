@@ -68,8 +68,7 @@ pub fn build_env(
     // 3. Per-call stamping from `lifecycle()` body (index.js:74-87).
     env.insert("npm_lifecycle_event".into(), opts.stage.to_string());
 
-    let node_execpath =
-        opts.node_execpath.map(Path::to_path_buf).or_else(find_node_in_path);
+    let node_execpath = opts.node_execpath.map(Path::to_path_buf).or_else(find_node_in_path);
     if let Some(node) = node_execpath {
         let node_str = node.to_string_lossy().into_owned();
         env.insert("npm_node_execpath".into(), node_str.clone());
@@ -87,10 +86,7 @@ pub fn build_env(
     }
 
     env.insert("INIT_CWD".into(), opts.init_cwd.to_string_lossy().into_owned());
-    env.insert(
-        "PNPM_SCRIPT_SRC_DIR".into(),
-        opts.script_src_dir.to_string_lossy().into_owned(),
-    );
+    env.insert("PNPM_SCRIPT_SRC_DIR".into(), opts.script_src_dir.to_string_lossy().into_owned());
 
     if let Some(p) = opts.node_gyp_path {
         env.insert("npm_config_node_gyp".into(), p.to_string_lossy().into_owned());

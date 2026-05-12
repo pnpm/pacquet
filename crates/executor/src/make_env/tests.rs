@@ -96,7 +96,9 @@ fn make_env_drops_non_keep_listed_top_level_keys() {
     let extra = empty_extra();
     let built = build_env(&base_opts(pkg_root, pkg_root, &extra), &manifest, HashMap::new());
 
-    for not_kept in ["npm_package_scripts_postinstall", "npm_package_dependencies_foo", "npm_package_homepage"] {
+    for not_kept in
+        ["npm_package_scripts_postinstall", "npm_package_dependencies_foo", "npm_package_homepage"]
+    {
         assert!(!built.env.contains_key(not_kept), "{not_kept} must be filtered out");
     }
 }
@@ -129,10 +131,7 @@ fn make_env_stamps_lifecycle_specific_keys() {
 
     assert_eq!(built.env.get("npm_lifecycle_event").map(String::as_str), Some("preinstall"));
     assert_eq!(built.env.get("npm_lifecycle_script").map(String::as_str), Some("node x.js"));
-    assert_eq!(
-        built.env.get("npm_package_json").map(String::as_str),
-        Some("/tmp/y/package.json"),
-    );
+    assert_eq!(built.env.get("npm_package_json").map(String::as_str), Some("/tmp/y/package.json"),);
     assert_eq!(built.env.get("INIT_CWD").map(String::as_str), Some("/tmp/projects/y"));
     assert_eq!(built.env.get("PNPM_SCRIPT_SRC_DIR").map(String::as_str), Some("/tmp/y"));
 }
@@ -154,10 +153,7 @@ fn make_env_tmpdir_gating_mirrors_unsafe_perm() {
     opts.unsafe_perm = false;
     let built = build_env(&opts, &json!({"name":"z","version":"0"}), HashMap::new());
     assert_eq!(built.tmpdir.as_deref(), Some(Path::new("/tmp/z/node_modules/.tmp")));
-    assert_eq!(
-        built.env.get("TMPDIR").map(String::as_str),
-        Some("/tmp/z/node_modules/.tmp"),
-    );
+    assert_eq!(built.env.get("TMPDIR").map(String::as_str), Some("/tmp/z/node_modules/.tmp"),);
 }
 
 /// `extra_env` is applied AFTER the lifecycle-area writes, so it can
@@ -217,10 +213,7 @@ fn stamp_package_recurses_into_kept_buckets() {
         "recursion must keep going beneath config/* — only the top-level filter restricts",
     );
     assert_eq!(env.get("npm_package_engines_node").map(String::as_str), Some(">=18"));
-    assert_eq!(
-        env.get("npm_package_bin_foo").map(String::as_str),
-        Some("./bin/foo.js"),
-    );
+    assert_eq!(env.get("npm_package_bin_foo").map(String::as_str), Some("./bin/foo.js"),);
 }
 
 /// Array indices become numeric keys (`bin[0]`, `bin[1]`, …) — JS
@@ -229,11 +222,7 @@ fn stamp_package_recurses_into_kept_buckets() {
 #[test]
 fn stamp_package_handles_arrays() {
     let mut env = HashMap::new();
-    stamp_package(
-        &mut env,
-        "npm_package_",
-        &json!({"name":"a","bin":["./a","./b"]}),
-    );
+    stamp_package(&mut env, "npm_package_", &json!({"name":"a","bin":["./a","./b"]}));
     assert_eq!(env.get("npm_package_bin_0").map(String::as_str), Some("./a"));
     assert_eq!(env.get("npm_package_bin_1").map(String::as_str), Some("./b"));
 }
