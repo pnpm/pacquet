@@ -11,7 +11,7 @@
 //! cross-reference (or a pnpm-side change we need to match) stays
 //! cheap.
 
-use crate::{CafsFileInfo, PackageFilesIndex, StoreDir};
+use crate::{CafsFileInfo, PackageFilesIndex, SideEffectsDiff, StoreDir};
 use dashmap::DashSet;
 use sha2::{Digest, Sha512};
 use std::{
@@ -60,10 +60,21 @@ pub type FilesMap = HashMap<String, PathBuf>;
 /// path` map; it may be partial or empty when a digest in the index
 /// row couldn't be reconstructed into a CAFS path, so callers should
 /// gate reuse on `passed` rather than on the map's size.
+///
+/// `side_effects_maps` is the optional cache-key → overlaid-FilesMap
+/// table from a populated side-effects cache (typically seeded by
+/// pnpm). Each value is the post-build files map for one cache key:
+/// the base `files_map` with the entry's `added` overlay applied on
+/// top of it and `deleted` entries dropped. Mirrors
+/// [`PackageFilesResponse.sideEffectsMaps`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/store/create-cafs-store/src/index.ts#L83-L100)
+/// — the importer looks up the entry by [`pacquet_graph_hasher::engine_name`]
+/// (or its full `engine;deps=…;patch=…` extension) to decide whether
+/// the package is already built.
 #[derive(Debug)]
 pub struct VerifyResult {
     pub passed: bool,
     pub files_map: FilesMap,
+    pub side_effects_maps: Option<HashMap<String, FilesMap>>,
 }
 
 /// Fast path used when `verify-store-integrity` is `false`.
@@ -74,13 +85,14 @@ pub struct VerifyResult {
 /// corrupt CAFS file surfaces lazily at import time (pnpm's `linkOrCopy`
 /// equivalent).
 pub fn build_file_maps_from_index(store_dir: &StoreDir, entry: PackageFilesIndex) -> VerifyResult {
-    let mut files_map = HashMap::with_capacity(entry.files.len());
+    let PackageFilesIndex { files, side_effects, .. } = entry;
+    let mut files_map = HashMap::with_capacity(files.len());
     let mut passed = true;
     // Consume `entry.files` so the owned `String` filenames move into
     // `files_map` without a per-file clone. On a realistic install the
     // previous borrow-then-clone cost one allocation per file on every
     // warm cache hit.
-    for (filename, info) in entry.files {
+    for (filename, info) in files {
         let Some(path) = store_dir.cas_file_path_by_mode(&info.digest, info.mode) else {
             // A malformed digest (non-hex / too short) makes this entry
             // unreconstructable. pnpm's `getFilePathByModeInCafs` doesn't
@@ -103,7 +115,8 @@ pub fn build_file_maps_from_index(store_dir: &StoreDir, entry: PackageFilesIndex
         };
         files_map.insert(filename, path);
     }
-    VerifyResult { passed, files_map }
+    let side_effects_maps = build_side_effects_maps(store_dir, side_effects, &files_map);
+    VerifyResult { passed, files_map, side_effects_maps }
 }
 
 /// Careful path used when `verify-store-integrity` is `true` (pnpm's
@@ -134,7 +147,7 @@ pub fn check_pkg_files_integrity(
     // Destructure so the owned `files` HashMap and `algo` String can be
     // consumed below; moving beats the extra per-file `filename.clone()`
     // the old borrow-based signature forced on the hot path.
-    let PackageFilesIndex { files, algo, .. } = entry;
+    let PackageFilesIndex { files, algo, side_effects, .. } = entry;
     let mut all_verified = true;
     let mut files_map = HashMap::with_capacity(files.len());
     // `verified_files_cache` is the install-scoped
@@ -180,7 +193,58 @@ pub fn check_pkg_files_integrity(
         }
         files_map.insert(filename, path);
     }
-    VerifyResult { passed: all_verified, files_map }
+    let side_effects_maps = build_side_effects_maps(store_dir, side_effects, &files_map);
+    VerifyResult { passed: all_verified, files_map, side_effects_maps }
+}
+
+/// Materialize the per-cache-key overlaid `FilesMap`s from a
+/// `PackageFilesIndex.side_effects` entry. Mirrors upstream's
+/// [`applySideEffectsDiffWithMaps`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/store/create-cafs-store/src/index.ts#L103-L121):
+/// the overlay is `added` plus base entries that aren't in `deleted`,
+/// with `added` winning when both name the same filename. The
+/// content of `added` entries is *not* re-verified here — pnpm
+/// doesn't do that either; corruption in the side-effects layer
+/// would surface at import time via `linkOrCopy` failing on a
+/// missing CAS blob.
+///
+/// Returns `None` when the entry has no `side_effects` field (the
+/// common case for pacquet-written rows today) so callers can
+/// trivially distinguish "no cache configured" from "cache configured
+/// but empty".
+fn build_side_effects_maps(
+    store_dir: &StoreDir,
+    side_effects: Option<HashMap<String, SideEffectsDiff>>,
+    base_files: &FilesMap,
+) -> Option<HashMap<String, FilesMap>> {
+    let raw = side_effects?;
+    let mut out: HashMap<String, FilesMap> = HashMap::with_capacity(raw.len());
+    for (cache_key, diff) in raw {
+        let SideEffectsDiff { added, deleted } = diff;
+        let mut overlay: FilesMap = HashMap::with_capacity(base_files.len());
+        if let Some(added) = added {
+            for (filename, info) in added {
+                let Some(path) = store_dir.cas_file_path_by_mode(&info.digest, info.mode) else {
+                    tracing::debug!(
+                        target: "pacquet::store_index",
+                        ?filename,
+                        digest = %info.digest,
+                        cache_key,
+                        "malformed CAFS digest in side-effects `added` overlay; skipping",
+                    );
+                    continue;
+                };
+                overlay.insert(filename, path);
+            }
+        }
+        let deleted_set = deleted.unwrap_or_default();
+        for (filename, path) in base_files {
+            if !deleted_set.iter().any(|d| d == filename) && !overlay.contains_key(filename) {
+                overlay.insert(filename.clone(), path.clone());
+            }
+        }
+        out.insert(cache_key, overlay);
+    }
+    Some(out)
 }
 
 /// Port of pnpm's `verifyFile`. `true` when the on-disk file is either
