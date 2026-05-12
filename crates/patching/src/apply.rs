@@ -146,7 +146,7 @@ fn apply_one_file(
                 matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_))
             })
         {
-            return Err(failed(format!("patch path escapes target dir: {}", rel.display(),)));
+            return Err(failed(format!("patch path escapes target dir: {}", rel.display())));
         }
         Ok(patched_dir.join(rel))
     };
