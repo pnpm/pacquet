@@ -56,7 +56,7 @@ pub struct UnusedPatches {
 ///
 /// - `allow_unused_patches == true` → returns
 ///   `Ok(Some(UnusedPatches))` so the caller can log a warning via
-///   [`pacquet_diagnostics`].
+///   `pacquet-diagnostics`.
 /// - `allow_unused_patches == false` → returns `Err(...)`.
 pub fn verify_patches(
     patched_dependencies: &PatchGroupRecord,

@@ -37,7 +37,7 @@ fn no_unused_patches_returns_ok_none() {
 }
 
 /// `allow_unused_patches: true` surfaces the list to the caller so
-/// the caller can warn via [`pacquet_diagnostics`]. Mirrors upstream's
+/// the caller can warn via `pacquet-diagnostics`. Mirrors upstream's
 /// [`globalWarn` branch](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/patching/config/src/verifyPatches.ts#L26-L28).
 #[test]
 fn unused_patches_with_allow_returns_warning_payload() {
