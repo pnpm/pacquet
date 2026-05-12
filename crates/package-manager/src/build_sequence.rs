@@ -105,6 +105,13 @@ fn build_children_map(
                 }
             }
         }
+        // Sort for the same reason `collect_root_dep_paths` sorts
+        // its output: `get_subgraph_to_build` walks children in
+        // sequence, and a shared transitive descendant gets trimmed
+        // off whichever sibling visits it second. Both the entry
+        // nodes and every child list must be in a deterministic
+        // order for the build sequence to be reproducible.
+        child_keys.sort_by_key(|k| k.to_string());
         children.insert(key.clone(), child_keys);
     }
     children
