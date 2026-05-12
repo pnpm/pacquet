@@ -50,6 +50,7 @@ pub struct WorkspaceSettings {
     pub strict_peer_dependencies: Option<bool>,
     pub resolve_peers_from_workspace_root: Option<bool>,
     pub verify_store_integrity: Option<bool>,
+    pub side_effects_cache: Option<bool>,
     pub fetch_retries: Option<u32>,
     pub fetch_retry_factor: Option<u32>,
     pub fetch_retry_mintimeout: Option<u64>,
@@ -141,8 +142,8 @@ impl WorkspaceSettings {
             lockfile, prefer_frozen_lockfile, lockfile_include_tarball_url,
             auto_install_peers, dedupe_peer_dependents, strict_peer_dependencies,
             resolve_peers_from_workspace_root, verify_store_integrity,
-            fetch_retries, fetch_retry_factor, fetch_retry_mintimeout,
-            fetch_retry_maxtimeout,
+            side_effects_cache, fetch_retries, fetch_retry_factor,
+            fetch_retry_mintimeout, fetch_retry_maxtimeout,
         }
 
         if let Some(v) = self.modules_dir {

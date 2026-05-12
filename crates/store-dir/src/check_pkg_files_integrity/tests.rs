@@ -413,6 +413,46 @@ fn side_effects_overlay_added_shadows_base_on_collision() {
     );
 }
 
+/// A malformed digest inside an `added` overlay drops the **whole**
+/// cache_key entry — not just the single bad file. Mismatched
+/// overlays would otherwise turn a future `is_built = true` decision
+/// into a silent corruption (build skipped, required artifact
+/// missing). Other cache_key entries on the same package survive.
+#[test]
+fn side_effects_overlay_malformed_added_digest_drops_cache_key_entry() {
+    let tmp = tempdir().unwrap();
+    let store_dir = StoreDir::new(tmp.path());
+    let base_digest = sha512_hex(b"base");
+    let good_digest = sha512_hex(b"good-added");
+
+    let mut k_bad_added = HashMap::new();
+    // One good file alongside one bad one — the whole entry should
+    // still drop, not just the bad file.
+    k_bad_added.insert("good.js".to_string(), info(&good_digest, 4, 0o644, None));
+    k_bad_added.insert("bad.js".to_string(), info("not-hex", 4, 0o644, None));
+
+    let mut k_good_added = HashMap::new();
+    k_good_added.insert("ok.js".to_string(), info(&good_digest, 4, 0o644, None));
+
+    let mut side_effects = HashMap::new();
+    side_effects
+        .insert("k-bad".to_string(), SideEffectsDiff { added: Some(k_bad_added), deleted: None });
+    side_effects
+        .insert("k-good".to_string(), SideEffectsDiff { added: Some(k_good_added), deleted: None });
+
+    let entry = PackageFilesIndex {
+        manifest: None,
+        requires_build: None,
+        algo: "sha512".into(),
+        files: HashMap::from([("base.js".to_string(), info(&base_digest, 4, 0o644, None))]),
+        side_effects: Some(side_effects),
+    };
+    let result = build_file_maps_from_index(&store_dir, entry);
+    let maps = result.side_effects_maps.expect("populated");
+    assert!(!maps.contains_key("k-bad"), "k-bad must drop entirely on malformed digest");
+    assert!(maps.contains_key("k-good"), "k-good must survive: {maps:?}");
+}
+
 /// Multiple cache keys produce independent overlays. One entry's
 /// `added` doesn't bleed into another's.
 #[test]

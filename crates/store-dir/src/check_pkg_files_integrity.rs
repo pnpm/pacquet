@@ -219,20 +219,28 @@ fn build_side_effects_maps(
 ) -> Option<HashMap<String, FilesMap>> {
     let raw = side_effects?;
     let mut out: HashMap<String, FilesMap> = HashMap::with_capacity(raw.len());
-    for (cache_key, diff) in raw {
+    'next_key: for (cache_key, diff) in raw {
         let SideEffectsDiff { added, deleted } = diff;
         let mut overlay: FilesMap = HashMap::with_capacity(base_files.len());
         if let Some(added) = added {
             for (filename, info) in added {
                 let Some(path) = store_dir.cas_file_path_by_mode(&info.digest, info.mode) else {
+                    // Skip the entire `cache_key` entry rather than
+                    // returning a partial overlay. A future importer
+                    // that flips `is_built = true` on overlay
+                    // presence would otherwise turn a malformed
+                    // digest into a silent corruption: build skipped
+                    // but a required artifact missing from disk.
+                    // Dropping the whole entry sends the package back
+                    // through the rebuild path, which is safe.
                     tracing::debug!(
                         target: "pacquet::store_index",
                         ?filename,
                         digest = %info.digest,
                         cache_key,
-                        "malformed CAFS digest in side-effects `added` overlay; skipping",
+                        "malformed CAFS digest in side-effects `added` overlay; dropping this cache_key entry entirely so the importer falls back to rebuild",
                     );
-                    continue;
+                    continue 'next_key;
                 };
                 overlay.insert(filename, path);
             }
