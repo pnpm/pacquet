@@ -14,6 +14,7 @@ repository  = "https://github.com/pnpm/pacquet"
 [workspace.dependencies]
 # Crates
 pacquet-cli              = { path = "crates/cli" }
+pacquet-cmd-shim         = { path = "crates/cmd-shim" }
 pacquet-fs               = { path = "crates/fs" }
 pacquet-registry         = { path = "crates/registry" }
 pacquet-tarball          = { path = "crates/tarball" }

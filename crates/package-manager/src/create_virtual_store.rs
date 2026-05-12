@@ -4,16 +4,35 @@ use crate::{
 use derive_more::{Display, Error};
 use futures_util::future;
 use miette::Diagnostic;
-use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
+use pacquet_lockfile::{
+    LockfileResolution, PackageKey, PackageMetadata, PkgNameVerPeer, SnapshotEntry,
+};
 use pacquet_network::ThrottledClient;
 use pacquet_npmrc::Npmrc;
 use pacquet_reporter::{
     LogEvent, LogLevel, ProgressLog, ProgressMessage, Reporter, StatsLog, StatsMessage,
 };
 use pacquet_store_dir::{SharedVerifiedFilesCache, StoreIndex, StoreIndexWriter, store_index_key};
-use pacquet_tarball::prefetch_cas_paths;
+use pacquet_tarball::{PrefetchResult, prefetch_cas_paths};
 use pipe_trait::Pipe;
 use std::{collections::HashMap, sync::atomic::AtomicU8};
+
+/// Bundled package manifests recovered from the SQLite store index
+/// during [`CreateVirtualStore::run`], keyed by the same
+/// `PkgNameVerPeer` (without peer suffix) that
+/// [`pacquet_lockfile::Lockfile::packages`] uses. Consumed by the
+/// bin-linker so it doesn't have to re-read `package.json` per child
+/// during [`crate::LinkVirtualStoreBins::run`].
+///
+/// Only covers the warm-batch packages (those whose tarball was
+/// already in the CAFS at install start). Cold-batch packages — ones
+/// pacquet had to download — are absent and the bin linker falls
+/// back to disk reads for them. That matches pnpm's behaviour for
+/// installs that mix warm and cold packages: pnpm's bin linker
+/// reads from `pkgFilesIndex.manifest` for warm fetches and from
+/// `dep.fetching()?.bundledManifest` for cold ones, but the cold
+/// path's `bundledManifest` isn't plumbed through pacquet yet.
+pub type PackageManifests = HashMap<PkgNameVerPeer, std::sync::Arc<serde_json::Value>>;
 
 /// This subroutine generates filesystem layout for the virtual store at `node_modules/.pacquet`.
 #[must_use]
@@ -49,8 +68,11 @@ pub enum CreateVirtualStoreError {
 }
 
 impl<'a> CreateVirtualStore<'a> {
-    /// Execute the subroutine.
-    pub async fn run<R: Reporter>(self) -> Result<(), CreateVirtualStoreError> {
+    /// Execute the subroutine. Returns the set of bundled manifests
+    /// recovered from `index.db` for the warm-batch slots — the
+    /// bin linker uses these to avoid re-reading `package.json` per
+    /// child. See [`PackageManifests`].
+    pub async fn run<R: Reporter>(self) -> Result<PackageManifests, CreateVirtualStoreError> {
         let CreateVirtualStore {
             http_client,
             config,
@@ -64,7 +86,7 @@ impl<'a> CreateVirtualStore<'a> {
             // No snapshots to install. If the lockfile also has no project deps
             // this is a valid no-op; if it does, pnpm would have populated
             // `snapshots`, so bailing out here is safe enough for v9.
-            return Ok(());
+            return Ok(PackageManifests::new());
         };
         let packages = packages.ok_or(CreateVirtualStoreError::MissingPackagesSection)?;
 
@@ -224,14 +246,15 @@ impl<'a> CreateVirtualStore<'a> {
         cache_key_refs.sort_unstable();
         cache_key_refs.dedup();
         let cache_keys: Vec<String> = cache_key_refs.into_iter().map(String::from).collect();
-        let prefetched = prefetch_cas_paths(
-            store_index.clone(),
-            store_dir,
-            cache_keys,
-            config.verify_store_integrity,
-            SharedVerifiedFilesCache::clone(&verified_files_cache),
-        )
-        .await;
+        let PrefetchResult { cas_paths: prefetched, manifests: prefetched_manifests } =
+            prefetch_cas_paths(
+                store_index.clone(),
+                store_dir,
+                cache_keys,
+                config.verify_store_integrity,
+                SharedVerifiedFilesCache::clone(&verified_files_cache),
+            )
+            .await;
 
         // Partition snapshots by whether the prefetch covered them. The
         // warm batch — every snapshot whose tarball is already in the
@@ -266,7 +289,25 @@ impl<'a> CreateVirtualStore<'a> {
         // local alias drifting (Copilot review on #292).
         let mut warm = Vec::with_capacity(snapshot_entries.len());
         let mut cold: Vec<(&PackageKey, &SnapshotEntry)> = Vec::new();
+        // Build a `metadata_key -> manifest` lookup from the prefetched
+        // index rows. Snapshot keys differ across peer-resolved
+        // variants of the same package (`react-dom@17.0.2(react@...)`),
+        // but the bundled manifest is identical across variants
+        // because every variant resolves to the same tarball. Keying
+        // by [`PkgNameVerPeer::without_peer`] collapses the variants
+        // to one entry: same shape as
+        // [`pacquet_lockfile::Lockfile::packages`], which is what the
+        // bin linker already looks up by.
+        let mut package_manifests: PackageManifests =
+            HashMap::with_capacity(prefetched_manifests.len());
         for (snapshot_key, snapshot, cache_key) in &snapshot_entries {
+            if let Some(cache_key) = cache_key.as_deref()
+                && let Some(manifest) = prefetched_manifests.get(cache_key)
+            {
+                package_manifests
+                    .entry(snapshot_key.without_peer())
+                    .or_insert_with(|| std::sync::Arc::clone(manifest));
+            }
             match cache_key.as_deref().and_then(|k| prefetched.get(k)) {
                 Some(cas_paths) => warm.push((snapshot_key, snapshot, cas_paths)),
                 None => cold.push((snapshot_key, snapshot)),
@@ -376,7 +417,7 @@ impl<'a> CreateVirtualStore<'a> {
             ),
         }
 
-        Ok(())
+        Ok(package_manifests)
     }
 }
 

@@ -20,6 +20,7 @@ use pacquet_store_dir::{
     StoreIndexError, StoreIndexWriter, WriteCasFileError, store_index_key,
 };
 use pipe_trait::Pipe;
+use rayon::prelude::*;
 use smart_default::SmartDefault;
 use ssri::Integrity;
 use tar::Archive;
@@ -294,6 +295,101 @@ fn decompress_gzip(gz_data: &[u8], unpacked_size: Option<usize>) -> Result<Vec<u
         .map_err(TarballError::DecodeGzip)
 }
 
+/// Mirror of pnpm's `normalizeBundledManifest` at
+/// <https://github.com/pnpm/pnpm/blob/4750fd370c/store/cafs/src/normalizeBundledManifest.ts>:
+/// pick the subset of `package.json` fields that downstream code
+/// (bin linking, dependency resolution, build-script detection)
+/// actually reads, and discard the rest. Two reasons for the
+/// subset: (1) `index.db` row size on disk — a full manifest can be
+/// tens of KB; (2) msgpackr-records slot pressure on the encoder
+/// (record slots top out at `0x7f`, see [`pacquet_store_dir::EncodeError::OutOfRecordSlots`]).
+///
+/// `scripts` is further narrowed to just the three lifecycle hooks
+/// pnpm actually executes — `preinstall`, `install`, `postinstall`.
+/// Other script keys (test, build, lint, etc.) are dev ergonomics
+/// that the installer never invokes.
+///
+/// Returns `None` when nothing survives the pick. In practice this
+/// only happens for inputs that aren't a JSON object at all (the
+/// type guard at the top of the function), or for objects whose
+/// every field is either absent or `null`. A real `package.json`
+/// from an npm tarball always carries at least `name` and `version`
+/// (both kept by the pick), so the typical npm-published manifest
+/// surfaces as `Some(...)`. Matches upstream's
+/// `if (!result && !scripts) return undefined` shape: empty inputs
+/// degrade to `None` rather than a `Some(Object({}))` that would
+/// round-trip as a zero-field record def.
+fn normalize_bundled_manifest(value: &serde_json::Value) -> Option<serde_json::Value> {
+    /// Fields kept verbatim from the source manifest.
+    ///
+    /// Order matters for the on-wire byte sequence — msgpackr emits
+    /// fields in JS object insertion order, and pacquet's encoder
+    /// follows the [`serde_json::Map`] iteration order — but it
+    /// does *not* matter for property-access correctness on the
+    /// pnpm side. The order below mirrors pnpm's
+    /// `BUNDLED_MANIFEST_FIELDS` array so a side-by-side byte diff
+    /// against a pnpm-written row is shallower.
+    const BUNDLED_MANIFEST_FIELDS: &[&str] = &[
+        "bin",
+        "bundledDependencies",
+        "bundleDependencies",
+        "cpu",
+        "dependencies",
+        "devDependencies",
+        "directories",
+        "engines",
+        "libc",
+        "name",
+        "optionalDependencies",
+        "os",
+        "peerDependencies",
+        "peerDependenciesMeta",
+    ];
+    const LIFECYCLE_SCRIPTS: &[&str] = &["preinstall", "install", "postinstall"];
+
+    let serde_json::Value::Object(map) = value else { return None };
+    let mut picked = serde_json::Map::new();
+
+    // pnpm emits `version` first regardless of whether it was first
+    // in the source object. Keep the same ordering so a byte diff
+    // against a pnpm-written row stays minimal. Version normalization
+    // via `semver.clean(...)` (pnpm only loose-cleans for the bundled
+    // row, not for resolution) is intentionally skipped: the inputs
+    // from a real npm tarball are already semver-clean in practice,
+    // and pulling `node-semver` into `pacquet-tarball` purely for
+    // this normalization would carry more risk than the deviation it
+    // closes.
+    if let Some(v) = map.get("version")
+        && !v.is_null()
+    {
+        picked.insert("version".to_string(), v.clone());
+    }
+
+    for &key in BUNDLED_MANIFEST_FIELDS {
+        if let Some(v) = map.get(key)
+            && !v.is_null()
+        {
+            picked.insert(key.to_string(), v.clone());
+        }
+    }
+
+    if let Some(serde_json::Value::Object(scripts)) = map.get("scripts") {
+        let mut sub = serde_json::Map::new();
+        for &key in LIFECYCLE_SCRIPTS {
+            if let Some(s) = scripts.get(key)
+                && !s.is_null()
+            {
+                sub.insert(key.to_string(), s.clone());
+            }
+        }
+        if !sub.is_empty() {
+            picked.insert("scripts".to_string(), serde_json::Value::Object(sub));
+        }
+    }
+
+    if picked.is_empty() { None } else { Some(serde_json::Value::Object(picked)) }
+}
+
 /// Walk a decompressed tar archive, writing each regular-file entry
 /// into the CAFS and returning the `{in-tarball path → CAFS path}` map
 /// plus the per-tarball [`PackageFilesIndex`] row to hand off to the
@@ -411,6 +507,44 @@ fn extract_tarball_entries(
             tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
         }
 
+        // Capture the parsed manifest whenever we see `package.json`.
+        // Mirrors pnpm's `bundledManifest` pass-through at
+        // [pnpm/pnpm@4750fd370c]: pnpm stuffs the narrowed manifest
+        // into `pkgFilesIndex.manifest` so install-side consumers
+        // (notably `linkBinsOfDependencies`) can avoid re-reading
+        // the file from disk. The [`normalize_bundled_manifest`]
+        // pick drops fields downstream code doesn't use, keeping
+        // `index.db` rows tight.
+        //
+        // **Last-entry wins.** Pnpm's [`addFilesFromTarball`] always
+        // overwrites `manifestBuffer = fileBuffer` per `package.json`
+        // entry (no `if (manifestBuffer === undefined)` guard), so
+        // when a tarball contains duplicate `package.json` entries
+        // the final one is canonical — same shape as
+        // `filesIndex.set(...)` which already overwrites duplicates.
+        // Real npm tarballs never publish multiple `package.json`
+        // entries, but the consistency with the `files` map is what
+        // matters: `manifest` and `files` must describe the same
+        // file. Failed JSON parses degrade the field to `None` (the
+        // manifest is best-effort; a corrupt `package.json` is the
+        // publisher's fault and downstream code can fall back to
+        // disk reads).
+        //
+        // [pnpm/pnpm@4750fd370c]: https://github.com/pnpm/pnpm/blob/4750fd370c/worker/src/start.ts#L218
+        // [`addFilesFromTarball`]: https://github.com/pnpm/pnpm/blob/4750fd370c/store/cafs/src/addFilesFromTarball.ts#L41-L43
+        if cleaned_entry_path == "package.json" {
+            match serde_json::from_slice::<serde_json::Value>(&buffer) {
+                Ok(parsed) => pkg_files_idx.manifest = normalize_bundled_manifest(&parsed),
+                Err(error) => {
+                    tracing::debug!(
+                        ?error,
+                        "package.json in tarball failed to parse as JSON; bundled manifest cleared",
+                    );
+                    pkg_files_idx.manifest = None;
+                }
+            }
+        }
+
         // `as_millis()` returns `u128`; narrow to `u64` to match the
         // store index schema — see `CafsFileInfo::checked_at` for why
         // `u64` is used. Using `u64::try_from` rather than `as u64`
@@ -470,6 +604,35 @@ fn extract_tarball_entries(
 /// as a hot-path cost).
 pub type PrefetchedCasPaths = HashMap<String, Arc<HashMap<String, PathBuf>>>;
 
+/// Bundled package manifests recovered from the SQLite store index,
+/// keyed by the same `<integrity>\t<pkg_id>` string [`PrefetchedCasPaths`]
+/// uses. Mirrors pnpm's `bundledManifest` cache in
+/// [`worker/src/start.ts`](https://github.com/pnpm/pnpm/blob/4750fd370c/worker/src/start.ts#L144):
+/// pnpm reads the parsed manifest out of `pkgFilesIndex.manifest` so
+/// `linkBinsOfDependencies` doesn't have to re-read `package.json`
+/// from disk per child. Each value is `Arc`-wrapped so multiple
+/// bin-link consumers can hold the same parsed manifest without
+/// deep-cloning.
+///
+/// Only keys whose row carried a manifest blob appear in the map —
+/// a missing key means either "row exists but has no manifest" (old
+/// pacquet write, or a tarball whose `package.json` failed to
+/// parse) or "package wasn't prefetched at all". Callers that need
+/// to tell those apart cross-reference with [`PrefetchedCasPaths`]
+/// from the same [`PrefetchResult`].
+pub type PrefetchedManifests = HashMap<String, Arc<serde_json::Value>>;
+
+/// Output of [`prefetch_cas_paths`]: the warm-cache filesystem map
+/// plus any bundled manifests recovered from the same `index.db`
+/// rows. Bundled in a single struct so callers can destructure both
+/// after one `await`, rather than the function having to thread two
+/// separate spawn_blocking round-trips through.
+#[derive(Default)]
+pub struct PrefetchResult {
+    pub cas_paths: PrefetchedCasPaths,
+    pub manifests: PrefetchedManifests,
+}
+
 /// Batch the entire warm-cache lookup phase into one `spawn_blocking`
 /// task at install start: collect every row the lockfile is going to
 /// ask about under a single `index.lock()` round-trip, drop the lock,
@@ -505,55 +668,100 @@ pub async fn prefetch_cas_paths(
     cache_keys: Vec<String>,
     verify_store_integrity: bool,
     verified_files_cache: SharedVerifiedFilesCache,
-) -> PrefetchedCasPaths {
-    let Some(index) = index else { return HashMap::new() };
+) -> PrefetchResult {
+    let Some(index) = index else { return PrefetchResult::default() };
     if cache_keys.is_empty() {
-        return HashMap::new();
+        return PrefetchResult::default();
     }
-    let result = tokio::task::spawn_blocking(move || -> PrefetchedCasPaths {
-        // Phase 1: read every row under the mutex; drop the guard
-        // before running any filesystem work. One batched
-        // `SELECT ... WHERE key IN (?, ?, ...)` per `GET_MANY_CHUNK`
-        // (see `StoreIndex::get_many`) collapses what used to be N
-        // round-trips into one — see #294 for the cold-cache regression
-        // the per-key loop introduced when every key missed.
-        let entries: HashMap<String, PackageFilesIndex> = {
+    let result = tokio::task::spawn_blocking(move || -> PrefetchResult {
+        // Phase 1: read every row's *raw bytes* under the mutex.
+        // Splitting raw-read from decode means the
+        // `SharedReadonlyStoreIndex` lock is held only for the
+        // SELECT loop, not for the per-row msgpackr decode — which
+        // is the dominant CPU cost once rows carry a `manifest`
+        // field (transcode + `rmp_serde::from_slice` of a nested
+        // JSON tree per row, times ~1k rows on a real lockfile).
+        // Doing the decode after the guard drops lets it fan out
+        // across rayon below.
+        //
+        // One batched `SELECT ... WHERE key IN (?, ?, ...)` per
+        // `GET_MANY_CHUNK` (see `StoreIndex::get_many_raw`)
+        // collapses what used to be N round-trips into one — see
+        // #294 for the cold-cache regression the per-key loop
+        // introduced when every key missed.
+        let raw: Vec<(String, Vec<u8>)> = {
             let Ok(guard) = index.lock() else {
                 tracing::debug!(
                     target: "pacquet::download",
                     "store-index mutex poisoned at prefetch start; falling back to per-snapshot lookups",
                 );
-                return HashMap::new();
+                return PrefetchResult::default();
             };
-            match guard.get_many(&cache_keys) {
-                Ok(map) => map,
+            match guard.get_many_raw(&cache_keys) {
+                Ok(rows) => rows,
                 Err(error) => {
                     tracing::debug!(
                         target: "pacquet::download",
                         ?error,
                         "store-index batched read failed at prefetch start; falling back to per-snapshot lookups",
                     );
-                    return HashMap::new();
+                    return PrefetchResult::default();
                 }
             }
         };
-        // Phase 2: integrity-check each entry without holding the lock.
-        let mut out = HashMap::with_capacity(entries.len());
-        for (cache_key, entry) in entries {
-            let verify_result = if verify_store_integrity {
-                pacquet_store_dir::check_pkg_files_integrity(
-                    store_dir,
-                    entry,
-                    &verified_files_cache,
-                )
-            } else {
-                pacquet_store_dir::build_file_maps_from_index(store_dir, entry)
-            };
+        // Phase 2: decode each row's msgpackr-records bytes into a
+        // `PackageFilesIndex`, then run the integrity check. Both
+        // steps are per-row CPU work with no shared state, so we
+        // fan out across rayon. With manifests included in the
+        // payload, decoding 1k+ rows serially had become the
+        // dominant chunk of the prefetch wall (single-threaded
+        // `spawn_blocking`); the par-iter recovers the per-row
+        // parallelism the warm-batch link phase already uses.
+        //
+        // The bundled manifest is split off the decoded entry via
+        // `Option::take` so it travels back to the caller without
+        // an intermediate `Value::clone` of the JSON tree — the
+        // verify function only inspects `files`, never `manifest`.
+        let decoded: Vec<(String, Option<Arc<serde_json::Value>>, pacquet_store_dir::VerifyResult)> = raw
+            .into_par_iter()
+            .filter_map(|(cache_key, bytes)| {
+                let mut entry: PackageFilesIndex = match pacquet_store_dir::decode_package_files_index(&bytes) {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        tracing::debug!(
+                            target: "pacquet::download",
+                            ?cache_key,
+                            ?error,
+                            "skipping undecodable package_index row at prefetch",
+                        );
+                        return None;
+                    }
+                };
+                let manifest = entry.manifest.take().map(Arc::new);
+                let verify_result = if verify_store_integrity {
+                    pacquet_store_dir::check_pkg_files_integrity(
+                        store_dir,
+                        entry,
+                        &verified_files_cache,
+                    )
+                } else {
+                    pacquet_store_dir::build_file_maps_from_index(store_dir, entry)
+                };
+                Some((cache_key, manifest, verify_result))
+            })
+            .collect();
+
+        let mut cas_paths = HashMap::with_capacity(decoded.len());
+        let mut manifests = HashMap::new();
+        for (cache_key, manifest, verify_result) in decoded {
             if verify_result.passed {
-                out.insert(cache_key, Arc::new(verify_result.files_map));
+                if let Some(manifest) = manifest {
+                    manifests.insert(cache_key.clone(), manifest);
+                }
+                cas_paths.insert(cache_key, Arc::new(verify_result.files_map));
             }
         }
-        out
+        PrefetchResult { cas_paths, manifests }
     })
     .await;
     result.unwrap_or_else(|error| {
@@ -562,7 +770,7 @@ pub async fn prefetch_cas_paths(
             ?error,
             "store-index prefetch task failed; falling back to per-snapshot lookups",
         );
-        HashMap::new()
+        PrefetchResult::default()
     })
 }
 

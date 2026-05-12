@@ -357,7 +357,39 @@ impl StoreIndex {
         &self,
         keys: &[String],
     ) -> Result<HashMap<String, PackageFilesIndex>, StoreIndexError> {
-        let mut out = HashMap::with_capacity(keys.len());
+        let raw = self.get_many_raw(keys)?;
+        let mut out = HashMap::with_capacity(raw.len());
+        for (key, bytes) in raw {
+            match decode_index_value(&bytes) {
+                Ok(entry) => {
+                    out.insert(key, entry);
+                }
+                Err(error) => tracing::debug!(
+                    target: "pacquet::store_index",
+                    ?key,
+                    ?error,
+                    "skipping undecodable package_index row in get_many",
+                ),
+            }
+        }
+        Ok(out)
+    }
+
+    /// Batched read that returns the **undecoded** value bytes for each
+    /// hit. Callers run `decode_index_value` themselves — either inline
+    /// (matching the old [`Self::get_many`] shape) or, more usefully,
+    /// in parallel across a rayon pool after releasing the
+    /// [`SharedReadonlyStoreIndex`] mutex.
+    ///
+    /// The decode is the dominant CPU cost of [`Self::get_many`] for
+    /// rows that carry a `manifest` field — msgpackr-records transcode
+    /// plus a `rmp_serde::from_slice` of a nested JSON tree per row,
+    /// times ~1k rows on a real lockfile. Doing that work under the
+    /// `SharedReadonlyStoreIndex` lock serialises N installs back to
+    /// one thread; doing it after the lock releases lets each prefetch
+    /// fan out across the rayon pool.
+    pub fn get_many_raw(&self, keys: &[String]) -> Result<Vec<(String, Vec<u8>)>, StoreIndexError> {
+        let mut out = Vec::with_capacity(keys.len());
         if keys.is_empty() {
             return Ok(out);
         }
@@ -381,18 +413,8 @@ impl StoreIndex {
                 .query_map(params, |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)))
                 .map_err(|source| StoreIndexError::Read { source })?;
             for row in rows {
-                let (key, bytes) = row.map_err(|source| StoreIndexError::Read { source })?;
-                match decode_index_value(&bytes) {
-                    Ok(entry) => {
-                        out.insert(key, entry);
-                    }
-                    Err(error) => tracing::debug!(
-                        target: "pacquet::store_index",
-                        ?key,
-                        ?error,
-                        "skipping undecodable package_index row in get_many",
-                    ),
-                }
+                let row = row.map_err(|source| StoreIndexError::Read { source })?;
+                out.push(row);
             }
         }
         Ok(out)
@@ -506,6 +528,16 @@ impl StoreIndex {
         }
         Ok(out)
     }
+}
+
+/// Decode one `package_index.data` blob into a [`PackageFilesIndex`].
+/// Exposed publicly so callers reading raw rows via
+/// [`StoreIndex::get_many_raw`] can run the decode outside the
+/// store-index mutex (typically across a rayon pool — the decode
+/// is the dominant CPU cost for rows that carry a `manifest`
+/// field).
+pub fn decode_package_files_index(bytes: &[u8]) -> Result<PackageFilesIndex, StoreIndexError> {
+    decode_index_value(bytes)
 }
 
 fn decode_index_value(bytes: &[u8]) -> Result<PackageFilesIndex, StoreIndexError> {

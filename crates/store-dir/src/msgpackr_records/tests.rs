@@ -594,19 +594,137 @@ fn allocate_slot_returns_error_past_0x7f() {
     assert!(matches!(err, EncodeError::OutOfRecordSlots { max: 63 }), "got {err:?}");
 }
 
+/// A `manifest: Some(_)` must round-trip through encode →
+/// transcode → `rmp_serde::from_slice` unchanged. This is the basic
+/// "the encoder doesn't drop or mangle JSON values" smoke test.
 #[test]
-fn encode_rejects_manifest_some() {
-    // pacquet doesn't populate `manifest` today; encoding a
-    // `Some` value is unimplemented. Fail loudly rather than
-    // silently dropping it — if/when the field starts carrying
-    // real data, this test trips and we implement the path.
-    let idx = PackageFilesIndex {
-        manifest: Some(serde_json::json!({ "name": "x" })),
+fn encode_roundtrips_simple_manifest() {
+    let manifest = serde_json::json!({
+        "name": "pkg",
+        "version": "1.0.0",
+        "bin": "cli.js",
+    });
+    let original = PackageFilesIndex {
+        manifest: Some(manifest),
         requires_build: None,
         algo: "sha512".to_string(),
         files: HashMap::new(),
         side_effects: None,
     };
-    let err = encode_package_files_index(&idx).unwrap_err();
-    assert!(matches!(err, EncodeError::ManifestNotSupported), "got {err:?}");
+    assert_eq!(roundtrip(&original), original);
+}
+
+/// Nested objects inside the manifest must be **record-encoded**, not
+/// emitted as plain msgpack maps — otherwise msgpackr in
+/// `useRecords: true` mode would decode them as JS `Map` and
+/// `manifest.bin.tsc` (the property access pnpm's bin linker uses
+/// for object-form `bin` fields) would be `undefined`. The encoder
+/// signals this by emitting one `d4 72 <slot>` def per distinct
+/// nested-object shape.
+#[test]
+fn encode_record_encodes_nested_objects_in_manifest() {
+    let manifest = serde_json::json!({
+        "name": "tsc",
+        "version": "5.0.0",
+        "bin": { "tsc": "bin/tsc.js", "tsserver": "bin/tsserver.js" },
+        "directories": { "bin": "bin" },
+    });
+    let idx = PackageFilesIndex {
+        manifest: Some(manifest),
+        requires_build: None,
+        algo: "sha512".to_string(),
+        files: HashMap::new(),
+        side_effects: None,
+    };
+    let bytes = encode_package_files_index(&idx).unwrap();
+
+    // Outer PackageFilesIndex def + nested manifest object def + nested
+    // `bin` object def + nested `directories` object def = 4 defs.
+    let record_defs = bytes.windows(2).filter(|w| *w == [0xd4, RECORD_DEF_EXT_TYPE]).count();
+    assert_eq!(
+        record_defs, 4,
+        "expected 4 record defs (outer + manifest + bin + directories), got bytes {bytes:02x?}",
+    );
+
+    // Round-trip the manifest through the transcoder to verify the
+    // bytes a msgpackr 1.11.8 reader would consume parse cleanly.
+    assert_eq!(roundtrip(&idx), idx);
+}
+
+/// Two nested objects with the **same** key set within the same
+/// manifest must share a slot. Verifies record-reuse — the whole
+/// point of records. Shape here is the *key set*, not just the
+/// arity: `{left-pad}` and `{right-pad}` are different shapes
+/// (different keys), so the test uses two objects that genuinely
+/// share keys.
+#[test]
+fn encode_shares_slot_for_same_shaped_nested_objects() {
+    let manifest = serde_json::json!({
+        "bin": { "cli": "bin/cli.js" },
+        "directories": { "cli": "src" },
+    });
+    let idx = PackageFilesIndex {
+        manifest: Some(manifest),
+        requires_build: None,
+        algo: "sha512".to_string(),
+        files: HashMap::new(),
+        side_effects: None,
+    };
+    let bytes = encode_package_files_index(&idx).unwrap();
+    let record_defs = bytes.windows(2).filter(|w| *w == [0xd4, RECORD_DEF_EXT_TYPE]).count();
+    // Outer + manifest + ONE shape `{ cli }` shared by both nested
+    // maps = 3 defs. If the encoder allocated a new slot per
+    // instance instead of sharing, this would be 4.
+    assert_eq!(
+        record_defs, 3,
+        "expected slot reuse for same-shape objects, got bytes {bytes:02x?}",
+    );
+    assert_eq!(roundtrip(&idx), idx);
+}
+
+/// All JSON value kinds (null, bool, number, string, array, object)
+/// must round-trip. Numbers cover the slot-byte fixint range so the
+/// `0x40..=0x7f` → `uint 8` promotion in [`write_uint`] is exercised
+/// from inside the manifest encoding path too.
+#[test]
+fn encode_roundtrips_all_json_value_kinds() {
+    let manifest = serde_json::json!({
+        "string": "hello",
+        "null": null,
+        "true": true,
+        "false": false,
+        "small_int": 0,
+        "slot_range_int": 0x42,
+        "big_int": 1_000_000_u64,
+        "negative_int": -5,
+        "float": 3.5,
+        "array": ["a", 1, null, true, [1, 2], { "k": "v" }],
+        "empty_array": [],
+        "empty_object": {},
+    });
+    let idx = PackageFilesIndex {
+        manifest: Some(manifest),
+        requires_build: None,
+        algo: "sha512".to_string(),
+        files: HashMap::new(),
+        side_effects: None,
+    };
+    assert_eq!(roundtrip(&idx), idx);
+}
+
+/// Manifest must round-trip alongside `requiresBuild`, `files`, and
+/// `sideEffects` — the encoder has to emit all five fields in the
+/// expected order and the decoder still needs to recover each.
+#[test]
+fn encode_roundtrips_manifest_with_other_fields() {
+    let mut files = HashMap::new();
+    files.insert("package.json".to_string(), sample_cafs(42, false));
+    let original = PackageFilesIndex {
+        manifest: Some(serde_json::json!({ "name": "x", "bin": "cli.js" })),
+        requires_build: Some(true),
+        algo: "sha512".to_string(),
+        files,
+        side_effects: None,
+    };
+    assert_eq!(roundtrip(&original), original);
 }

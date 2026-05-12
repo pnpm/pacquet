@@ -1,6 +1,7 @@
 use crate::{
     AllowBuildPolicy, BuildModules, BuildModulesError, CreateVirtualStore, CreateVirtualStoreError,
-    SymlinkDirectDependencies, SymlinkDirectDependenciesError,
+    LinkVirtualStoreBins, LinkVirtualStoreBinsError, SymlinkDirectDependencies,
+    SymlinkDirectDependenciesError,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
@@ -48,6 +49,9 @@ pub enum InstallFrozenLockfileError {
     SymlinkDirectDependencies(#[error(source)] SymlinkDirectDependenciesError),
 
     #[diagnostic(transparent)]
+    LinkVirtualStoreBins(#[error(source)] LinkVirtualStoreBinsError),
+
+    #[diagnostic(transparent)]
     BuildModules(#[error(source)] BuildModulesError),
 }
 
@@ -70,16 +74,42 @@ where
 
         // TODO: check if the lockfile is out-of-date
 
-        CreateVirtualStore { http_client, config, packages, snapshots, logged_methods, requester }
-            .run::<R>()
-            .await
-            .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
+        let package_manifests = CreateVirtualStore {
+            http_client,
+            config,
+            packages,
+            snapshots,
+            logged_methods,
+            requester,
+        }
+        .run::<R>()
+        .await
+        .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
 
         SymlinkDirectDependencies { config, importers, dependency_groups, requester }
             .run::<R>()
             .map_err(InstallFrozenLockfileError::SymlinkDirectDependencies)?;
 
-        // Mirrors upstream `link.ts:167-170` — `importing_done` fires once
+        // Link the bins of each virtual-store slot's children into the
+        // slot's own `node_modules/.bin`. Pnpm runs this from
+        // `linkBinsOfDependencies` during the headless install. See
+        // <https://github.com/pnpm/pnpm/blob/4750fd370c/building/during-install/src/index.ts#L258-L309>.
+        // Done before `importing_done` so reporters see the import phase
+        // close only after every link (including per-slot bins) is in
+        // place. The manifest map threaded from `CreateVirtualStore`
+        // lets the linker hit `pkgFilesIndex.manifest` directly
+        // (matching pnpm's `bundledManifest`-from-CAFS path) instead
+        // of re-reading every child's `package.json` from disk.
+        LinkVirtualStoreBins {
+            virtual_store_dir: &config.virtual_store_dir,
+            snapshots,
+            packages,
+            package_manifests: &package_manifests,
+        }
+        .run()
+        .map_err(InstallFrozenLockfileError::LinkVirtualStoreBins)?;
+
+        // Mirrors upstream `link.ts:167-170`: `importing_done` fires once
         // extraction and symlink linking are complete, before any build
         // phase. Reporters use it to close the import progress display so
         // subsequent `pnpm:lifecycle` events render in their own section.

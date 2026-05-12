@@ -1,6 +1,7 @@
-use crate::symlink_package;
+use crate::{link_direct_dep_bins, symlink_package};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
+use pacquet_cmd_shim::LinkBinsError;
 use pacquet_lockfile::{Lockfile, PkgName, PkgNameVerPeer, ProjectSnapshot};
 use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::DependencyGroup;
@@ -37,6 +38,9 @@ pub enum SymlinkDirectDependenciesError {
     )]
     #[diagnostic(code(pacquet_package_manager::missing_root_importer))]
     MissingRootImporter { root_key: String },
+
+    #[diagnostic(transparent)]
+    LinkBins(#[error(source)] LinkBinsError),
 }
 
 impl<'a, DependencyGroupList> SymlinkDirectDependencies<'a, DependencyGroupList>
@@ -54,7 +58,7 @@ where
         })?;
 
         // Iterate per group so each emit can label the dependency
-        // with its [`DependencyType`] — pnpm's reporter renders the
+        // with its [`DependencyType`]. pnpm's reporter renders the
         // diff with that hint, so dropping it would silently
         // misclassify devDependencies as prod.
         // [`ProjectSnapshot::dependencies_by_groups`] flattens the
@@ -65,22 +69,22 @@ where
         // for peer dependencies (they're materialised through their
         // host package, not directly under `node_modules/`), and
         // [`ProjectSnapshot::get_map_by_group`] also returns `None`
-        // for `Peer` so this filter is belt-and-braces — it lets
+        // for `Peer` so this filter is belt-and-braces. It lets
         // the per-group → [`DependencyType`] match below stay
         // exhaustive without a misleading `Peer` arm that maps to
         // an "absent" type.
         //
         // Dedup with a `HashSet<PkgName>`, first-wins. A v9 lockfile
         // pnpm itself wrote shouldn't list the same package across
-        // multiple importer sections — pnpm's resolver normalises
-        // (a package with `optional: true` lands in
+        // multiple importer sections (pnpm's resolver normalises:
+        // a package with `optional: true` lands in
         // `optionalDependencies` only). But pacquet ingests
         // user-supplied lockfiles, and a malformed one with the same
         // key in two sections would race two `symlink_package` calls
         // to the same `node_modules/<name>` and emit duplicate
         // `pnpm:root added` events. First-wins picks up the highest-
         // priority group from the caller-supplied
-        // `dependency_groups` order — the CLI today passes
+        // `dependency_groups` order. The CLI today passes
         // `[Prod, Dev, Optional]`, matching pnpm's
         // dependencies-over-optional precedence.
         let mut seen: HashSet<&PkgName> = HashSet::new();
@@ -127,14 +131,14 @@ where
                 DependencyGroup::Prod => DependencyType::Prod,
                 DependencyGroup::Dev => DependencyType::Dev,
                 DependencyGroup::Optional => DependencyType::Optional,
-                // Filtered upfront — see the comment on the
-                // `entries` builder above.
+                // Filtered upfront. See the comment on the `entries`
+                // builder above.
                 DependencyGroup::Peer => unreachable!("peers are filtered out before this point"),
             };
             // Pacquet's lockfile snapshot doesn't track the
             // npm-alias key separately from the resolved package
             // name at this layer, so `name` and `real_name` carry
-            // the same value — clone the already-built string
+            // the same value. Clone the already-built string
             // instead of formatting `name` a second time.
             let real_name = name_str.clone();
             R::emit(&LogEvent::Root(RootLog {
@@ -153,6 +157,14 @@ where
                 },
             }));
         });
+
+        // After the symlinks exist, walk them to discover each
+        // direct dep's `package.json` and link declared bins into
+        // `<modules_dir>/.bin`. Mirrors pnpm v11's `linkBinsOfPackages`
+        // call site for direct deps.
+        let dep_names: Vec<String> = entries.iter().map(|(name, _, _)| name.to_string()).collect();
+        link_direct_dep_bins(&config.modules_dir, &dep_names)
+            .map_err(SymlinkDirectDependenciesError::LinkBins)?;
 
         Ok(())
     }
