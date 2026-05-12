@@ -129,8 +129,16 @@ pub fn build_env(
 /// Keep PATH (handled by the caller) and everything that does not
 /// start with `npm_`; drop NODE / TMPDIR / INIT_CWD /
 /// PNPM_SCRIPT_SRC_DIR because we re-derive them.
+///
+/// On Windows the comparison is case-insensitive because Rust's
+/// `Command::env` treats env keys case-insensitively on that
+/// platform (see [`Command::env`] docs). Leaving e.g. `NPM_CONFIG_FOO`
+/// alongside our `npm_*` inserts would collapse at spawn time with
+/// an unpredictable winner.
+///
+/// [`Command::env`]: https://doc.rust-lang.org/std/process/struct.Command.html#method.env
 fn filter_parent_env(env: HashMap<String, String>) -> HashMap<String, String> {
-    env.into_iter().filter(|(k, _)| !is_stamping_key(k)).collect()
+    env.into_iter().filter(|(k, _)| !is_stamping_key(k, cfg!(windows))).collect()
 }
 
 /// Mirrors `!i.match(/^npm_/)` at index.js:359 plus the per-call
@@ -138,7 +146,19 @@ fn filter_parent_env(env: HashMap<String, String>) -> HashMap<String, String> {
 /// `PNPM_SCRIPT_SRC_DIR`). Only the `npm_*` prefix is stripped —
 /// `pnpm_*` keys (e.g. `PNPM_HOME`, feature flags) are upstream-
 /// preserved and pacquet does the same.
-fn is_stamping_key(key: &str) -> bool {
+///
+/// `is_windows` toggles case-insensitive matching so test code can
+/// drive both branches without `#[cfg(windows)]` gating the test
+/// bodies. Production callers pass `cfg!(windows)`.
+fn is_stamping_key(key: &str, is_windows: bool) -> bool {
+    if is_windows {
+        if key.len() >= 4 && key[..4].eq_ignore_ascii_case("npm_") {
+            return true;
+        }
+        return ["NODE", "TMPDIR", "INIT_CWD", "PNPM_SCRIPT_SRC_DIR"]
+            .iter()
+            .any(|n| key.eq_ignore_ascii_case(n));
+    }
     if key.starts_with("npm_") {
         return true;
     }

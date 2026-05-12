@@ -1,4 +1,6 @@
-use super::{EnvOptions, build_env, escape_newlines, sanitize_env_key, stamp_package};
+use super::{
+    EnvOptions, build_env, escape_newlines, is_stamping_key, sanitize_env_key, stamp_package,
+};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::{collections::HashMap, path::Path};
@@ -247,6 +249,49 @@ fn sanitize_env_key_matches_upstream_regex() {
     assert_eq!(sanitize_env_key("npm_package_@scope/foo"), "npm_package__scope_foo");
     assert_eq!(sanitize_env_key("npm_package_a-b.c"), "npm_package_a_b_c");
     assert_eq!(sanitize_env_key("npm_package_já"), "npm_package_j_");
+}
+
+/// On POSIX, env keys are case-sensitive: `NPM_CONFIG_FOO` is a
+/// different variable than `npm_config_foo`, so only the lowercase
+/// `npm_` prefix matches — matching upstream's `/^npm_/` regex
+/// exactly.
+#[test]
+fn is_stamping_key_is_case_sensitive_on_posix() {
+    assert!(is_stamping_key("npm_config_user_agent", false));
+    assert!(!is_stamping_key("NPM_CONFIG_USER_AGENT", false));
+    assert!(!is_stamping_key("Npm_Lifecycle_Event", false));
+    assert!(is_stamping_key("NODE", false));
+    assert!(!is_stamping_key("Node", false));
+    assert!(!is_stamping_key("node", false));
+    assert!(is_stamping_key("TMPDIR", false));
+    assert!(is_stamping_key("INIT_CWD", false));
+    assert!(is_stamping_key("PNPM_SCRIPT_SRC_DIR", false));
+    // pnpm_* keys other than the well-known stamps survive.
+    assert!(!is_stamping_key("PNPM_HOME", false));
+}
+
+/// On Windows, Rust's `Command::env` treats env keys
+/// case-insensitively, so `NPM_CONFIG_FOO` and `npm_config_foo`
+/// refer to the same variable. We must strip the entire family
+/// case-insensitively or our `npm_*` inserts collide at spawn time
+/// with an unpredictable winner.
+#[test]
+fn is_stamping_key_is_case_insensitive_on_windows() {
+    assert!(is_stamping_key("npm_config_user_agent", true));
+    assert!(is_stamping_key("NPM_CONFIG_USER_AGENT", true));
+    assert!(is_stamping_key("Npm_Lifecycle_Event", true));
+    assert!(is_stamping_key("NODE", true));
+    assert!(is_stamping_key("Node", true));
+    assert!(is_stamping_key("node", true));
+    assert!(is_stamping_key("tmpdir", true));
+    assert!(is_stamping_key("init_cwd", true));
+    assert!(is_stamping_key("pnpm_script_src_dir", true));
+    // Edge: short keys shouldn't accidentally match `npm_`.
+    assert!(!is_stamping_key("NPM", true));
+    assert!(!is_stamping_key("npm", true));
+    // pnpm_* keys other than the well-known stamps still survive.
+    assert!(!is_stamping_key("PNPM_HOME", true));
+    assert!(!is_stamping_key("pnpm_home", true));
 }
 
 /// Multi-line strings get JSON-encoded so child shells don't see a
