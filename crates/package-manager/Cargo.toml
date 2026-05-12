@@ -47,6 +47,7 @@ node-semver       = { workspace = true }
 insta             = { workspace = true }
 pretty_assertions = { workspace = true }
 serde-saphyr      = { workspace = true }
+sha2              = { workspace = true }
 ssri              = { workspace = true }
 tempfile          = { workspace = true }
 text-block-macros = { workspace = true }

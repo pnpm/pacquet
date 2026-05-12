@@ -163,6 +163,20 @@ pub struct BuildModules<'a> {
     /// gate is bypassed entirely and every `requires_build`
     /// snapshot runs its scripts.
     pub side_effects_cache: bool,
+    /// Mirrors upstream's `sideEffectsCacheWrite` at
+    /// <https://github.com/pnpm/pnpm/blob/7e3145f9fc/config/reader/src/index.ts#L615>.
+    /// When `true`, a successful postinstall triggers a re-CAFS of
+    /// the built package directory and a queued mutation of the
+    /// matching `PackageFilesIndex.sideEffects` row.
+    pub side_effects_cache_write: bool,
+    /// Store-dir handle for the WRITE path's `add_files_from_dir`
+    /// call. `None` short-circuits the upload site entirely — used
+    /// by unit tests that don't set up a CAFS.
+    pub store_dir: Option<&'a pacquet_store_dir::StoreDir>,
+    /// Shared batched writer for the side-effects upload's
+    /// read-modify-write of the existing `PackageFilesIndex` row.
+    /// `None` short-circuits the upload site.
+    pub store_index_writer: Option<&'a std::sync::Arc<pacquet_store_dir::StoreIndexWriter>>,
 }
 
 impl<'a> BuildModules<'a> {
@@ -184,6 +198,9 @@ impl<'a> BuildModules<'a> {
             side_effects_maps_by_snapshot,
             engine_name,
             side_effects_cache,
+            side_effects_cache_write,
+            store_dir,
+            store_index_writer,
         } = self;
 
         let Some(snapshots) = snapshots else { return Ok(Vec::new()) };
@@ -208,23 +225,25 @@ impl<'a> BuildModules<'a> {
             .collect();
 
         // Build the dep graph + state cache only when the
-        // side-effects-cache gate has a chance of firing. Otherwise
-        // the O(|snapshots|) graph construction is dead work — when
-        // `config.side_effects_cache` is off, or no Node major was
-        // detected, or the prefetch surfaced no cache rows, the
-        // gate below short-circuits before ever consulting the
-        // graph.
+        // side-effects-cache gate has a chance of firing — on
+        // either the READ side (prefetch surfaced cache rows) or
+        // the WRITE side (the install will be populating new
+        // cache entries after a successful build). When neither
+        // applies the O(|snapshots|) graph construction is dead
+        // work.
         //
         // Mirrors upstream's per-install `DepsStateCache` at
-        // <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L74>.
+        // <https://github.com/pnpm/pnpm/blob/7e3145f9fc/building/during-install/src/index.ts#L74>.
         // The cache memoizes per-node hash across diamond-shaped
         // subgraphs so the recursive walk stays linear in
         // |snapshots| even when the same dep is reachable through
         // many parents.
-        let cache_gate_active = side_effects_cache
+        let read_gate_active = side_effects_cache
             && engine_name.is_some()
-            && side_effects_maps_by_snapshot.is_some_and(|m| !m.is_empty())
-            && packages.is_some();
+            && side_effects_maps_by_snapshot.is_some_and(|m| !m.is_empty());
+        let write_gate_active =
+            side_effects_cache_write && engine_name.is_some() && store_index_writer.is_some();
+        let cache_gate_active = (read_gate_active || write_gate_active) && packages.is_some();
         let dep_graph = cache_gate_active.then(|| {
             crate::build_deps_graph(
                 snapshots,
@@ -376,6 +395,55 @@ impl<'a> BuildModules<'a> {
                         continue;
                     }
                     return Err(BuildModulesError::LifecycleScript(err));
+                }
+
+                // Side-effects-cache WRITE path. Mirrors
+                // `<https://github.com/pnpm/pnpm/blob/7e3145f9fc/building/during-install/src/index.ts#L198-L216>`:
+                // after a successful `run_postinstall_hooks`,
+                // re-hash the package directory and queue a
+                // `PackageFilesIndex.sideEffects[cache_key] = diff`
+                // mutation so a future install can skip the
+                // rebuild.
+                //
+                // Gated on every precondition for a meaningful
+                // upload: write enabled, cache_key composable
+                // (engine + graph present), `packages` map
+                // available for the integrity lookup, and the
+                // metadata row carries an integrity (registry /
+                // tarball resolutions — git / directory have no
+                // integrity and pnpm doesn't cache those either).
+                //
+                // All errors are swallowed with a `tracing::warn!`,
+                // matching upstream's `try { upload } catch (err) {
+                // logger.warn(...) }` at lines 208-215. A failed
+                // upload doesn't fail the install: the next install
+                // re-runs the build.
+                if side_effects_cache_write
+                    && let Some(writer) = store_index_writer
+                    && let Some(store) = store_dir
+                    && let Some(cache_key) = cache_key.as_deref()
+                    && let Some(packages) = packages
+                    && let Some(metadata) = packages.get(&metadata_key)
+                    && let Some(integrity) = metadata.resolution.integrity()
+                {
+                    let files_index_file = pacquet_store_dir::store_index_key(
+                        &integrity.to_string(),
+                        &metadata_key.to_string(),
+                    );
+                    if let Err(err) = pacquet_store_dir::upload(
+                        store,
+                        &pkg_dir,
+                        &files_index_file,
+                        cache_key,
+                        writer,
+                    ) {
+                        tracing::warn!(
+                            target: "pacquet::build",
+                            ?err,
+                            dep_path = %snapshot_key,
+                            "side-effects cache upload failed; build proceeds",
+                        );
+                    }
                 }
             }
         }

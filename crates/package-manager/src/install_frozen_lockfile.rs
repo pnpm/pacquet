@@ -152,6 +152,12 @@ where
             side_effects_maps_by_snapshot: Some(&side_effects_maps_by_snapshot),
             engine_name: engine_name.as_deref(),
             side_effects_cache: config.side_effects_cache,
+            side_effects_cache_write: config.side_effects_cache_write(),
+            // Threading the actual `StoreDir` + `StoreIndexWriter`
+            // here lands in the follow-up commit that hoists the
+            // writer out of `CreateVirtualStore`.
+            store_dir: None,
+            store_index_writer: None,
         }
         .run::<R>()
         .map_err(InstallFrozenLockfileError::BuildModules)?;
