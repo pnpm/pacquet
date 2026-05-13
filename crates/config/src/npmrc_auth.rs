@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use pacquet_network::{AuthHeaders, NoProxySetting, base64_encode};
+use pacquet_network::{AuthHeaders, NoProxySetting, PerRegistryTls, RegistryTls, base64_encode};
 
 use crate::{Config, api::EnvVar, env_replace::env_replace};
 
@@ -92,6 +92,14 @@ pub(crate) struct NpmrcAuth {
     /// silently dropped (mirrors pnpm, which hands the value verbatim
     /// to undici and lets Node error at connect time).
     pub local_address: Option<String>,
+    /// Per-registry TLS overrides keyed by the literal `.npmrc` key
+    /// prefix (`//host[:port]/path/`). Populated by `:ca`, `:cafile`,
+    /// `:cert`, `:certfile`, `:key`, `:keyfile` keys. The map is
+    /// preserved verbatim through to [`PerRegistryTls`] construction
+    /// so lookup keys stay byte-equivalent to upstream. Mirrors
+    /// pnpm's
+    /// [`configByUri[<uri>].tls`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/getNetworkConfigs.ts#L34-L40).
+    pub tls_by_uri: HashMap<String, RegistryTls>,
 }
 
 /// Raw (unparsed) credential fields for a given registry URI, mirroring
@@ -225,6 +233,26 @@ impl NpmrcAuth {
                 continue;
             }
 
+            if let Some((uri, field, is_file)) = split_ssl_key(&key) {
+                // For `*file` variants the value is a path; read the
+                // file at parse time (silent on error, matching
+                // pnpm's `fs.readFileSync` which throws into the
+                // outer parse and is swallowed). For inline variants
+                // expand `\n` → real newlines so a single-line INI
+                // value can carry a multi-line PEM.
+                let resolved = if is_file {
+                    let Ok(contents) = std::fs::read_to_string(&value) else {
+                        continue;
+                    };
+                    contents
+                } else {
+                    value.replace("\\n", "\n")
+                };
+                let entry = auth.tls_by_uri.entry(uri.to_owned()).or_default();
+                apply_tls_field(entry, field, resolved);
+                continue;
+            }
+
             apply_creds_field(&mut auth.default_creds, key.as_str(), value);
         }
         auth
@@ -263,6 +291,11 @@ impl NpmrcAuth {
         config.tls.key = self.key.take();
         config.tls.strict_ssl = self.strict_ssl.take();
         config.tls.local_address = self.local_address.take().and_then(|raw| raw.parse().ok());
+        // Per-registry TLS overrides. `PerRegistryTls::from_map`
+        // drops any entry whose three fields are all `None`, so the
+        // lookup never returns an empty hit that would otherwise
+        // suppress the top-level fallback.
+        config.tls_by_uri = PerRegistryTls::from_map(std::mem::take(&mut self.tls_by_uri));
     }
 
     /// Resolve the `(https_proxy, http_proxy, no_proxy)` triple on
@@ -521,6 +554,57 @@ fn apply_creds_field(creds: &mut RawCreds, field: &str, value: String) {
         "_auth" => creds.auth_pair_base64 = Some(value),
         "username" => creds.username = Some(value),
         "_password" => creds.password = Some(value),
+        _ => {}
+    }
+}
+
+/// Per-registry TLS suffixes. The `*file` variants instruct the
+/// parser to read the value as a path; the bare variants use the
+/// value as inline PEM (with `\n` escape expansion). Mirrors
+/// `SSL_SUFFIX_RE = /:(?<id>cert|key|ca)(?<kind>file)?$/` from pnpm's
+/// [`getNetworkConfigs.ts:94`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/getNetworkConfigs.ts#L94).
+const TLS_SUFFIXES: &[(&str, &str, bool)] = &[
+    // (suffix, field, is_file)
+    (":cafile", "ca", true),
+    (":certfile", "cert", true),
+    (":keyfile", "key", true),
+    (":ca", "ca", false),
+    (":cert", "cert", false),
+    (":key", "key", false),
+];
+
+/// Return `(uri_prefix, field, is_file)` when `key` ends in one of the
+/// recognized TLS suffixes. Matches pnpm's `tryParseSslKey` —
+/// deliberately does *not* require a leading `//`, so the lax keys
+/// pnpm accepts (`foo:cert=…`) end up in the map with `uri_prefix =
+/// "foo"`. They never match a real nerf-darted URL so the entry is
+/// effectively dropped at lookup time, but storing it preserves
+/// byte-for-byte parity with upstream parsing.
+///
+/// Order matters: `:certfile` must be tested before `:cert` so the
+/// `*file` variants don't get parsed as the inline form with a
+/// trailing `file` artifact in the URI prefix.
+fn split_ssl_key(key: &str) -> Option<(&str, &'static str, bool)> {
+    for (suffix, field, is_file) in TLS_SUFFIXES {
+        if let Some(stripped) = key.strip_suffix(suffix) {
+            return Some((stripped, field, *is_file));
+        }
+    }
+    None
+}
+
+/// Write a per-registry TLS value onto a [`RegistryTls`] entry.
+///
+/// For inline values (`is_file = false`) the parser pre-expands `\n`
+/// escapes to real newlines — pnpm does this only on per-registry
+/// values, not on the top-level `ca=` form
+/// ([`getNetworkConfigs.ts:38-39`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/getNetworkConfigs.ts#L38-L39))
+/// — and `value` arrives already expanded.
+fn apply_tls_field(tls: &mut RegistryTls, field: &str, value: String) {
+    match field {
+        "ca" => tls.ca = Some(value),
+        "cert" => tls.cert = Some(value),
+        "key" => tls.key = Some(value),
         _ => {}
     }
 }

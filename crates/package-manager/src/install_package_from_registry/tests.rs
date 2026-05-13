@@ -56,6 +56,7 @@ fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path)
         auth_headers: Default::default(),
         proxy: Default::default(),
         tls: Default::default(),
+        tls_by_uri: Default::default(),
     }
 }
 

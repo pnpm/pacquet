@@ -65,7 +65,7 @@ impl State {
             http_client: ThrottledClient::for_installs(
                 &config.proxy,
                 &config.tls,
-                &pacquet_network::PerRegistryTls::default(),
+                &config.tls_by_uri,
             )
             .map_err(InitStateError::Network)?,
             tarball_mem_cache: MemCache::new(),
