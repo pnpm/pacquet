@@ -1,7 +1,8 @@
 use crate::{
     AllowBuildPolicy, BuildModules, BuildModulesError, CreateVirtualStore, CreateVirtualStoreError,
-    CreateVirtualStoreOutput, LinkVirtualStoreBins, LinkVirtualStoreBinsError,
-    SymlinkDirectDependencies, SymlinkDirectDependenciesError, VersionPolicyError,
+    CreateVirtualStoreOutput, InstallabilityHost, LinkVirtualStoreBins, LinkVirtualStoreBinsError,
+    SkippedSnapshots, SymlinkDirectDependencies, SymlinkDirectDependenciesError,
+    VersionPolicyError, compute_skipped_snapshots,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
@@ -84,6 +85,18 @@ pub enum InstallFrozenLockfileError {
     /// See <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/config/version-policy/src/index.ts#L60-L80>.
     #[diagnostic(transparent)]
     VersionPolicy(#[error(source)] VersionPolicyError),
+
+    /// Wraps an installability check that surfaced an engine-strict
+    /// abort. Pacquet's default config has `engine_strict = false`,
+    /// so the install path doesn't currently reach this — but the
+    /// error type is wired through so a future config wiring of
+    /// `engineStrict: true` does the right thing without churning
+    /// the error enum again.
+    ///
+    /// Mirrors upstream's `throw warn` at
+    /// <https://github.com/pnpm/pnpm/blob/94240bc046/config/package-is-installable/src/index.ts#L63>.
+    #[diagnostic(transparent)]
+    Installability(#[error(source)] Box<pacquet_package_is_installable::InstallabilityError>),
 }
 
 impl<'a, DependencyGroupList> InstallFrozenLockfile<'a, DependencyGroupList>
@@ -126,6 +139,42 @@ where
         // existing best-effort stance on cache writes.
         let (store_index_writer, writer_task) = StoreIndexWriter::spawn(&config.store_dir);
 
+        // Detect the host environment once per install. `node --version`
+        // and the OS/CPU/libc lookups are synchronous and cheap, but
+        // `detect_node_version` spawns a child process — run on the
+        // blocking pool so it doesn't stall the reactor thread.
+        // Mirrors upstream's single-pass `getSystemNodeVersion()` /
+        // `process.platform` resolution at
+        // <https://github.com/pnpm/pnpm/blob/94240bc046/config/package-is-installable/src/index.ts#L90>.
+        let host =
+            tokio::task::spawn_blocking(InstallabilityHost::detect).await.unwrap_or_else(|_| {
+                InstallabilityHost {
+                    node_version: "99999.0.0".to_string(),
+                    os: pacquet_graph_hasher::host_platform(),
+                    cpu: pacquet_graph_hasher::host_arch(),
+                    libc: pacquet_graph_hasher::host_libc(),
+                    supported_architectures: None,
+                    engine_strict: false,
+                }
+            });
+
+        // Build the per-install [`SkippedSnapshots`] set. For every
+        // lockfile snapshot, run the installability check against
+        // the host triple; optional+incompatible entries land in
+        // the set and fire `pnpm:skipped-optional-dependency`.
+        // Mirrors pnpm's headless re-check at
+        // <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L206-L215>.
+        let skipped: SkippedSnapshots = match snapshots {
+            Some(snapshots) => match packages {
+                Some(packages) => {
+                    compute_skipped_snapshots::<R>(snapshots, packages, &host, requester)
+                        .map_err(InstallFrozenLockfileError::Installability)?
+                }
+                None => SkippedSnapshots::new(),
+            },
+            None => SkippedSnapshots::new(),
+        };
+
         let CreateVirtualStoreOutput { package_manifests, side_effects_maps_by_snapshot } =
             CreateVirtualStore {
                 http_client,
@@ -138,31 +187,28 @@ where
                 requester,
                 store_index_writer: &store_index_writer,
                 allow_build_policy: &allow_build_policy,
+                skipped: &skipped,
             }
             .run::<R>()
             .await
             .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
 
-        // Detect the host `node` major version once per install,
-        // not per snapshot. Threaded into `BuildModules` so the
-        // side-effects-cache lookup can compose the right cache
-        // key. `None` (no `node` on PATH) means the cache gate
-        // falls through to "rebuild" — safe.
-        //
-        // `detect_node_major` spawns `node --version` synchronously,
-        // so run it on a blocking thread to keep the async install
-        // driver from stalling.
-        let engine_name: Option<String> = tokio::task::spawn_blocking(|| {
-            pacquet_graph_hasher::detect_node_major()
-                .map(|major| pacquet_graph_hasher::engine_name(major, None, None))
-        })
-        .await
-        .ok()
-        .flatten();
+        // `engine_name` for the side-effects-cache lookup. Derived
+        // from the host's full node version we just detected — the
+        // cache key only needs the major, so strip and reuse rather
+        // than spawning `node --version` a second time.
+        let engine_name: Option<String> = parse_major_from_version(&host.node_version)
+            .map(|major| pacquet_graph_hasher::engine_name(major, None, None));
 
-        SymlinkDirectDependencies { config, importers, dependency_groups, requester }
-            .run::<R>()
-            .map_err(InstallFrozenLockfileError::SymlinkDirectDependencies)?;
+        SymlinkDirectDependencies {
+            config,
+            importers,
+            dependency_groups,
+            requester,
+            skipped: &skipped,
+        }
+        .run::<R>()
+        .map_err(InstallFrozenLockfileError::SymlinkDirectDependencies)?;
 
         // Link the bins of each virtual-store slot's children into the
         // slot's own `node_modules/.bin`. Pnpm runs this from
@@ -275,6 +321,7 @@ where
             scripts_prepend_node_path,
             unsafe_perm: config.unsafe_perm,
             child_concurrency: config.child_concurrency,
+            skipped: &skipped,
         }
         .run::<R>()
         .map_err(InstallFrozenLockfileError::BuildModules)?;
@@ -311,4 +358,14 @@ where
 
         Ok(())
     }
+}
+
+/// Pull the leading major-version digits out of a semver string like
+/// `"22.11.0"`. Returns `None` if the leading token isn't parseable
+/// as `u32`. Used to derive the engine-name string upstream's
+/// side-effects cache lookup expects without re-spawning
+/// `node --version`.
+fn parse_major_from_version(version: &str) -> Option<u32> {
+    let after_v = version.strip_prefix('v').unwrap_or(version);
+    after_v.split('.').next()?.parse().ok()
 }

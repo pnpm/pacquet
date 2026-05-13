@@ -1,4 +1,5 @@
 use super::{AllowBuildPolicy, BuildModules, parse_name_version_from_key};
+use crate::SkippedSnapshots;
 use pacquet_config::Config;
 use pacquet_executor::ScriptsPrependNodePath;
 use pacquet_lockfile::{
@@ -304,6 +305,7 @@ fn build_modules_collects_ignored_builds() {
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         unsafe_perm: true,
         child_concurrency: 1,
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<SilentReporter>()
     .expect("run BuildModules");
@@ -370,6 +372,7 @@ fn build_modules_collects_ignored_builds_under_concurrency() {
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         unsafe_perm: true,
         child_concurrency: 2,
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<SilentReporter>()
     .expect("run BuildModules under concurrency");
@@ -424,6 +427,7 @@ fn build_modules_excludes_explicit_deny_from_ignored() {
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         unsafe_perm: true,
         child_concurrency: 1,
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<SilentReporter>()
     .expect("run BuildModules");
@@ -502,6 +506,7 @@ fn do_not_fail_on_optional_dep_with_failing_postinstall() {
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         unsafe_perm: true,
         child_concurrency: 1,
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<RecordingReporter>()
     .expect("optional build failure must NOT abort the install");
@@ -628,6 +633,7 @@ fn using_side_effects_cache_skips_rebuild() {
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         unsafe_perm: true,
         child_concurrency: 1,
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<RecordingReporter>()
     .expect("install must succeed when the cache hit skips the rebuild");
@@ -689,6 +695,7 @@ fn side_effects_cache_disabled_bypasses_the_gate() {
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         unsafe_perm: true,
         child_concurrency: 1,
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<SilentReporter>()
     .expect_err("with cache disabled, the failing postinstall must run and the install must fail");
@@ -743,6 +750,7 @@ fn fail_when_failing_postinstall_is_required() {
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         unsafe_perm: true,
         child_concurrency: 1,
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<SilentReporter>()
     .expect_err("required build failure must propagate");
@@ -974,6 +982,7 @@ async fn write_path_populates_side_effects_row() {
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         unsafe_perm: true,
         child_concurrency: 1,
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<SilentReporter>()
     .expect("build modules must complete cleanly");
@@ -1080,6 +1089,7 @@ async fn write_path_disabled_skips_upload() {
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         unsafe_perm: true,
         child_concurrency: 1,
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<SilentReporter>()
     .expect("build modules must complete cleanly");
@@ -1195,6 +1205,7 @@ async fn upload_error_does_not_interrupt_install() {
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         unsafe_perm: true,
         child_concurrency: 1,
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<SilentReporter>()
     .expect("upload failure must not propagate; install continues");
@@ -1420,6 +1431,7 @@ new file mode 100644
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         unsafe_perm: true,
         child_concurrency: 1,
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<SilentReporter>()
     .expect("build modules must complete cleanly");
@@ -1523,6 +1535,7 @@ new file mode 100644
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         unsafe_perm: true,
         child_concurrency: 1,
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<SilentReporter>()
     .expect("build modules must complete cleanly");
@@ -1597,6 +1610,7 @@ async fn missing_patch_file_path_errors_with_diagnostic() {
         scripts_prepend_node_path: ScriptsPrependNodePath::Never,
         unsafe_perm: true,
         child_concurrency: 1,
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<SilentReporter>()
     .expect_err("missing patch_file_path must surface as PatchFilePathMissing");

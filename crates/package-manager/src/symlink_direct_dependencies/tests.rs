@@ -1,4 +1,5 @@
 use super::{SymlinkDirectDependencies, SymlinkDirectDependenciesError};
+use crate::SkippedSnapshots;
 use pacquet_config::Config;
 use pacquet_lockfile::{Lockfile, ProjectSnapshot, ResolvedDependencyMap, ResolvedDependencySpec};
 use pacquet_package_manifest::DependencyGroup;
@@ -85,6 +86,7 @@ fn emits_pnpm_root_added_per_direct_dependency() {
         importers: &importers,
         dependency_groups: [DependencyGroup::Prod, DependencyGroup::Dev],
         requester,
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<RecordingReporter>()
     .expect("symlink should succeed");
@@ -198,6 +200,7 @@ fn duplicate_dep_across_groups_collapses_to_one_entry() {
         // Prod first → first-wins gives `dependencyType: prod`.
         dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
         requester: "/proj",
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<RecordingReporter>()
     .expect("symlink should succeed");
@@ -237,6 +240,7 @@ fn missing_root_importer_surfaces_as_error() {
         importers: &importers,
         dependency_groups: [DependencyGroup::Prod],
         requester: "/proj",
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<SilentReporter>();
 

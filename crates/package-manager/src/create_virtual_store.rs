@@ -1,5 +1,6 @@
 use crate::{
-    InstallPackageBySnapshot, InstallPackageBySnapshotError, store_init::init_store_dir_best_effort,
+    InstallPackageBySnapshot, InstallPackageBySnapshotError, SkippedSnapshots,
+    store_init::init_store_dir_best_effort,
 };
 use derive_more::{Display, Error};
 use futures_util::future;
@@ -94,6 +95,14 @@ pub struct CreateVirtualStore<'a> {
     /// allowlisted. Computed once per install in
     /// [`crate::InstallFrozenLockfile::run`].
     pub allow_build_policy: &'a crate::AllowBuildPolicy,
+    /// Snapshots the installability pass marked optional+incompatible
+    /// on this host. Their virtual-store slots are not created — the
+    /// warm/cold partition skips them, and the bundled-manifest +
+    /// side-effects-cache lookups they would feed downstream phases
+    /// are likewise omitted. Mirrors pnpm's `lockfileToDepGraph`
+    /// behavior of materializing only non-skipped snapshots in the
+    /// graph passed to the build phase.
+    pub skipped: &'a SkippedSnapshots,
 }
 
 /// Error type of [`CreateVirtualStore`].
@@ -134,6 +143,7 @@ impl<'a> CreateVirtualStore<'a> {
             requester,
             store_index_writer,
             allow_build_policy,
+            skipped,
         } = self;
 
         let Some(snapshots) = snapshots else {
@@ -248,31 +258,43 @@ impl<'a> CreateVirtualStore<'a> {
         // Sort + dedup the prefetch input so `prefetch_cas_paths`
         // doesn't redo identical SELECT + integrity-check work for
         // every peer variant.
-        // Per-snapshot skip pass: for every snapshot the previous
-        // install also installed (`current_snapshots`) with the same
-        // dependency wiring + integrity, *and* whose virtual-store
-        // slot still exists on disk, drop it entirely from the install
-        // graph. The current-lockfile write at end-of-install captures
-        // the full wanted graph regardless, so the next install sees
-        // the same skip surface even after partial graph deltas.
+        // Per-snapshot skip pass: drop snapshots that don't need
+        // installing.
         //
-        // Mirrors upstream's gate at
-        // <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L246-L260>.
-        // When the cache key matches but the directory is gone (user
-        // ran `rm -rf <virtual_store_dir>/...`, antivirus quarantine,
-        // etc.) we emit the `_broken_node_modules` debug event and
-        // fall through to the full install path for that snapshot.
+        // Two reasons a snapshot can be dropped from the install graph:
+        //
+        // 1. **Installability skip (this PR)** — `SkippedSnapshots`
+        //    contains it because the host's `engines` / `cpu` / `os`
+        //    / `libc` don't satisfy the package's constraints and the
+        //    snapshot is `optional`. Mirrors pnpm's `lockfileToDepGraph`
+        //    behavior at
+        //    <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L194>
+        //    where skipped depPaths are dropped from the graph the
+        //    builder iterates. These snapshots also stay out of the
+        //    `skipped_entries` cache-key pass — they were never
+        //    supposed to be installed, so there are no store-index
+        //    rows to keep alive.
+        //
+        // 2. **Current-lockfile skip (main #442)** — the previous
+        //    install also installed this snapshot (`current_snapshots`)
+        //    with the same dependency wiring + integrity, AND its
+        //    virtual-store slot still exists on disk. Mirrors
+        //    upstream's gate at
+        //    <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L246-L260>.
+        //    These DO land in `skipped_entries` so `BuildModules`'s
+        //    `is_built` cache lookup can short-circuit re-runs of
+        //    allowed-build scripts on warm reinstalls.
         //
         // Run this *before* deriving cache keys so unchanged
         // directory-backed snapshots aren't tripped by
-        // `snapshot_cache_key`'s `UnsupportedResolution`. Once
-        // directory / git resolutions land they'll still survive the
-        // skip (their slot existing on disk is all the check needs)
-        // and the cache-key step won't see them either (review on
-        // #442).
+        // `snapshot_cache_key`'s `UnsupportedResolution`.
         let virtual_store_dir = &config.virtual_store_dir;
         let survivors: Vec<(&PackageKey, &SnapshotEntry)> = snapshots
             .iter()
+            // Reason 1: installability skip. Drop entirely.
+            .filter(|(snapshot_key, _)| !skipped.contains(snapshot_key))
+            // Reason 2: current-lockfile skip. Drop survivors that
+            // already match the previous install.
             .filter(|(snapshot_key, snapshot)| {
                 let Some(current_snapshots) = current_snapshots else { return true };
                 let Some(current_snapshot) = current_snapshots.get(*snapshot_key) else {
@@ -348,6 +370,13 @@ impl<'a> CreateVirtualStore<'a> {
         let skipped_entries: Vec<SnapshotWithCacheKey<'_>> = snapshots
             .iter()
             .filter(|(snapshot_key, _)| !survivor_keys.contains(snapshot_key))
+            // Installability-skipped snapshots are excluded from
+            // `skipped_entries` too — they were never installed, so
+            // there's no store-index row to keep warm for the
+            // build-cache lookup. Only the current-lockfile-skip
+            // path (`survivors` filtered above) should contribute
+            // here.
+            .filter(|(snapshot_key, _)| !skipped.contains(snapshot_key))
             .map(|(snapshot_key, snapshot)| {
                 let cache_key = snapshot_cache_key(snapshot_key, packages).ok().flatten();
                 (snapshot_key, snapshot, cache_key)
