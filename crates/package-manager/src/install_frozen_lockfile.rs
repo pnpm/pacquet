@@ -364,7 +364,13 @@ where
         // `slot_dir` call. Either way every downstream consumer
         // (warm batch, cold batch, direct-dep symlinks, bin linker,
         // build module) routes through this one lookup.
-        let layout = VirtualStoreLayout::new(config, engine_name.as_deref(), snapshots, packages);
+        let layout = VirtualStoreLayout::new(
+            config,
+            engine_name.as_deref(),
+            snapshots,
+            packages,
+            Some(&allow_build_policy),
+        );
 
         let CreateVirtualStoreOutput { package_manifests, side_effects_maps_by_snapshot } =
             CreateVirtualStore {
