@@ -54,6 +54,7 @@ fn synthetic_metadata(
         resolution: LockfileResolution::Tarball(TarballResolution {
             integrity: None,
             tarball: "https://example.test/pkg.tgz".to_string(),
+            git_hosted: None,
         }),
         engines: engines
             .map(|e| e.iter().map(|(k, v)| ((*k).to_string(), (*v).to_string())).collect()),
