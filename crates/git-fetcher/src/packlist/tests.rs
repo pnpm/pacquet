@@ -421,3 +421,108 @@ fn files_field_bare_basename_matches_at_depth() {
         "files entry matching a directory also includes its contents: {out:?}",
     );
 }
+
+#[test]
+fn bundle_dependencies_self_cycle_is_caught() {
+    // Defense-in-depth: a bundled dep whose own manifest declares a
+    // bundle pointing back at itself (or any cycle reachable through
+    // the canonical-path chain) must not stack-overflow the fetcher.
+    // The visited-set + depth cap inside `packlist_inner` stops the
+    // recursion; the test just confirms the fetcher returns without
+    // panicking and includes the one-level bundle's files exactly
+    // once.
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    touch(root, "package.json");
+    touch(root, "node_modules/self/package.json");
+    touch(root, "node_modules/self/lib.js");
+    // The bundled dep declares itself as a bundleDependency. Without
+    // cycle detection this becomes infinite recursion.
+    fs::write(
+        root.join("node_modules/self/package.json"),
+        r#"{"name":"self","version":"1.0.0","bundleDependencies":["self"]}"#,
+    )
+    .unwrap();
+    // Symlink `node_modules/self/node_modules/self` back to the
+    // outer `node_modules/self` so the canonical-path check has
+    // something to catch. (On platforms that can't symlink, the
+    // depth cap kicks in instead.)
+    fs::create_dir_all(root.join("node_modules/self/node_modules")).unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(
+            root.join("node_modules/self"),
+            root.join("node_modules/self/node_modules/self"),
+        )
+        .unwrap();
+    }
+
+    let manifest = json!({
+        "name": "x",
+        "version": "0.0.0",
+        "bundleDependencies": ["self"],
+    });
+    let out = packlist(root, &manifest).unwrap();
+
+    assert!(out.contains(&"package.json".to_string()));
+    assert!(out.contains(&"node_modules/self/package.json".to_string()));
+    assert!(out.contains(&"node_modules/self/lib.js".to_string()));
+    // No deeper paths via the cycle — the visited-set / depth cap
+    // refused the re-entry.
+    assert!(
+        !out.iter().any(|p| p.starts_with("node_modules/self/node_modules/")),
+        "cycle through node_modules/self/node_modules/self/... must be cut: {out:?}",
+    );
+}
+
+#[test]
+fn main_field_pointing_at_always_excluded_basename_is_refused() {
+    // Regression: pass 3 force-includes `main` / `bin` only after
+    // running them through `should_always_exclude`. A manifest with
+    // `"main": "package-lock.json"` previously would have re-added
+    // the lockfile despite the basename-cruft filter.
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    touch(root, "package.json");
+    touch(root, "package-lock.json");
+    touch(root, "real-entry.js");
+
+    let manifest = json!({
+        "name": "x",
+        "version": "0.0.0",
+        "main": "package-lock.json",
+    });
+    let out = packlist(root, &manifest).unwrap();
+
+    assert!(out.contains(&"package.json".to_string()));
+    assert!(out.contains(&"real-entry.js".to_string()));
+    assert!(
+        !out.contains(&"package-lock.json".to_string()),
+        "always-excluded basename must win over `main` field: {out:?}",
+    );
+}
+
+#[test]
+fn bin_field_pointing_at_vcs_segment_is_refused() {
+    // Same idea for `bin`: a manifest pointing `bin/cli` at
+    // `.git/something` (silly but possible) must not re-add a VCS
+    // file. Uses a basename inside a `.git` segment to hit the dir-
+    // segment exclusion path rather than the basename one.
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    touch(root, "package.json");
+    touch(root, ".git/hook");
+
+    let manifest = json!({
+        "name": "x",
+        "version": "0.0.0",
+        "bin": { "weird": ".git/hook" },
+    });
+    let out = packlist(root, &manifest).unwrap();
+
+    assert!(out.contains(&"package.json".to_string()));
+    assert!(
+        !out.iter().any(|p| p.contains(".git/")),
+        "VCS-segment exclusion must win over `bin` field: {out:?}",
+    );
+}

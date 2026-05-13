@@ -43,10 +43,18 @@ use ignore::{WalkBuilder, gitignore::Gitignore};
 use pacquet_package_manifest::safe_read_package_json_from_dir;
 use serde_json::Value;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashSet},
     fs,
     path::{Path, PathBuf},
 };
+
+/// Cap on `bundleDependencies` recursion depth. Real packages bundle
+/// at most a handful of levels (most published packages bundle zero;
+/// the rare ones bundle one or two). The cap prevents a runaway
+/// recursion if a bundled dep declares its own bundle pointing at
+/// itself (or a symlink loop in the source tree slips past
+/// `canonicalize`).
+const MAX_BUNDLE_DEPTH: u32 = 32;
 
 /// Case-insensitive prefix matches for files always-included at the
 /// package root regardless of `.npmignore` / `files`. Mirrors
@@ -80,6 +88,47 @@ const ALWAYS_EXCLUDED_SUFFIXES: &[&str] = &[".orig"];
 /// [`fs/packlist/src/index.ts:24-29`](https://github.com/pnpm/pnpm/blob/94240bc046/fs/packlist/src/index.ts#L24-L29)
 /// (paths relative to `pkg_dir`, no leading `./`).
 pub fn packlist(pkg_dir: &Path, manifest: &Value) -> Result<Vec<String>, PacklistError> {
+    let mut visited = HashSet::new();
+    packlist_inner(pkg_dir, manifest, &mut visited, 0)
+}
+
+/// Inner recursive entry point that threads cycle detection and a
+/// depth cap through `bundleDependencies` traversals. Each
+/// recursion's canonicalised `pkg_dir` is inserted into `visited`
+/// so a bundled dep that points back at an ancestor (cycle) gets
+/// skipped instead of stack-overflowing. The `depth` counter is a
+/// belt-and-braces guard against any cycle the canonical-path check
+/// can't see (e.g. filesystem mount tricks).
+fn packlist_inner(
+    pkg_dir: &Path,
+    manifest: &Value,
+    visited: &mut HashSet<PathBuf>,
+    depth: u32,
+) -> Result<Vec<String>, PacklistError> {
+    // `fs::canonicalize` resolves symlinks, which is precisely what
+    // we want for cycle detection — a symlink loop in the source
+    // tree shows up as the same canonical path. Fall back to the
+    // input path on canonicalisation failure (e.g. permission
+    // denied); the cycle check then degrades to identity on the
+    // raw path, which is still enough to catch trivial self-bundles.
+    let canonical = fs::canonicalize(pkg_dir).unwrap_or_else(|_| pkg_dir.to_path_buf());
+    if !visited.insert(canonical) {
+        tracing::warn!(
+            target: "pacquet::git_fetcher::packlist",
+            pkg_dir = %pkg_dir.display(),
+            "bundleDependencies cycle: directory already visited at this canonical path; skipping",
+        );
+        return Ok(Vec::new());
+    }
+    if depth > MAX_BUNDLE_DEPTH {
+        tracing::warn!(
+            target: "pacquet::git_fetcher::packlist",
+            pkg_dir = %pkg_dir.display(),
+            depth,
+            "bundleDependencies recursion exceeded MAX_BUNDLE_DEPTH; refusing to descend further",
+        );
+        return Ok(Vec::new());
+    }
     let files_field = manifest.get("files").and_then(Value::as_array);
     let files_matcher: Option<Gitignore> =
         files_field.and_then(|arr| build_files_matcher(pkg_dir, arr));
@@ -169,16 +218,21 @@ pub fn packlist(pkg_dir: &Path, manifest: &Value) -> Result<Vec<String>, Packlis
 
     // Pass 3: force-include `main` / `bin` paths, which always ship
     // regardless of `.npmignore`. (`files`-field rejection is already
-    // overridden in pass 1.)
+    // overridden in pass 1.) Still consult `should_always_exclude`
+    // first — a manifest declaring e.g. `"main": "package-lock.json"`
+    // would otherwise re-add the lockfile we just refused above. The
+    // always-excluded set wins over manifest fields; npm-packlist
+    // does the same and emits no warning, so we stay silent too
+    // (a `tracing::debug!` would be lost in install logs).
     if let Some(main) = main_path {
         let m = normalize_field_path(main);
-        if !m.is_empty() && pkg_dir.join(&m).is_file() {
+        if !m.is_empty() && !should_always_exclude(&m) && pkg_dir.join(&m).is_file() {
             out.insert(m);
         }
     }
     for bin in &bin_paths {
         let b = normalize_field_path(bin);
-        if !b.is_empty() && pkg_dir.join(&b).is_file() {
+        if !b.is_empty() && !should_always_exclude(&b) && pkg_dir.join(&b).is_file() {
             out.insert(b);
         }
     }
@@ -217,7 +271,7 @@ pub fn packlist(pkg_dir: &Path, manifest: &Value) -> Result<Vec<String>, Packlis
             .ok()
             .flatten()
             .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
-        let nested = packlist(&bundle_pkg_dir, &bundle_manifest)?;
+        let nested = packlist_inner(&bundle_pkg_dir, &bundle_manifest, visited, depth + 1)?;
         for rel in nested {
             out.insert(format!("node_modules/{bundle_name}/{rel}"));
         }
