@@ -1,47 +1,64 @@
 //! Decide which files inside an extracted git-hosted package end up in
-//! the CAS. MVP port of [`npm-packlist`](https://github.com/npm/npm-packlist)
-//! / pnpm's
-//! [`fs/packlist`](https://github.com/pnpm/pnpm/blob/94240bc046/fs/packlist/src/index.ts):
+//! the CAS. Port of [`npm-packlist`](https://github.com/npm/npm-packlist)
+//! and pnpm's
+//! [`fs/packlist`](https://github.com/pnpm/pnpm/blob/94240bc046/fs/packlist/src/index.ts).
 //!
-//! - When `manifest.files` is a non-empty array, only its glob entries
-//!   plus the always-included files (`package.json`, `README*`,
-//!   `LICEN[SC]E*`, `CHANGES*`, `CHANGELOG*`, `HISTORY*`, `NOTICE*`)
-//!   and any file referenced by `manifest.main` / `manifest.bin` make it
-//!   into the result.
-//! - When `manifest.files` is absent, every regular file under
-//!   `pkg_dir` is included *except* the always-excluded set
-//!   (`.git/`, `node_modules/`, lockfiles for other package managers,
-//!   common cruft like `.DS_Store` / `npm-debug.log` / `*.orig`).
+//! The algorithm has four passes:
 //!
-//! Glob support is limited to `*`, `**`, and `?`. Full
-//! `.npmignore` / `.gitignore` layering, `bundleDependencies` walking,
-//! and exotic glob features (negation, character classes) are deferred
-//! to a follow-up; the gap is logged at `tracing::warn!` when a
-//! manifest carries `bundleDependencies` so the omission is visible
-//! during install. Tracks pnpm's behavior at
-//! [`fs/packlist/src/index.ts:24-29`](https://github.com/pnpm/pnpm/blob/94240bc046/fs/packlist/src/index.ts#L24-L29).
+//! 1. **Honor `.npmignore` and `.gitignore`** while walking. The
+//!    `ignore::WalkBuilder` does per-directory inheritance: a
+//!    `.npmignore` in `lib/` applies to `lib/**` only, while the
+//!    package's root `.gitignore` applies to the whole tree.
+//! 2. **Apply the `files` field allowlist** on top of the walk's
+//!    output: when the manifest sets `files: ["dist/**"]`, drop
+//!    anything outside that set (except the always-included files
+//!    handled in pass 3).
+//! 3. **Always-include** the standard files: `package.json`,
+//!    `README*` / `LICEN[SC]E*` / `CHANGES*` / `CHANGELOG*` /
+//!    `HISTORY*` / `NOTICE*` at the root, plus the paths declared in
+//!    `main` / `bin`. These survive `.npmignore` rejection and the
+//!    `files`-field filter.
+//! 4. **`bundleDependencies` recursion**: for each name in
+//!    `manifest.bundleDependencies` (or the legacy
+//!    `bundledDependencies`), recurse into `node_modules/<name>/` and
+//!    splice its packlist under that prefix.
+//!
+//! Two intentional divergences from upstream:
+//!
+//! - The `ignore` crate combines `.npmignore` and `.gitignore` rules
+//!   when both files exist in the same directory; npm-packlist would
+//!   use only `.npmignore`. The combined-rules outcome is the same
+//!   for the common case (a `.npmignore` that's a strict superset of
+//!   `.gitignore`); the divergence shows up only when `.npmignore`
+//!   explicitly *includes* a path `.gitignore` excludes, which is a
+//!   rare configuration in the wild. Documented gap; revisit if a
+//!   real package surfaces it.
+//! - `.git/info/exclude` and global `~/.gitignore` are NOT honored —
+//!   only the in-tree `.gitignore` / `.npmignore` files. The fetcher
+//!   imports a clean tarball / git checkout, not a user's working
+//!   tree, so the global-state ignores are wrong by construction.
 
 use crate::error::PacklistError;
+use ignore::{WalkBuilder, gitignore::Gitignore};
+use pacquet_package_manifest::safe_read_package_json_from_dir;
 use serde_json::Value;
 use std::{
     collections::BTreeSet,
+    fs,
     path::{Path, PathBuf},
 };
-use walkdir::WalkDir;
 
-/// Filenames always included regardless of `manifest.files`, matching
-/// `npm-packlist`'s `alwaysIncluded` plus pnpm's
-/// [`packlist`](https://github.com/pnpm/pnpm/blob/94240bc046/fs/packlist/src/index.ts#L13)
-/// pattern set. Case-insensitive prefix matches.
+/// Case-insensitive prefix matches for files always-included at the
+/// package root regardless of `.npmignore` / `files`. Mirrors
+/// `npm-packlist`'s `alwaysIncluded` plus pnpm's pattern set at
+/// [`fs/packlist/src/index.ts:13`](https://github.com/pnpm/pnpm/blob/94240bc046/fs/packlist/src/index.ts#L13).
 const ALWAYS_INCLUDED_PREFIXES: &[&str] =
     &["readme", "license", "licence", "changes", "changelog", "history", "notice"];
 
-/// Files / directories always excluded from the published view. The
-/// repo's own lockfiles must not bleed into the consumer's install —
-/// only the dep's source/build artifacts should ship.
+/// Always-excluded basenames. Same set as upstream: pacquet's CAS must
+/// never carry a dep's own lockfile or VCS state.
 const ALWAYS_EXCLUDED_NAMES: &[&str] = &[
     ".git",
-    "node_modules",
     ".npmrc",
     "npm-debug.log",
     ".DS_Store",
@@ -53,32 +70,19 @@ const ALWAYS_EXCLUDED_NAMES: &[&str] = &[
     ".hg",
 ];
 
-/// File-name suffixes always excluded (matched case-sensitively on the
-/// basename, like `npm-packlist` does for the `*.orig` family).
+/// Suffix-based always-excluded set, matching `npm-packlist`'s
+/// `*.orig` exclusion family.
 const ALWAYS_EXCLUDED_SUFFIXES: &[&str] = &[".orig"];
 
 /// Walk `pkg_dir` and return forward-slash relative paths for every
-/// file the published tarball should contain. Mirrors the return shape
-/// of `packlist()` at
+/// file the published tarball should contain. Mirrors the return
+/// shape of `packlist()` at
 /// [`fs/packlist/src/index.ts:24-29`](https://github.com/pnpm/pnpm/blob/94240bc046/fs/packlist/src/index.ts#L24-L29)
-/// (paths relative to `pkgDir`, no leading `./`).
+/// (paths relative to `pkg_dir`, no leading `./`).
 pub fn packlist(pkg_dir: &Path, manifest: &Value) -> Result<Vec<String>, PacklistError> {
-    if let Some(bundle) =
-        manifest.get("bundleDependencies").or_else(|| manifest.get("bundledDependencies"))
-        && bundle.as_array().is_some_and(|a| !a.is_empty())
-    {
-        tracing::warn!(
-            target: "pacquet::git_fetcher::packlist",
-            pkg_dir = %pkg_dir.display(),
-            "manifest declares bundleDependencies, but the MVP packlist port does not yet recurse into bundled deps — they will be missing from the cached snapshot",
-        );
-    }
-
     let files_field = manifest.get("files").and_then(Value::as_array);
-    let files_globs: Option<Vec<&str>> = files_field
-        .map(|arr| arr.iter().filter_map(Value::as_str).collect::<Vec<_>>())
-        .filter(|v| !v.is_empty());
-
+    let files_matcher: Option<Gitignore> =
+        files_field.and_then(|arr| build_files_matcher(pkg_dir, arr));
     let main_path = manifest.get("main").and_then(Value::as_str);
     let bin_paths: Vec<&str> = manifest
         .get("bin")
@@ -90,72 +94,234 @@ pub fn packlist(pkg_dir: &Path, manifest: &Value) -> Result<Vec<String>, Packlis
         .unwrap_or_default();
 
     let mut out: BTreeSet<String> = BTreeSet::new();
-    for entry in WalkDir::new(pkg_dir).into_iter().filter_entry(|e| {
-        // Hard-exclude `.git` / `node_modules` etc. before descent so
-        // we never spend time walking them. Note: this also filters
-        // the root once `e.depth() == 0`, hence the `is_root` guard.
-        let is_root = e.depth() == 0;
-        is_root || !is_always_excluded_dir(e.file_name())
-    }) {
-        let entry = entry
-            .map_err(|err| io_error(pkg_dir, err.into_io_error().unwrap_or_else(other_io_error)))?;
-        if !entry.file_type().is_file() {
+
+    // Pass 1: walk with `.gitignore` / `.npmignore` filtering.
+    // `standard_filters(false)` turns off `ignore`'s opinionated
+    // defaults (hidden-file skip, `.git`-dir skip, etc.) so we control
+    // every filter explicitly. `git_ignore(true)` /
+    // `add_custom_ignore_filename(".npmignore")` enable the two ignore
+    // file sources; `require_git(false)` makes `ignore` honor
+    // `.gitignore` even though a git-hosted snapshot's `.git/` has
+    // already been deleted by [`crate::GitFetcher`] before this point.
+    let mut builder = WalkBuilder::new(pkg_dir);
+    builder
+        .standard_filters(false)
+        .hidden(false)
+        .git_ignore(true)
+        .git_exclude(false)
+        .git_global(false)
+        .require_git(false)
+        .add_custom_ignore_filename(".npmignore");
+
+    for entry in builder.build() {
+        let entry = entry.map_err(|err| io_error(pkg_dir, into_io(err)))?;
+        if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
         let rel = relative_forward_slash(pkg_dir, entry.path());
-        if should_always_exclude_file(&rel) {
+        if should_always_exclude(&rel) {
             continue;
         }
-        if should_include(&rel, &files_globs, main_path, &bin_paths) {
-            out.insert(rel);
+        // `node_modules/` is handled by the `bundleDependencies`
+        // pass below — never include its contents via the general
+        // walk. Without this gate a manifest that publishes a stray
+        // `node_modules/something` would slip through.
+        if rel.starts_with("node_modules/") || rel == "node_modules" {
+            continue;
+        }
+        if let Some(matcher) = &files_matcher
+            && !files_field_includes(matcher, &rel)
+            && !is_always_included_at_root(&rel)
+            && !is_main_or_bin(&rel, main_path, &bin_paths)
+        {
+            continue;
+        }
+        out.insert(rel);
+    }
+
+    // Pass 2: scan the root for always-included names (README, LICENSE,
+    // etc.) that `.npmignore` might have removed from pass 1. npm-
+    // packlist guarantees these survive `.npmignore`.
+    let root_entries = fs::read_dir(pkg_dir)
+        .map_err(|source| PacklistError::Io { pkg_dir: pkg_dir.display().to_string(), source })?;
+    for entry in root_entries {
+        let entry = entry.map_err(|source| PacklistError::Io {
+            pkg_dir: pkg_dir.display().to_string(),
+            source,
+        })?;
+        if !entry.file_type().is_ok_and(|t| t.is_file()) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if should_always_exclude(&name) {
+            continue;
+        }
+        if is_always_included_at_root(&name) {
+            out.insert(name);
         }
     }
+
+    // Pass 3: force-include `main` / `bin` paths, which always ship
+    // regardless of `.npmignore`. (`files`-field rejection is already
+    // overridden in pass 1.)
+    if let Some(main) = main_path {
+        let m = normalize_field_path(main);
+        if !m.is_empty() && pkg_dir.join(&m).is_file() {
+            out.insert(m);
+        }
+    }
+    for bin in &bin_paths {
+        let b = normalize_field_path(bin);
+        if !b.is_empty() && pkg_dir.join(&b).is_file() {
+            out.insert(b);
+        }
+    }
+
+    // Pass 4: recurse into `bundleDependencies` /
+    // `bundledDependencies`. Each bundled dep gets its own packlist
+    // pass; the result splices in under `node_modules/<name>/`. Both
+    // field names are accepted because some published packages use
+    // one and some the other (npm-packlist tolerates both).
+    for bundle_name in bundle_dep_names(manifest) {
+        let bundle_pkg_dir = pkg_dir.join("node_modules").join(&bundle_name);
+        if !bundle_pkg_dir.is_dir() {
+            tracing::debug!(
+                target: "pacquet::git_fetcher::packlist",
+                bundle_name = %bundle_name,
+                pkg_dir = %pkg_dir.display(),
+                "bundleDependencies entry not present under node_modules/; skipping",
+            );
+            continue;
+        }
+        let bundle_manifest = safe_read_package_json_from_dir(&bundle_pkg_dir)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+        let nested = packlist(&bundle_pkg_dir, &bundle_manifest)?;
+        for rel in nested {
+            out.insert(format!("node_modules/{bundle_name}/{rel}"));
+        }
+    }
+
     Ok(out.into_iter().collect())
 }
 
-fn should_include(
-    rel: &str,
-    files_globs: &Option<Vec<&str>>,
-    main: Option<&str>,
-    bins: &[&str],
-) -> bool {
-    if is_always_included_basename(rel) {
+/// Compile the `manifest.files` allowlist into a single `Gitignore`
+/// matcher rooted at `pkg_dir`. Returns `None` when no entries
+/// compile (e.g., the field was present but every entry was empty or
+/// malformed) so the caller treats the absence as "include
+/// everything", matching upstream's behavior for an unset / empty
+/// `files`. Lines that fail to parse are dropped with a
+/// `tracing::debug!` — npm-packlist tolerates bad globs the same way
+/// (a bad pattern just doesn't match anything).
+fn build_files_matcher(pkg_dir: &Path, entries: &[Value]) -> Option<Gitignore> {
+    let mut builder = ignore::gitignore::GitignoreBuilder::new(pkg_dir);
+    let mut added = 0;
+    for entry in entries {
+        let Some(raw) = entry.as_str() else { continue };
+        let pattern = normalize_field_path(raw);
+        if pattern.is_empty() {
+            continue;
+        }
+        if let Err(error) = builder.add_line(None, &pattern) {
+            tracing::debug!(
+                target: "pacquet::git_fetcher::packlist",
+                ?pattern,
+                ?error,
+                "skipping invalid `files` entry",
+            );
+            continue;
+        }
+        added += 1;
+    }
+    if added == 0 {
+        return None;
+    }
+    match builder.build() {
+        Ok(gi) => Some(gi),
+        Err(error) => {
+            tracing::debug!(
+                target: "pacquet::git_fetcher::packlist",
+                ?error,
+                "failed to build `files`-field matcher; treating field as absent",
+            );
+            None
+        }
+    }
+}
+
+/// `true` when `rel` matches the `files`-field allowlist. The matcher
+/// was built with the `files` entries as gitignore-style include
+/// patterns; `Gitignore::matched(rel, false).is_ignore()` is `true`
+/// when one of those patterns matches, which is what we want for an
+/// include list.
+///
+/// gitignore-style patterns also match directories implicitly: a
+/// pattern like `dist` matches both `dist` and everything under it.
+/// Bare basenames like `cli` should also match at any depth; the
+/// fallback below splits the candidate to try the leaf name.
+fn files_field_includes(matcher: &Gitignore, rel: &str) -> bool {
+    if matcher.matched(rel, false).is_ignore() {
         return true;
     }
-    if let Some(globs) = files_globs {
-        if let Some(main) = main
-            && normalize_field_path(main) == rel
-        {
-            return true;
-        }
-        if bins.iter().any(|bin| normalize_field_path(bin) == rel) {
-            return true;
-        }
-        return globs.iter().any(|glob| glob_match(normalize_field_path(glob).as_str(), rel));
-    }
-    // No `files` field — everything that wasn't excluded above ships.
-    true
+    rel.rsplit('/').next().is_some_and(|leaf| matcher.matched(leaf, false).is_ignore())
 }
 
-fn is_always_included_basename(rel: &str) -> bool {
-    let basename = rel.rsplit('/').next().unwrap_or(rel).to_ascii_lowercase();
-    if basename == "package.json" {
+fn is_always_included_at_root(rel: &str) -> bool {
+    // Only files at the root carry the always-include semantics; a
+    // `LICENSE` deep in a subtree follows the same `.npmignore` /
+    // `files` rules as any other file. Matches npm-packlist's
+    // root-only treatment of the README/LICENSE/etc. set.
+    if rel.contains('/') {
+        return false;
+    }
+    let lower = rel.to_ascii_lowercase();
+    if lower == "package.json" {
         return true;
     }
-    ALWAYS_INCLUDED_PREFIXES.iter().any(|prefix| basename.starts_with(prefix))
+    ALWAYS_INCLUDED_PREFIXES.iter().any(|prefix| lower.starts_with(prefix))
 }
 
-fn is_always_excluded_dir(name: &std::ffi::OsStr) -> bool {
-    let Some(name) = name.to_str() else { return false };
-    ALWAYS_EXCLUDED_NAMES.contains(&name)
+fn is_main_or_bin(rel: &str, main: Option<&str>, bins: &[&str]) -> bool {
+    if let Some(main) = main
+        && normalize_field_path(main) == rel
+    {
+        return true;
+    }
+    bins.iter().any(|bin| normalize_field_path(bin) == rel)
 }
 
-fn should_always_exclude_file(rel: &str) -> bool {
+fn should_always_exclude(rel: &str) -> bool {
     let basename = rel.rsplit('/').next().unwrap_or(rel);
     if ALWAYS_EXCLUDED_NAMES.contains(&basename) {
         return true;
     }
+    if rel.split('/').any(|seg| ALWAYS_EXCLUDED_NAMES.contains(&seg)) {
+        return true;
+    }
     ALWAYS_EXCLUDED_SUFFIXES.iter().any(|s| basename.ends_with(s))
+}
+
+/// Collect names from `bundleDependencies` (or the legacy
+/// `bundledDependencies`). Both spellings appear in real published
+/// packages; npm-packlist accepts either.
+fn bundle_dep_names(manifest: &Value) -> Vec<String> {
+    let raw = manifest.get("bundleDependencies").or_else(|| manifest.get("bundledDependencies"));
+    let Some(raw) = raw else { return Vec::new() };
+    match raw {
+        Value::Array(arr) => arr.iter().filter_map(Value::as_str).map(String::from).collect(),
+        Value::Bool(true) => {
+            // `bundleDependencies: true` means "bundle every entry in
+            // `dependencies`". Rare but supported by npm. Materialize
+            // the keys from the dependencies map.
+            manifest
+                .get("dependencies")
+                .and_then(Value::as_object)
+                .map(|m| m.keys().cloned().collect::<Vec<_>>())
+                .unwrap_or_default()
+        }
+        _ => Vec::new(),
+    }
 }
 
 fn relative_forward_slash(root: &Path, full: &Path) -> String {
@@ -168,97 +334,20 @@ fn relative_forward_slash(root: &Path, full: &Path) -> String {
 }
 
 /// Strip a leading `./` and any leading slashes from `path` so manifest
-/// `files` entries match the forward-slash relative form `packlist`
-/// produces. Mirrors `npm-packlist`'s normalisation step.
+/// field entries match the forward-slash relative form `packlist`
+/// produces. Mirrors `npm-packlist`'s normalization step.
 fn normalize_field_path(path: &str) -> String {
     let trimmed = path.trim_start_matches("./");
     trimmed.trim_start_matches('/').to_string()
-}
-
-/// Minimal glob matcher supporting `*` (any non-slash run), `**` (any
-/// sequence including slashes), and `?` (single non-slash char). Good
-/// enough for the common `files` patterns: `dist/**`, `lib/*.js`,
-/// `bin/cli`, etc.
-fn glob_match(pattern: &str, candidate: &str) -> bool {
-    glob_match_inner(pattern.as_bytes(), candidate.as_bytes())
-}
-
-fn glob_match_inner(pattern: &[u8], candidate: &[u8]) -> bool {
-    // Two-pointer walk with one backtrack point. The asymptotic worst
-    // case is O(n*m), but real `files` patterns have only one or two
-    // wildcards so the inner loop terminates fast.
-    let mut p = 0;
-    let mut c = 0;
-    let mut star_p: Option<usize> = None;
-    let mut star_c = 0;
-    while c < candidate.len() {
-        if p < pattern.len()
-            && pattern[p] == b'*'
-            && p + 1 < pattern.len()
-            && pattern[p + 1] == b'*'
-        {
-            // `**` — match any sequence (including slashes).
-            star_p = Some(p);
-            p += 2;
-            // Skip a single following `/` so `dist/**` matches `dist/x`.
-            if p < pattern.len() && pattern[p] == b'/' {
-                p += 1;
-            }
-            star_c = c;
-            continue;
-        }
-        if p < pattern.len() && pattern[p] == b'*' {
-            // single `*` — match any non-slash run.
-            star_p = Some(p);
-            p += 1;
-            star_c = c;
-            continue;
-        }
-        // `?` matches any single non-slash byte; otherwise the byte
-        // must match exactly. (Without the explicit `candidate[c] !=
-        // b'/'` gate, `a?b` would incorrectly match `a/b`.)
-        if p < pattern.len() {
-            let pc = pattern[p];
-            let matches = (pc == b'?' && candidate[c] != b'/') || pc == candidate[c];
-            if matches {
-                p += 1;
-                c += 1;
-                continue;
-            }
-        }
-        if let Some(sp) = star_p {
-            // Backtrack: the `*` swallows one more candidate byte.
-            // For single `*`, refuse to swallow a `/`.
-            if pattern[sp] == b'*'
-                && (sp + 1 >= pattern.len() || pattern[sp + 1] != b'*')
-                && candidate[star_c] == b'/'
-            {
-                return false;
-            }
-            star_c += 1;
-            c = star_c;
-            p = sp
-                + if pattern[sp] == b'*' && sp + 1 < pattern.len() && pattern[sp + 1] == b'*' {
-                    2
-                } else {
-                    1
-                };
-            continue;
-        }
-        return false;
-    }
-    while p < pattern.len() && pattern[p] == b'*' {
-        p += 1;
-    }
-    p == pattern.len()
 }
 
 fn io_error(pkg_dir: &Path, source: std::io::Error) -> PacklistError {
     PacklistError::Io { pkg_dir: pkg_dir.display().to_string(), source }
 }
 
-fn other_io_error() -> std::io::Error {
-    std::io::Error::other("walkdir produced an entry with no underlying io::Error")
+fn into_io(err: ignore::Error) -> std::io::Error {
+    err.into_io_error()
+        .unwrap_or_else(|| std::io::Error::other("ignore walker produced a non-io error"))
 }
 
 #[cfg(test)]
