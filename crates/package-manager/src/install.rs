@@ -293,18 +293,34 @@ where
                     config.ignored_optional_dependencies.as_deref(),
                 )
                 .map_err(|reason| InstallError::OutdatedLockfile { reason })?;
-                // Build the `ignoredOptionalDependencies` matcher once.
-                // Empty config → never matches. Uses the same
-                // glob-pattern engine as `hoistPattern` /
-                // `publicHoistPattern` (mirrors upstream's
-                // `createMatcher` at
-                // <https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts>).
-                let ignored_matcher = config
+                // Build the `ignoredOptionalDependencies` filter set.
+                // Mirrors upstream's
+                // [`createOptionalDependenciesRemover`](https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts):
+                // the hook iterates `manifest.optionalDependencies`
+                // and deletes matches from BOTH the `optional` and
+                // `dependencies` maps. A name only present in
+                // `dependencies` (not `optionalDependencies`) that
+                // happens to match the pattern is NOT removed —
+                // that's why the predicate is set-based ("name was
+                // in optionalDependencies AND matched") rather than
+                // pure pattern matching. `devDependencies` is
+                // untouched on purpose; the group gate inside
+                // `satisfies_package_manifest` enforces that.
+                let ignored_set: std::collections::HashSet<String> = config
                     .ignored_optional_dependencies
                     .as_deref()
-                    .map(pacquet_config::matcher::create_matcher);
+                    .filter(|patterns| !patterns.is_empty())
+                    .map(|patterns| {
+                        let matcher = pacquet_config::matcher::create_matcher(patterns);
+                        manifest
+                            .dependencies([pacquet_package_manifest::DependencyGroup::Optional])
+                            .filter(|(name, _)| matcher.matches(name))
+                            .map(|(name, _)| name.to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 let is_ignored_optional: &dyn Fn(&str) -> bool =
-                    &|name: &str| ignored_matcher.as_ref().is_some_and(|m| m.matches(name));
+                    &|name: &str| ignored_set.contains(name);
                 satisfies_package_manifest(
                     importer,
                     manifest,

@@ -307,11 +307,16 @@ pub fn satisfies_package_manifest(
             // upstream's read-package-hook strips matching entries
             // from `optionalDependencies` AND `dependencies` before
             // the resolver sees the manifest, so the lockfile never
-            // carries them. The freshness check applies the same
-            // filter so a manifest that still lists the ignored entry
-            // doesn't falsely flag drift. Mirrors
-            // <https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts>.
-            .filter(|(name, _)| !is_ignored_optional(name))
+            // carries them. `devDependencies` is intentionally
+            // untouched by the hook — see
+            // <https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts>:
+            // the hook iterates `optionalDependencies` keys and
+            // deletes from `optionalDependencies` plus
+            // `dependencies` only.
+            .filter(|(name, _)| {
+                !matches!(field, DependencyGroup::Prod | DependencyGroup::Optional)
+                    || !is_ignored_optional(name)
+            })
             .filter(|(name, _)| match field {
                 // `dev` deps are dropped if also listed in `prod` or
                 // `optional`. `prod` deps are dropped if also in
@@ -413,9 +418,18 @@ fn flat_manifest_specs(
     let mut out = BTreeMap::new();
     for group in [DependencyGroup::Dev, DependencyGroup::Prod, DependencyGroup::Optional] {
         for (name, spec) in manifest.dependencies([group]) {
-            // `ignoredOptionalDependencies` filter — see the
-            // matching call site inside `satisfies_package_manifest`.
-            if is_ignored_optional(name) {
+            // `ignoredOptionalDependencies` filter — only applies to
+            // `Prod` and `Optional`, matching upstream's
+            // [`createOptionalDependenciesRemover`](https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts).
+            // The hook iterates `optionalDependencies` and deletes
+            // matches from there AND from `dependencies`, but
+            // leaves `devDependencies` untouched. Mirroring that
+            // exactly: the same name listed in `devDependencies`
+            // is kept here so the lockfile-side dev entry doesn't
+            // falsely surface as drift.
+            if matches!(group, DependencyGroup::Prod | DependencyGroup::Optional)
+                && is_ignored_optional(name)
+            {
                 continue;
             }
             out.insert(name.to_string(), spec.to_string());

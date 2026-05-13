@@ -709,3 +709,75 @@ fn ignored_optional_dependencies_round_trips_through_yaml() {
         Some(&["foo".to_string(), "@scope/bar".to_string()][..]),
     );
 }
+
+/// `ignoredOptionalDependencies` must **not** apply to
+/// `devDependencies` — upstream's
+/// [`createOptionalDependenciesRemover`](https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts)
+/// iterates `optionalDependencies` keys and deletes from
+/// `optionalDependencies` + `dependencies` only, never touching
+/// `devDependencies`. Regression for CodeRabbit review on PR #507.
+///
+/// Fixture: same name `foo` in both `optionalDependencies` and
+/// `devDependencies` on the manifest; lockfile has `foo` only in
+/// dev (resolver dropped the optional via the hook, kept the dev).
+/// Filter says `foo` is ignored. Without the group gate, the
+/// manifest's dev `foo` would be filtered too → diff would flag
+/// lockfile's dev `foo` as removed → false drift.
+#[test]
+fn ignored_optional_does_not_apply_to_dev_dependencies() {
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    devDependencies:"
+        "      foo:"
+        "        specifier: ^1.0.0"
+        "        version: 1.0.0"
+    })
+    .expect("parse lockfile");
+    let importer = lockfile.root_project().expect("root importer");
+    let (_dir, manifest) = manifest_from_json(
+        r#"{
+        "name": "x",
+        "version": "1.0.0",
+        "optionalDependencies": { "foo": "^1.0.0" },
+        "devDependencies": { "foo": "^1.0.0" }
+    }"#,
+    );
+    let is_ignored: &dyn Fn(&str) -> bool = &|name: &str| name == "foo";
+    assert!(satisfies_package_manifest(importer, &manifest, ".", is_ignored).is_ok());
+}
+
+/// Mirror sanity: if the filter incorrectly applied to dev (the
+/// pre-CodeRabbit-fix behavior), this same fixture without the
+/// group gate would flag drift. Used to pin that the gate exists
+/// — removing the `matches!(... Prod | Optional)` check inside
+/// `satisfies_package_manifest` makes this test fail.
+#[test]
+fn ignored_optional_dev_only_lockfile_entry_kept() {
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    devDependencies:"
+        "      foo:"
+        "        specifier: ^1.0.0"
+        "        version: 1.0.0"
+    })
+    .expect("parse lockfile");
+    let importer = lockfile.root_project().expect("root importer");
+    let (_dir, manifest) = manifest_from_json(
+        r#"{
+        "name": "x",
+        "version": "1.0.0",
+        "devDependencies": { "foo": "^1.0.0" }
+    }"#,
+    );
+    // The manifest doesn't have `foo` in optionalDependencies, so
+    // upstream's hook wouldn't iterate it. Filter says `foo` matches
+    // a pattern — exercising the case "pattern says foo is ignored
+    // but manifest's only entry for foo is in devDependencies".
+    // Should pass (dev entry untouched).
+    let is_ignored: &dyn Fn(&str) -> bool = &|name: &str| name == "foo";
+    assert!(satisfies_package_manifest(importer, &manifest, ".", is_ignored).is_ok());
+}
