@@ -69,25 +69,28 @@ pub enum ImportIndexedDirError {
 /// Behavior:
 ///
 /// * If `dir_path` does not yet exist, this is equivalent to
-///   [`create_cas_files`] — make parent dirs, then link files in
+///   [`create_cas_files()`] — make parent dirs, then link files in
 ///   parallel.
 /// * If `dir_path` exists as a directory, the new contents are staged
 ///   in a sibling directory (so the rename stays on one filesystem),
 ///   any existing `dir_path/node_modules/` is moved into the staging
 ///   directory to preserve nested deps, the old directory is removed,
-///   and the staging directory is renamed into place.
+///   and the staging directory is renamed into place. On any failure
+///   after the `node_modules/` move, the staged copy is restored to
+///   `dir_path/node_modules/` before the staging directory is cleaned
+///   up — staging never holds the user's only copy of nested deps.
 /// * If `dir_path` exists as a regular file or a symlink, the dirent
 ///   is removed first and then the fresh-target path is taken. The
 ///   hoisted-linker won't produce that state in practice, but
 ///   refusing to clobber it would leave the install wedged.
 ///
-/// Files in the package's `cas_paths` are materialized by [`link_file`]
-/// using `import_method`'s preference order
+/// Files in the package's `cas_paths` are materialized by
+/// [`link_file()`] using `import_method`'s preference order
 /// (hardlink → reflink → copy, etc.), and the per-method
 /// `pnpm:package-import-method` log is emitted via `logged_methods` the
-/// same way [`create_cas_files`] does.
+/// same way [`create_cas_files()`] does.
 ///
-/// [`link_file`]: crate::link_file
+/// [`link_file()`]: crate::link_file()
 pub fn import_indexed_dir<R: Reporter>(
     logged_methods: &AtomicU8,
     import_method: PackageImportMethod,
@@ -131,30 +134,34 @@ fn stage_and_swap<R: Reporter>(
     cas_paths: &HashMap<String, PathBuf>,
 ) -> Result<(), ImportIndexedDirError> {
     let stage = pick_stage_path(dir_path);
+    let target_modules = dir_path.join("node_modules");
+    let stage_modules = stage.join("node_modules");
 
-    let result =
-        stage_and_swap_inner::<R>(logged_methods, import_method, dir_path, &stage, cas_paths);
-    if result.is_err() {
-        // Best-effort cleanup — the swap never happened, so we own the
-        // staging directory. Swallow the cleanup error; the caller
-        // already has the underlying failure.
+    // 1. Populate the staging directory with the new contents. On
+    //    failure, the staging directory is the only thing on disk we
+    //    own — a blanket rimraf is safe.
+    if let Err(error) = create_cas_files::<R>(logged_methods, import_method, &stage, cas_paths) {
         let _ = fs::remove_dir_all(&stage);
+        return Err(ImportIndexedDirError::CreateCasFiles(error));
     }
-    result
-}
 
-fn stage_and_swap_inner<R: Reporter>(
-    logged_methods: &AtomicU8,
-    import_method: PackageImportMethod,
-    dir_path: &Path,
-    stage: &Path,
-    cas_paths: &HashMap<String, PathBuf>,
-) -> Result<(), ImportIndexedDirError> {
-    // 1. Populate the staging directory with the new contents.
-    create_cas_files::<R>(logged_methods, import_method, stage, cas_paths)
-        .map_err(ImportIndexedDirError::CreateCasFiles)?;
+    // 2. Inspect the existing `node_modules/` so nested deps survive
+    //    the swap. Only `NotFound` is benign — `PermissionDenied` and
+    //    other transient I/O failures must surface, otherwise the
+    //    user's nested deps get silently clobbered when the directory
+    //    is removed in step 4.
+    let nm_kind = match fs::symlink_metadata(&target_modules) {
+        Ok(meta) => Some(meta.file_type()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&stage);
+            return Err(ImportIndexedDirError::InspectTarget { path: target_modules, error });
+        }
+    };
 
-    // 2. Preserve any existing `node_modules/` so nested deps survive.
+    // 3. Preserve `node_modules/` if it's a real directory. Track the
+    //    move so steps 4 and 5 can rescue it on failure.
+    //
     //    Indexed file maps for npm tarballs never contain
     //    `node_modules/` entries (npm and pnpm strip them at pack
     //    time), so a pre-existing `<stage>/node_modules/` would be
@@ -162,43 +169,70 @@ fn stage_and_swap_inner<R: Reporter>(
     //    merging. Upstream's `moveOrMergeModulesDirs` performs a real
     //    merge for this case, but the hoisted-linker call site does
     //    not exercise it in practice.
-    let target_modules = dir_path.join("node_modules");
-    match fs::symlink_metadata(&target_modules) {
-        Ok(meta) if meta.file_type().is_dir() => {
-            let stage_modules = stage.join("node_modules");
+    let nm_moved = match nm_kind {
+        Some(file_type) if file_type.is_dir() => {
             if stage_modules.exists() {
+                let _ = fs::remove_dir_all(&stage);
                 return Err(ImportIndexedDirError::NodeModulesCollision { path: stage_modules });
             }
-            fs::rename(&target_modules, &stage_modules).map_err(|error| {
-                ImportIndexedDirError::PreserveModulesDir {
+            if let Err(error) = fs::rename(&target_modules, &stage_modules) {
+                let _ = fs::remove_dir_all(&stage);
+                return Err(ImportIndexedDirError::PreserveModulesDir {
                     from: target_modules,
                     to: stage_modules,
                     error,
-                }
-            })?;
+                });
+            }
+            true
         }
-        Ok(_) | Err(_) => {
-            // No `node_modules/` to preserve, or it's a symlink / file
-            // rather than a real directory — nothing to do. The swap
-            // below will remove it along with the rest of the target.
-        }
+        Some(_) | None => false,
+    };
+
+    // 4. Remove the old contents. If this fails after step 3, the
+    //    staged copy of `node_modules/` is the user's only copy —
+    //    move it back into place before bailing.
+    if let Err(error) = fs::remove_dir_all(dir_path) {
+        rescue_node_modules(nm_moved, &stage_modules, &target_modules);
+        let _ = fs::remove_dir_all(&stage);
+        return Err(ImportIndexedDirError::RemoveExisting { path: dir_path.to_path_buf(), error });
     }
 
-    // 3. Clear the old contents and move the staged tree into place.
-    //    There's a brief window between `remove_dir_all` and `rename`
-    //    where the package dir does not exist on disk — acceptable
-    //    given pacquet runs one install per process and the hoisted
-    //    linker holds the install graph's coarse lock.
-    fs::remove_dir_all(dir_path).map_err(|error| ImportIndexedDirError::RemoveExisting {
-        path: dir_path.to_path_buf(),
-        error,
-    })?;
-    fs::rename(stage, dir_path).map_err(|error| ImportIndexedDirError::Swap {
-        from: stage.to_path_buf(),
-        to: dir_path.to_path_buf(),
-        error,
-    })?;
+    // 5. Move the staged tree into place. There's a brief window
+    //    between `remove_dir_all` and `rename` where `dir_path` does
+    //    not exist on disk — acceptable given pacquet runs one
+    //    install per process and the hoisted linker holds the install
+    //    graph's coarse lock. If the rename fails, recreate
+    //    `dir_path` so the rescued `node_modules/` has somewhere to
+    //    land.
+    if let Err(error) = fs::rename(&stage, dir_path) {
+        if nm_moved && fs::create_dir_all(dir_path).is_ok() {
+            rescue_node_modules(nm_moved, &stage_modules, &target_modules);
+        }
+        let _ = fs::remove_dir_all(&stage);
+        return Err(ImportIndexedDirError::Swap { from: stage, to: dir_path.to_path_buf(), error });
+    }
     Ok(())
+}
+
+/// Best-effort restoration of the preserved `node_modules/` directory
+/// onto its original path after a partial stage-and-swap failure. The
+/// caller has already decided to return an error to its caller; any
+/// failure here is logged-and-swallowed because the surfaced error
+/// already explains the underlying problem.
+fn rescue_node_modules(nm_moved: bool, stage_modules: &Path, target_modules: &Path) {
+    if !nm_moved {
+        return;
+    }
+    if let Err(error) = fs::rename(stage_modules, target_modules) {
+        tracing::warn!(
+            target: "pacquet::import_indexed_dir",
+            ?stage_modules,
+            ?target_modules,
+            %error,
+            "failed to restore preserved node_modules/ after a partial stage-and-swap; \
+             the staged copy is at the source path until cleanup runs",
+        );
+    }
 }
 
 /// Build a sibling path next to `target` that is unique within the
