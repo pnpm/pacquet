@@ -389,3 +389,160 @@ fn spec_diff_display_uses_singular_for_count_of_one() {
     );
     assert!(!rendered.contains("dependencies were added"));
 }
+
+/// `dependenciesMeta: {}` on the manifest with no `dependenciesMeta`
+/// on the importer should match — empty object and absent are
+/// equivalent. Mirrors upstream's `?? {}` coercion at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/verification/src/satisfiesPackageManifest.ts#L56-L58>.
+/// Ports the upstream test at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/verification/test/satisfiesPackageManifest.ts#L232-L252>.
+#[test]
+fn dependencies_meta_empty_object_equivalent_to_absent() {
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies:"
+        "      foo:"
+        "        specifier: 1.0.0"
+        "        version: 1.0.0"
+    })
+    .expect("parse fixture lockfile");
+    let importer = lockfile.root_project().expect("root importer present");
+    // Manifest has `dependenciesMeta: {}`; lockfile has none.
+    let (_dir, manifest) = manifest_from_json(
+        r#"{
+        "name": "x",
+        "version": "1.0.0",
+        "dependencies": { "foo": "1.0.0" },
+        "dependenciesMeta": {}
+    }"#,
+    );
+    assert!(satisfies_package_manifest(importer, &manifest, ".").is_ok());
+}
+
+/// `publishDirectory` happy-path: lockfile and manifest agree on the
+/// directory. Ports the upstream test at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/verification/test/satisfiesPackageManifest.ts#L314-L334>.
+#[test]
+fn publish_directory_match_satisfies() {
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    publishDirectory: ./dist"
+        "    dependencies:"
+        "      foo:"
+        "        specifier: 1.0.0"
+        "        version: 1.0.0"
+    })
+    .expect("parse fixture lockfile");
+    let importer = lockfile.root_project().expect("root importer present");
+    let (_dir, manifest) = manifest_from_json(
+        r#"{
+        "name": "x",
+        "version": "1.0.0",
+        "publishConfig": { "directory": "./dist" },
+        "dependencies": { "foo": "1.0.0" }
+    }"#,
+    );
+    assert!(satisfies_package_manifest(importer, &manifest, ".").is_ok());
+}
+
+/// Same dep listed in both `dependencies` and `devDependencies` on
+/// the manifest, only in `dependencies` on the lockfile — should
+/// pass because upstream's per-field check filters out a dep from
+/// `devDependencies` when it also exists in `dependencies` /
+/// `optionalDependencies` (precedence: optional > prod > dev).
+/// Mirrors upstream's `pkgDepNames` filter at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/verification/src/satisfiesPackageManifest.ts#L69-L84>.
+/// Ports the upstream test at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/verification/test/satisfiesPackageManifest.ts#L211-L230>.
+#[test]
+fn same_dep_in_prod_and_dev_counts_under_prod() {
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies:"
+        "      foo:"
+        "        specifier: 1.0.0"
+        "        version: 1.0.0"
+    })
+    .expect("parse fixture lockfile");
+    let importer = lockfile.root_project().expect("root importer present");
+    // Manifest lists foo under both prod and dev; lockfile records
+    // it only under prod (the higher-precedence field).
+    let (_dir, manifest) = manifest_from_json(
+        r#"{
+        "name": "x",
+        "version": "1.0.0",
+        "dependencies": { "foo": "1.0.0" },
+        "devDependencies": { "foo": "1.0.0" }
+    }"#,
+    );
+    assert!(
+        satisfies_package_manifest(importer, &manifest, ".").is_ok(),
+        "manifest listing foo in prod+dev must satisfy a lockfile that records it under prod only",
+    );
+}
+
+/// Same dep in both `dependencies` and `optionalDependencies`:
+/// optional wins precedence, lockfile records it only under
+/// `optionalDependencies`. Verifies the precedence rule in the
+/// other direction.
+#[test]
+fn same_dep_in_prod_and_optional_counts_under_optional() {
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    optionalDependencies:"
+        "      foo:"
+        "        specifier: 1.0.0"
+        "        version: 1.0.0"
+    })
+    .expect("parse fixture lockfile");
+    let importer = lockfile.root_project().expect("root importer present");
+    let (_dir, manifest) = manifest_from_json(
+        r#"{
+        "name": "x",
+        "version": "1.0.0",
+        "dependencies": { "foo": "1.0.0" },
+        "optionalDependencies": { "foo": "1.0.0" }
+    }"#,
+    );
+    assert!(
+        satisfies_package_manifest(importer, &manifest, ".").is_ok(),
+        "manifest listing foo in prod+optional must satisfy a lockfile that records it under optional only",
+    );
+}
+
+/// Manifest has prod-only deps; lockfile has prod deps plus an
+/// empty `devDependencies` map. Should satisfy — absent and empty
+/// must be treated alike on the importer side too. Ports the
+/// upstream test at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/verification/test/satisfiesPackageManifest.ts#L20-L31>.
+#[test]
+fn importer_empty_dev_dependencies_equivalent_to_absent() {
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies:"
+        "      foo:"
+        "        specifier: ^1.0.0"
+        "        version: 1.0.0"
+        "    devDependencies: {}"
+    })
+    .expect("parse fixture lockfile");
+    let importer = lockfile.root_project().expect("root importer present");
+    let (_dir, manifest) = manifest_from_json(
+        r#"{
+        "name": "x",
+        "version": "1.0.0",
+        "dependencies": { "foo": "^1.0.0" }
+    }"#,
+    );
+    assert!(satisfies_package_manifest(importer, &manifest, ".").is_ok());
+}

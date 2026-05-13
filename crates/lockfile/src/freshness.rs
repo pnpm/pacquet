@@ -233,9 +233,34 @@ pub fn satisfies_package_manifest(
     // same in both. Run the per-field comparison unconditionally
     // here to catch that and the same-cardinality cross-field-swap
     // case (lockfile prod={a}, dev={b} vs manifest prod={b}, dev={a}).
+    //
+    // A dep listed in *multiple* manifest fields is counted only in
+    // the highest-precedence one: `optionalDependencies` >
+    // `dependencies` > `devDependencies`. Matches upstream's
+    // `pkgDepNames` filter at
+    // <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/verification/src/satisfiesPackageManifest.ts#L69-L84>.
+    // Without this, a manifest with the same dep in both `deps` and
+    // `devDeps` would fail the `devDeps` check even though the
+    // lockfile records it under `deps` only.
+    let manifest_prod: BTreeMap<&str, &str> =
+        manifest.dependencies([DependencyGroup::Prod]).collect();
+    let manifest_optional: BTreeMap<&str, &str> =
+        manifest.dependencies([DependencyGroup::Optional]).collect();
     for field in [DependencyGroup::Prod, DependencyGroup::Dev, DependencyGroup::Optional] {
         let field_name = <&'static str>::from(field);
-        let manifest_field: BTreeMap<&str, &str> = manifest.dependencies([field]).collect();
+        let manifest_field: BTreeMap<&str, &str> = manifest
+            .dependencies([field])
+            .filter(|(name, _)| match field {
+                // `dev` deps are dropped if also listed in `prod` or
+                // `optional`. `prod` deps are dropped if also in
+                // `optional`. `optional` always wins.
+                DependencyGroup::Dev => {
+                    !manifest_prod.contains_key(*name) && !manifest_optional.contains_key(*name)
+                }
+                DependencyGroup::Prod => !manifest_optional.contains_key(*name),
+                DependencyGroup::Optional | DependencyGroup::Peer => true,
+            })
+            .collect();
         let importer_field = importer.get_map_by_group(field);
 
         // Every manifest entry must have a matching importer entry
@@ -268,9 +293,9 @@ pub fn satisfies_package_manifest(
         }
 
         // Every importer entry in this field must also exist in the
-        // manifest's same field. Catches the inverse of the loop
-        // above (lockfile lists a dep here that the manifest moved
-        // to a different field).
+        // manifest's same field (post-precedence-filter). Catches
+        // the inverse of the loop above (lockfile lists a dep here
+        // that the manifest moved to a different field).
         if let Some(importer_map) = importer_field {
             for (name, spec) in importer_map {
                 if !manifest_field.contains_key(name.to_string().as_str()) {
