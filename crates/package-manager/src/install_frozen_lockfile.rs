@@ -442,18 +442,25 @@ where
                     if let Some(result) = result {
                         // Public-hoist target is the project's root
                         // `node_modules` (= `config.modules_dir`).
-                        // Private-hoist target is `<virtual_store>/node_modules`,
-                        // matching upstream's
-                        // [`privateHoistedModulesDir = path.join(virtualStoreDir, 'node_modules')`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/index.ts#L228-L232).
-                        // (GVS rewires this to `<root>/node_modules/.pnpm/node_modules`;
-                        // pacquet doesn't implement GVS yet — tracked at
-                        // pnpm/pacquet#432.)
+                        // Private-hoist target is the project-local
+                        // `<root>/node_modules/.pnpm/node_modules` —
+                        // pacquet's `config.virtual_store_dir` always
+                        // resolves there even with GVS enabled
+                        // (upstream's `virtualStoreDir` field is
+                        // mutated under GVS, but pacquet keeps
+                        // `virtual_store_dir` project-local and
+                        // routes the GVS-shared root through
+                        // `global_virtual_store_dir` instead — see
+                        // [`Config::apply_global_virtual_store_derivation`]).
+                        // The symlink *target* (under the slot dir)
+                        // does need to be GVS-aware, which the
+                        // `VirtualStoreLayout` handle below provides.
                         let private_dir = config.virtual_store_dir.join("node_modules");
                         let public_dir = config.modules_dir.clone();
                         symlink_hoisted_dependencies(
                             &result.hoisted_dependencies_by_node_id,
                             &graph,
-                            &config.virtual_store_dir,
+                            &layout,
                             &private_dir,
                             &public_dir,
                         )

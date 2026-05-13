@@ -435,9 +435,14 @@ struct BfsEntry<'a> {
 /// [`symlinkHoistedDependencies`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/linking/hoist/src/index.ts#L269-L307).
 ///
 /// For each (snapshot_key, alias, kind) entry, link
-/// `<target_dir>/<alias>` → `<virtual_store_dir>/<key.virtual_store_name>/node_modules/<package_name>`,
+/// `<target_dir>/<alias>` → `<layout.slot_dir(key)>/node_modules/<package_name>`,
 /// where `<target_dir>` is `<public_hoisted_modules_dir>` for public-kind
-/// or `<private_hoisted_modules_dir>` for private-kind.
+/// or `<private_hoisted_modules_dir>` for private-kind. The
+/// [`crate::VirtualStoreLayout`] handle resolves the slot directory in
+/// either GVS mode (`<store_dir>/links/<scope>/<name>/<version>/<hash>/`)
+/// or legacy flat-name mode
+/// (`<virtual_store_dir>/<key.virtual_store_name>/`); the hoist code
+/// never has to branch on `enable_global_virtual_store` itself.
 ///
 /// Existing symlinks are left in place — `EEXIST` from the underlying
 /// [`pacquet_fs::symlink_dir`] is swallowed, mirroring upstream's
@@ -465,7 +470,7 @@ struct BfsEntry<'a> {
 pub fn symlink_hoisted_dependencies(
     hoisted_by_node_id: &HashMap<PackageKey, HashMap<String, HoistKind>>,
     graph: &HashMap<PackageKey, HoistGraphNode>,
-    virtual_store_dir: &std::path::Path,
+    layout: &crate::VirtualStoreLayout,
     private_hoisted_modules_dir: &std::path::Path,
     public_hoisted_modules_dir: &std::path::Path,
 ) -> Result<(), crate::SymlinkPackageError> {
@@ -479,12 +484,13 @@ pub fn symlink_hoisted_dependencies(
 
     // Phase 1: collect symlink work as `(Arc<dep_dir>, kind, alias)`
     // tuples. Sharing `dep_dir` via `Arc` avoids cloning the PathBuf
-    // (and the `to_virtual_store_name()` String inside it, which the
-    // lockfile crate flags as "far from optimal") once per alias on a
-    // multi-alias node. Most nodes have a single hoisted alias, so the
-    // Arc overhead is marginal — but `to_virtual_store_name()` performs
-    // up to four `String::replace` allocations per call, so even
-    // building it just once per node is worth the indirection.
+    // (which under legacy flat-name mode wraps the
+    // `to_virtual_store_name()` String the lockfile crate flags as
+    // "far from optimal") once per alias on a multi-alias node. Most
+    // nodes have a single hoisted alias, so the Arc overhead is
+    // marginal — but the `slot_dir` lookup itself does work
+    // (HashMap probe + String build) so building it just once per
+    // node is worth the indirection.
     //
     // The scope-dir set collected here is small (one entry per
     // distinct `@scope/` aliased to the hoist target) and is created
@@ -493,12 +499,8 @@ pub fn symlink_hoisted_dependencies(
     let mut scope_dirs: HashSet<PathBuf> = HashSet::new();
     for (node_id, alias_map) in hoisted_by_node_id {
         let Some(node) = graph.get(node_id) else { continue };
-        let dep_dir = Arc::new(
-            virtual_store_dir
-                .join(node_id.to_virtual_store_name())
-                .join("node_modules")
-                .join(name_to_dir(&node.name)),
-        );
+        let dep_dir =
+            Arc::new(layout.slot_dir(node_id).join("node_modules").join(name_to_dir(&node.name)));
         for (alias, kind) in alias_map {
             let target_dir_root: &Path = match kind {
                 HoistKind::Public => public_hoisted_modules_dir,
