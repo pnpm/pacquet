@@ -405,16 +405,26 @@ fn load_cafile(path: &Path) -> Vec<String> {
         return Vec::new();
     };
     let delimiter = "-----END CERTIFICATE-----";
+    // Byte-for-byte parity with pnpm's
+    // [`loadCAFile`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/loadNpmrcFiles.ts#L251-L254):
+    // `contents.split(delim).filter(ca => ca.trim().length > 0).map(ca => `${ca.trimStart()}${delim}`)`.
+    //
+    // Key contract points:
+    // - `split` (not `split_inclusive`) — pnpm drops the delimiter
+    //   from each chunk and re-appends it on the map side.
+    // - Filter on `chunk.trim().is_empty()` — drops the trailing
+    //   empty chunk produced when the file ends with a delimiter,
+    //   but *keeps* a trailing non-empty (malformed) chunk so
+    //   downstream `Certificate::from_pem` surfaces the parse error
+    //   instead of pacquet silently dropping the entry.
+    // - `trim_start()` (not full `trim`) — pnpm preserves any
+    //   trailing whitespace inside the chunk before the appended
+    //   delimiter. Doesn't matter to a PEM parser but matters for
+    //   "is the output byte-equivalent to pnpm's" tests.
     contents
-        .split_inclusive(delimiter)
-        .filter_map(|chunk| {
-            let trimmed = chunk.trim();
-            if trimmed.is_empty() || !trimmed.ends_with(delimiter) {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        })
+        .split(delimiter)
+        .filter(|chunk| !chunk.trim().is_empty())
+        .map(|chunk| format!("{}{}", chunk.trim_start(), delimiter))
         .collect()
 }
 
