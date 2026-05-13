@@ -204,7 +204,7 @@ pub enum TarballError {
 
     #[from(ignore)]
     #[display(
-        "Tarball at {url} advertised a Content-Length of {advertised_size} bytes, which exceeds what pacquet can allocate (either larger than `usize::MAX` on this target or memory pressure prevented a one-shot reservation)"
+        "Archive at {url} advertised a Content-Length of {advertised_size} bytes, which exceeds what pacquet can allocate (either larger than `usize::MAX` on this target or memory pressure prevented a one-shot reservation)"
     )]
     #[diagnostic(code(pacquet_tarball::tarball_too_large))]
     TarballTooLarge { url: String, advertised_size: u64 },
@@ -713,27 +713,57 @@ fn extract_zip_entries(
         // [`zip::read::ZipFile::enclosed_name`] returns `None` for
         // absolute paths and any path with a `..` component — a
         // single check covers both forms of traversal upstream's
-        // `validatePathSecurity` rejects.
-        if entry.enclosed_name().is_none() {
+        // `validatePathSecurity` rejects. The returned `PathBuf` has
+        // every `.` segment collapsed and is what we use below to
+        // build the canonical `cas_paths` / `pkg_files_idx` keys.
+        let Some(enclosed) = entry.enclosed_name() else {
             return Err(TarballError::PathTraversal {
                 url: package_url.to_string(),
                 entry_path: raw_name,
                 reason: "zip entry path is absolute or escapes the archive root",
             });
-        }
+        };
         if entry.is_dir() {
             continue;
         }
 
+        // Rebuild the path into a forward-slash string from the
+        // sanitized `enclosed_name()` components. Three reasons over
+        // using the raw `entry.name()`:
+        //
+        // 1. `.` segments are already collapsed by `enclosed_name`,
+        //    so `pkg/./foo.txt` and `pkg/foo.txt` produce the same
+        //    `cas_paths` key — no accidental duplicates from
+        //    publisher tooling quirks.
+        // 2. The ignore filter sees the same canonical strings the
+        //    map is keyed by, so the regex / hand-coded matchers
+        //    can't be tripped up by `.` segments either.
+        // 3. Zip entries are spec'd to use `/` separators; this also
+        //    rejects any `\` an in-the-wild Windows-built archive
+        //    might have smuggled in (those would be `Normal`
+        //    components on Unix but interpreted as separators on
+        //    Windows).
+        //
+        // `enclosed_name` only yields `Normal` components, so the
+        // path-component walk below covers every case.
+        let normalized: String = enclosed
+            .components()
+            .map(|c| match c {
+                Component::Normal(s) => s.to_string_lossy().into_owned(),
+                _ => unreachable!("enclosed_name returns only Normal components: {:?}", enclosed),
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+
         // Strip the archive's top-level basename (`prefix` on
         // `pacquet_lockfile::BinaryResolution`) so the ignore filter
         // sees the same relative paths upstream's regex does. If the
-        // entry path doesn't start with `{prefix}/` we use the raw
-        // name — pnpm's slice does the same (no-op when the entry
-        // already lives at the archive root).
+        // entry path doesn't start with `{prefix}/` we use the
+        // normalized form — pnpm's slice does the same (no-op when
+        // the entry already lives at the archive root).
         let cleaned = match basename_prefix.as_deref() {
-            Some(prefix) => raw_name.strip_prefix(prefix).unwrap_or(&raw_name).to_string(),
-            None => raw_name.clone(),
+            Some(prefix) => normalized.strip_prefix(prefix).unwrap_or(&normalized).to_string(),
+            None => normalized,
         };
         if cleaned.is_empty() {
             // Skip an entry whose name was exactly the prefix
@@ -1643,6 +1673,27 @@ async fn fetch_and_extract_with_retry<R: Reporter>(
 
 impl<'a> DownloadTarballToStore<'a> {
     /// Execute the subroutine with an in-memory cache.
+    ///
+    /// # Caller invariant: stable filter per URL
+    ///
+    /// The mem cache is keyed solely by `package_url` (the same
+    /// shape as pnpm's `tarballCache` / `archiveCache`), so two
+    /// callers fetching the same URL with *different*
+    /// [`ignore_file_pattern`] values would receive the same
+    /// `cas_paths` map — the one the first caller's filter
+    /// produced. Callers must ensure that every fetch of a given
+    /// URL uses the same filter.
+    ///
+    /// In practice this holds because tarball URLs encode
+    /// `(name, version, integrity)` and the filter is keyed by
+    /// `pkg.name` upstream (`archiveFilters` in
+    /// [`binary-fetcher/src/index.ts`](https://github.com/pnpm/pnpm/blob/94240bc046/fetching/binary-fetcher/src/index.ts)),
+    /// so the (URL, filter) relation is functional. The dispatcher
+    /// in Slice D constructs filters from the same per-package
+    /// table; nothing else calls this method with a non-`None`
+    /// filter.
+    ///
+    /// [`ignore_file_pattern`]: DownloadTarballToStore::ignore_file_pattern
     pub async fn run_with_mem_cache<R: Reporter>(
         self,
         mem_cache: &'a MemCache,

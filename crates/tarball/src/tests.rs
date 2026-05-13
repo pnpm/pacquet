@@ -888,6 +888,64 @@ fn extract_rejects_parent_dir_component_in_entry_path() {
     drop(tempdir);
 }
 
+/// The tarball extractor's `ignore_file_pattern` plumbing must drop
+/// the matched entries from *both* `cas_paths` and
+/// `pkg_files_idx.files`. The Slice D dispatcher will rely on this
+/// for runtime archive filtering (Node's bundled `npm` / `corepack`,
+/// per upstream's `NODE_EXTRAS_IGNORE_PATTERN`); without coverage
+/// here, a regression that, e.g., applied the filter to `cas_paths`
+/// but forgot the `pkg_files_idx` row would slip past the existing
+/// `None`-path tests.
+#[test]
+fn extract_tarball_applies_ignore_filter_dropping_entries_from_both_maps() {
+    let (tempdir, store_path) = tempdir_with_leaked_path();
+
+    let mut tar_bytes = Vec::new();
+    {
+        let mut builder = tar::Builder::new(&mut tar_bytes);
+        for (path, body) in [
+            ("package/bin/tool", &b"binary"[..]),
+            ("package/lib/node_modules/npm/package.json", &b"{}"[..]),
+            ("package/README.md", &b"readme"[..]),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(body.len() as u64);
+            header.set_mode(0o644);
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_cksum();
+            builder.append_data(&mut header, path, body).expect("append entry");
+        }
+        builder.finish().expect("finalize tar");
+    }
+    let mut archive = Archive::new(Cursor::new(tar_bytes));
+
+    fn drop_npm(path: &str) -> bool {
+        path.starts_with("lib/node_modules/npm/")
+    }
+
+    let (cas_paths, pkg_files_idx) =
+        extract_tarball_entries(&mut archive, store_path, Some(&drop_npm))
+            .expect("tarball extraction with ignore filter");
+
+    dbg!(&cas_paths);
+    assert!(cas_paths.contains_key("bin/tool"));
+    assert!(cas_paths.contains_key("README.md"));
+    assert!(
+        !cas_paths.contains_key("lib/node_modules/npm/package.json"),
+        "ignore filter should drop bundled npm from cas_paths",
+    );
+
+    dbg!(&pkg_files_idx.files);
+    assert!(pkg_files_idx.files.contains_key("bin/tool"));
+    assert!(pkg_files_idx.files.contains_key("README.md"));
+    assert!(
+        !pkg_files_idx.files.contains_key("lib/node_modules/npm/package.json"),
+        "ignore filter should drop bundled npm from pkg_files_idx.files",
+    );
+
+    drop(tempdir);
+}
+
 /// `RetryOpts::default()` reproduces pnpm's
 /// `network/fetch/src/fetch.ts` defaults: 2 retries, factor 10,
 /// minTimeout 10 s, maxTimeout 60 s. The first post-failure delay
@@ -2280,6 +2338,39 @@ fn extract_zip_uses_entry_path_when_no_prefix() {
     assert!(cas_paths.contains_key("bin/tool"));
     assert!(cas_paths.contains_key("README.md"));
     assert_eq!(cas_paths.len(), 2);
+
+    drop(tempdir);
+}
+
+/// `enclosed_name()` collapses `.` segments before we build the
+/// canonical `cas_paths` key. A publisher tool that wrote
+/// `pkg/./foo.txt` and `pkg/foo.txt` into the same archive must
+/// land at one `foo.txt` entry after the prefix strip — same key
+/// the ignore filter sees, same key downstream consumers look up.
+/// Without the normalization the two would split into separate
+/// `./foo.txt` / `foo.txt` rows.
+#[test]
+fn extract_zip_normalizes_dot_segments_in_entry_paths() {
+    let (tempdir, store_path) = tempdir_with_leaked_path();
+    let bytes = build_zip(&[
+        ("node-v22.0.0-darwin-arm64/./bin/node", b"binary"),
+        ("node-v22.0.0-darwin-arm64/lib/./README", b"readme"),
+    ]);
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).expect("open zip");
+
+    let (cas_paths, _) = extract_zip_entries(
+        &mut archive,
+        "https://example.test/dotted.zip",
+        store_path,
+        Some("node-v22.0.0-darwin-arm64"),
+        None,
+    )
+    .expect("zip with `.` segments");
+
+    dbg!(&cas_paths);
+    assert!(cas_paths.contains_key("bin/node"), "`.` segment must be collapsed");
+    assert!(cas_paths.contains_key("lib/README"), "`.` segment must be collapsed");
+    assert!(!cas_paths.keys().any(|k| k.contains("/./")), "no entry should retain a `.` segment");
 
     drop(tempdir);
 }
