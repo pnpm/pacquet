@@ -560,19 +560,34 @@ fn disjoint_subsets_preserve_len_and_iter() {
     assert_eq!(skipped.len(), 1);
 }
 
-/// `add_optional_excluded` also skips keys already in
-/// `fetch_failed` — same disjoint-subset invariant, lower
-/// precedence pair. This overlap can't arise in practice (a
-/// snapshot dropped by `--no-optional` never reaches the
-/// cold-batch dispatch where `fetch_failed` is populated) but
-/// the guard keeps the invariant honest.
+/// `add_fetch_failed` and `add_optional_excluded` are symmetric
+/// against each other — neither inserts when the other subset
+/// already has the key, so first-insert wins regardless of call
+/// order. This overlap can't arise in practice (a snapshot
+/// dropped by `--no-optional` never reaches the cold-batch
+/// dispatch where `fetch_failed` is populated), but the guard
+/// makes the public API safe to call in any order without
+/// breaking the disjoint-subset invariant.
 #[test]
-fn fetch_failed_takes_precedence_over_optional_excluded() {
+fn fetch_failed_and_optional_excluded_are_symmetric() {
+    // Order A: fetch_failed first, then optional_excluded — the
+    // second insert no-ops; the entry stays in fetch_failed.
     let key: PackageKey = "weird-overlap@1.0.0".parse().unwrap();
-    let mut skipped = SkippedSnapshots::new();
-    skipped.add_fetch_failed(key.clone());
-    skipped.add_optional_excluded(key.clone());
-    assert_eq!(skipped.len(), 1);
-    let collected: Vec<&PackageKey> = skipped.iter().collect();
-    assert_eq!(collected.len(), 1);
+    let mut a = SkippedSnapshots::new();
+    a.add_fetch_failed(key.clone());
+    a.add_optional_excluded(key.clone());
+    assert_eq!(a.len(), 1);
+    assert_eq!(a.iter().count(), 1);
+    assert!(a.contains(&key));
+
+    // Order B: optional_excluded first, then fetch_failed — the
+    // second insert must also no-op (Copilot PR #485 review:
+    // `add_fetch_failed` needs the symmetric guard so callers
+    // can't corrupt the skip set by reversing the order).
+    let mut b = SkippedSnapshots::new();
+    b.add_optional_excluded(key.clone());
+    b.add_fetch_failed(key.clone());
+    assert_eq!(b.len(), 1);
+    assert_eq!(b.iter().count(), 1);
+    assert!(b.contains(&key));
 }

@@ -328,12 +328,95 @@ fn skipped_snapshot_is_excluded() {
     // upstream records it before the skipped check (see
     // [`hoistGraph`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/linking/hoist/src/index.ts#L207-L267)),
     // and pacquet preserves that ordering for parity. The symlink
-    // pass [`super::symlink_hoisted_dependencies`] then bails on the
-    // missing graph node via `let Some(node) = graph.get(node_id)
-    // else { continue }`, so no symlink is attempted for the
-    // skipped snapshot — the entry just rides along in the map for
-    // any consumer that wants to inspect what was considered.
+    // pass [`super::symlink_hoisted_dependencies`] is what actually
+    // filters skipped node IDs out of the symlink work (the
+    // `graph.get(node_id)` guard alone isn't enough — `graph`
+    // contains every snapshot in `snapshots`, skipped or not, since
+    // `build_hoist_graph` only filters by missing metadata). The
+    // entry rides along in the map for any consumer that wants to
+    // inspect what was considered, and the explicit skip check at
+    // the symlink site prevents a dangling slot symlink.
     assert!(result.hoisted_dependencies_by_node_id.contains_key(&key("opt", "1.0.0")));
+}
+
+/// `symlink_hoisted_dependencies` filters entries whose key is in
+/// the skip set. Regression for PR #485 Copilot review: without the
+/// filter, a prod dependency with an optional transitive child
+/// would still get a dangling hoist symlink to the child's
+/// virtual-store slot, which `CreateVirtualStore` skipped.
+#[test]
+fn symlink_skips_dropped_nodes() {
+    use crate::VirtualStoreLayout;
+    use pacquet_lockfile::PkgName;
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+    let virtual_store_dir = dir.path().join("node_modules/.pacquet");
+    let private_hoisted = virtual_store_dir.join("node_modules");
+    let public_hoisted = dir.path().join("node_modules");
+    std::fs::create_dir_all(&virtual_store_dir).unwrap();
+
+    // Two-node hoist map: `kept@1.0.0` survives, `dropped@1.0.0` is
+    // in the skip set. The "graph" entries exist for both (mirroring
+    // what `build_hoist_graph` produces in production — it doesn't
+    // filter by skip).
+    let kept_key = key("kept", "1.0.0");
+    let dropped_key = key("dropped", "1.0.0");
+    let mut hoisted: HashMap<PackageKey, HashMap<String, HoistKind>> = HashMap::new();
+    hoisted.insert(kept_key.clone(), HashMap::from([("kept".to_string(), HoistKind::Private)]));
+    hoisted
+        .insert(dropped_key.clone(), HashMap::from([("dropped".to_string(), HoistKind::Private)]));
+
+    let mut graph: HashMap<PackageKey, HoistGraphNode> = HashMap::new();
+    graph.insert(
+        kept_key.clone(),
+        HoistGraphNode {
+            name: PkgName::parse("kept").unwrap(),
+            children: HashMap::new(),
+            has_bin: false,
+        },
+    );
+    graph.insert(
+        dropped_key.clone(),
+        HoistGraphNode {
+            name: PkgName::parse("dropped").unwrap(),
+            children: HashMap::new(),
+            has_bin: false,
+        },
+    );
+
+    // Pre-create just the kept snapshot's slot so its symlink has a
+    // valid target. The dropped snapshot's slot is intentionally
+    // absent — without the skip filter, the symlink pass would try
+    // to create a link pointing at it.
+    let layout = VirtualStoreLayout::legacy(&virtual_store_dir);
+    std::fs::create_dir_all(layout.slot_dir(&kept_key).join("node_modules/kept")).unwrap();
+
+    let mut skipped: HashSet<PackageKey> = HashSet::new();
+    skipped.insert(dropped_key.clone());
+
+    super::symlink_hoisted_dependencies(
+        &hoisted,
+        &graph,
+        &layout,
+        &private_hoisted,
+        &public_hoisted,
+        &skipped,
+    )
+    .expect("symlink pass must succeed");
+
+    // Use `symlink_metadata` rather than `exists` because a
+    // dangling symlink (the regression) makes `exists()` return
+    // false anyway — `exists()` follows the link. Need to detect
+    // the symlink itself, not its target.
+    assert!(
+        std::fs::symlink_metadata(private_hoisted.join("kept")).is_ok(),
+        "kept alias must be hoisted (symlink present)",
+    );
+    assert!(
+        std::fs::symlink_metadata(private_hoisted.join("dropped")).is_err(),
+        "dropped (skipped) alias must NOT have a hoist symlink — would be dangling",
+    );
 }
 
 /// Bins of privately-hoisted aliases land in `hoisted_aliases_with_bins`.

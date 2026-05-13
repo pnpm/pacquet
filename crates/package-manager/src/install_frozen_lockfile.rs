@@ -570,6 +570,7 @@ where
                             &layout,
                             &private_dir,
                             &public_dir,
+                            &hoist_skipped,
                         )
                         .map_err(InstallFrozenLockfileError::HoistSymlink)?;
                         // Private-side bins → `<vs>/node_modules/.bin`.

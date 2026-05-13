@@ -117,18 +117,21 @@ impl SkippedSnapshots {
     /// failed during this install. Slice 4 wire-up — call site is
     /// inside [`crate::CreateVirtualStore`]'s cold-batch dispatch.
     ///
-    /// Disjoint-subset guard: if `key` is already in the
-    /// higher-precedence `installability` set, the insert is a
-    /// no-op so [`len`] / [`iter`] stay consistent with [`contains`].
-    /// In practice this can't happen because installability-skipped
-    /// snapshots are filtered out of the cold-batch dispatch before
-    /// any fetch runs, but the guard keeps the invariant honest.
+    /// Disjoint-subset guard: if `key` is already in any other
+    /// subset, the insert is a no-op so [`len`] / [`iter`] stay
+    /// consistent with [`contains`]. In practice the only
+    /// realistic overlap is with `installability`
+    /// (`optional_excluded` snapshots are dropped before reaching
+    /// the cold-batch dispatch), but the guard is symmetric with
+    /// [`add_optional_excluded`]'s so the public API enforces the
+    /// invariant regardless of call order.
     ///
     /// [`len`]: SkippedSnapshots::len
     /// [`iter`]: SkippedSnapshots::iter
     /// [`contains`]: SkippedSnapshots::contains
+    /// [`add_optional_excluded`]: SkippedSnapshots::add_optional_excluded
     pub fn add_fetch_failed(&mut self, key: PackageKey) {
-        if self.installability.contains(&key) {
+        if self.installability.contains(&key) || self.optional_excluded.contains(&key) {
             return;
         }
         self.fetch_failed.insert(key);

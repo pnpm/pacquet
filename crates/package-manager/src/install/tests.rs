@@ -1966,7 +1966,7 @@ async fn frozen_install_no_optional_drops_optional_only_snapshots() {
 
     // The dispatch list excludes `DependencyGroup::Optional` — same
     // shape `--no-optional` produces from
-    // `AddDependencyOptions::dependency_groups()` in
+    // `InstallDependencyOptions::dependency_groups()` in
     // `crates/cli/src/cli_args/install.rs`.
     Install {
         tarball_mem_cache: &Default::default(),

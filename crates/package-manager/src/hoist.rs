@@ -477,6 +477,7 @@ pub fn symlink_hoisted_dependencies(
     layout: &crate::VirtualStoreLayout,
     private_hoisted_modules_dir: &std::path::Path,
     public_hoisted_modules_dir: &std::path::Path,
+    skipped: &std::collections::HashSet<PackageKey>,
 ) -> Result<(), crate::SymlinkPackageError> {
     use rayon::prelude::*;
     use std::{
@@ -502,6 +503,20 @@ pub fn symlink_hoisted_dependencies(
     let mut work: Vec<(Arc<PathBuf>, HoistKind, &String)> = Vec::new();
     let mut scope_dirs: HashSet<PathBuf> = HashSet::new();
     for (node_id, alias_map) in hoisted_by_node_id {
+        // Skipped snapshots never get a virtual-store slot, so a
+        // hoist symlink at their slot path would dangle (Unix) or
+        // fail as a junction (Windows). Mirrors the guard
+        // `get_hoisted_dependencies` already applies before
+        // recording the *parent's* hoisting decisions —
+        // `hoisted_dependencies_by_node_id` records the
+        // (target, alias) pair unconditionally upstream of that
+        // guard (matching pnpm's structure), so the filter has to
+        // run here too. Covers slice 4 (`fetch_failed`), slice 5
+        // (`optional_excluded`), and the slice 1 installability
+        // path uniformly.
+        if skipped.contains(node_id) {
+            continue;
+        }
         let Some(node) = graph.get(node_id) else { continue };
         let dep_dir =
             Arc::new(layout.slot_dir(node_id).join("node_modules").join(name_to_dir(&node.name)));
