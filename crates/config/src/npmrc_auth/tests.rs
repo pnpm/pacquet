@@ -42,8 +42,8 @@ fn ignores_non_auth_keys() {
     // `store_dir`, and the env-mutating tests in `defaults`
     // toggle those vars under `EnvGuard`. Hold the same lock so a
     // parallel test can't change the env between the two `Config::new()`
-    // snapshots compared below. Proper fix is dependency injection —
-    // see the TODO on `default_store_dir`.
+    // snapshots compared below. Proper fix is dependency injection.
+    // See the TODO on `default_store_dir`.
     let _g = crate::test_env_guard::EnvGuard::snapshot(["PNPM_HOME", "XDG_DATA_HOME"]);
     let ini = "
 store-dir=/should/not/apply

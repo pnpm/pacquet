@@ -36,7 +36,7 @@ use crate::api::EnvVar;
 /// produces in `loadNpmrcFiles.ts`'s `substituteEnv`. Callers typically
 /// downgrade this to a warning and keep the original value verbatim.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EnvReplaceError {
+pub(crate) struct EnvReplaceError {
     /// The placeholder that could not be resolved, including its
     /// surrounding `${...}` so the message lines up with pnpm's.
     pub placeholder: String,
@@ -56,7 +56,7 @@ impl std::error::Error for EnvReplaceError {}
 /// matching pnpm's `substituteEnv`.
 ///
 /// [`Api::var`]: EnvVar::var
-pub fn env_replace<Api: EnvVar>(text: &str) -> Result<String, EnvReplaceError> {
+pub(crate) fn env_replace<Api: EnvVar>(text: &str) -> Result<String, EnvReplaceError> {
     let bytes = text.as_bytes();
     let mut output = String::with_capacity(text.len());
     let mut index = 0;

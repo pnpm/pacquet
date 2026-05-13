@@ -20,12 +20,12 @@ use crate::{Config, api::EnvVar, env_replace::env_replace};
 /// matching pnpm.
 ///
 /// Other `.npmrc` knobs (TLS, proxy, scoped `@scope:registry`, etc.)
-/// remain unparsed for now — see the upstream
+/// remain unparsed for now. See the upstream
 /// [`isIniConfigKey`](https://github.com/pnpm/pnpm/blob/601317e7a3/config/reader/src/localConfig.ts#L160-L161)
 /// list. They will land here as the matching feature work picks them
 /// up.
 #[derive(Debug, Default, PartialEq, Eq)]
-pub struct NpmrcAuth {
+pub(crate) struct NpmrcAuth {
     pub registry: Option<String>,
     /// Default-registry creds (i.e. `_auth=…`, `_authToken=…`,
     /// `username=…` / `_password=…` without a leading `//host/`).
@@ -47,7 +47,7 @@ pub struct NpmrcAuth {
 /// [`RawCreds`](https://github.com/pnpm/pnpm/blob/601317e7a3/config/reader/src/parseCreds.ts#L7-L18).
 /// Each `Option` stores the post-`${VAR}`-substitution value when set.
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
-pub struct RawCreds {
+pub(crate) struct RawCreds {
     /// `_authToken=` value.
     pub auth_token: Option<String>,
     /// `_auth=` value (base64 of `username:password`).
@@ -126,7 +126,7 @@ impl NpmrcAuth {
 
     /// Phase 1: write the resolved `registry` onto `config` and emit
     /// any `${VAR}`-substitution warnings. Does *not* build
-    /// `auth_headers` yet — call [`NpmrcAuth::build_auth_headers`]
+    /// `auth_headers` yet. Call [`NpmrcAuth::build_auth_headers`]
     /// after every other config layer (notably `pnpm-workspace.yaml`)
     /// has had a chance to override `registry`, so default-registry
     /// creds end up keyed at the final URL.
@@ -246,8 +246,8 @@ fn split_creds_key(key: &str) -> Option<(&str, &str)> {
 
 fn apply_creds_field(creds: &mut RawCreds, field: &str, value: String) {
     // The catch-all swallows arbitrary `.npmrc` keys that don't map to
-    // a credential field — e.g. a top-level `store-dir=` line, or a
-    // `//host/:registry=` per-registry override that we don't honour
+    // a credential field. Examples: a top-level `store-dir=` line, or
+    // a `//host/:registry=` per-registry override that we don't honour
     // yet. Matches pnpm's `getNetworkConfigs` shape: only the four
     // recognised fields contribute to `RawCreds`; everything else is
     // silently dropped.

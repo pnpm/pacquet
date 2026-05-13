@@ -74,10 +74,11 @@ impl AuthHeaders {
     ///    regardless of whether anything matched in the map.
     /// 2. Otherwise nerf-dart the URL and walk parent path prefixes
     ///    down to the host-only key.
-    /// 3. If the URL carried the protocol's default port (`80` for
-    ///    `http`, `443` for `https`), retry the lookup with the port
-    ///    stripped — pnpm strips default ports during the second
-    ///    pass via `removePort` on the parsed URL.
+    /// 3. If the URL carried any explicit port, retry the lookup with
+    ///    the port stripped. Mirrors pnpm's
+    ///    [`removePort`](https://github.com/pnpm/pnpm/blob/601317e7a3/network/auth-header/src/helpers/removePort.ts),
+    ///    which strips *any* port (not just protocol defaults) and
+    ///    retries iff the URL changed.
     pub fn for_url(&self, url: &str) -> Option<String> {
         // Append a trailing `/` first, matching pnpm's lookup which
         // does the same before parsing. Without this, a URL like
@@ -100,8 +101,8 @@ impl AuthHeaders {
         if let Some(value) = self.lookup_by_nerf(&parsed) {
             return Some(value.to_owned());
         }
-        if parsed.has_default_port() {
-            let stripped = parsed.with_default_port_stripped();
+        if parsed.port.is_some() {
+            let stripped = parsed.with_port_stripped();
             return self.lookup_by_nerf(&stripped).map(str::to_owned);
         }
         None
@@ -154,7 +155,6 @@ pub fn nerf_dart(url: &str) -> String {
 /// needed.
 #[derive(Clone, Copy)]
 struct ParsedUrl<'a> {
-    scheme: &'a str,
     user_info: Option<&'a str>,
     host: &'a str,
     port: Option<&'a str>,
@@ -163,8 +163,8 @@ struct ParsedUrl<'a> {
 
 impl<'a> ParsedUrl<'a> {
     fn parse(url: &'a str) -> Option<Self> {
-        let (scheme, rest) = url.split_once("://")?;
-        // Strip query string and fragment — they never participate in
+        let (_scheme, rest) = url.split_once("://")?;
+        // Strip query string and fragment. Neither participates in
         // nerf-darting per `removeFragment` / `removeSearch` in npm's
         // own implementation.
         let rest = rest.split(['?', '#']).next().unwrap_or(rest);
@@ -177,13 +177,13 @@ impl<'a> ParsedUrl<'a> {
             None => (None, authority),
         };
         let (host, port) = match host_port.rsplit_once(':') {
-            // Skip IPv6 brackets — pnpm doesn't, but neither does any
-            // npm registry we care about. Documenting the limit here
-            // rather than silently misparsing.
+            // Skip IPv6 brackets. Pnpm doesn't handle them either, and
+            // no npm registry we care about uses them. Documenting the
+            // limit here rather than silently misparsing.
             Some((host, port)) if !host.contains('[') => (host, Some(port)),
             _ => (host_port, None),
         };
-        Some(ParsedUrl { scheme, user_info, host, port, path })
+        Some(ParsedUrl { user_info, host, port, path })
     }
 
     fn nerf_dart(&self) -> String {
@@ -195,7 +195,7 @@ impl<'a> ParsedUrl<'a> {
             out.push_str(port);
         }
         out.push('/');
-        // Drop everything after the last `/` in the path — that final
+        // Drop everything after the last `/` in the path. That final
         // segment is a filename or package selector, not a key.
         let trimmed = match self.path.rfind('/') {
             Some(index) => &self.path[..index],
@@ -220,11 +220,7 @@ impl<'a> ParsedUrl<'a> {
         Some(format!("Basic {}", base64_encode(&format!("{user}:{pass}"))))
     }
 
-    fn has_default_port(&self) -> bool {
-        matches!((self.scheme, self.port), ("https", Some("443")) | ("http", Some("80")))
-    }
-
-    fn with_default_port_stripped(&self) -> ParsedUrl<'a> {
+    fn with_port_stripped(&self) -> ParsedUrl<'a> {
         ParsedUrl { port: None, ..*self }
     }
 }
@@ -331,6 +327,18 @@ mod tests {
         let headers = build(&[("//reg.com/", "Bearer abc123")]);
         assert_eq!(headers.for_url("https://reg.com:443/").as_deref(), Some("Bearer abc123"));
         assert_eq!(headers.for_url("http://reg.com:80/").as_deref(), Some("Bearer abc123"));
+    }
+
+    /// Upstream's
+    /// [`removePort`](https://github.com/pnpm/pnpm/blob/601317e7a3/network/auth-header/src/helpers/removePort.ts)
+    /// strips *any* port and retries iff the URL changed, not only
+    /// protocol defaults. A `.npmrc` keyed at host-only must still match
+    /// a request that explicitly carries a non-default port — e.g. a
+    /// dev / proxy registry on `:8080` matched by a `//host/` token.
+    #[test]
+    fn non_default_port_strips_for_fallback_lookup() {
+        let headers = build(&[("//reg.com/", "Bearer abc123")]);
+        assert_eq!(headers.for_url("https://reg.com:8080/").as_deref(), Some("Bearer abc123"));
     }
 
     #[test]
