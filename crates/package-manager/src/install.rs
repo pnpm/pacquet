@@ -7,7 +7,9 @@ use crate::{
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_config::{Config, NodeLinker};
-use pacquet_lockfile::{LoadLockfileError, Lockfile, SaveLockfileError};
+use pacquet_lockfile::{
+    LoadLockfileError, Lockfile, SaveLockfileError, StalenessReason, satisfies_package_manifest,
+};
 use pacquet_modules_yaml::{
     DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH, IncludedDependencies, LayoutVersion, Modules,
     NodeLinker as ModulesNodeLinker, RealApi, WriteModulesError, write_modules_manifest,
@@ -73,6 +75,34 @@ pub enum InstallError {
     /// fail the install instead.
     #[diagnostic(transparent)]
     SaveCurrentLockfile(#[error(source)] SaveLockfileError),
+
+    /// `pnpm-lock.yaml` doesn't match the on-disk `package.json` for
+    /// the project being installed. Mirrors upstream's
+    /// `ERR_PNPM_OUTDATED_LOCKFILE` thrown from
+    /// <https://github.com/pnpm/pnpm/blob/94240bc046/pkg-manager/core/src/install/index.ts#L823>:
+    /// the user (or CI) edited the manifest without regenerating the
+    /// lockfile, and a frozen install would silently produce the
+    /// wrong shape of `node_modules`. Fail the install instead.
+    #[display(
+        "Cannot install with \"frozen-lockfile\" because pnpm-lock.yaml is not up to date with package.json.\n\n  Failure reason:\n  {reason}"
+    )]
+    #[diagnostic(
+        code(pacquet_package_manager::outdated_lockfile),
+        help(
+            "Regenerate the lockfile with `pnpm install --lockfile-only` so that pnpm-lock.yaml reflects the current package.json, then re-run `pacquet install --frozen-lockfile`."
+        )
+    )]
+    OutdatedLockfile { reason: StalenessReason },
+
+    /// `--frozen-lockfile` was requested against a lockfile whose
+    /// `importers` map has no entry for the root project. Distinct
+    /// from `NoLockfile` (file missing) — here the file exists but
+    /// doesn't describe the project being installed.
+    #[display(
+        r#"Cannot install with "frozen-lockfile" because pnpm-lock.yaml has no `importers["{importer_id}"]` entry. Regenerate the lockfile with `pnpm install --lockfile-only`."#
+    )]
+    #[diagnostic(code(pacquet_package_manager::no_importer))]
+    NoImporter { importer_id: String },
 }
 
 impl<'a, DependencyGroupList> Install<'a, DependencyGroupList>
@@ -200,6 +230,21 @@ where
             };
             let Lockfile { lockfile_version, importers, packages, snapshots, .. } = lockfile;
             assert_eq!(lockfile_version.major, 9); // compatibility check already happens at serde, but this still helps preventing programmer mistakes.
+
+            // Freshness check: verify the on-disk `package.json`
+            // still matches the lockfile's importer entry before we
+            // commit to materializing `node_modules` from it. Mirrors
+            // upstream's `satisfiesPackageManifest` gate at
+            // <https://github.com/pnpm/pnpm/blob/94240bc046/pkg-manager/core/src/install/index.ts#L808-L832>.
+            // Pacquet has only one importer today (#431 tracks
+            // workspaces), so the root project is the only thing to
+            // verify; once workspaces land this becomes a per-project
+            // loop over `importers`.
+            let importer = importers.get(Lockfile::ROOT_IMPORTER_KEY).ok_or_else(|| {
+                InstallError::NoImporter { importer_id: Lockfile::ROOT_IMPORTER_KEY.to_string() }
+            })?;
+            satisfies_package_manifest(importer, manifest, Lockfile::ROOT_IMPORTER_KEY)
+                .map_err(|reason| InstallError::OutdatedLockfile { reason })?;
 
             InstallFrozenLockfile {
                 http_client,

@@ -775,7 +775,12 @@ async fn warm_reinstall_skips_snapshot_when_current_lockfile_matches() {
     let virtual_store_dir = modules_dir.join(".pacquet");
 
     let manifest_path = dir.path().join("package.json");
-    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    let mut manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    // Manifest must match `PARTIAL_INSTALL_LOCKFILE` — the freshness
+    // check (#447) rejects any drift between the on-disk manifest and
+    // the lockfile importer entry.
+    manifest.add_dependency("placeholder", "1.0.0", DependencyGroup::Prod).unwrap();
+    manifest.save().unwrap();
 
     let mut config = Config::new();
     config.store_dir = store_dir.into();
@@ -843,7 +848,12 @@ async fn warm_reinstall_emits_broken_modules_when_dir_is_missing() {
     let virtual_store_dir = modules_dir.join(".pacquet");
 
     let manifest_path = dir.path().join("package.json");
-    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    let mut manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    // Manifest must match `PARTIAL_INSTALL_LOCKFILE` — the freshness
+    // check (#447) rejects any drift between the on-disk manifest and
+    // the lockfile importer entry.
+    manifest.add_dependency("placeholder", "1.0.0", DependencyGroup::Prod).unwrap();
+    manifest.save().unwrap();
 
     let mut config = Config::new();
     config.store_dir = store_dir.into();
@@ -930,7 +940,12 @@ async fn context_log_reflects_current_lockfile_after_first_install() {
     let virtual_store_dir = modules_dir.join(".pacquet");
 
     let manifest_path = dir.path().join("package.json");
-    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    let mut manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    // Manifest must match the fixture lockfile below — the freshness
+    // check (#447) rejects any drift between the on-disk manifest and
+    // the lockfile importer entry.
+    manifest.add_dependency("placeholder", "1.0.0", DependencyGroup::Prod).unwrap();
+    manifest.save().unwrap();
 
     let mut config = Config::new();
     config.store_dir = store_dir.into();
@@ -1061,7 +1076,12 @@ async fn warm_reinstall_reports_added_zero_and_emits_no_imported_events() {
     let virtual_store_dir = modules_dir.join(".pacquet");
 
     let manifest_path = dir.path().join("package.json");
-    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    let mut manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    // Manifest must match `PARTIAL_INSTALL_LOCKFILE` — the freshness
+    // check (#447) rejects any drift between the on-disk manifest and
+    // the lockfile importer entry.
+    manifest.add_dependency("placeholder", "1.0.0", DependencyGroup::Prod).unwrap();
+    manifest.save().unwrap();
 
     let mut config = Config::new();
     config.store_dir = store_dir.into();
@@ -1122,6 +1142,112 @@ async fn warm_reinstall_reports_added_zero_and_emits_no_imported_events() {
     assert_eq!(
         imported_count, 0,
         "skip path must suppress `pnpm:progress imported` for skipped snapshots",
+    );
+
+    drop(dir);
+}
+
+/// Issue #447: a `--frozen-lockfile` install where the on-disk
+/// `package.json` has drifted from the lockfile importer entry must
+/// fail with `OutdatedLockfile` *before* any fetch or link work
+/// starts. Mirrors upstream's `ERR_PNPM_OUTDATED_LOCKFILE` thrown
+/// from `pkg-manager/core/src/install/index.ts:823` — CI-correctness
+/// guarantee that pacquet can't silently install the wrong shape of
+/// `node_modules` when the manifest and lockfile diverge.
+///
+/// We use the partial-install fixture (bogus tarball URL) and *omit*
+/// adding the placeholder dep to the manifest. If the check fails to
+/// fire, the install reaches the fetch site and errors with a
+/// network / integrity failure — distinguishable from the early
+/// `OutdatedLockfile` we expect.
+#[tokio::test]
+async fn frozen_lockfile_errors_when_manifest_drifts_from_lockfile() {
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    // Deliberately do NOT add the `placeholder` dep — this is the
+    // drift case the check has to catch.
+    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+    let mut config = Config::new();
+    config.store_dir = store_dir.into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir;
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(PARTIAL_INSTALL_LOCKFILE)
+        .expect("parse partial-install fixture lockfile");
+
+    let result = Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await;
+
+    let err = result.expect_err("drifted manifest must surface as OutdatedLockfile");
+    assert!(
+        matches!(err, InstallError::OutdatedLockfile { .. }),
+        "expected OutdatedLockfile, got {err:?}",
+    );
+
+    drop(dir);
+}
+
+/// Negative-case: lockfile loads successfully but has no
+/// `importers["."]` entry for the project being installed. Distinct
+/// from `NoLockfile` (file missing entirely) — here the file is
+/// well-formed but doesn't describe this project. Should surface as
+/// `NoImporter`, also before any fetch attempt.
+#[tokio::test]
+async fn frozen_lockfile_errors_when_lockfile_has_no_root_importer() {
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+    let mut config = Config::new();
+    config.store_dir = store_dir.into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir;
+    let config = config.leak();
+
+    // Empty-importers lockfile — valid v9 shape, but no entry for
+    // the root project.
+    let lockfile: Lockfile =
+        serde_saphyr::from_str("lockfileVersion: '9.0'\n").expect("parse minimal lockfile");
+
+    let result = Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await;
+
+    let err = result.expect_err("missing root importer must surface as NoImporter");
+    assert!(
+        matches!(err, InstallError::NoImporter { ref importer_id } if importer_id == "."),
+        "expected NoImporter for `.`, got {err:?}",
     );
 
     drop(dir);
