@@ -1,5 +1,5 @@
 use super::{LinkVirtualStoreBins, LinkVirtualStoreBinsError, link_direct_dep_bins};
-use crate::SkippedSnapshots;
+use crate::{SkippedSnapshots, VirtualStoreLayout};
 use pacquet_cmd_shim::is_shim_pointing_at;
 use serde_json::json;
 use std::{
@@ -41,7 +41,7 @@ fn writes_child_bins_into_slot_own_package_node_modules() {
     write_file(child_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
 
     LinkVirtualStoreBins {
-        virtual_store_dir: &virtual_dir,
+        layout: &VirtualStoreLayout::legacy(virtual_dir.clone()),
         snapshots: None,
         packages: None,
         package_manifests: &Default::default(),
@@ -109,7 +109,7 @@ fn skips_slot_own_package_when_walking_children() {
     write_file(other_dir.join("other.js"), "#!/usr/bin/env node\n").unwrap();
 
     LinkVirtualStoreBins {
-        virtual_store_dir: &virtual_dir,
+        layout: &VirtualStoreLayout::legacy(virtual_dir.clone()),
         snapshots: None,
         packages: None,
         package_manifests: &Default::default(),
@@ -134,7 +134,7 @@ fn link_virtual_store_bins_no_op_when_dir_missing() {
     let tmp = tempdir().unwrap();
     let nonexistent = tmp.path().join("does-not-exist");
     LinkVirtualStoreBins {
-        virtual_store_dir: &nonexistent,
+        layout: &VirtualStoreLayout::legacy(nonexistent.clone()),
         snapshots: None,
         packages: None,
         package_manifests: &Default::default(),
@@ -172,7 +172,7 @@ fn link_virtual_store_bins_handles_scoped_slot_name() {
     write_file(child_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
 
     LinkVirtualStoreBins {
-        virtual_store_dir: &virtual_dir,
+        layout: &VirtualStoreLayout::legacy(virtual_dir.clone()),
         snapshots: None,
         packages: None,
         package_manifests: &Default::default(),
@@ -223,7 +223,7 @@ fn link_virtual_store_bins_handles_peer_resolved_slot_name() {
     write_file(child_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
 
     LinkVirtualStoreBins {
-        virtual_store_dir: &virtual_dir,
+        layout: &VirtualStoreLayout::legacy(virtual_dir.clone()),
         snapshots: None,
         packages: None,
         package_manifests: &Default::default(),
@@ -273,7 +273,7 @@ fn link_virtual_store_bins_handles_unscoped_name_with_plus() {
     write_file(child_dir.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
 
     LinkVirtualStoreBins {
-        virtual_store_dir: &virtual_dir,
+        layout: &VirtualStoreLayout::legacy(virtual_dir.clone()),
         snapshots: None,
         packages: None,
         package_manifests: &Default::default(),
@@ -298,7 +298,7 @@ fn link_virtual_store_bins_skips_slot_without_node_modules() {
     let virtual_dir = tmp.path().join(".pacquet");
     create_dir_all(virtual_dir.join("incomplete@1.0.0")).unwrap();
     LinkVirtualStoreBins {
-        virtual_store_dir: &virtual_dir,
+        layout: &VirtualStoreLayout::legacy(virtual_dir.clone()),
         snapshots: None,
         packages: None,
         package_manifests: &Default::default(),
@@ -325,7 +325,7 @@ fn link_virtual_store_bins_skips_slot_without_own_package_dir() {
     // is missing, so `find_slot_own_package_dir` returns `None`.
     create_dir_all(virtual_dir.join("foo@1.0.0/node_modules")).unwrap();
     LinkVirtualStoreBins {
-        virtual_store_dir: &virtual_dir,
+        layout: &VirtualStoreLayout::legacy(virtual_dir.clone()),
         snapshots: None,
         packages: None,
         package_manifests: &Default::default(),
@@ -473,7 +473,7 @@ fn link_virtual_store_bins_propagates_read_error_via_di() {
     }
 
     let err = LinkVirtualStoreBins {
-        virtual_store_dir: Path::new("/anything"),
+        layout: &VirtualStoreLayout::legacy(PathBuf::from("/anything")),
         snapshots: None,
         packages: None,
         package_manifests: &Default::default(),

@@ -1,6 +1,6 @@
 use crate::{
-    ImportIndexedDirError, ImportIndexedDirOpts, SymlinkPackageError, create_symlink_layout,
-    import_indexed_dir,
+    ImportIndexedDirError, ImportIndexedDirOpts, SymlinkPackageError, VirtualStoreLayout,
+    create_symlink_layout, import_indexed_dir,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
@@ -10,12 +10,7 @@ use pacquet_reporter::{
     LogEvent, LogLevel, PackageImportMethod as WireImportMethod, ProgressLog, ProgressMessage,
     Reporter,
 };
-use std::{
-    collections::HashMap,
-    fs, io,
-    path::{Path, PathBuf},
-    sync::atomic::AtomicU8,
-};
+use std::{collections::HashMap, fs, io, path::PathBuf, sync::atomic::AtomicU8};
 
 /// This subroutine creates the virtual-store slot for one package and then
 /// runs the two post-extraction tasks — CAS file import and intra-package
@@ -27,7 +22,14 @@ use std::{
 /// install's critical-path tail.
 #[must_use]
 pub struct CreateVirtualDirBySnapshot<'a> {
-    pub virtual_store_dir: &'a Path,
+    /// Per-install precomputed slot-directory mapping. Replaces the
+    /// previous `virtual_store_dir: &Path` field — the layout already
+    /// holds the root and knows how to resolve a per-snapshot slot
+    /// (legacy `<root>/<flat-name>` vs GVS-shaped
+    /// `<root>/<scope>/<name>/<version>/<hash>`) through a single
+    /// [`VirtualStoreLayout::slot_dir`] lookup. See
+    /// [`crate::VirtualStoreLayout`] for how it's built.
+    pub layout: &'a VirtualStoreLayout,
     pub cas_paths: &'a HashMap<String, PathBuf>,
     pub import_method: PackageImportMethod,
     /// Install-scoped dedupe state for `pnpm:package-import-method`.
@@ -69,7 +71,7 @@ impl<'a> CreateVirtualDirBySnapshot<'a> {
     /// Execute the subroutine.
     pub fn run<R: Reporter>(self) -> Result<(), CreateVirtualDirError> {
         let CreateVirtualDirBySnapshot {
-            virtual_store_dir,
+            layout,
             cas_paths,
             import_method,
             logged_methods,
@@ -79,8 +81,7 @@ impl<'a> CreateVirtualDirBySnapshot<'a> {
             snapshot,
         } = self;
 
-        let virtual_node_modules_dir =
-            virtual_store_dir.join(package_key.to_virtual_store_name()).join("node_modules");
+        let virtual_node_modules_dir = layout.slot_dir(package_key).join("node_modules");
         fs::create_dir_all(&virtual_node_modules_dir).map_err(|error| {
             CreateVirtualDirError::CreateNodeModulesDir {
                 dir: virtual_node_modules_dir.clone(),
@@ -109,12 +110,10 @@ impl<'a> CreateVirtualDirBySnapshot<'a> {
                 .map_err(CreateVirtualDirError::ImportIndexedDir)
             },
             || match snapshot.dependencies.as_ref() {
-                Some(dependencies) => create_symlink_layout(
-                    dependencies,
-                    virtual_store_dir,
-                    &virtual_node_modules_dir,
-                )
-                .map_err(CreateVirtualDirError::SymlinkPackage),
+                Some(dependencies) => {
+                    create_symlink_layout(dependencies, layout, &virtual_node_modules_dir)
+                        .map_err(CreateVirtualDirError::SymlinkPackage)
+                }
                 None => Ok(()),
             },
         );

@@ -115,7 +115,12 @@ pub enum LinkVirtualStoreBinsError {
 /// lockfile-driven path landed.
 #[must_use]
 pub struct LinkVirtualStoreBins<'a> {
-    pub virtual_store_dir: &'a Path,
+    /// Install-scoped slot-directory mapping (GVS-aware). Replaces the
+    /// previous `virtual_store_dir: &Path` field — the layout already
+    /// knows where each snapshot's slot lives, including under the
+    /// global-virtual-store `<scope>/<name>/<version>/<hash>` shape.
+    /// See [`crate::VirtualStoreLayout`].
+    pub layout: &'a crate::VirtualStoreLayout,
     /// `Some` when the install is lockfile-driven. Iterating the
     /// snapshot map (instead of `read_dir(virtual_store_dir)`)
     /// removes the per-slot directory enumeration and lets us walk
@@ -169,24 +174,23 @@ impl<'a> LinkVirtualStoreBins<'a> {
             + FsSetExecutable
             + FsEnsureExecutableBits,
     {
-        let LinkVirtualStoreBins {
-            virtual_store_dir,
-            snapshots,
-            packages,
-            package_manifests,
-            skipped,
-        } = self;
+        let LinkVirtualStoreBins { layout, snapshots, packages, package_manifests, skipped } = self;
         if let Some(snapshots) = snapshots {
             let has_bin_set = build_has_bin_set(packages);
             run_lockfile_driven::<Api>(
-                virtual_store_dir,
+                layout,
                 snapshots,
                 has_bin_set.as_ref(),
                 package_manifests,
                 skipped,
             )
         } else {
-            run_with_readdir::<Api>(virtual_store_dir)
+            // No snapshots (lockfile absent or empty): fall back to a
+            // `read_dir` enumeration. This path only fires for non-
+            // frozen installs, which #432 doesn't activate GVS for, so
+            // reading from `layout.package_store_dir()` reproduces
+            // today's behaviour exactly when GVS is off.
+            run_with_readdir::<Api>(layout.package_store_dir())
         }
     }
 }
@@ -236,7 +240,7 @@ fn build_has_bin_set(
 /// `package.json` read through the existing symlink at
 /// `<slot>/node_modules/<alias>`.
 fn run_lockfile_driven<Api>(
-    virtual_store_dir: &Path,
+    layout: &crate::VirtualStoreLayout,
     snapshots: &HashMap<PackageKey, SnapshotEntry>,
     has_bin_set: Option<&HashSet<PackageKey>>,
     package_manifests: &PackageManifests,
@@ -305,7 +309,7 @@ where
             return Ok(());
         }
 
-        let slot_dir = virtual_store_dir.join(slot_key.to_virtual_store_name());
+        let slot_dir = layout.slot_dir(slot_key);
         let modules_dir = slot_dir.join("node_modules");
         let self_pkg_dir = slot_own_pkg_dir(&modules_dir, slot_key);
         let bins_dir = self_pkg_dir.join("node_modules/.bin");

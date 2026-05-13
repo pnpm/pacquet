@@ -1,4 +1,7 @@
-use crate::{SkippedSnapshots, SymlinkPackageError, link_direct_dep_bins, symlink_package};
+use crate::{
+    SkippedSnapshots, SymlinkPackageError, VirtualStoreLayout, link_direct_dep_bins,
+    symlink_package,
+};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_cmd_shim::LinkBinsError;
@@ -46,6 +49,11 @@ where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
     pub config: &'static Config,
+    /// Install-scoped slot-directory mapping (GVS-aware). Drives the
+    /// per-direct-dep symlink target — `node_modules/<dep>` resolves
+    /// to `layout.slot_dir(<key>)/node_modules/<dep>`. See
+    /// [`crate::VirtualStoreLayout`].
+    pub layout: &'a VirtualStoreLayout,
     pub importers: &'a HashMap<String, ProjectSnapshot>,
     pub dependency_groups: DependencyGroupList,
     /// Workspace root. For a single-project install this is the
@@ -112,6 +120,7 @@ where
     pub fn run<R: Reporter>(self) -> Result<(), SymlinkDirectDependenciesError> {
         let SymlinkDirectDependencies {
             config,
+            layout,
             importers,
             dependency_groups,
             workspace_root,
@@ -160,7 +169,7 @@ where
 
             link_one_importer::<R>(
                 importer_id,
-                config,
+                layout,
                 project_snapshot,
                 &project_dir,
                 &modules_dir,
@@ -232,7 +241,7 @@ fn validate_importer_id(importer_id: &str) -> Result<(), SymlinkDirectDependenci
 /// keeps lockfiles written by pacquet and pnpm interchangeable. The
 /// returned path is platform-native (`Path::join` handles the
 /// conversion on Windows).
-fn importer_root_dir(workspace_root: &Path, importer_id: &str) -> PathBuf {
+pub(crate) fn importer_root_dir(workspace_root: &Path, importer_id: &str) -> PathBuf {
     if importer_id == "." {
         workspace_root.to_path_buf()
     } else {
@@ -247,7 +256,7 @@ fn importer_root_dir(workspace_root: &Path, importer_id: &str) -> PathBuf {
 
 fn link_one_importer<R: Reporter>(
     importer_id: &str,
-    config: &Config,
+    layout: &VirtualStoreLayout,
     project_snapshot: &ProjectSnapshot,
     project_dir: &Path,
     modules_dir: &Path,
@@ -331,15 +340,18 @@ fn link_one_importer<R: Reporter>(
             let name_str = name.to_string();
             let target_path: PathBuf = match &spec.version {
                 ImporterDepVersion::Regular(ver_peer) => {
-                    // TODO: the code below is not optimal
-                    let virtual_store_name =
-                        PkgNameVerPeer::new(PkgName::clone(name), ver_peer.clone())
-                            .to_virtual_store_name();
-                    config
-                        .virtual_store_dir
-                        .join(virtual_store_name)
-                        .join("node_modules")
-                        .join(&name_str)
+                    // Route the slot-directory lookup through the
+                    // install-scoped [`VirtualStoreLayout`] so the
+                    // path works under both legacy
+                    // (`<virtual_store_dir>/<flat-name>`) and GVS
+                    // (`<global_virtual_store_dir>/<scope>/<name>/<version>/<hash>`)
+                    // layouts. The layout's GVS-suffix map is keyed by
+                    // the full snapshot key (with peer suffix), so
+                    // construct that from the importer's resolved
+                    // version-with-peer rather than from `name`+`version`
+                    // separately.
+                    let dep_key = PkgNameVerPeer::new(PkgName::clone(name), ver_peer.clone());
+                    layout.slot_dir(&dep_key).join("node_modules").join(&name_str)
                 }
                 ImporterDepVersion::Link(target) => {
                     // `link:<path>` values are relative to the

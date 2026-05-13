@@ -82,6 +82,7 @@ fn emits_pnpm_root_added_per_direct_dependency() {
 
     SymlinkDirectDependencies {
         config,
+        layout: &crate::VirtualStoreLayout::legacy(config.virtual_store_dir.clone()),
         importers: &importers,
         dependency_groups: [DependencyGroup::Prod, DependencyGroup::Dev],
         workspace_root: &project_root,
@@ -200,6 +201,7 @@ fn duplicate_dep_across_groups_collapses_to_one_entry() {
 
     SymlinkDirectDependencies {
         config,
+        layout: &crate::VirtualStoreLayout::legacy(config.virtual_store_dir.clone()),
         importers: &importers,
         // Prod first → first-wins gives `dependencyType: prod`.
         dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
@@ -279,6 +281,7 @@ fn cross_importer_link_dep_symlinks_to_sibling_rootdir() {
 
     SymlinkDirectDependencies {
         config,
+        layout: &crate::VirtualStoreLayout::legacy(config.virtual_store_dir.clone()),
         importers: &importers,
         dependency_groups: [DependencyGroup::Prod],
         workspace_root: &workspace_root,
@@ -336,8 +339,10 @@ fn empty_importers_is_a_no_op() {
     let config = config.leak();
 
     let importers = HashMap::new();
+    let layout = crate::VirtualStoreLayout::legacy(config.virtual_store_dir.clone());
     let result = SymlinkDirectDependencies {
         config,
+        layout: &layout,
         importers: &importers,
         dependency_groups: [DependencyGroup::Prod],
         workspace_root: &project_root,
@@ -412,6 +417,7 @@ fn per_importer_prefix_in_pnpm_root_events() {
 
     SymlinkDirectDependencies {
         config,
+        layout: &crate::VirtualStoreLayout::legacy(config.virtual_store_dir.clone()),
         importers: &importers,
         dependency_groups: [DependencyGroup::Prod],
         workspace_root: &workspace_root,
@@ -475,6 +481,7 @@ fn unsafe_importer_keys_error_before_filesystem_writes() {
 
         let result = SymlinkDirectDependencies {
             config,
+            layout: &crate::VirtualStoreLayout::legacy(config.virtual_store_dir.clone()),
             importers: &importers,
             dependency_groups: [DependencyGroup::Prod],
             workspace_root: &workspace_root,
@@ -548,6 +555,7 @@ fn custom_modules_dir_propagates_to_each_importer() {
 
     SymlinkDirectDependencies {
         config,
+        layout: &crate::VirtualStoreLayout::legacy(config.virtual_store_dir.clone()),
         importers: &importers,
         dependency_groups: [DependencyGroup::Prod],
         workspace_root: &workspace_root,

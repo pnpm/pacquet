@@ -42,10 +42,18 @@ use std::{
 /// touch — it returns an absolute directory whose `node_modules/<name>`
 /// subdirectory holds the unpacked package.
 pub struct VirtualStoreLayout {
-    /// Root containing every per-snapshot subdirectory. Equal to
-    /// `Config::virtual_store_dir` in both GVS-on and GVS-off modes
-    /// (the field is derived to point at `<store_dir>/links` when
-    /// GVS is on; see [`Config::apply_global_virtual_store_derivation`]).
+    /// Root containing every per-snapshot subdirectory. Picked from
+    /// `Config::global_virtual_store_dir` when GVS is enabled (the
+    /// shared `<store_dir>/links` path, or the user's pinned override)
+    /// and from `Config::virtual_store_dir` when GVS is disabled (the
+    /// project-local `<modules_dir>/.pnpm`). Pacquet keeps the two
+    /// fields separate so the legacy non-frozen
+    /// [`crate::InstallWithoutLockfile`] path can keep reading
+    /// `virtual_store_dir` directly via [`Self::legacy`] without the
+    /// frozen-lockfile derivation redirecting it. See
+    /// [`Config::apply_global_virtual_store_derivation`] for the
+    /// reasoning behind the field split.
+    ///
     /// Stored separately from a `&Config` so callers don't have to
     /// thread the full config through the helpers that only need a
     /// path lookup.
@@ -63,6 +71,17 @@ pub struct VirtualStoreLayout {
 }
 
 impl VirtualStoreLayout {
+    /// Construct a layout that always uses the legacy
+    /// `<root>/<flat-name>` shape, regardless of any
+    /// `enable_global_virtual_store` setting on `Config`. The
+    /// non-frozen install path uses this — GVS is scoped to
+    /// frozen-lockfile installs (pnpm/pacquet#432), so without-lockfile
+    /// callers stay on the project-local flat layout even when
+    /// `enable_global_virtual_store: true` is configured.
+    pub fn legacy(root: impl Into<PathBuf>) -> Self {
+        VirtualStoreLayout { package_store_dir: root.into(), gvs_suffixes: None }
+    }
+
     /// Build the layout for one install. Reads
     /// [`Config::enable_global_virtual_store`] to decide whether to
     /// precompute GVS slot names, then iterates the lockfile's
@@ -79,6 +98,12 @@ impl VirtualStoreLayout {
     /// [`pacquet_graph_hasher::engine_name`] produces; threaded in
     /// instead of recomputed inside so the value matches whatever the
     /// rest of the install (notably the side-effects cache key) uses.
+    /// `None` propagates straight into
+    /// [`calc_graph_node_hash`]'s `engine` parameter — `None` and
+    /// `Some("")` produce *different* GVS hashes (the former omits
+    /// the `engine` contribution, the latter hashes the empty string),
+    /// so the call site must keep the `Option` shape rather than
+    /// flattening to `unwrap_or("")`.
     ///
     /// `snapshots` / `packages` are the lockfile fields the caller
     /// already has by the time the install dispatches to a frozen-
@@ -86,11 +111,22 @@ impl VirtualStoreLayout {
     /// [`crate::InstallFrozenLockfile::run`].
     pub fn new(
         config: &Config,
-        engine: &str,
+        engine: Option<&str>,
         snapshots: Option<&HashMap<PackageKey, SnapshotEntry>>,
         packages: Option<&HashMap<PackageKey, PackageMetadata>>,
     ) -> Self {
-        let package_store_dir = config.virtual_store_dir.clone();
+        // Pacquet keeps `virtual_store_dir` and `global_virtual_store_dir`
+        // as two separate fields (see
+        // [`Config::apply_global_virtual_store_derivation`] for why).
+        // The frozen-lockfile install picks
+        // `global_virtual_store_dir` here when GVS is on so the
+        // without-lockfile path can stay on the project-local
+        // `virtual_store_dir` without colliding.
+        let package_store_dir = if config.enable_global_virtual_store {
+            config.global_virtual_store_dir.clone()
+        } else {
+            config.virtual_store_dir.clone()
+        };
         if !config.enable_global_virtual_store {
             return VirtualStoreLayout { package_store_dir, gvs_suffixes: None };
         }
@@ -101,7 +137,7 @@ impl VirtualStoreLayout {
         let mut cache: DepsStateCache<PackageKey> = HashMap::new();
         let mut gvs_suffixes: HashMap<PackageKey, String> = HashMap::with_capacity(snapshots.len());
         for snapshot_key in snapshots.keys() {
-            let hex_digest = calc_graph_node_hash(&graph, &mut cache, snapshot_key, Some(engine));
+            let hex_digest = calc_graph_node_hash(&graph, &mut cache, snapshot_key, engine);
             let metadata_key = snapshot_key.without_peer();
             let name = metadata_key.name.to_string();
             let version = metadata_key.suffix.version().to_string();
@@ -236,10 +272,15 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::{collections::HashMap, path::PathBuf};
 
-    fn make_config(gvs: bool, virtual_store_dir: PathBuf) -> Config {
+    /// Build a `Config` test-double with the GVS-relevant fields
+    /// wired explicitly. `gvs_dir` populates `global_virtual_store_dir`
+    /// for the GVS-on path; `virtual_store_dir` stays at the
+    /// project-local default for the GVS-off path.
+    fn make_config(gvs: bool, virtual_store_dir: PathBuf, gvs_dir: PathBuf) -> Config {
         let mut config = Config::new();
         config.enable_global_virtual_store = gvs;
         config.virtual_store_dir = virtual_store_dir;
+        config.global_virtual_store_dir = gvs_dir;
         config
     }
 
@@ -248,8 +289,12 @@ mod tests {
     /// drop-in for the legacy path.
     #[test]
     fn slot_dir_uses_flat_name_when_gvs_off() {
-        let config = make_config(false, PathBuf::from("/tmp/proj/node_modules/.pnpm"));
-        let layout = VirtualStoreLayout::new(&config, "ignored", None, None);
+        let config = make_config(
+            false,
+            PathBuf::from("/tmp/proj/node_modules/.pnpm"),
+            PathBuf::from("/tmp/store/links"),
+        );
+        let layout = VirtualStoreLayout::new(&config, Some("ignored"), None, None);
         let key: PackageKey = "@scope/foo@1.2.3".parse().unwrap();
         assert_eq!(
             layout.slot_dir(&key),
@@ -263,7 +308,11 @@ mod tests {
     /// and depth.
     #[test]
     fn slot_dir_uses_gvs_layout_when_gvs_on() {
-        let config = make_config(true, PathBuf::from("/tmp/store/links"));
+        let config = make_config(
+            true,
+            PathBuf::from("/tmp/proj/node_modules/.pnpm"),
+            PathBuf::from("/tmp/store/links"),
+        );
         let key: PackageKey = "@scope/foo@1.2.3".parse().unwrap();
         let mut packages = HashMap::new();
         packages.insert(
@@ -290,7 +339,7 @@ mod tests {
         snapshots.insert(key.clone(), SnapshotEntry::default());
         let layout = VirtualStoreLayout::new(
             &config,
-            "darwin-arm64-node20",
+            Some("darwin-arm64-node20"),
             Some(&snapshots),
             Some(&packages),
         );
@@ -311,7 +360,11 @@ mod tests {
     /// depth — easier `readdir`-driven traversal.
     #[test]
     fn slot_dir_prefixes_unscoped_with_at_slash_under_gvs() {
-        let config = make_config(true, PathBuf::from("/tmp/store/links"));
+        let config = make_config(
+            true,
+            PathBuf::from("/tmp/proj/node_modules/.pnpm"),
+            PathBuf::from("/tmp/store/links"),
+        );
         let key: PackageKey = "foo@1.0.0".parse().unwrap();
         let mut packages = HashMap::new();
         packages.insert(
@@ -336,8 +389,12 @@ mod tests {
         );
         let mut snapshots = HashMap::new();
         snapshots.insert(key.clone(), SnapshotEntry::default());
-        let layout =
-            VirtualStoreLayout::new(&config, "linux-x64-node22", Some(&snapshots), Some(&packages));
+        let layout = VirtualStoreLayout::new(
+            &config,
+            Some("linux-x64-node22"),
+            Some(&snapshots),
+            Some(&packages),
+        );
         let slot = layout.slot_dir(&key);
         let _ = slot
             .strip_prefix("/tmp/store/links/@/foo/1.0.0/")

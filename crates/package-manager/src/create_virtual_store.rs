@@ -79,6 +79,11 @@ pub struct CreateVirtualStore<'a> {
     /// [`CreateVirtualStore::run`].
     pub current_snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,
     pub current_packages: Option<&'a HashMap<PackageKey, PackageMetadata>>,
+    /// Install-scoped precomputed slot-directory mapping (GVS-aware).
+    /// Used by both the warm batch and the cold batch to decide where
+    /// each snapshot's `node_modules/<pkg>` lands. See
+    /// [`crate::VirtualStoreLayout`].
+    pub layout: &'a crate::VirtualStoreLayout,
     /// Install-scoped dedupe state for `pnpm:package-import-method`.
     /// See `link_file::log_method_once`.
     pub logged_methods: &'a AtomicU8,
@@ -139,6 +144,7 @@ impl<'a> CreateVirtualStore<'a> {
             snapshots,
             current_snapshots,
             current_packages,
+            layout,
             logged_methods,
             requester,
             store_index_writer,
@@ -288,7 +294,15 @@ impl<'a> CreateVirtualStore<'a> {
         // Run this *before* deriving cache keys so unchanged
         // directory-backed snapshots aren't tripped by
         // `snapshot_cache_key`'s `UnsupportedResolution`.
-        let virtual_store_dir = &config.virtual_store_dir;
+        //
+        // Route the slot-existence probe through `layout.slot_dir` so
+        // GVS-on installs check the correct path. The probe used to
+        // hard-code `<config.virtual_store_dir>/<flat-name>`, which is
+        // the legacy layout — under GVS, slots live at
+        // `<global_virtual_store_dir>/<scope>/<name>/<ver>/<hash>` and
+        // the legacy path is empty, so the skip gate would
+        // incorrectly mark every warm slot as "broken" and emit
+        // `BrokenModules` for the wrong path.
         let survivors: Vec<(&PackageKey, &SnapshotEntry)> = snapshots
             .iter()
             // Reason 1: installability skip. Drop entirely.
@@ -309,8 +323,8 @@ impl<'a> CreateVirtualStore<'a> {
                 if !integrity_equal(current_metadata, wanted_metadata) {
                     return true;
                 }
-                let dir = virtual_store_dir
-                    .join(snapshot_key.to_virtual_store_name())
+                let dir = layout
+                    .slot_dir(snapshot_key)
                     .join("node_modules")
                     .join(snapshot_key.name.to_string());
                 if dir.is_dir() {
@@ -531,7 +545,6 @@ impl<'a> CreateVirtualStore<'a> {
             }
         }
 
-        let virtual_store_dir = &config.virtual_store_dir;
         let import_method = config.package_import_method;
         {
             use rayon::prelude::*;
@@ -554,7 +567,7 @@ impl<'a> CreateVirtualStore<'a> {
                     emit_warm_snapshot_progress::<R>(&package_id, requester);
 
                     crate::CreateVirtualDirBySnapshot {
-                        virtual_store_dir,
+                        layout,
                         cas_paths: cas_paths.as_ref(),
                         import_method,
                         logged_methods,
@@ -597,6 +610,7 @@ impl<'a> CreateVirtualStore<'a> {
                     InstallPackageBySnapshot {
                         http_client,
                         config,
+                        layout,
                         store_index: store_index_ref,
                         store_index_writer: store_index_writer_ref,
                         prefetched_cas_paths: prefetched_ref,

@@ -14,7 +14,7 @@ use pacquet_reporter::{
 };
 use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
 use pipe_trait::Pipe;
-use std::sync::Mutex;
+use std::{path::PathBuf, sync::Mutex};
 use tempfile::tempdir;
 use text_block_macros::text_block;
 
@@ -783,6 +783,15 @@ async fn warm_reinstall_skips_snapshot_when_current_lockfile_matches() {
     manifest.save().unwrap();
 
     let mut config = Config::new();
+    // Opt out of the (now-default) global virtual store: the
+    // `seed_placeholder_virtual_store_slot` helper writes the legacy
+    // `<virtual_store_dir>/<flat-name>` shape, which only matches the
+    // skip-probe path when `VirtualStoreLayout` is in legacy mode.
+    // The partial-install behaviour under test (skip when the
+    // current lockfile matches + slot exists) is independent of the
+    // GVS layout; the GVS-on equivalent is exercised by the
+    // `frozen_lockfile_under_gvs_*` tests below.
+    config.enable_global_virtual_store = false;
     config.store_dir = store_dir.into();
     config.modules_dir = modules_dir.clone();
     config.virtual_store_dir = virtual_store_dir.clone();
@@ -856,6 +865,12 @@ async fn warm_reinstall_emits_broken_modules_when_dir_is_missing() {
     manifest.save().unwrap();
 
     let mut config = Config::new();
+    // Opt out of the GVS layout — see the rationale on
+    // [`warm_reinstall_skips_snapshot_when_current_lockfile_matches`].
+    // The pre-seeded `<virtual_store_dir>/<flat-name>` slot is the
+    // legacy shape the probe matches; the BrokenModules emit fires
+    // identically under either layout once the slot is missing.
+    config.enable_global_virtual_store = false;
     config.store_dir = store_dir.into();
     config.modules_dir = modules_dir.clone();
     config.virtual_store_dir = virtual_store_dir.clone();
@@ -1084,6 +1099,11 @@ async fn warm_reinstall_reports_added_zero_and_emits_no_imported_events() {
     manifest.save().unwrap();
 
     let mut config = Config::new();
+    // Opt out of the GVS layout — the pre-seeded
+    // `<virtual_store_dir>/<flat-name>` slot is the legacy shape the
+    // skip probe matches under
+    // [`warm_reinstall_skips_snapshot_when_current_lockfile_matches`].
+    config.enable_global_virtual_store = false;
     config.store_dir = store_dir.into();
     config.modules_dir = modules_dir.clone();
     config.virtual_store_dir = virtual_store_dir.clone();
@@ -1249,6 +1269,242 @@ async fn frozen_lockfile_errors_when_lockfile_has_no_root_importer() {
         matches!(err, InstallError::NoImporter { ref importer_id } if importer_id == "."),
         "expected NoImporter for `.`, got {err:?}",
     );
+
+    drop(dir);
+}
+
+/// GVS-on frozen-lockfile install. With
+/// `enable_global_virtual_store: true` (pacquet's default, matching
+/// upstream's
+/// [`config/reader/src/index.ts:392-394`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L392-L394)),
+/// `Install::run` registers the project at
+/// `<store_dir>/projects/<short-hash>` (mirroring upstream's
+/// [`registerProject`](https://github.com/pnpm/pnpm/blob/94240bc046/store/controller/src/storeController/projectRegistry.ts))
+/// and routes every per-snapshot slot through
+/// [`crate::VirtualStoreLayout`]. The empty-snapshot lockfile here is
+/// enough to prove the wiring runs end-to-end without panicking and
+/// that the registry entry actually lands on disk; the GVS-shaped
+/// per-package path layout itself is unit-tested inside the
+/// [`crate::VirtualStoreLayout`] module, and the e2e port of
+/// upstream's `globalVirtualStore.ts` cases (with non-empty
+/// snapshots) is tracked as a follow-up.
+#[tokio::test]
+async fn frozen_lockfile_under_gvs_registers_project_and_runs_clean() {
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    // Place the manifest *inside* `project_root` — `Install::run`
+    // derives the registry target from `manifest.path().parent()`,
+    // so a manifest at `<tmp>/package.json` would register `<tmp>`
+    // and the symlink-resolves-to-project_root assertion below
+    // would silently pass for the wrong reason.
+    std::fs::create_dir_all(&project_root).expect("create project root");
+    let manifest_path = project_root.join("package.json");
+    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+    let mut config = Config::new();
+    // Pacquet's default is `true`; pin it explicitly so the test
+    // doesn't silently degrade if the default flips someday.
+    config.enable_global_virtual_store = true;
+    config.lockfile = false;
+    config.store_dir = store_dir.clone().into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    // Pin the GVS root to a known location under the test temp dir
+    // so any future assertions can target it without walking the
+    // SmartDefault'd cwd-based fallback.
+    config.global_virtual_store_dir = store_dir.join("links");
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies: {}"
+        "packages: {}"
+        "snapshots: {}"
+    })
+    .expect("parse minimal v9 lockfile");
+
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await
+    .expect("frozen-lockfile install under GVS should succeed");
+
+    // `register_project` wrote `<store_dir>/projects/<short-hash>`
+    // pointing back at the project dir. Resolve the symlink and
+    // canonicalize both ends — the test temp dir may itself be a
+    // symlink (e.g. `/tmp` → `/private/tmp` on macOS), and the
+    // registry stores the absolute project path at write time.
+    let projects_dir = store_dir.join("projects");
+    assert!(projects_dir.is_dir(), "GVS-on install must create <store_dir>/projects/");
+    let entries: Vec<_> =
+        std::fs::read_dir(&projects_dir).unwrap().collect::<Result<_, _>>().unwrap();
+    assert_eq!(entries.len(), 1, "exactly one project entry per `Install::run` invocation");
+    let entry_target = std::fs::read_link(entries[0].path()).expect("registry entry is a symlink");
+    assert_eq!(
+        dunce::canonicalize(&entry_target).expect("canonicalize registry target"),
+        dunce::canonicalize(&project_root).expect("canonicalize project root"),
+        "registry symlink must resolve back to the install's project root",
+    );
+
+    drop(dir);
+}
+
+/// GVS-off frozen-lockfile install. The dispatch path is the same,
+/// but `Install::run` skips the project-registry write entirely.
+/// Pins that turning off `enable_global_virtual_store` makes the
+/// install behave like today — no `<store_dir>/projects/` directory
+/// appears.
+#[tokio::test]
+async fn frozen_lockfile_with_gvs_off_skips_project_registry() {
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    std::fs::create_dir_all(&project_root).expect("create project root");
+    let manifest_path = project_root.join("package.json");
+    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+    let mut config = Config::new();
+    config.enable_global_virtual_store = false;
+    config.lockfile = false;
+    config.store_dir = store_dir.clone().into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies: {}"
+        "packages: {}"
+        "snapshots: {}"
+    })
+    .expect("parse minimal v9 lockfile");
+
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await
+    .expect("frozen-lockfile install with GVS off should succeed");
+
+    assert!(
+        !store_dir.join("projects").exists(),
+        "GVS-off install must NOT create the project-registry directory",
+    );
+
+    drop(dir);
+}
+
+/// Workspace install under GVS registers each importer separately.
+/// Mirrors upstream's per-project
+/// [`registerProject`](https://github.com/pnpm/pnpm/blob/94240bc046/store/controller/src/storeController/projectRegistry.ts)
+/// call site, which fires once per workspace package — a workspace
+/// with `.` (root) and `packages/web` therefore ends up with two
+/// entries in `<store_dir>/projects/`, each resolving back to its
+/// own root dir. `pacquet store prune` (tracked separately) needs
+/// every reachable importer in the registry to keep the
+/// `<store_dir>/links/...` slots they share alive.
+#[tokio::test]
+async fn frozen_lockfile_under_gvs_registers_each_workspace_importer() {
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let workspace_root = dir.path().join("workspace");
+    let modules_dir = workspace_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    // Workspace layout: root + one sub-importer. Both directories
+    // have to exist on disk because `register_project` canonicalises
+    // the target before writing the symlink.
+    let web_dir = workspace_root.join("packages/web");
+    std::fs::create_dir_all(&web_dir).expect("create packages/web");
+    let manifest_path = workspace_root.join("package.json");
+    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    // The sub-importer needs a `package.json` too — the freshness check
+    // satisfies on the root only today, but the per-importer registry
+    // write still resolves the target on disk.
+    std::fs::write(web_dir.join("package.json"), "{}").expect("write packages/web/package.json");
+
+    let mut config = Config::new();
+    config.enable_global_virtual_store = true;
+    config.lockfile = false;
+    config.store_dir = store_dir.clone().into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    config.global_virtual_store_dir = store_dir.join("links");
+    let config = config.leak();
+
+    // Two importers: `.` and `packages/web`. Empty dep graph so the
+    // install reaches the per-importer registry-write loop without
+    // doing any actual fetch/link work.
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies: {}"
+        "  packages/web:"
+        "    dependencies: {}"
+        "packages: {}"
+        "snapshots: {}"
+    })
+    .expect("parse minimal v9 workspace lockfile");
+
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await
+    .expect("workspace frozen-lockfile install under GVS should succeed");
+
+    // Exactly two registry entries — one per importer. Resolve the
+    // symlink targets and confirm both project roots are present.
+    let projects_dir = store_dir.join("projects");
+    assert!(projects_dir.is_dir(), "GVS-on workspace install must create <store_dir>/projects/");
+    let mut targets: Vec<PathBuf> = std::fs::read_dir(&projects_dir)
+        .unwrap()
+        .map(|entry| {
+            let target = std::fs::read_link(entry.unwrap().path()).expect("registry entry");
+            dunce::canonicalize(&target).expect("canonicalize registry target")
+        })
+        .collect();
+    targets.sort();
+    let mut expected = [
+        dunce::canonicalize(&workspace_root).expect("canonicalize workspace root"),
+        dunce::canonicalize(&web_dir).expect("canonicalize packages/web"),
+    ];
+    expected.sort();
+    assert_eq!(targets, expected, "every importer must have a registry entry");
 
     drop(dir);
 }

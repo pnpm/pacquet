@@ -1,5 +1,5 @@
 use crate::{
-    AllowBuildPolicy, CreateVirtualDirBySnapshot, CreateVirtualDirError,
+    AllowBuildPolicy, CreateVirtualDirBySnapshot, CreateVirtualDirError, VirtualStoreLayout,
     retry_config::retry_opts_from_config,
 };
 use derive_more::{Display, Error};
@@ -28,6 +28,11 @@ use std::{
 pub struct InstallPackageBySnapshot<'a> {
     pub http_client: &'a ThrottledClient,
     pub config: &'static Config,
+    /// Install-scoped slot-directory mapping (GVS-aware). Drives the
+    /// per-snapshot directory passed to
+    /// [`CreateVirtualDirBySnapshot`] after the cold-batch download
+    /// finishes. See [`crate::VirtualStoreLayout`].
+    pub layout: &'a VirtualStoreLayout,
     pub store_index: Option<&'a SharedReadonlyStoreIndex>,
     pub store_index_writer: Option<&'a Arc<StoreIndexWriter>>,
     /// Install-scoped batched cache lookup result. See
@@ -94,6 +99,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
         let InstallPackageBySnapshot {
             http_client,
             config,
+            layout,
             store_index,
             store_index_writer,
             prefetched_cas_paths,
@@ -218,7 +224,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
         };
 
         CreateVirtualDirBySnapshot {
-            virtual_store_dir: &config.virtual_store_dir,
+            layout,
             cas_paths: &cas_paths,
             import_method: config.package_import_method,
             logged_methods,

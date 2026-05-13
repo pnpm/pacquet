@@ -25,6 +25,19 @@ pub struct MinimalWorkspaceManifest {
     pub ignore_scripts: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lockfile: Option<bool>,
+    /// Mirrors pnpm's
+    /// [`enableGlobalVirtualStore`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L392-L394)
+    /// (default `true` in v11). The benchmark fixture pins this to
+    /// `false` so existing revisions can be compared apples-to-apples
+    /// against the project-local virtual-store layout pacquet shipped
+    /// before pnpm/pacquet#432 — both `pacquet@HEAD` and `pacquet@main`
+    /// then sit on the same `<project>/node_modules/.pnpm` shape, and
+    /// pnpm on the other side of the comparison honours the same
+    /// override. A separate GVS-on benchmark variant lives behind a
+    /// caller-supplied `--fixture-dir` with the flag flipped to
+    /// `true` (or omitted to inherit the default).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enable_global_virtual_store: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub supported_architectures: Option<SupportedArchitectures>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]

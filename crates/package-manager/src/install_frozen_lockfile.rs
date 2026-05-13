@@ -2,7 +2,8 @@ use crate::{
     AllowBuildPolicy, BuildModules, BuildModulesError, CreateVirtualStore, CreateVirtualStoreError,
     CreateVirtualStoreOutput, InstallabilityHost, LinkVirtualStoreBins, LinkVirtualStoreBinsError,
     SkippedSnapshots, SymlinkDirectDependencies, SymlinkDirectDependenciesError,
-    VersionPolicyError, any_installability_constraint, compute_skipped_snapshots,
+    VersionPolicyError, VirtualStoreLayout, any_installability_constraint,
+    compute_skipped_snapshots,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
@@ -231,38 +232,29 @@ where
             (SkippedSnapshots::new(), None)
         };
 
-        let CreateVirtualStoreOutput { package_manifests, side_effects_maps_by_snapshot } =
-            CreateVirtualStore {
-                http_client,
-                config,
-                packages,
-                snapshots,
-                current_snapshots,
-                current_packages,
-                logged_methods,
-                requester,
-                store_index_writer: &store_index_writer,
-                allow_build_policy: &allow_build_policy,
-                skipped: &skipped,
-            }
-            .run::<R>()
-            .await
-            .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
-
-        // `engine_name` for the side-effects-cache lookup.
+        // Compute `engine_name` *before* `CreateVirtualStore::run`
+        // because the GVS-aware `VirtualStoreLayout` needs it to
+        // produce the per-snapshot
+        // `<scope>/<name>/<version>/<hash>` suffix that `pnpm` writes
+        // under `<store_dir>/links`. Same value also feeds
+        // `BuildModules`'s side-effects-cache key prefix.
         //
         // Two paths:
         // - We already detected the host for the installability
         //   check (constraint-bearing lockfile): reuse the cached
-        //   version. The synthetic-fallback case (`node_detected = false`)
-        //   yields `None` so a bogus `99999.0.0`-derived key can't
-        //   poison the cache.
+        //   version. The synthetic-fallback case (`node_detected =
+        //   false`) yields `None` so a bogus `99999.0.0`-derived key
+        //   can't poison either the cache or the GVS hash.
         // - We skipped the installability check (constraint-free
         //   lockfile, the common case): no cached version. Fall
-        //   back to the legacy `detect_node_major` spawn — run
-        //   after `CreateVirtualStore::run` so it overlaps with
-        //   nothing on the critical path. This is the same
-        //   placement upstream used to have.
+        //   back to the legacy `detect_node_major` spawn. This used
+        //   to sit *after* `CreateVirtualStore::run` to overlap the
+        //   `node --version` cost with the install I/O, but the GVS
+        //   path now needs it earlier — the trade-off is a one-time
+        //   `node --version` spawn synchronous with install setup,
+        //   which is still tens of ms on the critical path. Users
+        //   who want the old overlap can opt out via
+        //   `enable_global_virtual_store: false`.
         let engine_name: Option<String> = match &host_node {
             Some((true, ver)) => parse_major_from_version(ver)
                 .map(|major| pacquet_graph_hasher::engine_name(major, None, None)),
@@ -276,8 +268,39 @@ where
             .flatten(),
         };
 
+        // Build the install-scoped slot-directory layout. When
+        // `enable_global_virtual_store` is on the layout precomputes
+        // each snapshot's `<scope>/<name>/<version>/<hash>` suffix
+        // from [`pacquet_graph_hasher::calc_graph_node_hash`];
+        // otherwise it falls through to the legacy
+        // `to_virtual_store_name`-shaped flat name on every
+        // `slot_dir` call. Either way every downstream consumer
+        // (warm batch, cold batch, direct-dep symlinks, bin linker,
+        // build module) routes through this one lookup.
+        let layout = VirtualStoreLayout::new(config, engine_name.as_deref(), snapshots, packages);
+
+        let CreateVirtualStoreOutput { package_manifests, side_effects_maps_by_snapshot } =
+            CreateVirtualStore {
+                http_client,
+                config,
+                packages,
+                snapshots,
+                current_snapshots,
+                current_packages,
+                layout: &layout,
+                logged_methods,
+                requester,
+                store_index_writer: &store_index_writer,
+                allow_build_policy: &allow_build_policy,
+                skipped: &skipped,
+            }
+            .run::<R>()
+            .await
+            .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
+
         SymlinkDirectDependencies {
             config,
+            layout: &layout,
             importers,
             dependency_groups,
             workspace_root,
@@ -297,7 +320,7 @@ where
         // (matching pnpm's `bundledManifest`-from-CAFS path) instead
         // of re-reading every child's `package.json` from disk.
         LinkVirtualStoreBins {
-            virtual_store_dir: &config.virtual_store_dir,
+            layout: &layout,
             snapshots,
             packages,
             package_manifests: &package_manifests,
@@ -388,7 +411,7 @@ where
         };
 
         let ignored_builds = BuildModules {
-            virtual_store_dir: &config.virtual_store_dir,
+            layout: &layout,
             modules_dir: &config.modules_dir,
             lockfile_dir: manifest_dir,
             snapshots,
