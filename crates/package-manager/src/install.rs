@@ -396,7 +396,18 @@ where
         // (selected importers × engine filter) so the saved current
         // lockfile reflects only what was actually materialized.
         if frozen_lockfile && let Some(lockfile) = lockfile {
-            lockfile
+            // Filter the wanted lockfile down to the snapshots that
+            // were actually materialized: dep maps the user excluded
+            // (`--no-optional`, `--no-dev`) plus snapshots the
+            // install-time skip set dropped (installability, fetch
+            // failure, `--no-optional`-only entries). Ports
+            // upstream's
+            // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/index.ts#L687-L695>
+            // flow — `writeCurrentLockfile(filteredLockfile)`. The
+            // next install diffs against this filtered shape so
+            // dropped snapshots aren't mistaken for already-done
+            // work.
+            crate::filter_lockfile_for_current(lockfile, included, &frozen_skipped)
                 .save_current_to_virtual_store_dir(&config.virtual_store_dir)
                 .map_err(InstallError::SaveCurrentLockfile)?;
         }

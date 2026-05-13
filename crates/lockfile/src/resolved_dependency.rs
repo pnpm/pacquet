@@ -14,7 +14,7 @@ use std::{
 pub type ResolvedDependencyMap = HashMap<PkgName, ResolvedDependencySpec>;
 
 /// Value type of [`ResolvedDependencyMap`].
-#[derive(Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ResolvedDependencySpec {
     pub specifier: String,
