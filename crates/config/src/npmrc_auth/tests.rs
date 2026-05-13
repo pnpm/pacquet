@@ -638,9 +638,5 @@ fn defaults_leave_tls_config_empty() {
     assert!(config.tls.cert.is_none(), "tls.cert={:?}", config.tls.cert);
     assert!(config.tls.key.is_none(), "tls.key={:?}", config.tls.key);
     assert_eq!(config.tls.strict_ssl, None);
-    assert!(
-        config.tls.local_address.is_none(),
-        "tls.local_address={:?}",
-        config.tls.local_address,
-    );
+    assert!(config.tls.local_address.is_none(), "tls.local_address={:?}", config.tls.local_address);
 }
