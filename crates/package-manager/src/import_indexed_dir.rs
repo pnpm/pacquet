@@ -145,12 +145,9 @@ pub fn import_indexed_dir<R: Reporter>(
         // Existing non-directory dirent with force=true. The hoisted
         // linker call shape won't produce this in practice, but
         // refusing to clobber a stale symlink would wedge the install.
-        // `remove_file` (not `remove_dir`) so symlinks-to-directory
-        // are unlinked rather than recursed into.
         (Some(file_type), true) if !file_type.is_dir() => {
-            fs::remove_file(dir_path).map_err(|error| ImportIndexedDirError::ClearNonDirEntry {
-                path: dir_path.to_path_buf(),
-                error,
+            remove_non_dir_dirent(dir_path, file_type).map_err(|error| {
+                ImportIndexedDirError::ClearNonDirEntry { path: dir_path.to_path_buf(), error }
             })?;
             populate_dir::<R>(logged_methods, import_method, dir_path, cas_paths)
         }
@@ -281,10 +278,10 @@ fn stage_and_swap<R: Reporter>(
 
     // 4. Remove the old contents. If this fails after step 3, the
     //    staged copy of `node_modules/` is the user's only copy —
-    //    move it back into place before bailing.
+    //    try to move it back into place before bailing, and leak
+    //    the staging directory if the move can't run.
     if let Err(error) = fs::remove_dir_all(dir_path) {
-        rescue_node_modules(nm_moved, &stage_modules, &target_modules);
-        let _ = fs::remove_dir_all(&stage);
+        finalize_stage_cleanup_after_failure(nm_moved, &stage, &stage_modules, &target_modules);
         return Err(ImportIndexedDirError::RemoveExisting { path: dir_path.to_path_buf(), error });
     }
 
@@ -296,34 +293,107 @@ fn stage_and_swap<R: Reporter>(
     //    `dir_path` so the rescued `node_modules/` has somewhere to
     //    land.
     if let Err(error) = fs::rename(&stage, dir_path) {
-        if nm_moved && fs::create_dir_all(dir_path).is_ok() {
-            rescue_node_modules(nm_moved, &stage_modules, &target_modules);
+        // `create_dir_all` is the gate: without `dir_path`, the rescue
+        // rename has no destination. Treat its failure as "rescue
+        // can't run" and leak the staging directory below.
+        let rescue_target_ready = !nm_moved || fs::create_dir_all(dir_path).is_ok();
+        if rescue_target_ready {
+            finalize_stage_cleanup_after_failure(nm_moved, &stage, &stage_modules, &target_modules);
+        } else {
+            leak_stage(&stage, &stage_modules);
         }
-        let _ = fs::remove_dir_all(&stage);
         return Err(ImportIndexedDirError::Swap { from: stage, to: dir_path.to_path_buf(), error });
     }
     Ok(())
 }
 
+/// Combined post-failure cleanup for steps 4 and 5: restore the
+/// preserved `node_modules/` if it was moved, then rimraf the
+/// staging directory — but only if the restore actually ran.
+/// Leaving the staging directory on disk after a failed restore is
+/// deliberate: it contains the user's only copy of the preserved
+/// `node_modules/`, and silently destroying it would compound the
+/// install failure with data loss. The emit warning gives an
+/// operator the exact path to recover from.
+fn finalize_stage_cleanup_after_failure(
+    nm_moved: bool,
+    stage: &Path,
+    stage_modules: &Path,
+    target_modules: &Path,
+) {
+    let restored = restore_preserved_node_modules(nm_moved, stage_modules, target_modules);
+    if restored {
+        let _ = fs::remove_dir_all(stage);
+    } else {
+        leak_stage(stage, stage_modules);
+    }
+}
+
 /// Best-effort restoration of the preserved `node_modules/` directory
-/// onto its original path after a partial stage-and-swap failure. The
-/// caller has already decided to return an error to its caller; any
-/// failure here is logged-and-swallowed because the surfaced error
-/// already explains the underlying problem.
-fn rescue_node_modules(nm_moved: bool, stage_modules: &Path, target_modules: &Path) {
+/// onto its original path. Returns `true` when there was nothing to
+/// restore or the restoration succeeded; returns `false` when the
+/// caller must not clean up the staging directory (it contains the
+/// user's only copy of the data).
+fn restore_preserved_node_modules(
+    nm_moved: bool,
+    stage_modules: &Path,
+    target_modules: &Path,
+) -> bool {
     if !nm_moved {
-        return;
+        return true;
     }
-    if let Err(error) = fs::rename(stage_modules, target_modules) {
-        tracing::warn!(
-            target: "pacquet::import_indexed_dir",
-            ?stage_modules,
-            ?target_modules,
-            %error,
-            "failed to restore preserved node_modules/ after a partial stage-and-swap; \
-             the staged copy is at the source path until cleanup runs",
-        );
+    match fs::rename(stage_modules, target_modules) {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::warn!(
+                target: "pacquet::import_indexed_dir",
+                ?stage_modules,
+                ?target_modules,
+                %error,
+                "failed to restore preserved node_modules/ after a partial stage-and-swap",
+            );
+            false
+        }
     }
+}
+
+/// Emit a warning that the staging directory is being left in place
+/// because removing it would destroy preserved data. Used by both
+/// post-failure cleanup paths.
+fn leak_stage(stage: &Path, stage_modules: &Path) {
+    tracing::warn!(
+        target: "pacquet::import_indexed_dir",
+        ?stage,
+        ?stage_modules,
+        "staging directory left in place after a partial stage-and-swap because the preserved \
+         node_modules/ could not be restored to its original location; recover manually from \
+         the staged copy",
+    );
+}
+
+/// Remove a non-directory dirent at `path`.
+///
+/// On Unix `fs::remove_file` unlinks any non-directory inode (regular
+/// file, symlink-to-anywhere, fifo, socket). On Windows it rejects
+/// directory symlinks and junctions — the OS treats those as
+/// directory-shaped and they have to go through `remove_dir` instead.
+/// Detect that case by resolving the link's target; if the target is
+/// a directory (or the link is dangling but reports as a symlink),
+/// route through `remove_dir`.
+fn remove_non_dir_dirent(path: &Path, file_type: fs::FileType) -> io::Result<()> {
+    #[cfg(windows)]
+    if file_type.is_symlink() {
+        // Resolved metadata follows the symlink: if the link points
+        // at a directory (or is a junction, which Rust models as a
+        // symlink whose target is a directory), `remove_dir` is the
+        // correct call. Fall through to `remove_file` for dangling
+        // links or symlinks-to-file.
+        if matches!(fs::metadata(path), Ok(meta) if meta.is_dir()) {
+            return fs::remove_dir(path);
+        }
+    }
+    let _ = file_type;
+    fs::remove_file(path)
 }
 
 /// Build a sibling path next to `target` that is unique within the
