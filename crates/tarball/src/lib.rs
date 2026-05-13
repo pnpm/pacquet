@@ -701,10 +701,14 @@ fn extract_zip_entries(
             url: package_url.to_string(),
             source,
         })?;
-        if entry.is_dir() {
-            continue;
-        }
-
+        // Validate the path *before* the `is_dir()` early-skip so an
+        // archive carrying a directory entry like `../evil/` still
+        // surfaces [`TarballError::PathTraversal`] rather than being
+        // silently dropped. Pacquet wouldn't write that directory
+        // either way (only file entries take the CAS write path
+        // below), but rejecting outright keeps the "no unsafe entry
+        // accepted" contract intact for tooling that inspects the
+        // error code.
         let raw_name = entry.name().to_string();
         // [`zip::read::ZipFile::enclosed_name`] returns `None` for
         // absolute paths and any path with a `..` component — a
@@ -716,6 +720,9 @@ fn extract_zip_entries(
                 entry_path: raw_name,
                 reason: "zip entry path is absolute or escapes the archive root",
             });
+        }
+        if entry.is_dir() {
+            continue;
         }
 
         // Strip the archive's top-level basename (`prefix` on

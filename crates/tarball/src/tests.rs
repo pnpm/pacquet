@@ -2214,6 +2214,54 @@ fn extract_zip_rejects_parent_dir_component() {
     drop(tempdir);
 }
 
+/// Path-traversal validation must run *before* the `is_dir()`
+/// early-skip — otherwise an archive carrying a malicious directory
+/// entry like `../evil/` is silently dropped instead of surfacing
+/// [`TarballError::PathTraversal`]. Pacquet wouldn't write that
+/// directory either way (the CAS write path is gated on file
+/// entries), but rejecting outright keeps the "no unsafe entry
+/// accepted" contract intact for tooling that inspects the error
+/// code (Caught by CodeRabbit on #472).
+#[test]
+fn extract_zip_rejects_directory_entry_with_parent_component() {
+    let (tempdir, store_path) = tempdir_with_leaked_path();
+    // Build a zip with a single directory entry whose name contains
+    // `..`. `build_zip` only writes files, so go through `ZipWriter`
+    // directly here to call `add_directory`.
+    let bytes = {
+        let mut buf = Vec::new();
+        {
+            let mut writer = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let opts: zip::write::FileOptions<()> = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            writer.add_directory("../evil", opts).expect("add dir entry");
+            writer.finish().expect("finalize zip");
+        }
+        buf
+    };
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).expect("open zip");
+
+    let err = extract_zip_entries(
+        &mut archive,
+        "https://example.test/evil-dir.zip",
+        store_path,
+        None,
+        None,
+    )
+    .expect_err("escaping directory entry must be rejected, not silently skipped");
+
+    match err {
+        TarballError::PathTraversal { url, entry_path, reason } => {
+            assert_eq!(url, "https://example.test/evil-dir.zip");
+            assert!(entry_path.contains(".."), "raw entry path should be surfaced: {entry_path}");
+            assert!(!reason.is_empty());
+        }
+        other => panic!("expected PathTraversal, got: {other:?}"),
+    }
+
+    drop(tempdir);
+}
+
 /// `archive_prefix: None` keeps entry paths verbatim — same as
 /// upstream's `basename === ''` branch in `extractZipToTarget`.
 /// A zip without a top-level wrapper directory must round-trip
