@@ -436,17 +436,16 @@ pub struct Config {
     pub git_shallow_hosts: Vec<String>,
 
     /// `supportedArchitectures` from `pnpm-workspace.yaml`. Threaded
-    /// into [`InstallabilityHost`] at install time so optional
-    /// platform-tagged dependencies for the listed `os` / `cpu` /
-    /// `libc` values are kept even when they don't match the host
-    /// triple. Per-axis CLI flags (`--cpu`, `--libc`, `--os`)
-    /// override individual axes — mirrors upstream's
+    /// into the installability check at install time (via
+    /// `pacquet-package-manager`'s `InstallabilityHost`, downstream of
+    /// this crate) so optional platform-tagged dependencies for the
+    /// listed `os` / `cpu` / `libc` values are kept even when they
+    /// don't match the host triple. Per-axis CLI flags (`--cpu`,
+    /// `--libc`, `--os`) override individual axes — mirrors upstream's
     /// [`overrideSupportedArchitecturesWithCLI`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/overrideSupportedArchitecturesWithCLI.ts).
     /// Default `None` so the host triple is the sole accept set
     /// (matches upstream's behavior when neither yaml nor CLI sets a
     /// value).
-    ///
-    /// [`InstallabilityHost`]: pacquet_package_is_installable::SupportedArchitectures
     pub supported_architectures: Option<pacquet_package_is_installable::SupportedArchitectures>,
 }
 
