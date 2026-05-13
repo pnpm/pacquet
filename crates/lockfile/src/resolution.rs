@@ -45,6 +45,13 @@ pub struct DirectoryResolution {
 pub struct GitResolution {
     pub repo: String,
     pub commit: String,
+    /// Sub-directory inside the cloned tree to package. Mirrors pnpm's
+    /// `GitRepositoryResolution.path` at
+    /// <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/types/src/index.ts#L120-L125>.
+    /// The git fetcher passes this to `preparePackage` so the build runs
+    /// inside the sub-directory rather than the repo root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 /// Represent the resolution object.

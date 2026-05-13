@@ -8,6 +8,20 @@ pub fn default_hoist_pattern() -> Vec<String> {
     vec!["*".to_string()]
 }
 
+/// Default for `git_shallow_hosts`. Mirrors pnpm v11's default at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L155-L162>,
+/// which follows
+/// <https://github.com/npm/git/blob/1e1dbd26bd/lib/clone.js#L13-L19>.
+pub fn default_git_shallow_hosts() -> Vec<String> {
+    vec![
+        "github.com".to_string(),
+        "gist.github.com".to_string(),
+        "gitlab.com".to_string(),
+        "bitbucket.com".to_string(),
+        "bitbucket.org".to_string(),
+    ]
+}
+
 pub fn default_public_hoist_pattern() -> Vec<String> {
     vec!["*eslint*".to_string(), "*prettier*".to_string()]
 }

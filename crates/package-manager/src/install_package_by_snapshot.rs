@@ -1,9 +1,12 @@
 use crate::{
-    CreateVirtualDirBySnapshot, CreateVirtualDirError, retry_config::retry_opts_from_config,
+    AllowBuildPolicy, CreateVirtualDirBySnapshot, CreateVirtualDirError,
+    retry_config::retry_opts_from_config,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_config::Config;
+use pacquet_executor::ScriptsPrependNodePath as ExecScriptsPrependNodePath;
+use pacquet_git_fetcher::{GitFetchOutput, GitFetcher, GitFetcherError};
 use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_reporter::{LogEvent, LogLevel, ProgressLog, ProgressMessage, Reporter};
@@ -12,6 +15,8 @@ use pacquet_tarball::{DownloadTarballToStore, PrefetchedCasPaths, TarballError};
 use pipe_trait::Pipe;
 use std::{
     borrow::Cow,
+    collections::HashMap,
+    path::PathBuf,
     sync::{Arc, atomic::AtomicU8},
 };
 
@@ -42,6 +47,12 @@ pub struct InstallPackageBySnapshot<'a> {
     pub package_key: &'a PackageKey,
     pub metadata: &'a PackageMetadata,
     pub snapshot: &'a SnapshotEntry,
+    /// `allowBuilds` gate. Routed into the git fetcher for
+    /// `preparePackage`'s `GIT_DEP_PREPARE_NOT_ALLOWED` check.
+    /// Computed once per install in
+    /// [`crate::InstallFrozenLockfile::run`] and threaded through
+    /// [`crate::CreateVirtualStore`].
+    pub allow_build_policy: &'a AllowBuildPolicy,
 }
 
 /// Error type of [`InstallPackageBySnapshot`].
@@ -64,6 +75,11 @@ pub enum InstallPackageBySnapshotError {
     )]
     #[diagnostic(code(pacquet_package_manager::unsupported_resolution))]
     UnsupportedResolution { package_key: String, resolution_kind: &'static str },
+
+    /// Failure from the git fetcher for a `type: git` resolution
+    /// (clone / checkout / preparePackage / CAS import).
+    #[diagnostic(transparent)]
+    GitFetch(#[error(source)] GitFetcherError),
 }
 
 impl<'a> InstallPackageBySnapshot<'a> {
@@ -81,25 +97,35 @@ impl<'a> InstallPackageBySnapshot<'a> {
             package_key,
             metadata,
             snapshot,
+            allow_build_policy,
         } = self;
 
-        let (tarball_url, integrity) = match &metadata.resolution {
-            LockfileResolution::Tarball(tarball_resolution) => {
-                let integrity = tarball_resolution.integrity.as_ref().ok_or_else(|| {
-                    InstallPackageBySnapshotError::MissingTarballIntegrity {
-                        package_key: package_key.to_string(),
-                    }
-                })?;
-                (tarball_resolution.tarball.as_str().pipe(Cow::Borrowed), integrity)
-            }
-            LockfileResolution::Registry(registry_resolution) => {
-                let registry = config.registry.strip_suffix('/').unwrap_or(&config.registry);
-                let name = &package_key.name;
-                let version = package_key.suffix.version();
-                let bare_name = name.bare.as_str();
-                let tarball_url = format!("{registry}/{name}/-/{bare_name}-{version}.tgz");
-                let integrity = &registry_resolution.integrity;
-                (Cow::Owned(tarball_url), integrity)
+        // TODO: skip when already exists in store?
+        let package_id = package_key.without_peer().to_string();
+        emit_progress_resolved::<R>(&package_id, requester);
+
+        let cas_paths: HashMap<String, PathBuf> = match &metadata.resolution {
+            LockfileResolution::Tarball(_) | LockfileResolution::Registry(_) => {
+                let (tarball_url, integrity) =
+                    tarball_url_and_integrity(&metadata.resolution, package_key, config)?;
+                DownloadTarballToStore {
+                    http_client,
+                    store_dir: &config.store_dir,
+                    store_index: store_index.cloned(),
+                    store_index_writer: store_index_writer.cloned(),
+                    verify_store_integrity: config.verify_store_integrity,
+                    verified_files_cache: Arc::clone(verified_files_cache),
+                    package_integrity: integrity,
+                    package_unpacked_size: None,
+                    package_url: &tarball_url,
+                    package_id: &package_id,
+                    requester,
+                    prefetched_cas_paths,
+                    retry_opts: retry_opts_from_config(config),
+                }
+                .run_without_mem_cache::<R>()
+                .await
+                .map_err(InstallPackageBySnapshotError::DownloadTarball)?
             }
             LockfileResolution::Directory(_) => {
                 return Err(InstallPackageBySnapshotError::UnsupportedResolution {
@@ -107,36 +133,56 @@ impl<'a> InstallPackageBySnapshot<'a> {
                     resolution_kind: "directory",
                 });
             }
-            LockfileResolution::Git(_) => {
-                return Err(InstallPackageBySnapshotError::UnsupportedResolution {
-                    package_key: package_key.to_string(),
-                    resolution_kind: "git",
-                });
+            LockfileResolution::Git(git_resolution) => {
+                // Bind the closure to a named local before borrowing it
+                // into `GitFetcher.allow_build`. `&|...|` would create a
+                // reference to a temporary closure that has to outlive
+                // the `.await` below; routing through a `let` makes the
+                // owning storage explicit and removes any reliance on
+                // temporary-lifetime extension across an await point.
+                //
+                // `AllowBuildPolicy::check` returns `None` when the
+                // package is neither allow-listed nor deny-listed.
+                // Default-deny (`None → false`) matches pnpm v11's
+                // policy: build scripts have to be explicitly opted in
+                // to run.
+                let allow_build_closure = |name: &str, version: &str| {
+                    allow_build_policy.check(name, version).unwrap_or(false)
+                };
+                let scripts_prepend_node_path = match config.scripts_prepend_node_path {
+                    pacquet_config::ScriptsPrependNodePath::Always => {
+                        ExecScriptsPrependNodePath::Always
+                    }
+                    pacquet_config::ScriptsPrependNodePath::Never => {
+                        ExecScriptsPrependNodePath::Never
+                    }
+                    pacquet_config::ScriptsPrependNodePath::WarnOnly => {
+                        ExecScriptsPrependNodePath::WarnOnly
+                    }
+                };
+                let GitFetchOutput { cas_paths, built: _built } = GitFetcher {
+                    repo: &git_resolution.repo,
+                    commit: &git_resolution.commit,
+                    path: git_resolution.path.as_deref(),
+                    git_shallow_hosts: &config.git_shallow_hosts,
+                    allow_build: &allow_build_closure,
+                    ignore_scripts: false,
+                    unsafe_perm: config.unsafe_perm,
+                    user_agent: None,
+                    scripts_prepend_node_path,
+                    script_shell: None,
+                    node_execpath: None,
+                    npm_execpath: None,
+                    store_dir: &config.store_dir,
+                    package_id: &package_id,
+                    requester,
+                }
+                .run::<R>()
+                .await
+                .map_err(InstallPackageBySnapshotError::GitFetch)?;
+                cas_paths
             }
         };
-
-        // TODO: skip when already exists in store?
-        let package_id = package_key.without_peer().to_string();
-        emit_progress_resolved::<R>(&package_id, requester);
-
-        let cas_paths = DownloadTarballToStore {
-            http_client,
-            store_dir: &config.store_dir,
-            store_index: store_index.cloned(),
-            store_index_writer: store_index_writer.cloned(),
-            verify_store_integrity: config.verify_store_integrity,
-            verified_files_cache: Arc::clone(verified_files_cache),
-            package_integrity: integrity,
-            package_unpacked_size: None,
-            package_url: &tarball_url,
-            package_id: &package_id,
-            requester,
-            prefetched_cas_paths,
-            retry_opts: retry_opts_from_config(config),
-        }
-        .run_without_mem_cache::<R>()
-        .await
-        .map_err(InstallPackageBySnapshotError::DownloadTarball)?;
 
         CreateVirtualDirBySnapshot {
             virtual_store_dir: &config.virtual_store_dir,
@@ -152,6 +198,42 @@ impl<'a> InstallPackageBySnapshot<'a> {
         .map_err(InstallPackageBySnapshotError::CreateVirtualDir)?;
 
         Ok(())
+    }
+}
+
+/// Resolve the tarball URL + integrity for tarball- and registry-shaped
+/// resolutions. Factored out so the per-resolution-type dispatch in
+/// [`InstallPackageBySnapshot::run`] reads top-down: each variant builds
+/// its own `cas_paths`.
+fn tarball_url_and_integrity<'a>(
+    resolution: &'a LockfileResolution,
+    package_key: &PackageKey,
+    config: &'a Config,
+) -> Result<(Cow<'a, str>, &'a ssri::Integrity), InstallPackageBySnapshotError> {
+    match resolution {
+        LockfileResolution::Tarball(tarball_resolution) => {
+            let integrity = tarball_resolution.integrity.as_ref().ok_or_else(|| {
+                InstallPackageBySnapshotError::MissingTarballIntegrity {
+                    package_key: package_key.to_string(),
+                }
+            })?;
+            Ok((tarball_resolution.tarball.as_str().pipe(Cow::Borrowed), integrity))
+        }
+        LockfileResolution::Registry(registry_resolution) => {
+            let registry = config.registry.strip_suffix('/').unwrap_or(&config.registry);
+            let name = &package_key.name;
+            let version = package_key.suffix.version();
+            let bare_name = name.bare.as_str();
+            let tarball_url = format!("{registry}/{name}/-/{bare_name}-{version}.tgz");
+            Ok((Cow::Owned(tarball_url), &registry_resolution.integrity))
+        }
+        // Caller (`run`) only invokes this helper for the tarball /
+        // registry arms; git and directory resolutions never reach
+        // here. Return an unreachable-style error so a future caller
+        // that forgets to gate gets a clear panic in debug.
+        LockfileResolution::Directory(_) | LockfileResolution::Git(_) => {
+            unreachable!("tarball_url_and_integrity called with non-tarball resolution");
+        }
     }
 }
 

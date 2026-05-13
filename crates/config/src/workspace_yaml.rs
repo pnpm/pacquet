@@ -130,6 +130,12 @@ pub struct WorkspaceSettings {
     /// Signed `i32` here so negative values (interpreted as
     /// `parallelism - |value|`) round-trip cleanly.
     pub child_concurrency: Option<i32>,
+
+    /// `gitShallowHosts` from `pnpm-workspace.yaml`. Overrides
+    /// [`Config::git_shallow_hosts`] wholesale when set (mirrors
+    /// pnpm's settings precedence, where `pnpm-workspace.yaml`
+    /// replaces the built-in defaults rather than merging).
+    pub git_shallow_hosts: Option<Vec<String>>,
 }
 
 /// Basename of the file pnpm reads; exported for test use.
@@ -221,6 +227,7 @@ impl WorkspaceSettings {
             fetch_retries, fetch_retry_factor,
             fetch_retry_mintimeout, fetch_retry_maxtimeout,
             enable_global_virtual_store,
+            git_shallow_hosts,
         }
 
         if let Some(v) = self.modules_dir {

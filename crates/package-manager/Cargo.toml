@@ -14,6 +14,7 @@ repository.workspace  = true
 pacquet-cmd-shim         = { workspace = true }
 pacquet-executor         = { workspace = true }
 pacquet-fs               = { workspace = true }
+pacquet-git-fetcher      = { workspace = true }
 pacquet-lockfile         = { workspace = true }
 pacquet-modules-yaml     = { workspace = true }
 pacquet-network          = { workspace = true }
@@ -36,6 +37,7 @@ pipe-trait      = { workspace = true }
 rayon           = { workspace = true }
 reflink-copy    = { workspace = true }
 serde_json      = { workspace = true }
+ssri            = { workspace = true }
 tokio           = { workspace = true }
 tracing         = { workspace = true }
 miette          = { workspace = true }

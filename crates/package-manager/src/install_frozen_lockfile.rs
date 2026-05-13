@@ -107,6 +107,13 @@ where
 
         // TODO: check if the lockfile is out-of-date
 
+        // Build the allow-builds policy up front so it can flow into
+        // the cold-batch git fetcher in `CreateVirtualStore` as well as
+        // the postinstall phase in `BuildModules`. Mirrors pnpm where
+        // `createAllowBuildFunction` is a per-install constant.
+        let allow_build_policy = AllowBuildPolicy::from_config(config)
+            .map_err(InstallFrozenLockfileError::VersionPolicy)?;
+
         // Spawn the batched store-index writer here so it lives
         // across both the prefetch/download phase (consumers in
         // `CreateVirtualStore`) and the build phase (the new
@@ -130,6 +137,7 @@ where
                 logged_methods,
                 requester,
                 store_index_writer: &store_index_writer,
+                allow_build_policy: &allow_build_policy,
             }
             .run::<R>()
             .await
@@ -187,8 +195,6 @@ where
         }));
 
         let manifest_dir = Path::new(requester);
-        let allow_build_policy = AllowBuildPolicy::from_config(config)
-            .map_err(InstallFrozenLockfileError::VersionPolicy)?;
 
         // Resolve `pnpm-workspace.yaml`'s `patchedDependencies` once
         // per install. Yields `None` when nothing is configured (no

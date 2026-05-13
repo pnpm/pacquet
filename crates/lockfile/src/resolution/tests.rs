@@ -248,6 +248,24 @@ fn deserialize_git_resolution() {
     let expected = LockfileResolution::Git(GitResolution {
         repo: "https://github.com/ksxnodemodules/ts-pipe-compose.git".to_string(),
         commit: "e63c09e460269b0c535e4c34debf69bb91d57b22".to_string(),
+        path: None,
+    });
+    assert_eq!(received, expected);
+}
+
+#[test]
+fn deserialize_git_resolution_with_path() {
+    let yaml = text_block! {
+        "type: git"
+        "repo: https://github.com/ksxnodemodules/ts-pipe-compose.git"
+        "commit: e63c09e460269b0c535e4c34debf69bb91d57b22"
+        "path: packages/sub"
+    };
+    let received: LockfileResolution = serde_saphyr::from_str(yaml).unwrap();
+    let expected = LockfileResolution::Git(GitResolution {
+        repo: "https://github.com/ksxnodemodules/ts-pipe-compose.git".to_string(),
+        commit: "e63c09e460269b0c535e4c34debf69bb91d57b22".to_string(),
+        path: Some("packages/sub".to_string()),
     });
     assert_eq!(received, expected);
 }
@@ -257,6 +275,7 @@ fn serialize_git_resolution() {
     let resolution = LockfileResolution::Git(GitResolution {
         repo: "https://github.com/ksxnodemodules/ts-pipe-compose.git".to_string(),
         commit: "e63c09e460269b0c535e4c34debf69bb91d57b22".to_string(),
+        path: None,
     });
     let received = serialize_yaml::to_string(&resolution).unwrap();
     let received = received.trim();
@@ -265,6 +284,25 @@ fn serialize_git_resolution() {
         "type: git"
         "repo: https://github.com/ksxnodemodules/ts-pipe-compose.git"
         "commit: e63c09e460269b0c535e4c34debf69bb91d57b22"
+    };
+    assert_eq!(received, expected);
+}
+
+#[test]
+fn serialize_git_resolution_with_path() {
+    let resolution = LockfileResolution::Git(GitResolution {
+        repo: "https://github.com/ksxnodemodules/ts-pipe-compose.git".to_string(),
+        commit: "e63c09e460269b0c535e4c34debf69bb91d57b22".to_string(),
+        path: Some("packages/sub".to_string()),
+    });
+    let received = serialize_yaml::to_string(&resolution).unwrap();
+    let received = received.trim();
+    eprintln!("RECEIVED:\n{received}");
+    let expected = text_block! {
+        "type: git"
+        "repo: https://github.com/ksxnodemodules/ts-pipe-compose.git"
+        "commit: e63c09e460269b0c535e4c34debf69bb91d57b22"
+        "path: packages/sub"
     };
     assert_eq!(received, expected);
 }

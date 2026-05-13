@@ -88,6 +88,12 @@ pub struct CreateVirtualStore<'a> {
     /// download path's `InstallPackageBySnapshot` and also reused by
     /// `BuildModules` for the side-effects-cache WRITE path.
     pub store_index_writer: &'a std::sync::Arc<StoreIndexWriter>,
+    /// `allowBuilds` gate, shared with `BuildModules`. The cold-batch
+    /// path threads this into the git fetcher so `preparePackage` can
+    /// reject `GIT_DEP_PREPARE_NOT_ALLOWED` for packages that aren't
+    /// allowlisted. Computed once per install in
+    /// [`crate::InstallFrozenLockfile::run`].
+    pub allow_build_policy: &'a crate::AllowBuildPolicy,
 }
 
 /// Error type of [`CreateVirtualStore`].
@@ -127,6 +133,7 @@ impl<'a> CreateVirtualStore<'a> {
             logged_methods,
             requester,
             store_index_writer,
+            allow_build_policy,
         } = self;
 
         let Some(snapshots) = snapshots else {
@@ -570,6 +577,7 @@ impl<'a> CreateVirtualStore<'a> {
                         package_key: snapshot_key,
                         metadata,
                         snapshot,
+                        allow_build_policy,
                     }
                     .run::<R>()
                     .await
@@ -646,12 +654,19 @@ fn snapshot_cache_key(
             ));
         }
         LockfileResolution::Git(_) => {
-            return Err(CreateVirtualStoreError::InstallPackageBySnapshot(
-                InstallPackageBySnapshotError::UnsupportedResolution {
-                    package_key: snapshot_key.to_string(),
-                    resolution_kind: "git",
-                },
-            ));
+            // Git resolutions don't participate in the warm prefetch
+            // batch in this PR — the fetcher decides the
+            // `gitHostedStoreIndexKey` `built` bit at fetch time
+            // (`preparePackage` returns `shouldBeBuilt`) and writes
+            // no store-index row, so there's nothing for the warm
+            // path to read back yet. Returning `Ok(None)` routes the
+            // snapshot through the cold-batch
+            // [`InstallPackageBySnapshot`], where
+            // [`pacquet_git_fetcher::GitFetcher`] handles the
+            // clone + checkout + import. Wiring warm caching for
+            // git-hosted entries is a follow-up tracked alongside
+            // Section C (the git-hosted *tarball* path) in #436.
+            return Ok(None);
         }
     };
     let pkg_id = metadata_key.to_string();
