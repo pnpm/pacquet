@@ -49,7 +49,31 @@ where
     /// Install-scoped dedupe state for `pnpm:package-import-method`.
     /// See `link_file::log_method_once`.
     pub logged_methods: &'a AtomicU8,
-    /// Install root, threaded into reporter `requester` fields.
+    /// Install root — the directory containing `pnpm-lock.yaml`.
+    /// For a real workspace, this is the workspace root (the dir
+    /// containing `pnpm-workspace.yaml`); for a single-project
+    /// install, it's the project dir.
+    ///
+    /// Reporter envelopes (`pnpm:stage`, `pnpm:summary`, `pnpm:lifecycle`)
+    /// use [`requester`], a lossy-UTF-8 string view of this path —
+    /// per-importer events like `pnpm:root` use the importer's own
+    /// `rootDir` instead. Filesystem operations that need the real
+    /// path (the per-importer `node_modules/` write under
+    /// `SymlinkDirectDependencies`, the `lockfile_dir` threaded into
+    /// `BuildModules`) use `workspace_root` directly so the round-trip
+    /// through a lossy string can never corrupt the on-disk path on
+    /// hosts with non-UTF-8 filenames.
+    ///
+    /// [`requester`]: Self::requester
+    pub workspace_root: &'a Path,
+
+    /// Lossy-UTF-8 view of [`workspace_root`] for reporter envelopes.
+    /// Kept as a separate field rather than recomputed from
+    /// `workspace_root` so the caller controls how the conversion is
+    /// performed (today: `to_string_lossy().into_owned()` in
+    /// `Install::run`).
+    ///
+    /// [`workspace_root`]: Self::workspace_root
     pub requester: &'a str,
 }
 
@@ -126,6 +150,7 @@ where
             current_packages,
             dependency_groups,
             logged_methods,
+            workspace_root,
             requester,
         } = self;
 
@@ -255,7 +280,7 @@ where
             config,
             importers,
             dependency_groups,
-            requester,
+            workspace_root,
             skipped: &skipped,
         }
         .run::<R>()
@@ -292,7 +317,14 @@ where
             stage: Stage::ImportingDone,
         }));
 
-        let manifest_dir = Path::new(requester);
+        // `manifest_dir` (= upstream's `lockfileDir`) is the workspace
+        // root threaded through `BuildModules`. Use the real `Path`
+        // here rather than reconstructing it from the lossy
+        // `requester` string so non-UTF-8 filenames survive intact.
+        // `allow_build_policy` was already constructed up-front
+        // (before `CreateVirtualStore`) on `main` so the git fetcher
+        // can consult it — no second construction needed here.
+        let manifest_dir: &Path = workspace_root;
 
         // Resolve `pnpm-workspace.yaml`'s `patchedDependencies` once
         // per install. Yields `None` when nothing is configured (no

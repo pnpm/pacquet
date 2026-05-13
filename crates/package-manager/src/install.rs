@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::Path, sync::atomic::AtomicU8, time::SystemTime};
+use std::{collections::BTreeMap, sync::atomic::AtomicU8, time::SystemTime};
 
 use crate::{
     InstallFrozenLockfile, InstallFrozenLockfileError, InstallWithoutLockfile,
@@ -103,6 +103,9 @@ pub enum InstallError {
     )]
     #[diagnostic(code(pacquet_package_manager::no_importer))]
     NoImporter { importer_id: String },
+
+    #[diagnostic(transparent)]
+    FindWorkspaceDir(#[error(source)] pacquet_workspace::FindWorkspaceDirError),
 }
 
 impl<'a, DependencyGroupList> Install<'a, DependencyGroupList>
@@ -137,19 +140,24 @@ where
         // Project root for the [bunyan]-envelope `prefix`. Upstream pnpm
         // emits this as `lockfileDir`, the directory containing
         // `pnpm-lock.yaml`. With workspace support that equals the
-        // workspace root. Pacquet has no workspace support yet, so the
-        // manifest's parent directory is the correct value today.
-        // pnpm/pacquet#357 tracks resolving this via a
-        // `findWorkspaceDir`-equivalent once workspaces land.
+        // workspace root — pacquet finds it via [`find_workspace_dir`]
+        // (port of upstream's `findWorkspaceDir`). Falls back to the
+        // manifest's parent dir when no `pnpm-workspace.yaml` exists in
+        // any ancestor, matching upstream's single-project behavior.
+        // Closes pnpm/pacquet#357.
         //
         // [bunyan]: https://github.com/trentm/node-bunyan
-        let prefix = manifest
-            .path()
-            .parent()
-            .map(Path::to_str)
-            .map(Option::<&str>::unwrap)
-            .unwrap()
-            .to_owned();
+        let manifest_dir = manifest.path().parent().expect("manifest path always has a parent dir");
+        let workspace_root = pacquet_workspace::find_workspace_dir(manifest_dir)
+            .map_err(InstallError::FindWorkspaceDir)?
+            .unwrap_or_else(|| manifest_dir.to_path_buf());
+        // Use `to_string_lossy` rather than `to_str().expect(...)` so a
+        // valid filesystem path with non-UTF-8 bytes (possible on Unix)
+        // doesn't panic the installer. `prefix` is used only for
+        // reporter envelopes, so a lossy conversion is acceptable —
+        // the rest of the install path uses the same pattern for
+        // paths threaded into log events.
+        let prefix = workspace_root.to_string_lossy().into_owned();
 
         // `pnpm:package-manifest initial` carries the on-disk
         // `package.json` body. Mirrors pnpm's per-project emit at
@@ -256,6 +264,7 @@ where
                 current_packages: current_lockfile.as_ref().and_then(|l| l.packages.as_ref()),
                 dependency_groups,
                 logged_methods: &logged_methods,
+                workspace_root: &workspace_root,
                 requester: &prefix,
             }
             .run::<R>()
@@ -311,11 +320,14 @@ where
         // a manifest failure can't leave a fresh current-lockfile
         // pointing at incomplete install state — the next frozen
         // reinstall would otherwise diff against a graph that never
-        // finished committing (review on #442). Today pacquet writes
-        // the wanted lockfile unchanged because there's only one
-        // importer to filter to; once workspace install (#431) lands
-        // this needs to narrow to the *filtered* lockfile (selected
-        // importers × engine filter).
+        // finished committing (review on #442).
+        //
+        // Workspace installs (#431) ship every importer's section of
+        // the wanted lockfile unchanged because the install fans out
+        // across all of them. Once `--filter` lands (Stage 2 of
+        // #299), this needs to narrow to the filtered lockfile
+        // (selected importers × engine filter) so the saved current
+        // lockfile reflects only what was actually materialized.
         if frozen_lockfile && let Some(lockfile) = lockfile {
             lockfile
                 .save_current_to_virtual_store_dir(&config.virtual_store_dir)
