@@ -215,9 +215,10 @@ pub struct Config {
     /// non-`--global` installs. The `true` assignment at
     /// [`config/reader/src/index.ts:392-394`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L392-L394)
     /// applies only inside upstream's `if (cliOptions['global'])`
-    /// block (see [`default_enable_global_virtual_store`] for the
-    /// full reasoning). Pacquet has no `--global` flow, so the only
-    /// applicable upstream default is `false`.
+    /// block (see `default_enable_global_virtual_store` in
+    /// `crates/config/src/defaults.rs` for the full reasoning).
+    /// Pacquet has no `--global` flow, so the only applicable
+    /// upstream default is `false`.
     #[default(_code = "default_enable_global_virtual_store()")]
     pub enable_global_virtual_store: bool,
 
@@ -1005,7 +1006,7 @@ mod tests {
     /// `enableGlobalVirtualStore` defaults to `false` — matches pnpm
     /// v11's effective default for regular installs (the `true`
     /// assignment lives only inside the `--global` install branch;
-    /// see [`default_enable_global_virtual_store`]). The derivation
+    /// see [`Config::enable_global_virtual_store`]). The derivation
     /// still fires automatically from [`Config::current`] after yaml
     /// has been applied, writing `<store_dir>/links` into
     /// `global_virtual_store_dir` while leaving `virtual_store_dir`
