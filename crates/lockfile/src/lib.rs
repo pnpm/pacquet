@@ -1,4 +1,5 @@
 mod comver;
+mod freshness;
 mod load_lockfile;
 mod lockfile_version;
 mod package_metadata;
@@ -16,6 +17,7 @@ mod snapshot_dep_ref;
 mod snapshot_entry;
 
 pub use comver::*;
+pub use freshness::*;
 pub use load_lockfile::*;
 pub use lockfile_version::*;
 pub use package_metadata::*;
