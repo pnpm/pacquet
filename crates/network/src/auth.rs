@@ -8,12 +8,14 @@
 //! is encoded as a `Basic` header even when no per-host token matches.
 //!
 //! The map is built once per install from the merged `.npmrc` and is
-//! consulted on every metadata fetch and tarball download. Tarballs
-//! served from a CDN host that differs from the registry host (the
-//! common case for private registries) still pick up the header keyed
-//! at the registry's nerf-dart, because the per-CDN nerf-dart never
-//! exists in the config and the lookup falls through to the host-only
-//! key for that registry.
+//! consulted on every metadata fetch and tarball download. The lookup
+//! walks parts of the *request* URL: a tarball served from a CDN on a
+//! different host than the registry only matches keys keyed at the
+//! CDN's host (or a path prefix on that host). It does *not* fall
+//! through to the registry's host. Pacquet matches pnpm here. If a
+//! private registry redirects to its own subdomain or path, place a
+//! key at that host or prefix in `.npmrc`; if it redirects across
+//! hosts, no header is attached, matching upstream.
 
 use std::collections::HashMap;
 

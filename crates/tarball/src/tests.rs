@@ -1392,6 +1392,63 @@ async fn fetch_attaches_authorization_header_when_creds_match_tarball_url() {
     drop(store_dir_keep);
 }
 
+/// The retry loop must re-attach the `Authorization` header on every
+/// attempt, not just the first. A regression that read `auth_headers`
+/// once outside the loop would pass the single-attempt test
+/// [`fetch_attaches_authorization_header_when_creds_match_tarball_url`]
+/// but silently 401 on the retried call. Mock returns 503 then 200,
+/// both gated on the bearer header.
+#[tokio::test]
+async fn retry_re_attaches_authorization_header_on_each_attempt() {
+    let (store_dir_keep, store_path) = tempdir_with_leaked_path();
+    let mut server = mockito::Server::new_async().await;
+    let fail = server
+        .mock("GET", "/pkg.tgz")
+        .match_header("authorization", "Bearer test-token")
+        .with_status(503)
+        .expect(1)
+        .create_async()
+        .await;
+    let ok = server
+        .mock("GET", "/pkg.tgz")
+        .match_header("authorization", "Bearer test-token")
+        .with_status(200)
+        .with_body(FASTIFY_ERROR_TARBALL)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let url = format!("{}/pkg.tgz", server.url());
+    let client = ThrottledClient::default();
+    let pkg_integrity = integrity(FASTIFY_ERROR_INTEGRITY);
+    let auth_headers = AuthHeaders::from_creds_map(
+        [(pacquet_network::nerf_dart(&url), "Bearer test-token".to_owned())],
+        None,
+    );
+
+    let (cas_paths, _idx) = fetch_and_extract_with_retry::<SilentReporter>(
+        &client,
+        &url,
+        &pkg_integrity,
+        None,
+        "test-pkg",
+        "",
+        store_path,
+        fast_retry_opts(),
+        &auth_headers,
+    )
+    .await
+    .expect("retry attempt should also carry the bearer header");
+
+    assert!(cas_paths.contains_key("package.json"));
+    // Both mocks must have fired: header missing on the retry would
+    // mean the second `match_header` rejects (501) and the test fails
+    // either at this assertion or at the integrity check.
+    fail.assert_async().await;
+    ok.assert_async().await;
+    drop(store_dir_keep);
+}
+
 /// `run_with_mem_cache`'s in-process dedup must still fire
 /// `pnpm:progress found_in_store` for the *second* requester of a
 /// shared tarball URL. Without it, the per-package counters in
