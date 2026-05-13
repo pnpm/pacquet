@@ -58,9 +58,23 @@ impl AuthHeaders {
         let registry_default_key =
             default_registry_url.map(nerf_dart).unwrap_or_else(|| "//registry.npmjs.org/".into());
         let mut by_uri = HashMap::new();
+        let mut default_header: Option<String> = None;
+        // Two-phase build, mirroring upstream's
+        // [`getAuthHeadersFromCreds`](https://github.com/pnpm/pnpm/blob/601317e7a3/network/auth-header/src/getAuthHeadersFromConfig.ts):
+        // per-URI entries land first, then the default-registry creds
+        // unconditionally overwrite the slot at `registry_default_key`.
+        // Without the two-phase split, both entries would race through a
+        // single HashMap insert and the winner would depend on
+        // non-deterministic iteration order.
         for (raw_uri, header_value) in headers {
-            let key = if raw_uri.is_empty() { registry_default_key.clone() } else { raw_uri };
-            by_uri.insert(key, header_value);
+            if raw_uri.is_empty() {
+                default_header = Some(header_value);
+            } else {
+                by_uri.insert(raw_uri, header_value);
+            }
+        }
+        if let Some(header) = default_header {
+            by_uri.insert(registry_default_key, header);
         }
         Self::from_map(by_uri)
     }
@@ -462,6 +476,31 @@ mod tests {
     #[test]
     fn returns_none_for_unmatched_url_in_empty_map() {
         assert_eq!(AuthHeaders::default().for_url("http://reg.com"), None);
+    }
+
+    /// Upstream's
+    /// [`getAuthHeadersFromCreds`](https://github.com/pnpm/pnpm/blob/601317e7a3/network/auth-header/src/getAuthHeadersFromConfig.ts)
+    /// processes per-URI entries first, then unconditionally overwrites
+    /// the default-registry slot with the default-creds header. When a
+    /// `.npmrc` carries both `_authToken=A` (default) and
+    /// `//registry.npmjs.org/:_authToken=B` (per-URI for the default
+    /// registry), upstream guarantees the *default* (A) wins on the
+    /// default registry. Without the two-phase build in `from_creds_map`,
+    /// pacquet's HashMap iteration would let either value win
+    /// non-deterministically.
+    #[test]
+    fn default_creds_win_over_per_uri_on_default_registry() {
+        let headers = AuthHeaders::from_creds_map(
+            [
+                ("//registry.npmjs.org/".to_owned(), "Bearer per-uri".to_owned()),
+                (String::new(), "Bearer default".to_owned()),
+            ],
+            Some("https://registry.npmjs.org/"),
+        );
+        assert_eq!(
+            headers.for_url("https://registry.npmjs.org/foo").as_deref(),
+            Some("Bearer default"),
+        );
     }
 
     /// Specifically exercises the trailing-slash-append branch in
