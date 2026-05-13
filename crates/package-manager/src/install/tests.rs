@@ -2067,8 +2067,15 @@ async fn frozen_install_optional_included_surfaces_missing_metadata() {
 
     let err =
         result.expect_err("install must abort without --no-optional when metadata is missing");
-    let msg = format!("{err:?}");
-    assert!(msg.contains("MissingPackageMetadata"), "expected MissingPackageMetadata, got {msg}");
+    assert!(
+        matches!(
+            err,
+            InstallError::FrozenLockfile(crate::InstallFrozenLockfileError::CreateVirtualStore(
+                crate::CreateVirtualStoreError::MissingPackageMetadata { .. },
+            ),),
+        ),
+        "expected FrozenLockfile(CreateVirtualStore(MissingPackageMetadata)), got {err:?}",
+    );
 
     drop(dir);
 }
@@ -2146,10 +2153,15 @@ async fn frozen_install_no_optional_keeps_shared_non_optional_snapshot() {
 
     let err =
         result.expect_err("snapshot with optional:false must NOT be dropped by --no-optional");
-    let msg = format!("{err:?}");
     assert!(
-        msg.contains("MissingPackageMetadata"),
-        "expected MissingPackageMetadata (proves the snapshot was kept), got {msg}",
+        matches!(
+            err,
+            InstallError::FrozenLockfile(crate::InstallFrozenLockfileError::CreateVirtualStore(
+                crate::CreateVirtualStoreError::MissingPackageMetadata { .. },
+            ),),
+        ),
+        "expected FrozenLockfile(CreateVirtualStore(MissingPackageMetadata)) — \
+         proves the snapshot was kept; got {err:?}",
     );
 
     drop(dir);
