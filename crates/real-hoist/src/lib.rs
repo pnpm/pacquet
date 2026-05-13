@@ -568,11 +568,19 @@ enum AbsorbDecision {
 /// descendant of `root` onto `root` itself. Single-pass: each node
 /// is visited once, and a descendant's children become hoist
 /// candidates as soon as the descendant itself is queued.
+///
+/// Maintains a side `HashMap<name, RcByPtr>` mirror of root's
+/// direct deps so the per-edge "is this name taken at root?" check
+/// stays O(1). Without the index a graph with `N` packages all
+/// hoisting freely would do O(N²) `IndexSet` scans.
 fn hoist_into_root(root: &Rc<HoisterResult>) {
     let root_ptr = Rc::as_ptr(root);
     let mut visited: HashSet<*const HoisterResult> = HashSet::new();
     let mut queue: VecDeque<Rc<HoisterResult>> = VecDeque::new();
     queue.push_back(Rc::clone(root));
+
+    let mut root_index: HashMap<String, RcByPtr<HoisterResult>> =
+        root.dependencies.borrow().iter().map(|d| (d.0.name.clone(), d.clone())).collect();
 
     while let Some(node) = queue.pop_front() {
         let node_ptr = Rc::as_ptr(&node);
@@ -595,16 +603,10 @@ fn hoist_into_root(root: &Rc<HoisterResult>) {
                 continue;
             }
 
-            // Decide what to do with this child by inspecting root's
-            // current direct deps. Read in its own scope so the
-            // borrow drops before any subsequent mutation.
-            let decision = {
-                let root_deps = root.dependencies.borrow();
-                match root_deps.iter().find(|d| d.0.name == child.0.name) {
-                    None => AbsorbDecision::Free,
-                    Some(existing) if Rc::ptr_eq(&existing.0, &child.0) => AbsorbDecision::SameNode,
-                    Some(_) => AbsorbDecision::Conflict,
-                }
+            let decision = match root_index.get(&child.0.name) {
+                None => AbsorbDecision::Free,
+                Some(existing) if Rc::ptr_eq(&existing.0, &child.0) => AbsorbDecision::SameNode,
+                Some(_) => AbsorbDecision::Conflict,
             };
 
             if !is_root_parent {
@@ -612,6 +614,7 @@ fn hoist_into_root(root: &Rc<HoisterResult>) {
                     AbsorbDecision::Free => {
                         node.dependencies.borrow_mut().shift_remove(&child);
                         root.dependencies.borrow_mut().insert(child.clone());
+                        root_index.insert(child.0.name.clone(), child.clone());
                     }
                     AbsorbDecision::SameNode => {
                         // The shared `Rc` is already at root; just

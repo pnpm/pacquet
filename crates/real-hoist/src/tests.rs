@@ -115,7 +115,8 @@ fn one_transitive_dep_hoists_to_root() {
     let result = hoist(&lockfile, &HoistOpts::default()).expect("happy hoist should succeed");
     assert_eq!(result.name, ".");
     let root_children = result.dependencies.borrow();
-    let names: Vec<&str> = root_children.iter().map(|d| d.0.name.as_str()).collect();
+    let mut names: Vec<&str> = root_children.iter().map(|d| d.0.name.as_str()).collect();
+    names.sort();
     assert_eq!(names, ["a", "b"], "both a and b sit at root: {result:#?}");
     let a = root_children.iter().find(|d| d.0.name == "a").unwrap().0.clone();
     assert!(a.dependencies.borrow().is_empty(), "a's b moved to root: {a:#?}");
@@ -167,18 +168,34 @@ fn diamond_dep_hoists_once_to_root() {
     let mut names: Vec<&str> = root_children.iter().map(|d| d.0.name.as_str()).collect();
     names.sort();
     assert_eq!(names, ["a", "b", "c"], "diamond flattens at root: {result:#?}");
-    // Count the unique `b` allocations: exactly one because the
-    // wrapper deduped by identity and the hoist preserved that
-    // identity instead of allocating a second copy.
-    let mut all_bs: Vec<Rc<HoisterResult>> = Vec::new();
-    if let Some(b) = root_children.iter().find(|d| d.0.name == "b") {
-        all_bs.push(b.0.clone());
-    }
     let a = root_children.iter().find(|d| d.0.name == "a").unwrap().0.clone();
     let c = root_children.iter().find(|d| d.0.name == "c").unwrap().0.clone();
     assert!(a.dependencies.borrow().is_empty(), "a stripped of its b: {a:#?}");
     assert!(c.dependencies.borrow().is_empty(), "c stripped of its b: {c:#?}");
-    assert_eq!(all_bs.len(), 1, "b is unique");
+
+    // Walk the whole result graph and collect every distinct
+    // allocation whose `name == "b"`. The wrapper deduped a@1's b
+    // and c@1's b into one `Rc<HoisterResult>` (the diamond shares
+    // by identity), and the hoist must preserve that identity
+    // rather than allocating a second copy somewhere — so the set
+    // of pointers we collect has exactly one entry.
+    let mut b_ptrs: std::collections::HashSet<*const HoisterResult> =
+        std::collections::HashSet::new();
+    let mut stack: Vec<Rc<HoisterResult>> = root_children.iter().map(|d| d.0.clone()).collect();
+    let mut walked: std::collections::HashSet<*const HoisterResult> =
+        std::collections::HashSet::new();
+    while let Some(node) = stack.pop() {
+        if !walked.insert(Rc::as_ptr(&node)) {
+            continue;
+        }
+        if node.name == "b" {
+            b_ptrs.insert(Rc::as_ptr(&node));
+        }
+        for d in node.dependencies.borrow().iter() {
+            stack.push(d.0.clone());
+        }
+    }
+    assert_eq!(b_ptrs.len(), 1, "exactly one `b` allocation across the entire result graph");
 }
 
 /// Version conflict: `root → {a, c}` with `a → b@1` and
@@ -227,17 +244,22 @@ fn version_conflict_keeps_loser_at_parent() {
     names.sort();
     assert_eq!(names, ["a", "b", "c"], "root has a, c, and one b");
     let b_at_root = root_children.iter().find(|d| d.0.name == "b").unwrap().0.clone();
-    let b_ref = b_at_root.references.borrow().iter().next().cloned();
     // The first BFS visit from root iterates root's direct deps in
     // alias order (`a` then `c`), so `a@1`'s `b@1.0.0` reaches
-    // root first and wins the slot.
-    assert_eq!(b_ref.as_deref(), Some("b@1.0.0"), "first BFS visitor wins root slot");
+    // root first and wins the slot. Assert membership (not
+    // iteration-order-derived equality) so the test stays focused
+    // on which reference is present, not on which one happens to
+    // come back first from the set.
+    let b_refs = b_at_root.references.borrow();
+    assert!(b_refs.contains("b@1.0.0"), "first BFS visitor wins root slot: {b_refs:?}");
+    assert_eq!(b_refs.len(), 1, "no other reference accumulated yet: {b_refs:?}");
     // `c`'s `b@2` remains under `c`.
     let c = root_children.iter().find(|d| d.0.name == "c").unwrap().0.clone();
     let c_kids = c.dependencies.borrow();
     assert_eq!(c_kids.len(), 1, "c kept its conflicting b@2");
-    let b_under_c = &c_kids[0];
-    assert_eq!(b_under_c.0.references.borrow().iter().next().cloned().as_deref(), Some("b@2.0.0"));
+    let b_under_c_refs = c_kids[0].0.references.borrow();
+    assert!(b_under_c_refs.contains("b@2.0.0"), "loser stays under c: {b_under_c_refs:?}");
+    assert_eq!(b_under_c_refs.len(), 1);
 }
 
 /// Deep linear chain `root → a → b → c → d` flattens to
@@ -391,11 +413,12 @@ fn transitive_npm_alias_resolves_target_snapshot() {
         .clone();
     assert_eq!(aliased.name, "aliased-name");
     assert_eq!(aliased.ident_name, "real-pkg");
-    assert_eq!(
-        aliased.references.borrow().iter().next().map(String::as_str),
-        Some("real-pkg@2.0.0"),
-        "reference is the resolved snapshot key, not the alias",
+    let refs = aliased.references.borrow();
+    assert!(
+        refs.contains("real-pkg@2.0.0"),
+        "reference is the resolved snapshot key, not the alias: {refs:?}",
     );
+    assert_eq!(refs.len(), 1);
     let host = root_children.iter().find(|d| d.0.name == "host").unwrap().0.clone();
     assert!(host.dependencies.borrow().is_empty(), "host stripped of its aliased dep: {host:#?}");
 }
