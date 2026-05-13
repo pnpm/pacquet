@@ -204,7 +204,7 @@ fn diamond_dep_hoists_once_to_root() {
 }
 
 /// Version conflict: `root → {a, c}` with `a → b@1` and
-/// `c → b@2`. The first BFS reach wins root's `b` slot; the
+/// `c → b@2`. The first DFS reach wins root's `b` slot; the
 /// other version stays under its declaring parent.
 #[test]
 fn version_conflict_keeps_loser_at_parent() {
@@ -249,14 +249,14 @@ fn version_conflict_keeps_loser_at_parent() {
     names.sort();
     assert_eq!(names, ["a", "b", "c"], "root has a, c, and one b");
     let b_at_root = root_children.iter().find(|d| d.0.name == "b").unwrap().0.clone();
-    // The first BFS visit from root iterates root's direct deps in
-    // alias order (`a` then `c`), so `a@1`'s `b@1.0.0` reaches
-    // root first and wins the slot. Assert membership (not
-    // iteration-order-derived equality) so the test stays focused
-    // on which reference is present, not on which one happens to
-    // come back first from the set.
+    // DFS visits root's direct deps in alias order (`a` then
+    // `c`), so `a@1`'s `b@1.0.0` reaches root first and wins the
+    // slot. Assert membership (not iteration-order-derived
+    // equality) so the test stays focused on which reference is
+    // present, not on which one happens to come back first from
+    // the set.
     let b_refs = b_at_root.references.borrow();
-    assert!(b_refs.contains("b@1.0.0"), "first BFS visitor wins root slot: {b_refs:?}");
+    assert!(b_refs.contains("b@1.0.0"), "first DFS visitor wins root slot: {b_refs:?}");
     assert_eq!(b_refs.len(), 1, "no other reference accumulated yet: {b_refs:?}");
     // `c`'s `b@2` remains under `c`.
     let c = root_children.iter().find(|d| d.0.name == "c").unwrap().0.clone();
@@ -268,9 +268,9 @@ fn version_conflict_keeps_loser_at_parent() {
 }
 
 /// Deep linear chain `root → a → b → c → d` flattens to
-/// `root → {a, b, c, d}` in a single BFS pass: each node, once
-/// queued, sees the previously-hoisted nodes as direct children
-/// of root, so its own children evaluate against root's slots
+/// `root → {a, b, c, d}` in a single hoist round: each node, by
+/// the time DFS descends into it, has already been moved up to
+/// root, so its own children evaluate against root's slots
 /// (which are all free).
 #[test]
 fn deep_chain_flattens_in_one_pass() {
@@ -887,7 +887,8 @@ fn hoisting_limits_keyed_on_unrelated_importer_is_inert() {
 /// self-dependencies` in `@yarnpkg/nm/tests/hoist.test.ts`).
 /// The wrapper's dedup-by-cache keeps a single `Rc` for `a@1`,
 /// and the hoist sees the back-edge to itself as a cycle that
-/// the BFS/DFS skips. No infinite loop, sane output.
+/// the DFS skips via its `visited` set. No infinite loop, sane
+/// output.
 #[test]
 fn self_dependency_does_not_loop() {
     let mut importers = HashMap::new();

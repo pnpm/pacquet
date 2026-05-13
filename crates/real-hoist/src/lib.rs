@@ -82,9 +82,10 @@ pub struct HoisterTree {
     /// hoister moves freely).
     pub peer_names: BTreeSet<String>,
     pub dependency_kind: HoisterDependencyKind,
-    /// Tiebreaker for the hoister's BFS. Pacquet always builds with
-    /// `0`; pnpm and yarn-berry use higher values for packages that
-    /// declare a high `hoistPriority` to bias them toward the root.
+    /// Tiebreaker the hoister consults when ranking candidates.
+    /// Pacquet always builds with `0`; pnpm and yarn-berry use
+    /// higher values for packages that declare a high
+    /// `hoistPriority` to bias them toward the root.
     pub hoist_priority: u32,
     /// Children of this node. Order matches insertion order — the
     /// hoister depends on it.
@@ -548,8 +549,9 @@ fn percent_encode_path(s: &str) -> String {
 
 /// Pacquet's port of the `@yarnpkg/nm` hoist algorithm. Walks the
 /// input tree, deep-copies it into a `HoisterResult` shape, then
-/// pulls eligible descendants up to the root via single-pass BFS
-/// with parent-wins conflict resolution. Models the common case
+/// pulls eligible descendants up to the root via a depth-first
+/// recursion run to a fixed point (see [`hoist_into_root`]) with
+/// parent-wins conflict resolution. Models the common case
 /// of pnpm's `nodeLinker: hoisted` install — every transitive
 /// dependency that doesn't collide with an already-hoisted name
 /// surfaces at the root, just like a flat `node_modules`.
@@ -793,8 +795,10 @@ fn hoist_subtree(
 
         // Apply the decision, *then* compute the path to pass
         // into recursion based on the child's *new* position.
-        // This is the load-bearing difference from the previous
-        // BFS shape: the recursion path reflects current state.
+        // Computing post-decision is the load-bearing detail:
+        // the recursion path always reflects the child's current
+        // position in the result graph, so peer checks deeper
+        // down see ancestors that are actually ancestors.
         let child_recursion_path: Vec<Rc<HoisterResult>> = if is_root {
             // Root's direct children are already at root — no
             // movement happens, and their ancestor path is
@@ -866,7 +870,7 @@ fn hoist_subtree(
 /// Differs from upstream's check in one DAG case: upstream's
 /// [`cloneTree`][clone] duplicates the work tree into a strict
 /// tree per parent path, so each visit has a unique ancestor
-/// chain. Pacquet preserves the DAG, and the BFS records only
+/// chain. Pacquet preserves the DAG, and the DFS records only
 /// the path it actually used to reach the candidate; if the same
 /// candidate could be reached via a peer-compatible alternative
 /// path, we still refuse to hoist. The result is at most
