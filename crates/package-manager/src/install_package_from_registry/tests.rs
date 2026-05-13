@@ -55,6 +55,7 @@ fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path)
         supported_architectures: None,
         auth_headers: Default::default(),
         proxy: Default::default(),
+        tls: Default::default(),
     }
 }
 
