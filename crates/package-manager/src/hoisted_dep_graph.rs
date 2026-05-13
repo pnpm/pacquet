@@ -34,7 +34,9 @@
 use derive_more::{Display, Error, From};
 use indexmap::IndexSet;
 use miette::Diagnostic;
-use pacquet_lockfile::{Lockfile, LockfileResolution, PackageKey, ParsePkgNameVerPeerError};
+use pacquet_lockfile::{
+    Lockfile, LockfileResolution, PackageKey, ParsePkgNameVerPeerError, PkgIdWithPatchHash,
+};
 use pacquet_modules_yaml::DepPath;
 use pacquet_package_is_installable::{
     InstallabilityError, InstallabilityOptions, InstallabilityVerdict,
@@ -69,10 +71,11 @@ pub struct DependenciesGraphNode {
     /// `hoistedLocations` and the join key for `hoistedDependencies`.
     pub dep_path: DepPath,
     /// Upstream's `pkgIdWithPatchHash`: the patch-aware ident key
-    /// the side-effects cache uses. Kept as a plain `String` —
-    /// matches the convention pacquet's `virtual_store_layout`
-    /// module already uses for the same value.
-    pub pkg_id_with_patch_hash: String,
+    /// the side-effects cache uses. Ported as
+    /// [`pacquet_lockfile::PkgIdWithPatchHash`] — a non-validating
+    /// branded newtype around `String` matching upstream's
+    /// `string & { __brand: 'PkgIdWithPatchHash' }`.
+    pub pkg_id_with_patch_hash: PkgIdWithPatchHash,
     /// Absolute path of the package's directory on disk. The
     /// outer [`DependenciesGraph`]'s key is this same value;
     /// upstream stores it on the node too so consumers don't need
@@ -548,7 +551,7 @@ fn walk_deps(
         let node = DependenciesGraphNode {
             alias: Some(dep.0.name.clone()),
             dep_path: DepPath::from(reference.clone()),
-            pkg_id_with_patch_hash: pkg_key.to_string(),
+            pkg_id_with_patch_hash: PkgIdWithPatchHash::from(pkg_key.to_string()),
             dir: dir.clone(),
             modules: modules.to_path_buf(),
             children: BTreeMap::new(),
@@ -685,7 +688,7 @@ mod tests {
         DepHierarchy, DependenciesGraph, DependenciesGraphNode, LockfileToDepGraphResult,
         LockfileToHoistedDepGraphOptions,
     };
-    use pacquet_lockfile::{DirectoryResolution, LockfileResolution};
+    use pacquet_lockfile::{DirectoryResolution, LockfileResolution, PkgIdWithPatchHash};
     use pacquet_modules_yaml::DepPath;
     use pretty_assertions::assert_eq;
     use std::{
@@ -731,7 +734,7 @@ mod tests {
         let node = DependenciesGraphNode {
             alias: Some("accepts".to_string()),
             dep_path: DepPath::from(ACCEPTS_DEP_PATH.to_string()),
-            pkg_id_with_patch_hash: ACCEPTS_DEP_PATH.to_string(),
+            pkg_id_with_patch_hash: PkgIdWithPatchHash::from(ACCEPTS_DEP_PATH),
             dir: dir.clone(),
             modules,
             children: BTreeMap::new(),
