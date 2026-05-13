@@ -868,9 +868,12 @@ mod tests {
         let non_auth_ini = "symlink=false\nlockfile=true\nhoist=false\nnode-linker=hoisted\n";
         fs::write(tmp.path().join(".npmrc"), non_auth_ini).expect("write to .npmrc");
         let defaults = Config::new();
-        let config =
-            Config::current::<RealApi, _, _, _, _>(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
-                .expect("workspace yaml absent => no error");
+        let config = Config::current::<RealApi, _, _, _, _>(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || None,
+            Config::new,
+        )
+        .expect("workspace yaml absent => no error");
         assert_eq!(config.symlink, defaults.symlink);
         assert_eq!(config.lockfile, defaults.lockfile);
         assert_eq!(config.hoist, defaults.hoist);
@@ -889,9 +892,12 @@ mod tests {
         let ini = "fetch-retries=99\nfetch-retry-factor=99\nfetch-retry-mintimeout=99\nfetch-retry-maxtimeout=99\n";
         fs::write(tmp.path().join(".npmrc"), ini).expect("write to .npmrc");
         let defaults = Config::new();
-        let config =
-            Config::current::<RealApi, _, _, _, _>(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
-                .expect("workspace yaml absent => no error");
+        let config = Config::current::<RealApi, _, _, _, _>(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || None,
+            Config::new,
+        )
+        .expect("workspace yaml absent => no error");
         assert_eq!(config.fetch_retries, defaults.fetch_retries);
         assert_eq!(config.fetch_retry_factor, defaults.fetch_retry_factor);
         assert_eq!(config.fetch_retry_mintimeout, defaults.fetch_retry_mintimeout);
@@ -903,9 +909,12 @@ mod tests {
         let tmp = tempdir().unwrap();
         // write invalid utf-8 value to npmrc
         fs::write(tmp.path().join(".npmrc"), b"Hello \xff World").expect("write to .npmrc");
-        let config =
-            Config::current::<RealApi, _, _, _, _>(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
-                .expect("workspace yaml absent => no error");
+        let config = Config::current::<RealApi, _, _, _, _>(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || None,
+            Config::new,
+        )
+        .expect("workspace yaml absent => no error");
         assert!(config.symlink); // default — invalid .npmrc is silently ignored
     }
 
@@ -952,8 +961,12 @@ mod tests {
             .expect("write to pnpm-workspace.yaml");
         // No `.npmrc` anywhere, but a parent dir has `pnpm-workspace.yaml` —
         // the yaml should still be applied.
-        let config = Config::current::<RealApi, _, _, _, _>(|| nested.clone().pipe(Ok::<_, ()>), || None, Config::new)
-            .expect("yaml is valid");
+        let config = Config::current::<RealApi, _, _, _, _>(
+            || nested.clone().pipe(Ok::<_, ()>),
+            || None,
+            Config::new,
+        )
+        .expect("yaml is valid");
         assert!(!config.symlink);
     }
 
@@ -982,9 +995,12 @@ mod tests {
     #[test]
     pub fn gvs_default_writes_links_into_global_virtual_store_dir() {
         let tmp = tempdir().unwrap();
-        let config =
-            Config::current::<RealApi, _, _, _, _>(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
-                .expect("workspace yaml absent => no error");
+        let config = Config::current::<RealApi, _, _, _, _>(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || None,
+            Config::new,
+        )
+        .expect("workspace yaml absent => no error");
         assert!(config.enable_global_virtual_store, "GVS defaults to true");
         // `virtual_store_dir` stays project-local. The
         // `<cwd>/node_modules/.pnpm` default has been re-anchored to
@@ -1004,9 +1020,12 @@ mod tests {
         let tmp = tempdir().unwrap();
         fs::write(tmp.path().join("pnpm-workspace.yaml"), "enableGlobalVirtualStore: false\n")
             .expect("write to pnpm-workspace.yaml");
-        let config =
-            Config::current::<RealApi, _, _, _, _>(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
-                .expect("yaml is valid");
+        let config = Config::current::<RealApi, _, _, _, _>(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || None,
+            Config::new,
+        )
+        .expect("yaml is valid");
         assert!(!config.enable_global_virtual_store);
         assert_eq!(config.virtual_store_dir, tmp.path().join("node_modules/.pnpm"));
         assert_eq!(config.global_virtual_store_dir, config.store_dir.links());
@@ -1026,9 +1045,12 @@ mod tests {
             format!("virtualStoreDir: {}\n", user_path.display()),
         )
         .expect("write to pnpm-workspace.yaml");
-        let config =
-            Config::current::<RealApi, _, _, _, _>(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
-                .expect("yaml is valid");
+        let config = Config::current::<RealApi, _, _, _, _>(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || None,
+            Config::new,
+        )
+        .expect("yaml is valid");
         assert!(config.enable_global_virtual_store);
         assert_eq!(config.virtual_store_dir, user_path);
         assert_eq!(config.global_virtual_store_dir, user_path);
@@ -1052,9 +1074,12 @@ mod tests {
             format!("globalVirtualStoreDir: {}\n", yaml_gvs.display()),
         )
         .expect("write to pnpm-workspace.yaml");
-        let config =
-            Config::current::<RealApi, _, _, _, _>(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
-                .expect("yaml is valid");
+        let config = Config::current::<RealApi, _, _, _, _>(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || None,
+            Config::new,
+        )
+        .expect("yaml is valid");
         assert!(config.enable_global_virtual_store, "GVS defaults to true");
         // `virtual_store_dir` stays at the project-local default,
         // because the user didn't pin `virtualStoreDir`.
@@ -1075,8 +1100,11 @@ mod tests {
         // `: : :` is rejected by saphyr.
         fs::write(tmp.path().join("pnpm-workspace.yaml"), ": : :\n")
             .expect("write to pnpm-workspace.yaml");
-        let result =
-            Config::current::<RealApi, _, _, _, _>(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new);
+        let result = Config::current::<RealApi, _, _, _, _>(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || None,
+            Config::new,
+        );
         let err = result.expect_err("invalid yaml should error");
         assert!(
             matches!(err, crate::LoadWorkspaceYamlError::ParseYaml { .. }),
@@ -1101,8 +1129,12 @@ mod tests {
         fs::write(workspace_root.join("pnpm-workspace.yaml"), "packages:\n  - packages/*\n")
             .expect("write to pnpm-workspace.yaml");
 
-        let config = Config::current::<RealApi, _, _, _, _>(|| subdir.clone().pipe(Ok::<_, ()>), || None, Config::new)
-            .expect("config loads");
+        let config = Config::current::<RealApi, _, _, _, _>(
+            || subdir.clone().pipe(Ok::<_, ()>),
+            || None,
+            Config::new,
+        )
+        .expect("config loads");
 
         assert_eq!(
             config.modules_dir,
@@ -1137,9 +1169,12 @@ mod tests {
             env::remove_var("npm_config_workspace_dir");
         }
         let tmp = tempdir().unwrap();
-        let config =
-            Config::current::<RealApi, _, _, _, _>(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
-                .expect("config loads");
+        let config = Config::current::<RealApi, _, _, _, _>(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || None,
+            Config::new,
+        )
+        .expect("config loads");
         assert_eq!(config.modules_dir, tmp.path().join("node_modules"));
         assert_eq!(config.virtual_store_dir, tmp.path().join("node_modules/.pnpm"));
     }
@@ -1217,9 +1252,12 @@ mod tests {
             env::set_var("npm_config_workspace_dir", "");
         }
         let tmp = tempdir().unwrap();
-        let config =
-            Config::current::<RealApi, _, _, _, _>(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
-                .expect("config loads");
+        let config = Config::current::<RealApi, _, _, _, _>(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || None,
+            Config::new,
+        )
+        .expect("config loads");
         // No yaml in tmp → no re-anchor → cwd-anchored defaults.
         assert_eq!(config.modules_dir, tmp.path().join("node_modules"));
         assert_eq!(config.virtual_store_dir, tmp.path().join("node_modules/.pnpm"));

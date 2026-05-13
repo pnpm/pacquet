@@ -1048,7 +1048,10 @@ fn is_transient_error(err: &TarballError) -> bool {
 /// pQueue and #281's EMFILE fix), then dropped before the
 /// `post_download_semaphore` permit gates the CPU-bound checksum +
 /// decode + extract step.
-#[expect(clippy::too_many_arguments, reason = "arg count is set by upstream pnpm's fetcher signature")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "arg count is set by upstream pnpm's fetcher signature"
+)]
 async fn fetch_and_extract_once<R: Reporter>(
     http_client: &ThrottledClient,
     package_url: &str,
