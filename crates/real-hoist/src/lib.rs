@@ -82,10 +82,13 @@ pub struct HoisterTree {
     /// hoister moves freely).
     pub peer_names: BTreeSet<String>,
     pub dependency_kind: HoisterDependencyKind,
-    /// Tiebreaker the hoister consults when ranking candidates.
-    /// Pacquet always builds with `0`; pnpm and yarn-berry use
-    /// higher values for packages that declare a high
-    /// `hoistPriority` to bias them toward the root.
+    /// Tiebreaker used upstream when ranking competing hoist
+    /// candidates. Carried through the type for parity with
+    /// `@yarnpkg/nm`'s `HoisterTree.hoistPriority` but currently
+    /// unread by pacquet's algorithm — pacquet builds every node
+    /// with `0` and the popularity-based preference pass that
+    /// would consume it isn't ported yet (see the "popularity-
+    /// based ident preference" gap on `nm_hoist`).
     pub hoist_priority: u32,
     /// Children of this node. Order matches insertion order — the
     /// hoister depends on it.
@@ -245,16 +248,16 @@ impl<T> From<Rc<T>> for RcByPtr<T> {
     }
 }
 
-/// Build the [`HoisterTree`] for `lockfile`'s root importer (plus
-/// any non-root importers as workspace children) and run the
-/// `@yarnpkg/nm` hoister over it. Ports
+/// Build the [`HoisterTree`] for `lockfile`'s root importer and
+/// run the `@yarnpkg/nm` hoister over it. Ports
 /// [`installing/linking/real-hoist/src/index.ts`][upstream].
 ///
-/// The inner hoist algorithm is currently stubbed: it returns the
-/// input tree shape converted to `HoisterResult` without moving
-/// anything. The lockfile-to-tree translation and the
-/// `LockfileMissingDependencyError` surface are what this function
-/// pins today.
+/// The inner hoist is a recursive DFS with multi-round
+/// convergence over the result graph (peer-aware, with
+/// `hoistingLimits` enforced as `Border` decisions). Gaps that
+/// remain — popularity-based ident preference, multi-importer
+/// workspace trees, and `ExternalSoftLink` descendants — are
+/// documented on the private `nm_hoist` driver.
 ///
 /// [upstream]: https://github.com/pnpm/pnpm/blob/94240bc0464196bd52f7006b97f6d9a43df34633/installing/linking/real-hoist/src/index.ts
 pub fn hoist(lockfile: &Lockfile, opts: &HoistOpts) -> Result<HoisterResult, HoistError> {
@@ -613,9 +616,17 @@ fn percent_encode_path(s: &str) -> String {
 ///
 /// [upstream]: https://github.com/yarnpkg/berry/blob/4287909fa6a0a1ec976a55776bff606864b31990/packages/yarnpkg-nm/sources/hoist.ts#L329
 fn nm_hoist(tree: &HoisterTree, opts: &HoistOpts) -> HoisterResult {
+    // Compute the root locator from the input tree, where each
+    // node carries a single unambiguous `reference`. The result
+    // graph collects references into a `BTreeSet` (one
+    // `HoisterResult` can absorb several `HoisterTree` nodes with
+    // the same ident), so deriving the locator from a result
+    // node would mean picking an arbitrary entry from the set;
+    // doing it here keeps the lookup well-defined.
+    let root_locator = format!("{}@{}", tree.ident_name, tree.reference);
     let mut memo: HashMap<*const HoisterTree, Rc<HoisterResult>> = HashMap::new();
     let root = convert(tree, &mut memo);
-    hoist_into_root(&root, opts);
+    hoist_into_root(&root, &root_locator, opts);
     // Returning an owned `HoisterResult` (rather than
     // `Rc<HoisterResult>`) keeps the wrapper's post-hoist
     // `external_dependencies` filter from mutating the shared graph.
@@ -693,7 +704,7 @@ enum AbsorbDecision {
 /// DAG sharing and accepts a more conservative ruling in the
 /// rare cross-path mismatch cases. The cost is layouts that are
 /// sometimes more nested than pnpm's, never less.
-fn hoist_into_root(root: &Rc<HoisterResult>, opts: &HoistOpts) {
+fn hoist_into_root(root: &Rc<HoisterResult>, root_locator: &str, opts: &HoistOpts) {
     let mut root_index: HashMap<String, RcByPtr<HoisterResult>> =
         root.dependencies.borrow().iter().map(|d| (d.0.name.clone(), d.clone())).collect();
 
@@ -703,10 +714,9 @@ fn hoist_into_root(root: &Rc<HoisterResult>, opts: &HoistOpts) {
     // names up by-name at decision time, which is equivalent since
     // there's only one root locator. An empty fallback set means
     // the check is effectively a no-op when no limits are configured.
-    let root_locator = make_locator(root);
     let empty_set: BTreeSet<String> = BTreeSet::new();
     let border_names: &BTreeSet<String> =
-        opts.hoisting_limits.get(&root_locator).unwrap_or(&empty_set);
+        opts.hoisting_limits.get(root_locator).unwrap_or(&empty_set);
 
     loop {
         let mut visited: HashSet<*const HoisterResult> = HashSet::new();
@@ -715,16 +725,6 @@ fn hoist_into_root(root: &Rc<HoisterResult>, opts: &HoistOpts) {
             break;
         }
     }
-}
-
-/// Build the upstream locator key (`identName@reference`) for a
-/// result node. The wrapper builds the root with
-/// `ident_name = "."` and `reference = ""`, so the root locator is
-/// `".@"` — the same form pnpm uses for `hoistingLimits` keys.
-fn make_locator(node: &Rc<HoisterResult>) -> String {
-    let refs = node.references.borrow();
-    let r = refs.iter().next().map(|s| s.as_str()).unwrap_or("");
-    format!("{}@{}", node.ident_name, r)
 }
 
 /// Depth-first hoist driver. `ancestor_path` is the path from
