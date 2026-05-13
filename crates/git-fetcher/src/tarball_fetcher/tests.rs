@@ -322,6 +322,7 @@ async fn writes_index_row_when_writer_provided() {
     let row = index.get(key).unwrap().expect("row must exist at the git-hosted key");
     assert_eq!(row.algo, "sha512");
     assert_eq!(row.requires_build, Some(received.built));
-    assert!(row.files.contains_key("package.json"));
-    assert!(row.files.contains_key("index.js"));
+    let keys: Vec<&str> = row.files.keys().map(String::as_str).collect();
+    assert!(keys.contains(&"package.json"), "package.json missing from row.files: {keys:?}");
+    assert!(keys.contains(&"index.js"), "index.js missing from row.files: {keys:?}");
 }
