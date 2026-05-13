@@ -265,6 +265,15 @@ pub struct Config {
     #[default(_code = "default_registry()")]
     pub registry: String, // TODO: use Url type (compatible with reqwest)
 
+    /// Resolved proxy configuration — `https-proxy`, `http-proxy`, and
+    /// `no-proxy` (plus the legacy `proxy` key and env-var fallbacks),
+    /// all from `.npmrc` and the process environment. The type lives
+    /// in `pacquet-network` (where it is consumed by
+    /// `ThrottledClient::for_installs`) because `pacquet-config`
+    /// already depends on `pacquet-network` for auth-headers plumbing.
+    /// Default is empty (`None` for every field) — i.e. no proxy.
+    pub proxy: pacquet_network::ProxyConfig,
+
     /// When true, any missing non-optional peer dependencies are automatically installed.
     #[default = true]
     pub auto_install_peers: bool,
@@ -595,12 +604,14 @@ impl Config {
     ///    (cwd, falling back to home), then
     /// 3. the nearest `pnpm-workspace.yaml` walking up from cwd.
     ///
-    /// Pacquet currently only applies `registry` from `.npmrc`. Other
-    /// `.npmrc` entries — pnpm's TLS / npm-auth / proxy / scoped-registry
-    /// keys, plus project-structural settings like `storeDir`, `lockfile`
-    /// and `hoist-pattern` — are silently ignored here. The first group
-    /// is tracked for future auth / proxy / TLS work; the second must
-    /// come from `pnpm-workspace.yaml` or CLI flags, matching pnpm 11.
+    /// Pacquet currently applies `registry`, npm-auth credentials, and
+    /// the proxy keys (`https-proxy`, `http-proxy`, `proxy`,
+    /// `no-proxy` / `noproxy`) from `.npmrc`. Other `.npmrc` entries —
+    /// pnpm's TLS / scoped-registry keys, plus project-structural
+    /// settings like `storeDir`, `lockfile` and `hoist-pattern` — are
+    /// silently ignored here. The first group is tracked for future
+    /// TLS work; the second must come from `pnpm-workspace.yaml` or
+    /// CLI flags, matching pnpm 11.
     ///
     /// The yaml wins over `.npmrc` on any key it sets.
     ///
@@ -655,6 +666,12 @@ impl Config {
             .map(|text| crate::npmrc_auth::NpmrcAuth::from_ini::<Api>(&text))
             .unwrap_or_default();
         npmrc_auth.apply_registry_and_warn(&mut config);
+        // Proxy cascade fires unconditionally — even when no `.npmrc`
+        // is found — because the env-var fallback in pnpm's
+        // [`config/reader/src/index.ts:591-600`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L591-L600)
+        // is a normalization step on the resolved config, not a
+        // function of `.npmrc` presence.
+        npmrc_auth.apply_proxy_cascade::<Api>(&mut config);
 
         // Layer pnpm-workspace.yaml overrides on top. A missing file is
         // silent. Read or parse failures propagate to the caller.
@@ -1088,6 +1105,60 @@ mod tests {
         // `<store_dir>/links` fallback nor any mirroring of
         // `virtual_store_dir` clobbers it.
         assert_eq!(config.global_virtual_store_dir, yaml_gvs);
+    }
+
+    /// Real-process-environment smoke test for the proxy env-var
+    /// fallback through `Config::current`. The injected-`EnvVar` tests
+    /// in `npmrc_auth/tests.rs` cover the cascade branches
+    /// exhaustively; this one only proves the wiring through
+    /// `RealApi::var` reaches `std::env::var` and that the cascade
+    /// fires even with no `.npmrc` present.
+    #[test]
+    pub fn proxy_env_fallback_applies_through_current() {
+        // Snapshot every proxy var the cascade might read so peer tests
+        // can't observe our mutations and so the env restores cleanly.
+        let _g = EnvGuard::snapshot([
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "PROXY",
+            "proxy",
+            "NO_PROXY",
+            "no_proxy",
+            "NPM_CONFIG_WORKSPACE_DIR",
+            "npm_config_workspace_dir",
+        ]);
+        let tmp = tempdir().unwrap();
+        // SAFETY: EnvGuard above serializes the test against other
+        // env-mutating tests in this process; no other thread reads
+        // these vars concurrently. The other proxy vars are removed so
+        // a host-set value can't leak in and skew the assertion.
+        unsafe {
+            env::remove_var("HTTPS_PROXY");
+            env::remove_var("https_proxy");
+            env::remove_var("HTTP_PROXY");
+            env::remove_var("http_proxy");
+            env::remove_var("PROXY");
+            env::remove_var("proxy");
+            env::remove_var("NO_PROXY");
+            env::remove_var("no_proxy");
+            env::remove_var("NPM_CONFIG_WORKSPACE_DIR");
+            env::remove_var("npm_config_workspace_dir");
+            env::set_var("HTTPS_PROXY", "http://env.example:8080");
+        }
+        let config = Config::current::<RealApi, _, _, _, _>(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || None,
+            Config::new,
+        )
+        .expect("workspace yaml absent => no error");
+        assert_eq!(config.proxy.https_proxy.as_deref(), Some("http://env.example:8080"));
+        assert_eq!(
+            config.proxy.http_proxy.as_deref(),
+            Some("http://env.example:8080"),
+            "http side cascades through resolved https",
+        );
     }
 
     /// Pnpm's
