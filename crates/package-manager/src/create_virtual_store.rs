@@ -656,13 +656,26 @@ impl<'a> CreateVirtualStore<'a> {
                     .await;
                     match result {
                         Ok(()) => Ok(None),
-                        Err(err) if snapshot.optional => {
+                        Err(err) if snapshot.optional && is_fetch_side_failure(&err) => {
                             // Silent swallow, matching upstream. `tracing::warn!`
                             // gives operator visibility without polluting
                             // the reporter wire (upstream's frozen path
                             // emits nothing; only the resolver-side
                             // emit site fires `pnpm:skipped-optional-
                             // dependency reason=resolution_failure`).
+                            //
+                            // Scoped via [`is_fetch_side_failure`] to the
+                            // tarball-fetch / git-fetch / CAS-write
+                            // variants — i.e. the same surface upstream
+                            // wraps in
+                            // <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L286-L298>.
+                            // Local materialization (`CreateVirtualDir`)
+                            // and config-shape errors
+                            // (`MissingTarballIntegrity`,
+                            // `UnsupportedResolution`) abort even for
+                            // optional snapshots, matching upstream's
+                            // post-fetch `linkPkg` path which sits
+                            // outside the catch.
                             tracing::warn!(
                                 target: "pacquet::install",
                                 snapshot = %snapshot_key,
@@ -840,6 +853,36 @@ fn integrity_equal(current: Option<&PackageMetadata>, wanted: Option<&PackageMet
 /// unit-testable; the call site stays in the warm-batch hot path
 /// where setting up a non-empty prefetched-cas test would require a
 /// full lockfile + populated CAFS.
+/// True for the [`InstallPackageBySnapshotError`] variants pacquet
+/// classifies as **fetch-side** — the surface inside upstream's
+/// catch at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L286-L298>.
+/// These are the ones an optional snapshot is allowed to swallow:
+///
+/// - `DownloadTarball` — HTTP fetch, integrity check, gzip decode,
+///   CAS write. Equivalent to `storeController.fetchPackage`
+///   blowing up.
+/// - `GitFetch` — `git` CLI clone / checkout / preparePackage /
+///   packlist / CAS import. Equivalent to upstream's git-fetcher
+///   inside the same `fetchPackage` dispatch.
+///
+/// Excluded (propagate even for optional snapshots, matching
+/// upstream's post-`fetching()` `linkPkg` path that sits outside
+/// the catch):
+///
+/// - `CreateVirtualDir` — local materialization (clone / hardlink /
+///   copy / symlink from CAS into the slot dir).
+/// - `MissingTarballIntegrity`, `UnsupportedResolution` —
+///   config/shape errors; upstream's equivalents `throw` rather
+///   than going through `fetchPackage`.
+fn is_fetch_side_failure(err: &InstallPackageBySnapshotError) -> bool {
+    matches!(
+        err,
+        InstallPackageBySnapshotError::DownloadTarball(_)
+            | InstallPackageBySnapshotError::GitFetch(_),
+    )
+}
+
 fn emit_warm_snapshot_progress<R: Reporter>(package_id: &str, requester: &str) {
     R::emit(&LogEvent::Progress(ProgressLog {
         level: LogLevel::Debug,

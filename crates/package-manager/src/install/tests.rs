@@ -1761,6 +1761,12 @@ async fn frozen_install_silently_swallows_unreachable_optional_tarball() {
 
     let mut config = Config::new();
     config.lockfile = false;
+    // Opt out of the GVS layout so the assertion below can stat the
+    // legacy `<virtual_store_dir>/<flat-name>` slot directly. With
+    // GVS on, the slot lives under `<store_dir>/links/...` and the
+    // assertion would always pass regardless of whether the swallow
+    // path actually fired.
+    config.enable_global_virtual_store = false;
     config.store_dir = store_dir.clone().into();
     config.modules_dir = modules_dir.clone();
     config.virtual_store_dir = virtual_store_dir.clone();
@@ -1850,6 +1856,11 @@ async fn frozen_install_propagates_non_optional_fetch_failure() {
 
     let mut config = Config::new();
     config.lockfile = false;
+    // Match the sister test's GVS-off setup so both swallow tests
+    // route through the same layout — sidesteps any GVS-routing
+    // path divergence affecting where the cold-batch dispatch even
+    // runs.
+    config.enable_global_virtual_store = false;
     config.store_dir = store_dir.into();
     config.modules_dir = modules_dir;
     config.virtual_store_dir = virtual_store_dir;

@@ -715,8 +715,12 @@ fn skipped_optional_resolution_failure_omits_absent_name_and_version() {
         .expect("serialize envelope")
         .pipe_as_ref(serde_json::from_str)
         .expect("parse JSON");
+    dbg!(&json);
     assert!(json["package"].get("name").is_none(), "name omitted when absent, got {json:?}");
-    assert!(json["package"].get("version").is_none(), "version omitted when absent");
+    assert!(
+        json["package"].get("version").is_none(),
+        "version omitted when absent, got {json:?}",
+    );
     assert_eq!(json["package"]["bareSpecifier"], "git+ssh://broken-url");
 }
 
