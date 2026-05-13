@@ -39,10 +39,12 @@ pub fn remove_symlink_dir(link: &Path) -> io::Result<()> {
 /// see [`rust-lang/rust#28528`](https://github.com/rust-lang/rust/issues/28528),
 /// which has been open since 2015. Since [`symlink_dir`] creates
 /// junctions on Windows, every entry pacquet writes would
-/// otherwise be unreadable. Fall back to
-/// [`junction::get_target`] on `InvalidInput` to handle the
-/// junction case while keeping `fs::read_link` as the fast path
-/// for true symlinks.
+/// otherwise be unreadable. Fall back to `junction::get_target`
+/// on `InvalidInput` to handle the junction case while keeping
+/// `fs::read_link` as the fast path for true symlinks. (Plain
+/// backticks rather than an intra-doc link because the `junction`
+/// crate is only in scope on Windows targets — a link would
+/// break the Linux doc build.)
 pub fn read_symlink_dir(link: &Path) -> io::Result<PathBuf> {
     #[cfg(unix)]
     return std::fs::read_link(link);
