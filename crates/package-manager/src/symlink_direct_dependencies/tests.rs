@@ -282,6 +282,7 @@ fn cross_importer_link_dep_symlinks_to_sibling_rootdir() {
         importers: &importers,
         dependency_groups: [DependencyGroup::Prod],
         workspace_root: &workspace_root,
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<RecordingReporter>()
     .expect("symlink should succeed");
@@ -414,6 +415,7 @@ fn per_importer_prefix_in_pnpm_root_events() {
         importers: &importers,
         dependency_groups: [DependencyGroup::Prod],
         workspace_root: &workspace_root,
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<RecordingReporter>()
     .unwrap();
@@ -476,6 +478,7 @@ fn unsafe_importer_keys_error_before_filesystem_writes() {
             importers: &importers,
             dependency_groups: [DependencyGroup::Prod],
             workspace_root: &workspace_root,
+            skipped: &SkippedSnapshots::default(),
         }
         .run::<SilentReporter>();
 
@@ -548,6 +551,7 @@ fn custom_modules_dir_propagates_to_each_importer() {
         importers: &importers,
         dependency_groups: [DependencyGroup::Prod],
         workspace_root: &workspace_root,
+        skipped: &SkippedSnapshots::default(),
     }
     .run::<SilentReporter>()
     .expect("symlink should succeed");
