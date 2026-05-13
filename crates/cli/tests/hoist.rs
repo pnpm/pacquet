@@ -13,12 +13,20 @@
 //!
 //! Test ports of upstream's
 //! [`installing/deps-installer/test/install/hoist.ts`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/test/install/hoist.ts)
-//! that depend on features pacquet hasn't built yet (workspace
-//! install — pnpm/pacquet#431, partial install / re-hoist —
-//! pnpm/pacquet#433, GVS — pnpm/pacquet#432, peer-dep details, hoisted
-//! node-linker) live in [`known_failures`] below with
+//! that depend on features pacquet hasn't built yet (partial install
+//! / re-hoist — pnpm/pacquet#433, GVS — pnpm/pacquet#432, peer-dep
+//! details, hoisted node-linker, `hoistWorkspacePackages`,
+//! `extendNodePath`) live in [`known_failures`] below with
 //! [`pacquet_testing_utils::allow_known_failure`] gating the assertion
 //! against the not-yet-implemented subject under test.
+//!
+//! Workspace install (pnpm/pacquet#431) landed in #443. The
+//! [`workspace_hoist_walks_every_importer`] test below covers the
+//! basic multi-importer case directly; the upstream
+//! `hoistWorkspacePackages` test still lives under [`known_failures`]
+//! because pacquet doesn't yet model the
+//! `hoistedWorkspacePackages` shape itself (linking workspace
+//! projects into the hoist target tree).
 
 #![cfg(unix)] // pnpm CLI: 'program not found' on Windows runners.
 
@@ -367,6 +375,79 @@ fn public_hoist_bin_is_linked_via_root_bin_dir() {
     drop((root, mock_instance));
 }
 
+/// Workspace install (pnpm/pacquet#431) lands per-importer
+/// node_modules layouts; hoist must walk every importer's direct
+/// deps, not just the root, so transitives unique to a workspace
+/// project still reach the shared `<vs>/node_modules` private
+/// hoist. Sets up a two-importer workspace where the workspace
+/// package depends on `@pnpm.e2e/hello-world-js-bin-parent` (which
+/// has `@pnpm.e2e/hello-world-js-bin` as a transitive). With the
+/// default `hoistPattern: ["*"]` the transitive must end up
+/// hoisted regardless of which importer dragged it in.
+///
+/// Pacquet-original — no direct upstream analogue. Closes the
+/// integration gap left by `installing/deps-installer/test/install/hoist.ts:341`
+/// (which uses `mutateModulesInSingleProject` we don't have).
+#[test]
+fn workspace_hoist_walks_every_importer() {
+    let CommandTempCwd { pacquet, pnpm, root, workspace, npmrc_info, .. } =
+        CommandTempCwd::init().add_mocked_registry();
+    let AddMockedRegistry { mock_instance, .. } = npmrc_info;
+
+    // Root package.json — no deps; the dependency lives only in the
+    // workspace package, so the transitive can only reach the hoist
+    // pass via the per-importer walk.
+    fs::write(
+        workspace.join("package.json"),
+        serde_json::json!({ "name": "root", "private": true }).to_string(),
+    )
+    .expect("write root package.json");
+
+    // pnpm-workspace.yaml: enumerate `packages/*` (also keeps the
+    // existing `storeDir`/`cacheDir` from `add_mocked_registry`).
+    write_workspace_yaml(&workspace, "packages:\n  - 'packages/*'\n");
+
+    // Workspace package — has the transitive-bearing dep.
+    let pkg_dir = workspace.join("packages/foo");
+    fs::create_dir_all(&pkg_dir).expect("mkdir packages/foo");
+    fs::write(
+        pkg_dir.join("package.json"),
+        serde_json::json!({
+            "name": "@local/foo",
+            "version": "1.0.0",
+            "private": true,
+            "dependencies": { "@pnpm.e2e/hello-world-js-bin-parent": "1.0.0" },
+        })
+        .to_string(),
+    )
+    .expect("write packages/foo/package.json");
+
+    generate_lockfile(pnpm);
+    pacquet.with_args(["install", "--frozen-lockfile"]).assert().success();
+
+    // The workspace package's direct dep symlink lives under the
+    // workspace project's own `node_modules/`.
+    assert!(
+        is_symlink_or_junction(&pkg_dir.join("node_modules/@pnpm.e2e/hello-world-js-bin-parent"))
+            .unwrap(),
+        "workspace package should have its direct dep linked under its own node_modules",
+    );
+
+    // The transitive — reachable only via the workspace package —
+    // must still land in the shared `<vs>/node_modules` private
+    // hoist. This is what `workspace_hoist_walks_every_importer`
+    // catches: a regression that filters down to just the root
+    // importer would silently drop this entry.
+    let private_hoist =
+        workspace.join("node_modules/.pnpm/node_modules/@pnpm.e2e/hello-world-js-bin");
+    assert!(
+        is_symlink_or_junction(&private_hoist).unwrap(),
+        "transitive of workspace package must be privately hoisted at {private_hoist:?}",
+    );
+
+    drop((root, mock_instance));
+}
+
 mod known_failures {
     //! Test ports of upstream `hoist.ts` cases blocked on features
     //! pacquet hasn't built yet. Each entry stubs the not-yet-built
@@ -375,11 +456,18 @@ mod known_failures {
     //! exits early rather than masking a real bug. The cases here
     //! cover:
     //!
-    //! - **Workspace install** (#431): multi-importer hoist, hoist of
-    //!   workspace packages, install-by-selected-projects.
     //! - **Partial install / re-hoist** (#433): persisted-map
     //!   preservation across re-installs, uninstall-then-rehoist,
     //!   pattern-change detection.
+    //! - **`pnpm add` / `pnpm remove`**: re-running install after
+    //!   adding or removing a dep requires the manifest-mutation
+    //!   path pacquet doesn't expose yet.
+    //! - **`--filter` selected-projects install**: pacquet doesn't
+    //!   yet implement the workspace-projects-filter selection.
+    //! - **`hoistWorkspacePackages`**: links workspace projects
+    //!   themselves into the hoist tree (separate from snapshot
+    //!   hoisting); pacquet doesn't model the
+    //!   `hoistedWorkspacePackages` shape yet.
     //! - **Skipped optional deps**: hoist must not create broken
     //!   symlinks for snapshots that won't be installed; pacquet
     //!   doesn't yet skip optional deps based on OS / arch / engine.
@@ -387,6 +475,9 @@ mod known_failures {
     //!   the bin link order matters when hoisted aliases collide
     //!   with direct deps; pacquet's bin-link pipeline doesn't yet
     //!   mirror upstream's full ordering.
+    //!
+    //! Workspace install (pnpm/pacquet#431) landed in #443 and is
+    //! covered by [`super::workspace_hoist_walks_every_importer`].
 
     use pacquet_testing_utils::{
         allow_known_failure,
@@ -402,11 +493,31 @@ mod known_failures {
         ))
     }
 
-    fn workspace_install() -> KnownResult<()> {
+    fn manifest_mutation_via_pnpm_add() -> KnownResult<()> {
         Err(KnownFailure::new(
-            "Workspace install (pnpm/pacquet#431) is needed: hoist's \
-             `directDepsByImporterId` carries one entry per workspace \
-             project, but pacquet only reads the root importer today.",
+            "Pacquet doesn't yet implement `pnpm add` / `pnpm remove` \
+             manifest mutation. Upstream tests that mutate the manifest \
+             between installs aren't directly portable until that lands.",
+        ))
+    }
+
+    fn workspace_filter_selection() -> KnownResult<()> {
+        Err(KnownFailure::new(
+            "Pacquet doesn't yet implement `--filter` selected-projects \
+             installs. Workspace install (pnpm/pacquet#431) landed in \
+             #443 but only as the unfiltered \"install all importers\" \
+             flow; selecting a subset of workspace projects is a \
+             follow-up.",
+        ))
+    }
+
+    fn hoist_workspace_packages_unsupported() -> KnownResult<()> {
+        Err(KnownFailure::new(
+            "Pacquet doesn't yet model the `hoistedWorkspacePackages` \
+             shape. Workspace install lays out per-importer node_modules \
+             dirs, but linking workspace projects themselves into the \
+             hoist tree (the `hoistWorkspacePackages` config) requires \
+             additional plumbing in `symlink_hoisted_dependencies`.",
         ))
     }
 
@@ -568,16 +679,22 @@ mod known_failures {
     }
 
     /// Upstream: [`hoist.ts:341` "hoist-pattern: hoist all dependencies to the virtual store node_modules"](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/test/install/hoist.ts#L341).
-    /// Workspace install followed by frozen reinstall.
+    /// Workspace install followed by frozen reinstall. Pacquet's
+    /// per-importer hoist walk lands the basic shape — covered by
+    /// [`super::workspace_hoist_walks_every_importer`] — but the
+    /// upstream test additionally re-installs and asserts
+    /// preservation, which needs partial install (#433).
     #[test]
     fn workspace_hoist_all_to_virtual_store_node_modules() {
-        allow_known_failure!(workspace_install());
+        allow_known_failure!(partial_install_persists_hoisted_map());
     }
 
     /// Upstream: [`hoist.ts:423` "hoist when updating in one of the workspace projects"](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/test/install/hoist.ts#L423).
+    /// Mutates the workspace package's `package.json` mid-test and
+    /// re-installs — needs `pnpm add`-equivalent manifest mutation.
     #[test]
     fn workspace_hoist_when_updating_one_project() {
-        allow_known_failure!(workspace_install());
+        allow_known_failure!(manifest_mutation_via_pnpm_add());
     }
 
     /// Upstream: [`hoist.ts:514` "should recreate node_modules with hoisting"](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/test/install/hoist.ts#L514).
@@ -601,15 +718,19 @@ mod known_failures {
     }
 
     /// Upstream: [`hoist.ts:587` "hoist packages which is in the dependencies tree of the selected projects"](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/test/install/hoist.ts#L587).
+    /// Uses upstream's `selectedProjectDirs` API to install a
+    /// subset of workspace projects. Pacquet doesn't yet implement
+    /// `--filter` selected-projects installs.
     #[test]
     fn workspace_hoist_packages_in_selected_projects_tree() {
-        allow_known_failure!(workspace_install());
+        allow_known_failure!(workspace_filter_selection());
     }
 
     /// Upstream: [`hoist.ts:682` "only hoist packages which is in the dependencies tree of the selected projects with sub dependencies"](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/test/install/hoist.ts#L682).
+    /// Same `selectedProjectDirs` shape as above.
     #[test]
     fn workspace_hoist_only_in_selected_projects_with_subdeps() {
-        allow_known_failure!(workspace_install());
+        allow_known_failure!(workspace_filter_selection());
     }
 
     /// Upstream: [`hoist.ts:790` "should add extra node paths to command shims"](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/test/install/hoist.ts#L790).
@@ -625,9 +746,13 @@ mod known_failures {
     }
 
     /// Upstream: [`hoist.ts:813` "hoistWorkspacePackages should hoist all workspace projects"](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/test/install/hoist.ts#L813).
+    /// Tests the `hoistWorkspacePackages: true` config which links
+    /// workspace projects themselves into the hoist tree (separate
+    /// from snapshot hoisting). Needs the
+    /// `hoistedWorkspacePackages` shape pacquet doesn't model yet.
     #[test]
     fn hoist_workspace_packages_hoists_all_workspace_projects() {
-        allow_known_failure!(workspace_install());
+        allow_known_failure!(hoist_workspace_packages_unsupported());
     }
 
     /// Upstream: [`hoist.ts:89` "should hoist some dependencies to the root of node_modules when publicHoistPattern is used and others to the virtual store directory"](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/test/install/hoist.ts#L89).

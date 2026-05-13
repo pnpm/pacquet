@@ -409,22 +409,25 @@ where
                     BTreeMap::new()
                 } else {
                     let graph = build_hoist_graph(snaps, pkgs);
-                    // Restrict the hoist input to the same importer set
-                    // pacquet actually installs / links — currently just
-                    // the root importer. Pulling every importer's direct
-                    // deps from a workspace lockfile would hoist
-                    // transitives of non-root importers (which pacquet
-                    // does NOT install today) into the root project's
-                    // `node_modules`. Workspace install (pnpm/pacquet#431)
-                    // will widen this to the install's importer set
-                    // without touching `build_direct_deps_by_importer`'s
-                    // signature.
-                    let root_importer =
-                        importers.get_key_value(pacquet_lockfile::Lockfile::ROOT_IMPORTER_KEY);
-                    let direct_deps = build_direct_deps_by_importer(
-                        root_importer,
-                        dependency_groups.iter().copied(),
-                    );
+                    // Walk every importer's direct deps. Workspace
+                    // install (pnpm/pacquet#431) landed in #443, so
+                    // pacquet now installs every entry in
+                    // `Lockfile.importers` — not just the root. Hoist
+                    // visits each importer's direct deps so transitives
+                    // unique to a workspace project still get
+                    // privately hoisted into the shared
+                    // `<vs>/node_modules` and contribute to
+                    // `hoistedDependencies`.
+                    //
+                    // The `link:` workspace-sibling entries
+                    // [`build_direct_deps_by_importer`] sees are
+                    // skipped via [`pacquet_lockfile::ImporterDepVersion::as_regular`]
+                    // — they're not snapshots, and upstream handles
+                    // workspace-package hoisting via the separate
+                    // `hoistedWorkspacePackages` shape (out of scope
+                    // for this issue; tracked as a workspace follow-up).
+                    let direct_deps =
+                        build_direct_deps_by_importer(importers, dependency_groups.iter().copied());
                     // No skipped-snapshot tracking yet (pacquet does not
                     // implement skipped optionals). Empty set is the
                     // upstream default for the no-skip case.
