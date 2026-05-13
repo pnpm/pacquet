@@ -76,8 +76,10 @@ pub struct GitFetcher<'a> {
     /// (matches upstream's `execa('git', …)` shape). Tests use it to
     /// inject a shim binary at an absolute path, so the test can
     /// observe the fetcher's argv without mutating process-global
-    /// state. Threaded into [`exec_git_with`] verbatim — `None` keeps
-    /// the existing `Command::new("git")` behavior.
+    /// state. `None` keeps the existing `Command::new("git")`
+    /// behavior; `Some(path)` runs `Command::new(path)` for every
+    /// git invocation inside `run_sync` (`init`, `clone`, `fetch`,
+    /// `checkout`, `rev-parse`).
     pub git_bin: Option<&'a Path>,
 }
 
