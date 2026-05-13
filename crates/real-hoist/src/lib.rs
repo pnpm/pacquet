@@ -15,6 +15,7 @@ use indexmap::IndexSet;
 use miette::Diagnostic;
 use pacquet_lockfile::{Lockfile, PkgName, PkgNameVerPeer, ProjectSnapshot, SnapshotEntry};
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap},
     rc::Rc,
 };
@@ -50,6 +51,15 @@ pub enum HoisterDependencyKind {
 /// two parent paths is shared by `Rc` identity the way JS's
 /// `Set<HoisterTree>` shares by object identity.
 ///
+/// `dependencies` is behind a [`RefCell`] so the construction phase
+/// can stash a placeholder `Rc<HoisterTree>` for cycle short-circuit,
+/// recurse, then populate the children in place. The placeholder Rc
+/// and the populated one are the same allocation, so a node visited
+/// via a back-edge sees the eventually-populated set — matching JS's
+/// `Set<HoisterTree>` mutation semantics. The same interior
+/// mutability is what the hoister algorithm will use to move children
+/// between parents when it lands.
+///
 /// [yarn-tree]: https://github.com/yarnpkg/berry/blob/4287909fa6a0a1ec976a55776bff606864b31990/packages/yarnpkg-nm/sources/hoist.ts#L16-L19
 #[derive(Debug)]
 pub struct HoisterTree {
@@ -78,13 +88,20 @@ pub struct HoisterTree {
     pub hoist_priority: u32,
     /// Children of this node. Order matches insertion order — the
     /// hoister depends on it.
-    pub dependencies: IndexSet<RcByPtr<HoisterTree>>,
+    pub dependencies: RefCell<IndexSet<RcByPtr<HoisterTree>>>,
 }
 
 /// Output node from the hoister. The shape mirrors `HoisterTree`
 /// except that one `HoisterResult` can collect multiple references
 /// (when several `HoisterTree` nodes with the same `ident_name`
 /// converged onto the same hoist slot).
+///
+/// Both `references` and `dependencies` use [`RefCell`] for the same
+/// reason [`HoisterTree::dependencies`] does: nodes are shared by
+/// `Rc` identity across the result graph, and the algorithm
+/// accumulates references / reorders children in place rather than
+/// rebuilding `Rc`s (which would break the shared-by-identity
+/// invariant for any earlier clone).
 ///
 /// Mirrors `HoisterResult` at the [yarn source][yarn-result].
 ///
@@ -93,8 +110,8 @@ pub struct HoisterTree {
 pub struct HoisterResult {
     pub name: String,
     pub ident_name: String,
-    pub references: BTreeSet<String>,
-    pub dependencies: IndexSet<RcByPtr<HoisterResult>>,
+    pub references: RefCell<BTreeSet<String>>,
+    pub dependencies: RefCell<IndexSet<RcByPtr<HoisterResult>>>,
 }
 
 /// Per-importer hoisting borders. Outer key is the importer locator
@@ -121,7 +138,11 @@ pub struct HoistOpts {
 }
 
 /// Failure modes of [`hoist`].
+///
+/// Marked `#[non_exhaustive]` so adding variants in later work
+/// isn't a breaking API change.
 #[derive(Debug, Display, Error, Diagnostic)]
+#[non_exhaustive]
 pub enum HoistError {
     /// A snapshot referenced by an importer is missing from
     /// `lockfile.snapshots`. Mirrors pnpm's
@@ -224,7 +245,7 @@ pub fn hoist(lockfile: &Lockfile, opts: &HoistOpts) -> Result<HoisterResult, Hoi
             peer_names: BTreeSet::new(),
             dependency_kind: HoisterDependencyKind::ExternalSoftLink,
             hoist_priority: 0,
-            dependencies: IndexSet::new(),
+            dependencies: RefCell::new(IndexSet::new()),
         });
         root_children.insert(RcByPtr(placeholder));
     }
@@ -254,7 +275,7 @@ pub fn hoist(lockfile: &Lockfile, opts: &HoistOpts) -> Result<HoisterResult, Hoi
             peer_names: BTreeSet::new(),
             dependency_kind: HoisterDependencyKind::Workspace,
             hoist_priority: 0,
-            dependencies: importer_children,
+            dependencies: RefCell::new(importer_children),
         });
         root_children.insert(RcByPtr(importer_node));
     }
@@ -266,15 +287,18 @@ pub fn hoist(lockfile: &Lockfile, opts: &HoistOpts) -> Result<HoisterResult, Hoi
         peer_names: BTreeSet::new(),
         dependency_kind: HoisterDependencyKind::Workspace,
         hoist_priority: 0,
-        dependencies: root_children,
+        dependencies: RefCell::new(root_children),
     });
 
-    let mut result = nm_hoist(&root_node, opts);
+    let result = nm_hoist(&root_node, opts);
 
     // Strip `externalDependencies` from the top-level result —
     // they exist only to reserve a name slot at the root.
     if !opts.external_dependencies.is_empty() {
-        result.dependencies.retain(|dep| !opts.external_dependencies.contains(&dep.name));
+        result
+            .dependencies
+            .borrow_mut()
+            .retain(|dep| !opts.external_dependencies.contains(&dep.name));
     }
 
     Ok(result)
@@ -308,7 +332,14 @@ fn collect_importer_deps(
     let mut entries: Vec<_> = merged.into_iter().collect();
     entries.sort_by_key(|(alias, _)| alias.to_string());
     for (alias, spec) in entries {
-        let node = build_dep_node(alias, &spec.version, lockfile, opts, nodes)?;
+        // Pacquet's `ResolvedDependencySpec.version` doesn't carry an
+        // alternate package name, so importer-level npm-aliases
+        // aren't modelled here today — assume the alias is the
+        // registry name. Transitive npm-aliases (modelled via
+        // `SnapshotDepRef::Alias`) are handled in
+        // `collect_snapshot_deps`.
+        let dep_key = PkgNameVerPeer::new(alias.clone(), spec.version.clone());
+        let node = build_dep_node(alias, &dep_key, lockfile, opts, nodes)?;
         out.insert(RcByPtr(node));
     }
     Ok(())
@@ -316,12 +347,15 @@ fn collect_importer_deps(
 
 fn build_dep_node(
     alias: &PkgName,
-    version: &pacquet_lockfile::PkgVerPeer,
+    dep_key: &PkgNameVerPeer,
     lockfile: &Lockfile,
     opts: &HoistOpts,
     nodes: &mut HashMap<String, Rc<HoisterTree>>,
 ) -> Result<Rc<HoisterTree>, HoistError> {
-    let dep_key = PkgNameVerPeer::new(alias.clone(), version.clone());
+    // Cache key is `<alias>:<dep_key>` to match upstream — two
+    // different aliases pointing at the same package are
+    // intentionally different nodes (the node's `name` field
+    // differs), so they shouldn't share a cache slot.
     let cache_key = format!("{alias}:{dep_key}");
     if let Some(existing) = nodes.get(&cache_key) {
         return Ok(Rc::clone(existing));
@@ -332,7 +366,7 @@ fn build_dep_node(
         .as_ref()
         .ok_or_else(|| HoistError::LockfileMissingDependency { pkg_key: dep_key.to_string() })?;
     let snapshot = snapshots
-        .get(&dep_key)
+        .get(dep_key)
         .ok_or_else(|| HoistError::LockfileMissingDependency { pkg_key: dep_key.to_string() })?;
 
     // Peer-name set: peerDependencies (from the `packages:` map)
@@ -360,45 +394,29 @@ fn build_dep_node(
         }
     }
 
-    let mut children: IndexSet<RcByPtr<HoisterTree>> = IndexSet::new();
-    // Insert a placeholder first so cyclic descents short-circuit
-    // back to it (the JS code achieves the same by setting `node`
-    // in the map before recursing — see real-hoist:131).
+    // Construct the node with an empty `dependencies` cell, stash
+    // it in the cache, then recurse and populate the cell in place.
+    // A back-edge that hits the same `cache_key` during the
+    // recursion gets the same `Rc<HoisterTree>` — by the time the
+    // outer call returns the cell holds the populated set, and the
+    // shared-by-identity invariant the hoister algorithm relies on
+    // survives. Mirrors the in-place mutation of `node.dependencies`
+    // at upstream's real-hoist:132.
     let node = Rc::new(HoisterTree {
         name: alias.to_string(),
-        ident_name: pkg_name_from_key(&dep_key),
+        ident_name: dep_key.name.to_string(),
         reference: dep_key.to_string(),
         peer_names,
         dependency_kind: HoisterDependencyKind::Regular,
         hoist_priority: 0,
-        dependencies: IndexSet::new(),
+        dependencies: RefCell::new(IndexSet::new()),
     });
-    nodes.insert(cache_key.clone(), Rc::clone(&node));
+    nodes.insert(cache_key, Rc::clone(&node));
 
+    let mut children: IndexSet<RcByPtr<HoisterTree>> = IndexSet::new();
     collect_snapshot_deps(snapshot, lockfile, opts, nodes, &mut children)?;
-
-    // The placeholder we stashed in `nodes` is shared with anyone
-    // who recursed back into us. Swap its empty `dependencies` for
-    // the populated set by rebuilding the `Rc` — safe because we
-    // never handed out a `&HoisterTree` reference that's still
-    // live, only `Rc<HoisterTree>` clones that point at the same
-    // allocation. Existing clones see the rebuilt set because we
-    // overwrite the map entry too.
-    //
-    // (A cleaner pattern is `Rc<RefCell<HoisterTree>>` but `RefCell`
-    // pollutes every read site downstream. We re-Rc once at
-    // construction here.)
-    let finished = Rc::new(HoisterTree {
-        name: node.name.clone(),
-        ident_name: node.ident_name.clone(),
-        reference: node.reference.clone(),
-        peer_names: node.peer_names.clone(),
-        dependency_kind: node.dependency_kind,
-        hoist_priority: node.hoist_priority,
-        dependencies: children,
-    });
-    nodes.insert(cache_key, Rc::clone(&finished));
-    Ok(finished)
+    *node.dependencies.borrow_mut() = children;
+    Ok(node)
 }
 
 fn collect_snapshot_deps(
@@ -417,18 +435,17 @@ fn collect_snapshot_deps(
     let mut entries: Vec<_> = merged.into_iter().collect();
     entries.sort_by_key(|(alias, _)| alias.to_string());
     for (alias, dep_ref) in entries {
-        let resolved = dep_ref.resolve(alias);
-        let node = build_dep_node(alias, &resolved.suffix, lockfile, opts, nodes)?;
+        // `dep_ref.resolve(alias)` returns the *snapshot lookup
+        // key*: `<alias>@<ver>` for `Plain`, `<target>@<ver>` for
+        // an npm-alias `Alias`. Pass that as `dep_key` so the
+        // snapshot lookup hits the right entry. The node's exposed
+        // `name` stays `alias`; only the lookup uses the resolved
+        // target name.
+        let dep_key = dep_ref.resolve(alias);
+        let node = build_dep_node(alias, &dep_key, lockfile, opts, nodes)?;
         out.insert(RcByPtr(node));
     }
     Ok(())
-}
-
-/// Extract `name@version` from a snapshot key. The upstream
-/// `nameVerFromPkgSnapshot` returns just the name portion here; we
-/// rebuild it from the parsed key.
-fn pkg_name_from_key(key: &PkgNameVerPeer) -> String {
-    key.name.to_string()
 }
 
 /// Encode an importer id for use as a child node's `name`. Upstream
@@ -477,7 +494,14 @@ fn percent_encode_path(s: &str) -> String {
 /// hoisting happens. The real algorithm replaces this body.
 fn nm_hoist(tree: &HoisterTree, _opts: &HoistOpts) -> HoisterResult {
     let mut memo: HashMap<*const HoisterTree, Rc<HoisterResult>> = HashMap::new();
-    convert(tree, &mut memo).as_ref().clone()
+    // The root is fresh (no caller holds another Rc to it yet), so
+    // cloning the outer struct is cheap and only duplicates the
+    // top-level fields — the subtree children remain shared via the
+    // cloned RcByPtr values. Returning an owned `HoisterResult`
+    // (rather than `Rc<HoisterResult>`) keeps the wrapper's
+    // post-hoist `external_dependencies` filter from mutating the
+    // shared graph.
+    (*convert(tree, &mut memo)).clone()
 }
 
 fn convert(
@@ -488,41 +512,35 @@ fn convert(
     if let Some(existing) = memo.get(&ptr) {
         return Rc::clone(existing);
     }
-    // Stash a placeholder before recursing so cycles in the input
-    // graph short-circuit. The placeholder has empty children; the
-    // real conversion overwrites the memo entry below. Anyone who
-    // received the placeholder via a cycle reads its (then-empty)
-    // children — matches JS Set-identity dedup semantics where a
-    // node visited via a cycle yields the same object.
-    let placeholder = Rc::new(HoisterResult {
+    // Stash a node with empty `dependencies`, then recurse and
+    // populate the cell in place. Anyone reached via a back-edge
+    // gets `Rc::clone` of the same allocation and reads the
+    // (eventually-populated) cell — matches the in-place mutation
+    // semantics the real hoist algorithm needs.
+    let mut refs = BTreeSet::new();
+    refs.insert(tree.reference.clone());
+    let node = Rc::new(HoisterResult {
         name: tree.name.clone(),
         ident_name: tree.ident_name.clone(),
-        references: {
-            let mut s = BTreeSet::new();
-            s.insert(tree.reference.clone());
-            s
-        },
-        dependencies: IndexSet::new(),
+        references: RefCell::new(refs),
+        dependencies: RefCell::new(IndexSet::new()),
     });
-    memo.insert(ptr, Rc::clone(&placeholder));
+    memo.insert(ptr, Rc::clone(&node));
 
+    // Collect the children before recursing so we can drop the
+    // `Ref<'_, IndexSet<...>>` borrow on `tree.dependencies`. The
+    // recursion only reads (not mutates) `HoisterTree` cells, so
+    // holding the borrow across recursive calls is technically
+    // safe, but releasing it keeps the panic surface smaller if
+    // the algorithm later grows a mutation pass over the input.
+    let to_convert: Vec<RcByPtr<HoisterTree>> =
+        tree.dependencies.borrow().iter().cloned().collect();
     let mut children: IndexSet<RcByPtr<HoisterResult>> = IndexSet::new();
-    for child in &tree.dependencies {
+    for child in to_convert {
         children.insert(RcByPtr(convert(&child.0, memo)));
     }
-
-    let finished = Rc::new(HoisterResult {
-        name: tree.name.clone(),
-        ident_name: tree.ident_name.clone(),
-        references: {
-            let mut s = BTreeSet::new();
-            s.insert(tree.reference.clone());
-            s
-        },
-        dependencies: children,
-    });
-    memo.insert(ptr, Rc::clone(&finished));
-    finished
+    *node.dependencies.borrow_mut() = children;
+    node
 }
 
 #[cfg(test)]
