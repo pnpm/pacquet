@@ -419,13 +419,25 @@ async fn fetcher_skips_build_when_ignore_scripts() {
         package_id: "x@1.0.0",
         requester: "/test",
         store_index_writer: None,
-        files_index_file: "x@1.0.0\tnot-built",
+        // The key's `built` dimension reflects what the *dispatcher*
+        // would pass for `ignore_scripts: false`. Upstream's
+        // `pickStoreIndexKey` would flip this to `\tnot-built` when
+        // ignore-scripts is honored at the dispatcher layer; pacquet's
+        // dispatcher hardcodes `built=true` today (see
+        // `install_package_by_snapshot.rs`), so we mirror that here.
+        // `received.built` is the unrelated `should_be_built` flag from
+        // `prepare_package` (does the manifest declare a build?) — it
+        // can be `true` even when scripts were skipped.
+        files_index_file: "x@1.0.0\tbuilt",
     }
     .run::<SilentReporter>()
     .await
     .unwrap();
 
-    assert!(received.built, "package with prepare script still reports built when ignored");
+    assert!(
+        received.built,
+        "should_be_built must still report `true` when the manifest declares prepare scripts, even if ignore_scripts blocked them",
+    );
     assert!(received.cas_paths.contains_key("package.json"));
     assert!(received.cas_paths.contains_key("index.js"));
 }
