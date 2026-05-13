@@ -149,6 +149,7 @@ async fn fetcher_imports_package_into_cas() {
         requester: "/test",
         store_index_writer: None,
         files_index_file: "pkg@1.0.0\tbuilt",
+        git_bin: None,
     }
     .run::<SilentReporter>()
     .await
@@ -196,6 +197,7 @@ async fn fetcher_rejects_commit_mismatch() {
         requester: "/test",
         store_index_writer: None,
         files_index_file: "pkg@1.0.0\tbuilt",
+        git_bin: None,
     }
     .run::<SilentReporter>()
     .await
@@ -257,6 +259,7 @@ async fn fetcher_blocks_build_when_not_allowed() {
         requester: "/test",
         store_index_writer: None,
         files_index_file: "naughty@2.0.0\tbuilt",
+        git_bin: None,
     }
     .run::<SilentReporter>()
     .await
@@ -361,6 +364,7 @@ async fn fetcher_packs_subfolder_when_path_set() {
         requester: "/test",
         store_index_writer: None,
         files_index_file: "sub@1.0.0\tbuilt",
+        git_bin: None,
     }
     .run::<SilentReporter>()
     .await
@@ -410,6 +414,7 @@ async fn fetcher_handles_repo_without_package_json() {
         requester: "/test",
         store_index_writer: None,
         files_index_file: "anon@0.0.0\tbuilt",
+        git_bin: None,
     }
     .run::<SilentReporter>()
     .await
@@ -482,6 +487,7 @@ async fn fetcher_skips_build_when_ignore_scripts() {
         // `prepare_package` (does the manifest declare a build?) — it
         // can be `true` even when scripts were skipped.
         files_index_file: "x@1.0.0\tbuilt",
+        git_bin: None,
     }
     .run::<SilentReporter>()
     .await
@@ -539,6 +545,7 @@ async fn fetcher_runs_prepare_script_when_allowed() {
         requester: "/test",
         store_index_writer: None,
         files_index_file: "x@1.0.0\tbuilt",
+        git_bin: None,
     }
     .run::<SilentReporter>()
     .await
@@ -595,6 +602,7 @@ async fn fetcher_surfaces_prepare_failure() {
         requester: "/test",
         store_index_writer: None,
         files_index_file: "x@1.0.0\tbuilt",
+        git_bin: None,
     }
     .run::<SilentReporter>()
     .await
@@ -669,6 +677,7 @@ async fn fetcher_runs_prepare_when_allow_build_returns_true() {
         requester: "/test",
         store_index_writer: None,
         files_index_file: "x@1.0.0\tbuilt",
+        git_bin: None,
     }
     .run::<SilentReporter>()
     .await
@@ -700,11 +709,15 @@ async fn fetcher_runs_prepare_when_allow_build_returns_true() {
 /// the shim's source — keeping `printf '%s' "$VAR"` outside any
 /// shell-evaluation context means a `TMPDIR` containing `$` /
 /// backticks / `\` can't be re-interpreted by `/bin/sh` when the
-/// shim runs. Callers populate the env via the [`EnvGuard`] they
-/// already hold for `PATH`.
+/// shim runs. Callers populate the env via the [`EnvGuard`] each
+/// test holds.
 ///
-/// Returns the absolute path to the shim binary. The caller is
-/// responsible for prepending its parent directory to `PATH`.
+/// Returns the absolute path to the shim binary. The caller passes
+/// it as [`GitFetcher::git_bin`] so only *that* fetcher resolves git
+/// through the shim — process-global `PATH` is never touched, so
+/// sibling tests calling `Command::new("git")` (in fixture setup,
+/// or in unrelated git-fetcher tests) keep resolving to the real
+/// git binary unaffected.
 ///
 /// The shim handles every `git` invocation the fetcher might make
 /// — both the shallow path (`init`, `remote add origin`, `fetch
@@ -775,24 +788,28 @@ fn position_of(invocations: &[Vec<String>], argv: &[&str]) -> Option<usize> {
 /// achieves the same observation by:
 ///
 /// 1. Writing a tiny shell-script `git` to a temp dir.
-/// 2. Prepending that dir to `PATH` so `Command::new("git")`
-///    resolves to the shim instead of the system binary.
+/// 2. Passing the shim's path to the fetcher via
+///    [`GitFetcher::git_bin`] — process-global `PATH` is *not*
+///    touched, so sibling tests in the same binary that call
+///    `Command::new("git")` (fixture-setup helpers, ad-hoc test
+///    spawns) keep resolving to the real git binary.
 /// 3. Letting the fetcher run end-to-end against the shim.
 /// 4. Inspecting the shim's append-only log for the expected
 ///    invocation sequence.
+///
+/// The shim's two communication channels (log file path, fake
+/// commit) ride through env vars. Those vars *do* go through
+/// process-global env, but they're only consulted by the shim
+/// itself — real git ignores `PACQUET_GIT_SHIM_*`, so a sibling
+/// test concurrently spawning `git --version` won't be affected.
+/// [`EnvGuard`] serializes the two shim tests against each other
+/// so their log-path env vars can't cross-contaminate.
 ///
 /// The shim is Unix-only (it's a `/bin/sh` script). Windows hosts
 /// would need a `.cmd` shim and a different process-launch model;
 /// out of scope for this test. The `should_use_shallow_matches_known_host`
 /// unit test already covers the predicate cross-platform, so this
 /// test only adds end-to-end argv coverage for the shallow path.
-///
-/// Env-mutation safety: [`EnvGuard`] holds a process-wide mutex
-/// for the lifetime of the test body, so a concurrent
-/// `cargo test`-style run (threads inside one process) can't race
-/// the modified `PATH`. The guard also restores all three named
-/// variables on `Drop`, so a panic inside the test body still
-/// leaves the env clean for whatever runs next.
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn fetcher_uses_shallow_fetch_for_allowed_hosts() {
@@ -802,7 +819,7 @@ async fn fetcher_uses_shallow_fetch_for_allowed_hosts() {
     // Any 40-hex value works — the shim echoes it for `rev-parse
     // HEAD` and the fetcher accepts the match.
     let fake_commit = "c9b30e71d704cd30fa71f2edd1ecc7dcc4985493";
-    write_git_shim(&shim_dir);
+    let shim_path = write_git_shim(&shim_dir);
 
     let store_root = tempdir().unwrap();
     let store_dir = StoreDir::from(store_root.path().to_path_buf());
@@ -812,15 +829,11 @@ async fn fetcher_uses_shallow_fetch_for_allowed_hosts() {
     let repo_url = "git://test.invalid/x/y.git";
     let shallow_hosts = vec!["test.invalid".to_string()];
 
-    // Acquire the process-wide env lock and snapshot the three
-    // variables we'll touch. The guard's `Drop` restores them in
-    // the same order, even if the test body panics.
-    let env = EnvGuard::snapshot(["PATH", "PACQUET_GIT_SHIM_LOG", "PACQUET_GIT_SHIM_FAKE_COMMIT"]);
-    let original_path = std::env::var_os("PATH").unwrap_or_default();
-    let mut new_path = std::ffi::OsString::from(&shim_dir);
-    new_path.push(":");
-    new_path.push(&original_path);
-    env.set("PATH", &new_path);
+    // EnvGuard serializes the two `PACQUET_GIT_SHIM_*` setters so
+    // the *other* shim test can't observe our log path. Real git
+    // invocations elsewhere in the binary ignore these vars, so
+    // they don't need the same lock.
+    let env = EnvGuard::snapshot(["PACQUET_GIT_SHIM_LOG", "PACQUET_GIT_SHIM_FAKE_COMMIT"]);
     env.set("PACQUET_GIT_SHIM_LOG", &log_path);
     env.set("PACQUET_GIT_SHIM_FAKE_COMMIT", fake_commit);
 
@@ -842,6 +855,7 @@ async fn fetcher_uses_shallow_fetch_for_allowed_hosts() {
         requester: "/test",
         store_index_writer: None,
         files_index_file: "x@1.0.0\tbuilt",
+        git_bin: Some(&shim_path),
     }
     .run::<SilentReporter>()
     .await
@@ -891,7 +905,7 @@ async fn fetcher_clones_when_host_not_in_shallow_list() {
     let shim_dir = tmp.path().join("shim");
     let log_path = tmp.path().join("git-invocations.log");
     let fake_commit = "0000000000000000000000000000000000000001";
-    write_git_shim(&shim_dir);
+    let shim_path = write_git_shim(&shim_dir);
 
     let store_root = tempdir().unwrap();
     let store_dir = StoreDir::from(store_root.path().to_path_buf());
@@ -899,12 +913,7 @@ async fn fetcher_clones_when_host_not_in_shallow_list() {
     // Configured host doesn't match the URL's host → non-shallow.
     let shallow_hosts = vec!["test.invalid".to_string()];
 
-    let env = EnvGuard::snapshot(["PATH", "PACQUET_GIT_SHIM_LOG", "PACQUET_GIT_SHIM_FAKE_COMMIT"]);
-    let original_path = std::env::var_os("PATH").unwrap_or_default();
-    let mut new_path = std::ffi::OsString::from(&shim_dir);
-    new_path.push(":");
-    new_path.push(&original_path);
-    env.set("PATH", &new_path);
+    let env = EnvGuard::snapshot(["PACQUET_GIT_SHIM_LOG", "PACQUET_GIT_SHIM_FAKE_COMMIT"]);
     env.set("PACQUET_GIT_SHIM_LOG", &log_path);
     env.set("PACQUET_GIT_SHIM_FAKE_COMMIT", fake_commit);
 
@@ -926,6 +935,7 @@ async fn fetcher_clones_when_host_not_in_shallow_list() {
         requester: "/test",
         store_index_writer: None,
         files_index_file: "x@1.0.0\tbuilt",
+        git_bin: Some(&shim_path),
     }
     .run::<SilentReporter>()
     .await

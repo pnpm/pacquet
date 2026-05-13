@@ -51,19 +51,6 @@ runs:
       if: runner.os != 'macOS'
       run: sed -i '/profile/d' rust-toolchain.toml
 
-    - name: Ensure rustup proxies take precedence on PATH
-      shell: bash
-      # GitHub-hosted macOS images ship `rustup-init` symlinked as
-      # `cargo` / `rustc` in `/usr/local/bin/` (ahead of the rustup
-      # proxies in `~/.cargo/bin/`). When `cargo clippy` runs from
-      # this image, it resolves to `rustup-init` and errors with
-      # `unexpected argument 'clippy' found / Usage: rustup-init[EXE]`.
-      # Prepending `~/.cargo/bin` to `GITHUB_PATH` ensures every later
-      # step picks the rustup proxies first; rustup proper still lives
-      # at the same path, so `rustup ...` invocations below are
-      # unaffected.
-      run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
     - name: Set minimal
       shell: bash
       run: rustup set profile minimal
