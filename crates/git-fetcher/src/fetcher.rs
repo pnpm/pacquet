@@ -1,5 +1,5 @@
 //! Shell out to the system `git` binary, check out the pinned commit,
-//! run [`crate::prepare_package`], delete `.git`, run [`crate::packlist`],
+//! run [`crate::prepare_package()`], delete `.git`, run [`crate::packlist()`],
 //! and import the resulting file set into the CAS.
 //!
 //! Ports pnpm's
@@ -38,7 +38,7 @@ pub struct GitFetcher<'a> {
     /// Hosts that opt into `git init` + `git fetch --depth 1` instead
     /// of a full clone. Mirrors `Config::git_shallow_hosts`.
     pub git_shallow_hosts: &'a [String],
-    /// Closure routes through [`crate::prepare_package`]'s
+    /// Closure routes through [`crate::prepare_package()`]'s
     /// `allow_build`. The caller (typically the install dispatcher) is
     /// responsible for plumbing whatever policy structure it has into
     /// this closure shape.
@@ -101,6 +101,13 @@ impl<'a> GitFetcher<'a> {
             });
         }
 
+        // `extra_env` is a borrow rather than `Option<&HashMap>` so the
+        // shape matches upstream's `runLifecycleHook` options exactly.
+        // Bind an empty map to a local so the borrow has the same lifetime
+        // as `prepare_opts` itself — relying on `&HashMap::new()`'s
+        // temporary-lifetime extension here would work today but is
+        // brittle to future expression-reshape edits in this block.
+        let empty_env: HashMap<String, String> = HashMap::new();
         let prepare_opts = PreparePackageOptions {
             allow_build: Box::new(|name, version| (self.allow_build)(name, version)),
             ignore_scripts: self.ignore_scripts,
@@ -111,7 +118,7 @@ impl<'a> GitFetcher<'a> {
             node_execpath: self.node_execpath,
             npm_execpath: self.npm_execpath,
             extra_bin_paths: &[],
-            extra_env: &HashMap::new(),
+            extra_env: &empty_env,
         };
         let PreparedPackage { pkg_dir, should_be_built } =
             match prepare_package::<R>(&prepare_opts, temp_location, self.path) {

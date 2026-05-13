@@ -214,14 +214,17 @@ fn glob_match_inner(pattern: &[u8], candidate: &[u8]) -> bool {
             star_c = c;
             continue;
         }
-        if p < pattern.len()
-            && (pattern[p] == b'?' || pattern[p] == candidate[c])
-            && pattern[p] != b'/'
-            || (p < pattern.len() && pattern[p] == candidate[c])
-        {
-            p += 1;
-            c += 1;
-            continue;
+        // `?` matches any single non-slash byte; otherwise the byte
+        // must match exactly. (Without the explicit `candidate[c] !=
+        // b'/'` gate, `a?b` would incorrectly match `a/b`.)
+        if p < pattern.len() {
+            let pc = pattern[p];
+            let matches = (pc == b'?' && candidate[c] != b'/') || pc == candidate[c];
+            if matches {
+                p += 1;
+                c += 1;
+                continue;
+            }
         }
         if let Some(sp) = star_p {
             // Backtrack: the `*` swallows one more candidate byte.

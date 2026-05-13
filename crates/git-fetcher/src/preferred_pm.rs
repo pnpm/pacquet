@@ -14,7 +14,7 @@ use std::path::Path;
 
 /// Package manager a git-hosted dep wants to install with. The variant
 /// drives the synthesized `<pm>-install` script in
-/// [`crate::prepare_package`].
+/// [`crate::prepare_package()`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreferredPm {
     Pnpm,

@@ -1,7 +1,7 @@
 use derive_more::{Display, Error};
 use pacquet_diagnostics::miette::{self, Diagnostic};
 
-/// Error type of [`crate::prepare_package`].
+/// Error type of [`crate::prepare_package()`].
 ///
 /// Mirrors the upstream error codes thrown by
 /// [`exec/prepare-package`](https://github.com/pnpm/pnpm/blob/94240bc046/exec/prepare-package/src/index.ts).
@@ -49,7 +49,7 @@ pub enum PreparePackageError {
     Io(#[error(source)] std::io::Error),
 }
 
-/// Error type of [`crate::packlist`]. Surfaces the subset of npm-packlist
+/// Error type of [`crate::packlist()`]. Surfaces the subset of npm-packlist
 /// failures the MVP scope can produce.
 #[derive(Debug, Display, Error, Diagnostic)]
 #[non_exhaustive]

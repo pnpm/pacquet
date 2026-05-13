@@ -118,6 +118,26 @@ fn main_and_bin_paths_are_force_included_under_files_field() {
 }
 
 #[test]
+fn question_mark_does_not_cross_directory() {
+    // Regression: `?` matches a single non-slash byte, not arbitrary
+    // characters. Without the explicit `/` guard, `a?b/index.js` would
+    // incorrectly match `a/b/index.js`.
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    touch(root, "package.json");
+    touch(root, "a/b/index.js");
+
+    let manifest = json!({
+        "name": "x",
+        "version": "0.0.0",
+        "files": ["a?b/index.js"],
+    });
+    let out = packlist(root, &manifest).unwrap();
+
+    assert!(!out.iter().any(|p| p == "a/b/index.js"), "`?` must not match `/`; received {out:?}",);
+}
+
+#[test]
 fn single_star_does_not_cross_directory() {
     let dir = tempdir().unwrap();
     let root = dir.path();
