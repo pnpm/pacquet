@@ -21,6 +21,7 @@ fn deserialize_tarball_resolution() {
     let expected = LockfileResolution::Tarball(TarballResolution {
         tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
         integrity: None,
+        git_hosted: None,
     });
     assert_eq!(received, expected);
 
@@ -33,7 +34,94 @@ fn deserialize_tarball_resolution() {
     dbg!(&received);
     let expected = LockfileResolution::Tarball(TarballResolution {
         tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
-        integrity: integrity("sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==").into()
+        integrity: integrity("sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==").into(),
+        git_hosted: None,
+    });
+    assert_eq!(received, expected);
+}
+
+#[test]
+fn deserialize_tarball_resolution_with_git_hosted() {
+    eprintln!("CASE: explicit gitHosted: true");
+    let yaml = text_block! {
+        "tarball: https://codeload.github.com/foo/bar/tar.gz/abc1234"
+        "gitHosted: true"
+    };
+    let received: LockfileResolution = serde_saphyr::from_str(yaml).unwrap();
+    dbg!(&received);
+    let expected = LockfileResolution::Tarball(TarballResolution {
+        tarball: "https://codeload.github.com/foo/bar/tar.gz/abc1234".to_string(),
+        integrity: None,
+        git_hosted: Some(true),
+    });
+    assert_eq!(received, expected);
+}
+
+#[test]
+fn deserialize_tarball_resolution_backfills_git_hosted() {
+    // Lockfiles written by older pnpm versions don't carry `gitHosted`; the
+    // loader back-fills it for entries whose URL matches a known git host.
+    // Mirrors upstream's `enrichGitHostedFlag`.
+    eprintln!("CASE: codeload.github.com");
+    let yaml = text_block! {
+        "tarball: https://codeload.github.com/foo/bar/tar.gz/abc1234"
+    };
+    let received: LockfileResolution = serde_saphyr::from_str(yaml).unwrap();
+    dbg!(&received);
+    let expected = LockfileResolution::Tarball(TarballResolution {
+        tarball: "https://codeload.github.com/foo/bar/tar.gz/abc1234".to_string(),
+        integrity: None,
+        git_hosted: Some(true),
+    });
+    assert_eq!(received, expected);
+
+    eprintln!("CASE: gitlab.com archive");
+    let yaml = text_block! {
+        "tarball: https://gitlab.com/foo/bar/-/archive/abc1234/bar-abc1234.tar.gz"
+    };
+    let received: LockfileResolution = serde_saphyr::from_str(yaml).unwrap();
+    let expected = LockfileResolution::Tarball(TarballResolution {
+        tarball: "https://gitlab.com/foo/bar/-/archive/abc1234/bar-abc1234.tar.gz".to_string(),
+        integrity: None,
+        git_hosted: Some(true),
+    });
+    assert_eq!(received, expected);
+
+    eprintln!("CASE: bitbucket.org archive");
+    let yaml = text_block! {
+        "tarball: https://bitbucket.org/foo/bar/get/abc1234.tar.gz"
+    };
+    let received: LockfileResolution = serde_saphyr::from_str(yaml).unwrap();
+    let expected = LockfileResolution::Tarball(TarballResolution {
+        tarball: "https://bitbucket.org/foo/bar/get/abc1234.tar.gz".to_string(),
+        integrity: None,
+        git_hosted: Some(true),
+    });
+    assert_eq!(received, expected);
+
+    eprintln!("CASE: registry URL (must not back-fill)");
+    let yaml = text_block! {
+        "tarball: https://registry.npmjs.org/foo/-/foo-1.0.0.tgz"
+    };
+    let received: LockfileResolution = serde_saphyr::from_str(yaml).unwrap();
+    let expected = LockfileResolution::Tarball(TarballResolution {
+        tarball: "https://registry.npmjs.org/foo/-/foo-1.0.0.tgz".to_string(),
+        integrity: None,
+        git_hosted: None,
+    });
+    assert_eq!(received, expected);
+
+    eprintln!("CASE: github.com without tar.gz (must not back-fill)");
+    // Upstream's prefix check requires both the host prefix *and* a `tar.gz`
+    // substring — release pages aren't tarballs.
+    let yaml = text_block! {
+        "tarball: https://codeload.github.com/foo/bar/zip/abc1234"
+    };
+    let received: LockfileResolution = serde_saphyr::from_str(yaml).unwrap();
+    let expected = LockfileResolution::Tarball(TarballResolution {
+        tarball: "https://codeload.github.com/foo/bar/zip/abc1234".to_string(),
+        integrity: None,
+        git_hosted: None,
     });
     assert_eq!(received, expected);
 }
@@ -44,6 +132,7 @@ fn serialize_tarball_resolution() {
     let resolution = LockfileResolution::Tarball(TarballResolution {
         tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
         integrity: None,
+        git_hosted: None,
     });
     let received = serialize_yaml::to_string(&resolution).unwrap();
     let received = received.trim();
@@ -56,7 +145,8 @@ fn serialize_tarball_resolution() {
     eprintln!("CASE: with integrity");
     let resolution = LockfileResolution::Tarball(TarballResolution {
         tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
-        integrity: integrity("sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==").into()
+        integrity: integrity("sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==").into(),
+        git_hosted: None,
     });
     let received = serialize_yaml::to_string(&resolution).unwrap();
     let received = received.trim();
@@ -64,6 +154,24 @@ fn serialize_tarball_resolution() {
     let expected = text_block! {
         "tarball: file:ts-pipe-compose-0.2.1.tgz"
         "integrity: sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg=="
+    };
+    assert_eq!(received, expected);
+}
+
+#[test]
+fn serialize_tarball_resolution_with_git_hosted() {
+    let resolution = LockfileResolution::Tarball(TarballResolution {
+        tarball: "https://codeload.github.com/foo/bar/tar.gz/abc1234".to_string(),
+        integrity: integrity("sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==").into(),
+        git_hosted: Some(true),
+    });
+    let received = serialize_yaml::to_string(&resolution).unwrap();
+    let received = received.trim();
+    eprintln!("RECEIVED:\n{received}");
+    let expected = text_block! {
+        "tarball: https://codeload.github.com/foo/bar/tar.gz/abc1234"
+        "integrity: sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg=="
+        "gitHosted: true"
     };
     assert_eq!(received, expected);
 }

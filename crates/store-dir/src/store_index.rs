@@ -707,6 +707,42 @@ pub fn store_index_key(integrity: &str, pkg_id: &str) -> String {
     format!("{integrity}\t{pkg_id}")
 }
 
+/// Store-index key for git-hosted tarballs and bare `type: git` resolutions.
+/// Mirrors pnpm's `gitHostedStoreIndexKey` at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/store/index/src/index.ts#L65-L67>.
+///
+/// The cached content of a git-hosted package depends on whether build scripts
+/// ran during fetch (`preparePackage`), so `built` is part of the key. The
+/// integrity-only key would collapse the built/not-built variants into one
+/// slot.
+pub fn git_hosted_store_index_key(pkg_id: &str, built: bool) -> String {
+    store_index_key(pkg_id, if built { "built" } else { "not-built" })
+}
+
+/// Pick the store-index key for a tarball-shaped resolution.
+///
+/// Mirrors pnpm's `pickStoreIndexKey` at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/store/index/src/index.ts#L85-L94>:
+///
+/// - Tarballs flagged `git_hosted: true`, or any tarball entry missing
+///   integrity, use [`git_hosted_store_index_key`] — the cached content
+///   depends on whether the build ran.
+/// - All other integrity-carrying tarballs use [`store_index_key`].
+///
+/// The `built` flag must match the build decision the caller will make at
+/// fetch time (upstream sets it to `!opts.ignoreScripts`).
+pub fn pick_store_index_key(
+    integrity: Option<&str>,
+    git_hosted: bool,
+    pkg_id: &str,
+    built: bool,
+) -> String {
+    match integrity {
+        Some(integrity) if !git_hosted => store_index_key(integrity, pkg_id),
+        _ => git_hosted_store_index_key(pkg_id, built),
+    }
+}
+
 /// Per-instance record of what a tarball contributed to the CAFS. Stored as the
 /// value half of each `package_index` row.
 ///

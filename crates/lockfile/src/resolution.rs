@@ -10,6 +10,19 @@ pub struct TarballResolution {
     pub tarball: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub integrity: Option<Integrity>,
+    /// `true` for tarballs sourced from a git host (codeload.github.com /
+    /// gitlab.com / bitbucket.org). Such tarballs need preparation
+    /// (preparePackage / packlist) on extraction, and their cached content
+    /// depends on whether build scripts ran, so they are addressed by a
+    /// git-hosted store-index key rather than the integrity-based key.
+    ///
+    /// The git resolver sets this when it produces the resolution; the
+    /// lockfile loader back-fills it on entries whose URL matches a known
+    /// git host for backward compatibility with lockfiles written before
+    /// this field existed. Mirrors pnpm's `TarballResolution.gitHosted`
+    /// at <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/types/src/index.ts#L88-L107>.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_hosted: Option<bool>,
 }
 
 /// For standard package specification, with package name and version range.
@@ -75,12 +88,33 @@ enum ResolutionSerde {
 impl From<ResolutionSerde> for LockfileResolution {
     fn from(value: ResolutionSerde) -> Self {
         match value {
-            ResolutionSerde::Tarball(resolution) => resolution.into(),
+            ResolutionSerde::Tarball(mut resolution) => {
+                // Back-fill `gitHosted` for entries written by older pnpm
+                // versions that lacked the field. Mirrors upstream's
+                // `enrichGitHostedFlag` at
+                // <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/fs/src/lockfileFormatConverters.ts#L158-L168>.
+                if resolution.git_hosted.is_none() && is_git_hosted_tarball_url(&resolution.tarball)
+                {
+                    resolution.git_hosted = Some(true);
+                }
+                resolution.into()
+            }
             ResolutionSerde::Registry(resolution) => resolution.into(),
             ResolutionSerde::Tagged(TaggedResolution::Directory(resolution)) => resolution.into(),
             ResolutionSerde::Tagged(TaggedResolution::Git(resolution)) => resolution.into(),
         }
     }
+}
+
+/// Best-effort URL-prefix check used to back-fill `gitHosted` on tarball
+/// resolutions written by older pnpm versions. Mirrors upstream's
+/// `isGitHostedTarballUrl` at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/fs/src/lockfileFormatConverters.ts#L23-L29>.
+fn is_git_hosted_tarball_url(url: &str) -> bool {
+    (url.starts_with("https://codeload.github.com/")
+        || url.starts_with("https://bitbucket.org/")
+        || url.starts_with("https://gitlab.com/"))
+        && url.contains("tar.gz")
 }
 
 impl From<LockfileResolution> for ResolutionSerde {
