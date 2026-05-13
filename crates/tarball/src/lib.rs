@@ -247,14 +247,23 @@ pub enum TarballError {
 
     /// Per-entry I/O failure during zip extraction — `try_reserve`
     /// for the entry's payload, the body read, or any other
-    /// [`std::io::Error`] surfaced from the zip iterator. Kept
-    /// separate from [`TarballError::ReadTarballEntries`] so the
-    /// retry-classification path emits `ERR_PACQUET_ZIP` rather
-    /// than the tar-specific `ERR_PACQUET_TARBALL_TAR`.
+    /// [`std::io::Error`] surfaced from the zip iterator. Carries
+    /// the archive URL and the entry path that triggered the
+    /// failure so a corrupt archive is diagnosable from the user-
+    /// facing message; the underlying [`std::io::Error`] is
+    /// exposed as `source` for miette / `Error::source` walkers.
+    /// Kept separate from [`TarballError::ReadTarballEntries`] so
+    /// the retry-classification path emits `ERR_PACQUET_ZIP`
+    /// rather than the tar-specific `ERR_PACQUET_TARBALL_TAR`.
     #[from(ignore)]
-    #[display("Failed to read zip entry: {_0}")]
+    #[display("Failed to read zip entry {entry_path:?} from {url}: {source}")]
     #[diagnostic(code(pacquet_tarball::read_zip_entry))]
-    ReadZipEntries(std::io::Error),
+    ReadZipEntries {
+        url: String,
+        entry_path: String,
+        #[error(source)]
+        source: std::io::Error,
+    },
 }
 
 /// Per-package callback that decides whether a given archive entry
@@ -794,13 +803,19 @@ fn extract_zip_entries(
         const MAX_ENTRY_PREALLOC_BYTES: u64 = 64 * 1024 * 1024;
         let prealloc_hint = entry.size().min(MAX_ENTRY_PREALLOC_BYTES) as usize;
         let mut buffer = Vec::new();
-        buffer.try_reserve(prealloc_hint).map_err(|err| {
-            TarballError::ReadZipEntries(std::io::Error::new(
+        buffer.try_reserve(prealloc_hint).map_err(|err| TarballError::ReadZipEntries {
+            url: package_url.to_string(),
+            entry_path: cleaned.clone(),
+            source: std::io::Error::new(
                 std::io::ErrorKind::OutOfMemory,
                 format!("failed to reserve {prealloc_hint} bytes for zip entry: {err}"),
-            ))
+            ),
         })?;
-        entry.read_to_end(&mut buffer).map_err(TarballError::ReadZipEntries)?;
+        entry.read_to_end(&mut buffer).map_err(|source| TarballError::ReadZipEntries {
+            url: package_url.to_string(),
+            entry_path: cleaned.clone(),
+            source,
+        })?;
 
         // Central-directory record carries a Unix mode only when
         // the archive was built by a Unix tool; Windows-built
@@ -1292,7 +1307,7 @@ fn tarball_error_to_request_retry(err: &TarballError) -> RequestRetryError {
         TarballError::PathTraversal { .. } => {
             out.code = Some("ERR_PACQUET_PATH_TRAVERSAL".to_string());
         }
-        TarballError::ReadZipArchive { .. } | TarballError::ReadZipEntries(_) => {
+        TarballError::ReadZipArchive { .. } | TarballError::ReadZipEntries { .. } => {
             out.code = Some("ERR_PACQUET_ZIP".to_string());
         }
     }
@@ -1955,6 +1970,10 @@ impl<'a> DownloadTarballToStore<'a> {
 // 8 arguments — over the default clippy threshold, but each is
 // distinct (see the matching note on `fetch_and_extract_zip_with_retry`).
 #[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "arg count is set by upstream pnpm's fetcher signature"
+)]
 async fn fetch_and_extract_zip_once<R: Reporter>(
     http_client: &ThrottledClient,
     package_url: &str,
@@ -1962,6 +1981,7 @@ async fn fetch_and_extract_zip_once<R: Reporter>(
     package_id: &str,
     attempt: u32,
     store_dir: &'static StoreDir,
+    auth_headers: &AuthHeaders,
     archive_prefix: Option<&str>,
     ignore_file_pattern: Option<Arc<IgnoreEntryFilter>>,
 ) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
@@ -1970,7 +1990,19 @@ async fn fetch_and_extract_zip_once<R: Reporter>(
 
     let client = http_client.acquire().await;
 
-    let send_result = client.get(package_url).send().await;
+    let mut request = client.get(package_url);
+    // Match the tarball download path: resolve the per-URL auth
+    // header and attach it. Runtime artifacts (Node.js, Bun, Deno)
+    // are typically downloaded from public hosts that don't require
+    // auth, but a self-hosted mirror behind a token-protected proxy
+    // would 401 without this. Keeps parity with pnpm's binary
+    // fetcher which goes through the same `fetchFromRegistry` /
+    // auth-header plumbing.
+    if let Some(value) = auth_headers.for_url(package_url) {
+        request = request.header("authorization", value);
+    }
+
+    let send_result = request.send().await;
     let size = send_result.as_ref().ok().and_then(|r| r.content_length());
     R::emit(&LogEvent::FetchingProgress(FetchingProgressLog {
         level: LogLevel::Debug,
@@ -2090,11 +2122,14 @@ async fn fetch_and_extract_zip_once<R: Reporter>(
 /// backoff until [`RetryOpts::retries`] is exhausted. On success
 /// emits `pnpm:progress fetched` once per (resolved) package, same
 /// as the tarball path.
-// 9 arguments — over the default clippy threshold for the same
+// 10 arguments — over the default clippy threshold for the same
 // reason `fetch_and_extract_with_retry` is: each is distinct, and
 // bundling into a struct would just push the same fields into a
 // wrapper.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "arg count is set by upstream pnpm's fetcher signature"
+)]
 async fn fetch_and_extract_zip_with_retry<R: Reporter>(
     http_client: &ThrottledClient,
     package_url: &str,
@@ -2103,6 +2138,7 @@ async fn fetch_and_extract_zip_with_retry<R: Reporter>(
     requester: &str,
     store_dir: &'static StoreDir,
     retry_opts: RetryOpts,
+    auth_headers: &AuthHeaders,
     archive_prefix: Option<&str>,
     ignore_file_pattern: Option<Arc<IgnoreEntryFilter>>,
 ) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
@@ -2115,6 +2151,7 @@ async fn fetch_and_extract_zip_with_retry<R: Reporter>(
             package_id,
             attempt,
             store_dir,
+            auth_headers,
             archive_prefix,
             ignore_file_pattern.clone(),
         )
@@ -2196,6 +2233,11 @@ pub struct DownloadZipArchiveToStore<'a> {
     pub requester: &'a str,
     pub prefetched_cas_paths: Option<&'a PrefetchedCasPaths>,
     pub retry_opts: RetryOpts,
+    /// Auth headers resolved at install start. The zip pipeline
+    /// applies the per-URL match the same way the tarball pipeline
+    /// does (`AuthHeaders::for_url`), so a runtime archive hosted
+    /// behind a token-protected proxy still authenticates correctly.
+    pub auth_headers: &'a AuthHeaders,
     /// Basename of the archive's top-level directory, mirroring the
     /// `prefix` field on `pacquet_lockfile::BinaryResolution`. The
     /// zip extractor strips `{prefix}/` from each entry path before
@@ -2227,6 +2269,7 @@ impl<'a> DownloadZipArchiveToStore<'a> {
             verify_store_integrity,
             prefetched_cas_paths,
             retry_opts,
+            auth_headers,
             archive_prefix,
             ..
         } = self;
@@ -2276,6 +2319,7 @@ impl<'a> DownloadZipArchiveToStore<'a> {
             requester,
             store_dir,
             retry_opts,
+            auth_headers,
             archive_prefix,
             ignore_file_pattern,
         )
