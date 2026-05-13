@@ -2,7 +2,7 @@ use crate::{
     AllowBuildPolicy, BuildModules, BuildModulesError, CreateVirtualStore, CreateVirtualStoreError,
     CreateVirtualStoreOutput, InstallabilityHost, LinkVirtualStoreBins, LinkVirtualStoreBinsError,
     SkippedSnapshots, SymlinkDirectDependencies, SymlinkDirectDependenciesError,
-    VersionPolicyError, compute_skipped_snapshots,
+    VersionPolicyError, any_installability_constraint, compute_skipped_snapshots,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
@@ -139,25 +139,24 @@ where
         // existing best-effort stance on cache writes.
         let (store_index_writer, writer_task) = StoreIndexWriter::spawn(&config.store_dir);
 
-        // Detect the host environment once per install. `node --version`
-        // and the OS/CPU/libc lookups are synchronous and cheap, but
-        // `detect_node_version` spawns a child process — run on the
-        // blocking pool so it doesn't stall the reactor thread.
-        // Mirrors upstream's single-pass `getSystemNodeVersion()` /
-        // `process.platform` resolution at
-        // <https://github.com/pnpm/pnpm/blob/94240bc046/config/package-is-installable/src/index.ts#L90>.
-        let host =
-            tokio::task::spawn_blocking(InstallabilityHost::detect).await.unwrap_or_else(|_| {
-                InstallabilityHost {
-                    node_version: "99999.0.0".to_string(),
-                    node_detected: false,
-                    os: pacquet_graph_hasher::host_platform(),
-                    cpu: pacquet_graph_hasher::host_arch(),
-                    libc: pacquet_graph_hasher::host_libc(),
-                    supported_architectures: None,
-                    engine_strict: false,
-                }
-            });
+        // Caller-side fast-path for the installability check. The
+        // common case (no lockfile metadata row declares an
+        // `engines` / `cpu` / `os` / `libc` constraint) lets us skip
+        // both [`InstallabilityHost::detect`] and
+        // [`compute_skipped_snapshots`] entirely. Spawning
+        // `node --version` here would otherwise serialize the
+        // node-binary startup with `CreateVirtualStore::run` (the
+        // dominant cost of a cold install), giving up the overlap
+        // pacquet had before — see the previous benchmark regression
+        // on this PR.
+        //
+        // When constraints DO exist, the host is needed before
+        // extraction (so `CreateVirtualStore` can suppress slots for
+        // skipped snapshots), and the spawn cost is unavoidable.
+        let needs_installability_check = match (snapshots, packages) {
+            (Some(snaps), Some(pkgs)) if !snaps.is_empty() => any_installability_constraint(pkgs),
+            _ => false,
+        };
 
         // Build the per-install [`SkippedSnapshots`] set. For every
         // lockfile snapshot, run the installability check against
@@ -165,15 +164,35 @@ where
         // the set and fire `pnpm:skipped-optional-dependency`.
         // Mirrors pnpm's headless re-check at
         // <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L206-L215>.
-        let skipped: SkippedSnapshots = match snapshots {
-            Some(snapshots) => match packages {
-                Some(packages) => {
-                    compute_skipped_snapshots::<R>(snapshots, packages, &host, requester)
-                        .map_err(InstallFrozenLockfileError::Installability)?
-                }
-                None => SkippedSnapshots::new(),
-            },
-            None => SkippedSnapshots::new(),
+        //
+        // `host` is built only when needed. The detection path runs
+        // `node --version` on the blocking pool so it doesn't stall
+        // the reactor thread.
+        let (skipped, host_node) = if needs_installability_check {
+            let host = tokio::task::spawn_blocking(InstallabilityHost::detect)
+                .await
+                .unwrap_or_else(|_| InstallabilityHost {
+                    node_version: "99999.0.0".to_string(),
+                    node_detected: false,
+                    os: pacquet_graph_hasher::host_platform(),
+                    cpu: pacquet_graph_hasher::host_arch(),
+                    libc: pacquet_graph_hasher::host_libc(),
+                    supported_architectures: None,
+                    engine_strict: false,
+                });
+            let s = compute_skipped_snapshots::<R>(
+                snapshots.expect("guarded by needs_installability_check"),
+                packages.expect("guarded by needs_installability_check"),
+                &host,
+                requester,
+            )
+            .map_err(InstallFrozenLockfileError::Installability)?;
+            // Preserve `node_detected` + `node_version` for the
+            // engine-name derivation below. Dropping the rest of the
+            // host struct frees the allocations early.
+            (s, Some((host.node_detected, host.node_version)))
+        } else {
+            (SkippedSnapshots::new(), None)
         };
 
         let CreateVirtualStoreOutput { package_manifests, side_effects_maps_by_snapshot } =
@@ -194,21 +213,31 @@ where
             .await
             .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
 
-        // `engine_name` for the side-effects-cache lookup. Derived
-        // from the host's full node version we just detected — the
-        // cache key only needs the major, so strip and reuse rather
-        // than spawning `node --version` a second time. Falls back
-        // to `None` when `node --version` itself didn't run; the
-        // installability path uses a synthetic version in that case,
-        // and feeding that synthetic into the cache key would poison
-        // the cache with rows keyed on a value subsequent installs
-        // won't match. Mirrors the prior `detect_node_major` flow
-        // upstream depends on.
-        let engine_name: Option<String> = if host.node_detected {
-            parse_major_from_version(&host.node_version)
-                .map(|major| pacquet_graph_hasher::engine_name(major, None, None))
-        } else {
-            None
+        // `engine_name` for the side-effects-cache lookup.
+        //
+        // Two paths:
+        // - We already detected the host for the installability
+        //   check (constraint-bearing lockfile): reuse the cached
+        //   version. The synthetic-fallback case (`node_detected = false`)
+        //   yields `None` so a bogus `99999.0.0`-derived key can't
+        //   poison the cache.
+        // - We skipped the installability check (constraint-free
+        //   lockfile, the common case): no cached version. Fall
+        //   back to the legacy `detect_node_major` spawn — run
+        //   after `CreateVirtualStore::run` so it overlaps with
+        //   nothing on the critical path. This is the same
+        //   placement upstream used to have.
+        let engine_name: Option<String> = match &host_node {
+            Some((true, ver)) => parse_major_from_version(ver)
+                .map(|major| pacquet_graph_hasher::engine_name(major, None, None)),
+            Some((false, _)) => None,
+            None => tokio::task::spawn_blocking(|| {
+                pacquet_graph_hasher::detect_node_major()
+                    .map(|major| pacquet_graph_hasher::engine_name(major, None, None))
+            })
+            .await
+            .ok()
+            .flatten(),
         };
 
         SymlinkDirectDependencies {

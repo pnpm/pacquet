@@ -255,9 +255,16 @@ pub fn compute_skipped_snapshots<R: Reporter>(
 /// True if any package metadata row in the lockfile declares an
 /// `engines` / `cpu` / `os` / `libc` constraint pacquet would need
 /// to evaluate. Short-circuits on the first hit. When this returns
-/// false, [`compute_skipped_snapshots`] skips the per-snapshot pass
-/// entirely.
-fn any_installability_constraint(packages: &HashMap<PackageKey, PackageMetadata>) -> bool {
+/// false, both [`compute_skipped_snapshots`] and the caller can
+/// short-circuit: no need to spawn `node --version` or build the
+/// host context, because the verdict is unconditionally an empty
+/// skip set.
+///
+/// `pub` so `install_frozen_lockfile` can gate the host detection
+/// on it — the spawn is otherwise on the critical path of
+/// `CreateVirtualStore::run` and serializes ~100ms of node-binary
+/// startup with extraction it used to overlap with.
+pub fn any_installability_constraint(packages: &HashMap<PackageKey, PackageMetadata>) -> bool {
     packages
         .values()
         .any(|m| m.engines.is_some() || m.cpu.is_some() || m.os.is_some() || m.libc.is_some())
