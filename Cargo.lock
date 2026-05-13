@@ -2146,6 +2146,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pacquet-real-hoist"
+version = "0.0.1"
+dependencies = [
+ "derive_more",
+ "indexmap",
+ "miette 7.6.0",
+ "pacquet-lockfile",
+ "pretty_assertions",
+]
+
+[[package]]
 name = "pacquet-registry"
 version = "0.0.1"
 dependencies = [
