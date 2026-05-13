@@ -41,7 +41,7 @@ use std::collections::HashMap;
 /// Example: `react-dom@17.0.2(react@17.0.2)`.
 pub type PackageKey = PkgNameVerPeer;
 
-#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LockfileSettings {
     pub auto_install_peers: bool,
@@ -52,7 +52,7 @@ pub struct LockfileSettings {
 ///
 /// Specification: <https://github.com/pnpm/spec/blob/834f2815cc/lockfile/9.0.md>
 /// Reference: <https://github.com/pnpm/pnpm/blob/1819226b51/lockfile/types/src/index.ts>
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Lockfile {
     pub lockfile_version: LockfileVersion<9>,
