@@ -206,11 +206,16 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
         // disk). The frozen-lockfile path skips both via
         // [`LinkVirtualStoreBins::snapshots`] / `package_manifests`.
         let empty_manifests = std::collections::HashMap::new();
+        let empty_skipped = crate::SkippedSnapshots::new();
         LinkVirtualStoreBins {
             virtual_store_dir: &config.virtual_store_dir,
             snapshots: None,
             packages: None,
             package_manifests: &empty_manifests,
+            // The without-lockfile path has no installability check
+            // (no `packages:` metadata to evaluate constraints
+            // against), so the skip set is empty by definition.
+            skipped: &empty_skipped,
         }
         .run()
         .map_err(InstallWithoutLockfileError::LinkVirtualStoreBins)?;

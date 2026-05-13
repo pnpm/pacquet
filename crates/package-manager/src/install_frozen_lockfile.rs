@@ -265,6 +265,7 @@ where
             snapshots,
             packages,
             package_manifests: &package_manifests,
+            skipped: &skipped,
         }
         .run()
         .map_err(InstallFrozenLockfileError::LinkVirtualStoreBins)?;

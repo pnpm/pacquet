@@ -1,4 +1,5 @@
 use super::{LinkVirtualStoreBins, LinkVirtualStoreBinsError, link_direct_dep_bins};
+use crate::SkippedSnapshots;
 use pacquet_cmd_shim::is_shim_pointing_at;
 use serde_json::json;
 use std::{
@@ -44,6 +45,7 @@ fn writes_child_bins_into_slot_own_package_node_modules() {
         snapshots: None,
         packages: None,
         package_manifests: &Default::default(),
+        skipped: &SkippedSnapshots::default(),
     }
     .run()
     .unwrap();
@@ -111,6 +113,7 @@ fn skips_slot_own_package_when_walking_children() {
         snapshots: None,
         packages: None,
         package_manifests: &Default::default(),
+        skipped: &SkippedSnapshots::default(),
     }
     .run()
     .unwrap();
@@ -135,6 +138,7 @@ fn link_virtual_store_bins_no_op_when_dir_missing() {
         snapshots: None,
         packages: None,
         package_manifests: &Default::default(),
+        skipped: &SkippedSnapshots::default(),
     }
     .run()
     .expect("missing dir is Ok");
@@ -172,6 +176,7 @@ fn link_virtual_store_bins_handles_scoped_slot_name() {
         snapshots: None,
         packages: None,
         package_manifests: &Default::default(),
+        skipped: &SkippedSnapshots::default(),
     }
     .run()
     .unwrap();
@@ -222,6 +227,7 @@ fn link_virtual_store_bins_handles_peer_resolved_slot_name() {
         snapshots: None,
         packages: None,
         package_manifests: &Default::default(),
+        skipped: &SkippedSnapshots::default(),
     }
     .run()
     .unwrap();
@@ -271,6 +277,7 @@ fn link_virtual_store_bins_handles_unscoped_name_with_plus() {
         snapshots: None,
         packages: None,
         package_manifests: &Default::default(),
+        skipped: &SkippedSnapshots::default(),
     }
     .run()
     .unwrap();
@@ -295,6 +302,7 @@ fn link_virtual_store_bins_skips_slot_without_node_modules() {
         snapshots: None,
         packages: None,
         package_manifests: &Default::default(),
+        skipped: &SkippedSnapshots::default(),
     }
     .run()
     .unwrap();
@@ -321,6 +329,7 @@ fn link_virtual_store_bins_skips_slot_without_own_package_dir() {
         snapshots: None,
         packages: None,
         package_manifests: &Default::default(),
+        skipped: &SkippedSnapshots::default(),
     }
     .run()
     .expect("missing own-package dir is skipped silently");
@@ -468,6 +477,7 @@ fn link_virtual_store_bins_propagates_read_error_via_di() {
         snapshots: None,
         packages: None,
         package_manifests: &Default::default(),
+        skipped: &SkippedSnapshots::default(),
     }
     .run_with::<DenyVirtualStore>()
     .expect_err("read_dir error must propagate");
