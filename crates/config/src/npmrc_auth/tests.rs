@@ -7,7 +7,7 @@ use pretty_assertions::assert_eq;
 /// `&[(&str, &str)]` literal — saves each cascade test from spelling
 /// out an `impl EnvVar` block. Avoids touching the real process
 /// environment so cascade tests don't need
-/// [`crate::test_env_guard::EnvGuard`]'s global lock.
+/// [`pacquet_testing_utils::env_guard::EnvGuard`]'s global lock.
 macro_rules! static_env {
     ($name:ident, $entries:expr) => {
         struct $name;
@@ -62,7 +62,7 @@ fn ignores_non_auth_keys() {
     // parallel test can't change the env between the two `Config::new()`
     // snapshots compared below. Proper fix is dependency injection.
     // See the TODO on `default_store_dir`.
-    let _g = crate::test_env_guard::EnvGuard::snapshot(["PNPM_HOME", "XDG_DATA_HOME"]);
+    let _g = pacquet_testing_utils::env_guard::EnvGuard::snapshot(["PNPM_HOME", "XDG_DATA_HOME"]);
     let ini = "
 store-dir=/should/not/apply
 lockfile=false

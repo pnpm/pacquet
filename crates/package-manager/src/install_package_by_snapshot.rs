@@ -357,6 +357,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
                     requester,
                     store_index_writer,
                     files_index_file: &files_index_file,
+                    git_bin: None,
                 }
                 .run::<R>()
                 .await

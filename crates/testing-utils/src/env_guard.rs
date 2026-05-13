@@ -4,7 +4,7 @@
 //! `env::set_var` / `env::remove_var` are process-global and outlive
 //! any `#[test]` they were set inside. Rust / nextest run unit tests in
 //! parallel threads inside the same process by default, so two
-//! concurrent tests mutating `PNPM_HOME` can easily observe each
+//! concurrent tests mutating the same variable can easily observe each
 //! other's half-set state. This module guards both concerns:
 //!
 //! * a process-wide `Mutex` is acquired for the lifetime of each
@@ -17,11 +17,12 @@
 //! Proper fix is to thread env lookups through dependency injection
 //! (the same TODO already noted inline on each test), at which point
 //! this module goes away. Until then, holding the returned guard is
-//! enough to keep the env-var tests correct under `cargo test` and
+//! enough to keep env-mutating tests correct under `cargo test` and
 //! `cargo nextest run` alike.
+
 use std::{
     env,
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     sync::{Mutex, MutexGuard, OnceLock},
 };
 
@@ -63,6 +64,29 @@ impl EnvGuard {
         let lock = env_mutex().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let saved = vars.into_iter().map(|name| (name, env::var_os(name))).collect();
         EnvGuard { saved, _lock: lock }
+    }
+
+    /// Set a variable under the lock the guard holds. Equivalent to
+    /// `unsafe { env::set_var(name, value) }`, but the `EnvGuard`
+    /// existence proof tells the reader the call is serialized against
+    /// every other `EnvGuard`-using test in this process.
+    ///
+    /// The variable must have been listed in [`Self::snapshot`]'s
+    /// `vars` so the `Drop` impl will restore it — otherwise the
+    /// mutation leaks beyond the guard. We accept this footgun rather
+    /// than re-snapshotting on every `set` because the snapshot-then-
+    /// set pattern matches every call site, and the test fixtures
+    /// that need it are small.
+    ///
+    /// `name` is taken as `&'static str` to mirror `snapshot`'s
+    /// signature — the set of variables a test touches is fixed at
+    /// compile time.
+    pub fn set(&self, name: &'static str, value: impl AsRef<OsStr>) {
+        // SAFETY: the guard holds `env_mutex`, so no other
+        // `EnvGuard`-using test in this process is running
+        // concurrently. The variable was named at `snapshot` time,
+        // so `Drop` will restore it.
+        unsafe { env::set_var(name, value) };
     }
 }
 

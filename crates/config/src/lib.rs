@@ -3,8 +3,6 @@ mod defaults;
 mod env_replace;
 pub mod matcher;
 mod npmrc_auth;
-#[cfg(test)]
-mod test_env_guard;
 mod workspace_yaml;
 
 pub use crate::api::{EnvVar, RealApi};
@@ -820,8 +818,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{Config, NodeLinker, PackageImportMethod, RealApi, fs};
-    use crate::{defaults::default_store_dir, test_env_guard::EnvGuard};
+    use crate::defaults::default_store_dir;
     use pacquet_store_dir::StoreDir;
+    use pacquet_testing_utils::env_guard::EnvGuard;
     use pipe_trait::Pipe;
 
     fn display_store_dir(store_dir: &StoreDir) -> String {
@@ -1266,10 +1265,7 @@ mod tests {
         // Even though this test doesn't `set_var`, hold the env
         // guard so a *concurrent* `NPM_CONFIG_WORKSPACE_DIR` test
         // can't make this one fall into the env-var override path.
-        let _guard = crate::test_env_guard::EnvGuard::snapshot([
-            "NPM_CONFIG_WORKSPACE_DIR",
-            "npm_config_workspace_dir",
-        ]);
+        let _guard = EnvGuard::snapshot(["NPM_CONFIG_WORKSPACE_DIR", "npm_config_workspace_dir"]);
         // SAFETY: lock held by `_guard`. Two removes are fine on
         // both POSIX (case-sensitive: two distinct vars) and Windows
         // (case-insensitive: the second remove is a no-op on an
@@ -1299,10 +1295,7 @@ mod tests {
     /// during PR #443 review.
     #[test]
     pub fn npm_config_workspace_dir_re_anchors_modules() {
-        let _guard = crate::test_env_guard::EnvGuard::snapshot([
-            "NPM_CONFIG_WORKSPACE_DIR",
-            "npm_config_workspace_dir",
-        ]);
+        let _guard = EnvGuard::snapshot(["NPM_CONFIG_WORKSPACE_DIR", "npm_config_workspace_dir"]);
 
         let env_workspace = tempdir().unwrap();
         let cwd_dir = tempdir().unwrap();
@@ -1347,10 +1340,7 @@ mod tests {
     /// `empty_env_var_is_treated_as_unset`.
     #[test]
     pub fn empty_npm_config_workspace_dir_falls_through() {
-        let _guard = crate::test_env_guard::EnvGuard::snapshot([
-            "NPM_CONFIG_WORKSPACE_DIR",
-            "npm_config_workspace_dir",
-        ]);
+        let _guard = EnvGuard::snapshot(["NPM_CONFIG_WORKSPACE_DIR", "npm_config_workspace_dir"]);
         // SAFETY: lock held by `_guard`. Setting *both* names to
         // empty handles both platforms: on POSIX they're distinct
         // vars (clear each); on Windows they're aliases for the

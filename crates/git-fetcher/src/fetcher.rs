@@ -71,6 +71,16 @@ pub struct GitFetcher<'a> {
     /// form (`pkg_id\t{built|not-built}`). The dispatcher computes
     /// it once and threads it in.
     pub files_index_file: &'a str,
+    /// Override for the `git` binary path. Production callers leave
+    /// this `None` and the fetcher resolves `git` through `PATH`
+    /// (matches upstream's `execa('git', …)` shape). Tests use it to
+    /// inject a shim binary at an absolute path, so the test can
+    /// observe the fetcher's argv without mutating process-global
+    /// state. `None` keeps the existing `Command::new("git")`
+    /// behavior; `Some(path)` runs `Command::new(path)` for every
+    /// git invocation inside `run_sync` (`init`, `clone`, `fetch`,
+    /// `checkout`, `rev-parse`).
+    pub git_bin: Option<&'a Path>,
 }
 
 /// Output of [`GitFetcher::run`]. Mirrors the shape of
@@ -99,16 +109,21 @@ impl<'a> GitFetcher<'a> {
         let temp = tempfile::tempdir().map_err(GitFetcherError::Io)?;
         let temp_location = temp.path();
 
+        let git_bin = self.git_bin.unwrap_or(Path::new("git"));
         if should_use_shallow(self.repo, self.git_shallow_hosts) {
-            exec_git(&["init"], Some(temp_location))?;
-            exec_git(&["remote", "add", "origin", self.repo], Some(temp_location))?;
-            exec_git(&["fetch", "--depth", "1", "origin", self.commit], Some(temp_location))?;
+            exec_git_with(git_bin, &["init"], Some(temp_location))?;
+            exec_git_with(git_bin, &["remote", "add", "origin", self.repo], Some(temp_location))?;
+            exec_git_with(
+                git_bin,
+                &["fetch", "--depth", "1", "origin", self.commit],
+                Some(temp_location),
+            )?;
         } else {
-            exec_git(&["clone", self.repo, &temp_location.to_string_lossy()], None)?;
+            exec_git_with(git_bin, &["clone", self.repo, &temp_location.to_string_lossy()], None)?;
         }
 
-        exec_git(&["checkout", self.commit], Some(temp_location))?;
-        let received = exec_git(&["rev-parse", "HEAD"], Some(temp_location))?;
+        exec_git_with(git_bin, &["checkout", self.commit], Some(temp_location))?;
+        let received = exec_git_with(git_bin, &["rev-parse", "HEAD"], Some(temp_location))?;
         let received_trimmed = received.trim();
         if received_trimmed != self.commit {
             return Err(GitFetcherError::CheckoutMismatch {
@@ -263,9 +278,25 @@ fn prefix_git_args() -> &'static [&'static str] {
 /// the binary is missing so callers can produce a friendly install
 /// hint, and `Err(GitFetcherError::GitExec { stderr, … })` for non-
 /// zero exit codes.
+///
+/// Resolves `git` through `PATH` — convenience wrapper around
+/// [`exec_git_with`] for fixture-setup helpers and ad-hoc tests
+/// that don't need to override the binary location. Test-only
+/// because the only non-test caller now passes a `git_bin` override
+/// through `GitFetcher::run_sync`'s [`exec_git_with`] call.
+#[cfg(test)]
 fn exec_git(args: &[&str], cwd: Option<&Path>) -> Result<String, GitFetcherError> {
+    exec_git_with(Path::new("git"), args, cwd)
+}
+
+/// `exec_git` with an explicit binary path. The fetcher uses this so
+/// a test-injected shim (via [`GitFetcher::git_bin`]) is resolved at
+/// the call site instead of through `PATH`, keeping the shim's
+/// observability scope to one fetcher instance rather than the whole
+/// process env.
+fn exec_git_with(bin: &Path, args: &[&str], cwd: Option<&Path>) -> Result<String, GitFetcherError> {
     let prefix = prefix_git_args();
-    let mut cmd = Command::new("git");
+    let mut cmd = Command::new(bin);
     for arg in prefix {
         cmd.arg(arg);
     }
