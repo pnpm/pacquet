@@ -1,9 +1,9 @@
 //! Per-install installability pass.
 //!
 //! For each snapshot in a frozen-lockfile install, run
-//! [`pacquet_package_is_installable::package_is_installable`] against
-//! the matching `PackageMetadata` and the host environment, build
-//! the [`SkippedSnapshots`] set, and emit
+//! `pacquet-package-is-installable`'s `check_package` against the
+//! matching `PackageMetadata` and the host environment, build the
+//! [`SkippedSnapshots`] set, and emit
 //! `pnpm:skipped-optional-dependency` for every optional+incompatible
 //! one.
 //!
@@ -24,9 +24,8 @@ use std::collections::{HashMap, HashSet};
 
 use pacquet_lockfile::{PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_package_is_installable::{
-    InstallabilityError, InstallabilityOptions, InstallabilityVerdict,
-    PackageInstallabilityManifest, SkipReason, SupportedArchitectures, WantedEngine,
-    package_is_installable,
+    InstallabilityError, InstallabilityOptions, PackageInstallabilityManifest, SkipReason,
+    SupportedArchitectures, WantedEngine, check_package,
 };
 use pacquet_reporter::{
     LogEvent, LogLevel, Reporter, SkippedOptionalDependencyLog, SkippedOptionalPackage,
@@ -119,18 +118,20 @@ impl InstallabilityHost {
 ///    separately).
 /// 2. Build a [`PackageInstallabilityManifest`] from `metadata.engines`,
 ///    `metadata.cpu`, `metadata.os`, `metadata.libc`.
-/// 3. Run [`package_is_installable`] with `optional = snapshot.optional`.
-/// 4. Outcomes:
-///    - `Installable`: nothing to do.
-///    - `SkipOptional`: add to the set; emit
+/// 3. Run `check_package` against the host triple.
+/// 4. Apply the per-snapshot dispatch:
+///    - `Ok(None)`: compatible, nothing to do.
+///    - `Ok(Some(err))` + `snapshot.optional`: add to the set; emit
 ///      `pnpm:skipped-optional-dependency`.
-///    - `ProceedWithWarning`: emit `tracing::warn!` and proceed.
-///      (Upstream uses `pnpm:install-check` here, which pacquet's
-///      reporter does not yet expose — slice 1 follow-up.)
-///    - `Err`: returned to the caller. Pacquet's default has
-///      `engine_strict = false`, so this path is currently
-///      unreachable from production — kept for the slice that wires
-///      the config setting.
+///    - `Ok(Some(err))` + `engine_strict`: return as the install
+///      error. Pacquet's default has `engine_strict = false`, so
+///      this path is currently unreachable from production — wired
+///      for the slice that lands the config setting.
+///    - `Ok(Some(err))` otherwise: emit `tracing::warn!` and proceed.
+///      Upstream uses `pnpm:install-check` here, which pacquet's
+///      reporter does not yet expose — slice 1 follow-up.
+///    - `Err(InvalidNodeVersionError)`: surface as
+///      `ERR_PNPM_INVALID_NODE_VERSION`.
 pub fn compute_skipped_snapshots<R: Reporter>(
     snapshots: &HashMap<PackageKey, SnapshotEntry>,
     packages: &HashMap<PackageKey, PackageMetadata>,
@@ -161,12 +162,24 @@ pub fn compute_skipped_snapshots<R: Reporter>(
     let mut skipped = SkippedSnapshots::new();
     let mut seen_emit: HashSet<PackageKey> = HashSet::new();
 
-    // Build the host-derived part of the options once. Only `optional`
-    // varies per snapshot, so the loop just toggles that field instead
-    // of cloning four Strings per iteration. `InstallabilityOptions`
-    // borrows its string fields for exactly this reuse pattern.
+    // Build the host-derived part of the options once. Only the
+    // (`engine_strict`-irrelevant) `optional` flag varies per
+    // snapshot, but the result of [`check_package`] — "does this
+    // manifest satisfy the host?" — does not. We compute and cache
+    // the check verdict per peer-stripped `metadata_key`; the
+    // per-snapshot loop then only needs to apply the
+    // optional / engine-strict dispatch.
+    //
+    // The cache pays off on lockfiles with peer-resolved variants of
+    // the same package (`react-dom@17(react@17)` /
+    // `react-dom@17(react@18)`, etc.) — every variant shares the
+    // same `metadata_key`, so the check only runs once.
+    // `InstallabilityOptions` borrows its string fields for exactly
+    // this reuse pattern.
     let base_options = InstallabilityOptions {
         engine_strict: host.engine_strict,
+        // Cache-shared check: `optional` is applied per-snapshot
+        // below, not inside `check_package`.
         optional: false,
         current_node_version: host.node_version.as_str(),
         pnpm_version: None,
@@ -176,40 +189,64 @@ pub fn compute_skipped_snapshots<R: Reporter>(
         supported_architectures: host.supported_architectures.as_ref(),
     };
 
+    // `None` = compatible. `Some(err)` = incompatible, with the
+    // diagnostic the caller would surface (used as both the
+    // `SkipOptional` details payload and the `ProceedWithWarning`
+    // message body, matching upstream's `warn.toString()` / `warn.message`
+    // at `index.ts:50` / `:44`).
+    let mut check_cache: HashMap<PackageKey, Option<InstallabilityError>> = HashMap::new();
+
     for (snapshot_key, snapshot) in snapshots {
         let metadata_key = snapshot_key.without_peer();
         let Some(metadata) = packages.get(&metadata_key) else { continue };
 
-        let manifest = manifest_from_metadata(metadata);
-        let options = InstallabilityOptions { optional: snapshot.optional, ..base_options };
+        // Cache miss → run `check_package` once for this metadata
+        // row. The clone-on-insert is a single `Option<InstallabilityError>`
+        // (small) and only happens on the first peer-variant of each
+        // package. Subsequent peer-variants land in the `else` arm
+        // and read back the cached verdict.
+        let warn = if let Some(cached) = check_cache.get(&metadata_key) {
+            cached.clone()
+        } else {
+            let manifest = manifest_from_metadata(metadata);
+            let pkg_id = metadata_key.to_string();
+            let result = check_package(&pkg_id, &manifest, &base_options)
+                .map_err(|invalid| Box::new(InstallabilityError::InvalidNodeVersion(invalid)))?;
+            check_cache.insert(metadata_key.clone(), result.clone());
+            result
+        };
 
-        let pkg_id = metadata_key.to_string();
-        match package_is_installable(&pkg_id, &manifest, &options) {
-            Ok(InstallabilityVerdict::Installable) => {}
-            Ok(InstallabilityVerdict::SkipOptional { reason, details }) => {
-                skipped.set.insert(snapshot_key.clone());
-                // Many snapshots map to the same metadata row (one per
-                // peer-dependency variant). Dedup so the reporter sees
-                // one event per metadata key, matching upstream's
-                // emit-per-pkgId at `index.ts:49-58`.
-                if seen_emit.insert(metadata_key.clone()) {
-                    emit_skipped::<R>(&pkg_id, reason, details, prefix);
-                }
-            }
-            Ok(InstallabilityVerdict::ProceedWithWarning { message }) => {
-                // TODO(slice 1 follow-up): add `pnpm:install-check`
-                // to the reporter and emit there. For now the
-                // tracing-level warning is the user-visible signal
-                // that an incompatible non-optional dep slipped
-                // through.
-                tracing::warn!(
-                    target: "pacquet::install",
-                    package = %pkg_id,
-                    "{message}",
+        let Some(warn) = warn else { continue };
+
+        if snapshot.optional {
+            skipped.set.insert(snapshot_key.clone());
+            // Dedup events per metadata key, matching upstream's
+            // emit-per-pkgId at `index.ts:49-58`.
+            if seen_emit.insert(metadata_key.clone()) {
+                emit_skipped::<R>(
+                    &metadata_key.to_string(),
+                    warn.skip_reason(),
+                    warn.to_string(),
+                    prefix,
                 );
             }
-            Err(err) => return Err(err),
+            continue;
         }
+
+        if host.engine_strict {
+            return Err(Box::new(warn));
+        }
+
+        // Non-optional, non-strict: upstream emits `pnpm:install-check`
+        // warn (TODO: add channel to the reporter). For now the
+        // tracing-level warning is the user-visible signal that an
+        // incompatible non-optional dep slipped through.
+        tracing::warn!(
+            target: "pacquet::install",
+            package = %metadata_key,
+            "{}",
+            warn,
+        );
     }
 
     Ok(skipped)

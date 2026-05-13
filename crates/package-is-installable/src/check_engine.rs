@@ -93,15 +93,17 @@ pub fn check_engine(
     let mut unsatisfied = WantedEngine::default();
 
     if let Some(wanted_node) = wanted.node.as_ref() {
-        let satisfied = node_satisfies(&current.node, wanted_node);
-        match satisfied {
+        match node_satisfies(&current.node, wanted_node) {
+            // Range matched — nothing to do.
             Ok(true) => {}
-            Ok(false) => {
-                if Version::parse(&current.node).is_err() {
-                    return Err(InvalidNodeVersionError { node_version: current.node.clone() });
-                }
-                unsatisfied.node = Some(wanted_node.clone());
-            }
+            // `current.node` is a valid version but doesn't satisfy
+            // the range — record the unsatisfied wanted entry.
+            // `node_satisfies` already parsed it once, so we don't
+            // re-parse here.
+            Ok(false) => unsatisfied.node = Some(wanted_node.clone()),
+            // `current.node` is not a parseable exact semver — this
+            // is the `ERR_PNPM_INVALID_NODE_VERSION` path upstream
+            // throws from inside `checkEngine`.
             Err(InvalidVersion) => {
                 return Err(InvalidNodeVersionError { node_version: current.node.clone() });
             }
