@@ -65,7 +65,7 @@ libc = { version = "0.2.185" }
 reqwest = { version = "0.13", default-features = false, features = [
   "hickory-dns",
   "json",
-  "native-tls-vendored",
+  "rustls",
   "socks",
   "stream",
 ] }

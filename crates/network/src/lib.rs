@@ -186,8 +186,10 @@ impl ThrottledClient {
     /// * **TLS.** Each PEM in [`TlsConfig::ca`] is added as a trusted
     ///   root via `reqwest::Certificate::from_pem`. When both
     ///   [`TlsConfig::cert`] and [`TlsConfig::key`] are set, they are
-    ///   passed to `Identity::from_pkcs8_pem` and installed as a
-    ///   client [`Identity`]. `strict_ssl` defaults to `true` and
+    ///   concatenated and passed to `Identity::from_pem` (rustls
+    ///   single-buffer form). rustls accepts PKCS#1, PKCS#8, and EC
+    ///   private keys — the same surface Node's `tls` exposes to
+    ///   pnpm. `strict_ssl` defaults to `true` and
     ///   disables both chain-of-trust and hostname verification when
     ///   `false` — same as Node's `rejectUnauthorized=false`
     ///   short-circuit that pnpm forwards through undici
@@ -348,29 +350,65 @@ fn merge_tls(top: &TlsConfig, override_: &RegistryTls) -> TlsConfig {
     }
 }
 
+/// Lightweight syntactic check that `pem` contains at least one
+/// `-----BEGIN CERTIFICATE-----` / `-----END CERTIFICATE-----` armor
+/// pair. Catches the "user pasted garbage instead of PEM" case
+/// without parsing the base64 body — rustls's
+/// `Certificate::from_pem` stores the bytes verbatim and validates
+/// lazily, so without this guard a malformed CA would silently slip
+/// through and the install would proceed against an unknown trust
+/// root. A stricter parse (base64 decode + DER validation) is left
+/// to rustls itself when the connection is actually made.
+fn looks_like_pem_cert(pem: &str) -> bool {
+    let begin = pem.find("-----BEGIN CERTIFICATE-----");
+    let end = pem.rfind("-----END CERTIFICATE-----");
+    matches!((begin, end), (Some(b), Some(e)) if b < e)
+}
+
 fn apply_tls(
     mut builder: reqwest::ClientBuilder,
     tls: &TlsConfig,
 ) -> Result<reqwest::ClientBuilder, TlsError> {
     for (index, pem) in tls.ca.iter().enumerate() {
+        // Validate the PEM armor *before* handing to reqwest.
+        // Reqwest's rustls backend stores the bytes verbatim and
+        // parses lazily at `Client::build()` time — a garbage CA
+        // entry would otherwise be silently dropped and the install
+        // would proceed against an unknown trust root. The eager
+        // check catches the no-armor case (the common "user
+        // pasted a path instead of PEM contents" failure) and lets
+        // the malformed-CA error point at the specific entry in
+        // the list.
+        if !looks_like_pem_cert(pem) {
+            return Err(TlsError::InvalidCa {
+                index,
+                reason: "missing `-----BEGIN CERTIFICATE-----` / `-----END CERTIFICATE-----` \
+                         armor"
+                    .to_string(),
+            });
+        }
         let cert = Certificate::from_pem(pem.as_bytes())
             .map_err(|source| TlsError::InvalidCa { index, reason: source.to_string() })?;
         builder = builder.add_root_certificate(cert);
     }
     if let (Some(cert), Some(key)) = (tls.cert.as_deref(), tls.key.as_deref()) {
-        // reqwest's `Identity::from_pkcs8_pem` (gated on the
-        // `native-tls` feature pacquet builds with) takes cert and
-        // key as two separate PEM buffers — same shape pnpm hands to
-        // undici. The key must be in PKCS#8 PEM format
-        // (`-----BEGIN PRIVATE KEY-----`). Legacy PKCS#1 keys
-        // (`-----BEGIN RSA PRIVATE KEY-----`) and the
-        // `from_pkcs12_der` path are not supported by this constructor
-        // and would surface as `InvalidClientIdentity` here. pnpm /
-        // Node `tls` accept both formats; the native-tls backend
-        // doesn't. If a user reports a PKCS#1 key being rejected,
-        // either convert with `openssl pkcs8 -topk8 -nocrypt` or
-        // upgrade pacquet's reqwest TLS backend.
-        let identity = Identity::from_pkcs8_pem(cert.as_bytes(), key.as_bytes())
+        // reqwest's `Identity::from_pem` (gated on the `rustls`
+        // feature pacquet builds with) takes a single PEM buffer
+        // containing *both* the certificate and the private key, in
+        // any order. Concatenating with a `\n` separator handles
+        // both pnpm-style configs (where `cert=` and `key=` arrive
+        // separately) and users who paste them into one field.
+        //
+        // rustls accepts PKCS#1 (`-----BEGIN RSA PRIVATE KEY-----`),
+        // PKCS#8 (`-----BEGIN PRIVATE KEY-----`), and EC
+        // (`-----BEGIN EC PRIVATE KEY-----`) private keys — same
+        // surface area Node's `tls.createSecureContext` exposes,
+        // and the surface pnpm hands to undici. PKCS#12 (`.pfx`) is
+        // not supported by pnpm at the config layer (no `pfx=`
+        // option in pnpm's `.npmrc` allow-list), so pacquet doesn't
+        // need to handle it either.
+        let combined = format!("{cert}\n{key}");
+        let identity = Identity::from_pem(combined.as_bytes())
             .map_err(|source| TlsError::InvalidClientIdentity { reason: source.to_string() })?;
         builder = builder.identity(identity);
     }
