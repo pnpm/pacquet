@@ -68,11 +68,12 @@ pub(crate) fn env_replace<Api: EnvVar>(text: &str) -> Result<String, EnvReplaceE
             continue;
         }
 
-        // Count backslashes immediately before this `$`.
+        // Count backslashes immediately before this `$` in the *source*.
+        // Counting from `output` would conflate trailing `\` in a
+        // previously-substituted env value with literal source escapes.
+        // Upstream's `(?<!\\)(\\*)\$\{...}` runs on the original input.
         let mut backslashes = 0;
-        while backslashes < output.len()
-            && output.as_bytes()[output.len() - 1 - backslashes] == b'\\'
-        {
+        while backslashes < index && bytes[index - 1 - backslashes] == b'\\' {
             backslashes += 1;
         }
 
@@ -84,7 +85,9 @@ pub(crate) fn env_replace<Api: EnvVar>(text: &str) -> Result<String, EnvReplaceE
 
         // Each pair of backslashes collapses to one literal backslash,
         // matching `(\\*)\$\{...\}` in the JS regex with the escape
-        // semantics from `replaceEnvMatch`.
+        // semantics from `replaceEnvMatch`. The source backslashes are
+        // already in `output` from the literal-passthrough loop, so we
+        // truncate them off and re-emit half.
         output.truncate(output.len() - backslashes);
         for _ in 0..(backslashes / 2) {
             output.push('\\');
@@ -258,6 +261,32 @@ mod tests {
             }
         }
         assert_eq!(env_replace::<StaticEnv>("${A}-${B}-${A}").unwrap(), "1-2-1");
+    }
+
+    /// The source-backslash count must come from the original input,
+    /// not from the working `output` buffer. Without that, a
+    /// previously-expanded variable whose value ends in `\` would be
+    /// conflated with literal source `\` characters preceding the
+    /// next `${...}`. Upstream's regex `(?<!\\)(\\*)\$\{...}` runs on
+    /// the source, so a single literal `\` between two placeholders
+    /// must escape only the second one regardless of any trailing `\`
+    /// in the first's value. Without the fix, env A=`x\` + source
+    /// `${A}\${B}` returned `x\` + B's value (B unescaped); upstream
+    /// returns `x\${B}` (B kept literal).
+    #[test]
+    fn backslash_count_uses_source_not_output_buffer() {
+        struct Env;
+        impl EnvVar for Env {
+            fn var(name: &str) -> Option<String> {
+                match name {
+                    "A" => Some(r"x\".to_owned()),
+                    "B" => Some("should-not-expand".to_owned()),
+                    _ => None,
+                }
+            }
+        }
+        // Single literal `\` between `${A}` and `${B}`. Must escape `${B}`.
+        assert_eq!(env_replace::<Env>(r"${A}\${B}").unwrap(), r"x\${B}");
     }
 
     #[test]

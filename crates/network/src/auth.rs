@@ -155,6 +155,7 @@ pub fn nerf_dart(url: &str) -> String {
 /// needed.
 #[derive(Clone, Copy)]
 struct ParsedUrl<'a> {
+    scheme: &'a str,
     user_info: Option<&'a str>,
     host: &'a str,
     port: Option<&'a str>,
@@ -163,7 +164,7 @@ struct ParsedUrl<'a> {
 
 impl<'a> ParsedUrl<'a> {
     fn parse(url: &'a str) -> Option<Self> {
-        let (_scheme, rest) = url.split_once("://")?;
+        let (scheme, rest) = url.split_once("://")?;
         // Strip query string and fragment. Neither participates in
         // nerf-darting per `removeFragment` / `removeSearch` in npm's
         // own implementation.
@@ -183,14 +184,23 @@ impl<'a> ParsedUrl<'a> {
             Some((host, port)) if !host.contains('[') => (host, Some(port)),
             _ => (host_port, None),
         };
-        Some(ParsedUrl { user_info, host, port, path })
+        Some(ParsedUrl { scheme, user_info, host, port, path })
     }
 
     fn nerf_dart(&self) -> String {
         let mut out = String::with_capacity(2 + self.host.len() + self.path.len());
         out.push_str("//");
         out.push_str(self.host);
-        if let Some(port) = self.port {
+        // Drop default ports the way upstream's WHATWG `URL.host` does
+        // (`//reg.com:443/` → `//reg.com/`). Without this, a registry
+        // configured as `https://reg.com:443/` keys creds at
+        // `//reg.com:443/` and a request to `https://reg.com/...` (no
+        // port) misses, because the port-strip fallback only fires
+        // when the *request* URL carries a port. See
+        // [`@pnpm/config.nerf-dart`](https://github.com/pnpm/components/blob/a8ba7794d8/config/nerf-dart/nerf-dart.ts).
+        if let Some(port) = self.port
+            && !is_default_port(self.scheme, port)
+        {
             out.push(':');
             out.push_str(port);
         }
@@ -223,6 +233,10 @@ impl<'a> ParsedUrl<'a> {
     fn with_port_stripped(&self) -> ParsedUrl<'a> {
         ParsedUrl { port: None, ..*self }
     }
+}
+
+fn is_default_port(scheme: &str, port: &str) -> bool {
+    matches!((scheme, port), ("https", "443") | ("http", "80"))
 }
 
 /// Local base64 encode so this crate doesn't pull in `base64` just for
@@ -333,12 +347,27 @@ mod tests {
     /// [`removePort`](https://github.com/pnpm/pnpm/blob/601317e7a3/network/auth-header/src/helpers/removePort.ts)
     /// strips *any* port and retries iff the URL changed, not only
     /// protocol defaults. A `.npmrc` keyed at host-only must still match
-    /// a request that explicitly carries a non-default port — e.g. a
-    /// dev / proxy registry on `:8080` matched by a `//host/` token.
+    /// a request that explicitly carries a non-default port. A dev or
+    /// proxy registry on `:8080` matched by a `//host/` token is the
+    /// canonical case.
     #[test]
     fn non_default_port_strips_for_fallback_lookup() {
         let headers = build(&[("//reg.com/", "Bearer abc123")]);
         assert_eq!(headers.for_url("https://reg.com:8080/").as_deref(), Some("Bearer abc123"));
+    }
+
+    /// Upstream's [`@pnpm/config.nerf-dart`](https://github.com/pnpm/components/blob/a8ba7794d8/config/nerf-dart/nerf-dart.ts)
+    /// builds keys via WHATWG `URL.host`, which drops protocol-default
+    /// ports. A registry configured as `https://reg.com:443/` keys
+    /// creds at `//reg.com/` (not `//reg.com:443/`); a request to
+    /// `https://reg.com/` (no port) must match without the port-strip
+    /// fallback firing on the request side.
+    #[test]
+    fn nerf_dart_strips_default_ports_when_keying() {
+        assert_eq!(nerf_dart("https://reg.com:443/"), "//reg.com/");
+        assert_eq!(nerf_dart("http://reg.com:80/"), "//reg.com/");
+        // Non-default ports are preserved.
+        assert_eq!(nerf_dart("https://reg.com:8080/"), "//reg.com:8080/");
     }
 
     #[test]
