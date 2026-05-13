@@ -86,8 +86,12 @@ pub enum TlsError {
     #[display("Invalid CA certificate (entry {index}): {reason}")]
     InvalidCa { index: usize, reason: String },
 
-    /// `Identity::from_pem` rejected the concatenated `cert` + `key`
-    /// PEM block.
+    /// `Identity::from_pkcs8_pem` rejected the `cert` + `key`
+    /// PEM pair. The native-tls backend only accepts PKCS#8-encoded
+    /// keys (`-----BEGIN PRIVATE KEY-----`); legacy PKCS#1
+    /// (`-----BEGIN RSA PRIVATE KEY-----`) keys land here. See the
+    /// comment on `apply_tls` in `crates/network/src/lib.rs` for the
+    /// `openssl pkcs8` conversion path.
     #[display("Invalid client TLS cert/key: {reason}")]
     InvalidClientIdentity { reason: String },
 }

@@ -518,6 +518,17 @@ fn strict_ssl_invalid_value_silently_drops() {
 }
 
 #[test]
+fn strict_ssl_invalid_value_resets_prior_value() {
+    // A later invalid `strict-ssl=` line resets the slot to `None`
+    // so the build-site `unwrap_or(true)` default kicks in. If the
+    // parser silently kept the earlier `false`, a typo on a later
+    // line would leave TLS verification disabled — silently — until
+    // the user noticed.
+    let auth = NpmrcAuth::from_ini::<NoEnv>("strict-ssl=false\nstrict-ssl=oops\n");
+    assert_eq!(auth.strict_ssl, None);
+}
+
+#[test]
 fn parses_local_address_from_ini() {
     let auth = NpmrcAuth::from_ini::<NoEnv>("local-address=10.0.0.5\n");
     assert_eq!(auth.local_address.as_deref(), Some("10.0.0.5"));

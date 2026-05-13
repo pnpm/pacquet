@@ -203,11 +203,13 @@ impl NpmrcAuth {
                 }
                 "strict-ssl" => {
                     // pnpm/nopt parses `true` / `false` case-sensitively.
-                    // Anything else is dropped silently (no warning, no
-                    // override of the default).
-                    if let Some(parsed) = parse_bool(&value) {
-                        auth.strict_ssl = Some(parsed);
-                    }
+                    // Anything else resets the slot to `None` so the
+                    // build-site `unwrap_or(true)` default kicks in —
+                    // matters when the same `.npmrc` has multiple
+                    // `strict-ssl=` lines and a later invalid token
+                    // would otherwise leave an earlier `false`
+                    // silently active.
+                    auth.strict_ssl = parse_bool(&value);
                     continue;
                 }
                 "local-address" => {
