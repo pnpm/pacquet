@@ -425,52 +425,68 @@ fn transitive_npm_alias_resolves_target_snapshot() {
     assert!(host.dependencies.borrow().is_empty(), "host stripped of its aliased dep: {host:#?}");
 }
 
-/// A package with `peer_dependencies` declared in the lockfile's
-/// `packages:` map must surface `UnsupportedPeerDependency` rather
-/// than silently hoist past parents that supply the peer. The
-/// algorithm doesn't model peer constraints today; refusing
-/// upfront keeps a future caller from getting a wrong layout.
-#[test]
-fn peer_dependency_in_lockfile_surfaces_unsupported() {
+/// Helper for the peer-aware tests: build a `PackageMetadata`
+/// whose `packages:`-level `peer_dependencies` claims one peer.
+fn pkg_metadata_with_peer(peer_name: &str) -> pacquet_lockfile::PackageMetadata {
     use pacquet_lockfile::{LockfileResolution, PackageMetadata, TarballResolution};
+    let mut peer_deps = HashMap::new();
+    peer_deps.insert(peer_name.to_string(), "*".to_string());
+    PackageMetadata {
+        resolution: LockfileResolution::Tarball(TarballResolution {
+            tarball: format!("https://example.invalid/{peer_name}-host.tgz"),
+            integrity: None,
+            git_hosted: None,
+            path: None,
+        }),
+        engines: None,
+        cpu: None,
+        os: None,
+        libc: None,
+        deprecated: None,
+        has_bin: None,
+        prepare: None,
+        bundled_dependencies: None,
+        peer_dependencies: Some(peer_deps),
+        peer_dependencies_meta: None,
+    }
+}
+
+/// Peer-shadow refusal: `app → widget (peer: react) + widget → react@17`
+/// and `root → react@18`. `widget` declares `react` as a peer, its
+/// only ancestor (`app`) supplies `react@17`, and the root carries
+/// `react@18`. Hoisting `widget` to root would silently re-resolve
+/// its peer to react@18 instead of the ancestor-supplied react@17,
+/// so the algorithm leaves `widget` nested under `app`.
+#[test]
+fn peer_constrained_node_stays_under_parent_when_root_provides_different_ident() {
     let mut importers = HashMap::new();
     let mut root_deps = ResolvedDependencyMap::new();
-    root_deps.insert(pkg_name("widget"), resolved_dep("1.0.0"));
+    root_deps.insert(pkg_name("app"), resolved_dep("1.0.0"));
+    root_deps.insert(pkg_name("react"), resolved_dep("18.0.0"));
     importers.insert(
         Lockfile::ROOT_IMPORTER_KEY.to_string(),
         ProjectSnapshot { dependencies: Some(root_deps), ..ProjectSnapshot::default() },
     );
 
-    // `widget@1.0.0` declares `react` as a peer dep — the
-    // `packages:` map carries that information at the
-    // `name@version` (peer-stripped) key.
-    let mut packages = HashMap::new();
-    let mut peer_deps = HashMap::new();
-    peer_deps.insert("react".to_string(), "^18".to_string());
-    packages.insert(
-        dep_key("widget", "1.0.0").without_peer(),
-        PackageMetadata {
-            resolution: LockfileResolution::Tarball(TarballResolution {
-                tarball: "https://example.invalid/widget-1.0.0.tgz".to_string(),
-                integrity: None,
-                git_hosted: None,
-                path: None,
-            }),
-            engines: None,
-            cpu: None,
-            os: None,
-            libc: None,
-            deprecated: None,
-            has_bin: None,
-            prepare: None,
-            bundled_dependencies: None,
-            peer_dependencies: Some(peer_deps),
-            peer_dependencies_meta: None,
-        },
-    );
-
+    // `app@1.0.0` brings in both `widget` and `react@17`.
+    // `widget@1.0.0` declares `react` as a peer dependency. The
+    // snapshot graph itself doesn't list `react` under `widget`
+    // (peers aren't snapshot edges), so `widget`'s ancestor for
+    // peer resolution is `app`.
     let mut snapshots = HashMap::new();
+    let mut app_deps = HashMap::new();
+    app_deps.insert(pkg_name("widget"), SnapshotDepRef::Plain(ver_peer("1.0.0")));
+    app_deps.insert(pkg_name("react"), SnapshotDepRef::Plain(ver_peer("17.0.0")));
+    snapshots.insert(
+        dep_key("app", "1.0.0"),
+        SnapshotEntry { dependencies: Some(app_deps), ..SnapshotEntry::default() },
+    );
     snapshots.insert(dep_key("widget", "1.0.0"), SnapshotEntry::default());
+    snapshots.insert(dep_key("react", "17.0.0"), SnapshotEntry::default());
+    snapshots.insert(dep_key("react", "18.0.0"), SnapshotEntry::default());
+
+    let mut packages = HashMap::new();
+    packages.insert(dep_key("widget", "1.0.0").without_peer(), pkg_metadata_with_peer("react"));
 
     let lockfile = Lockfile {
         lockfile_version: lockfile_version(),
@@ -481,14 +497,162 @@ fn peer_dependency_in_lockfile_surfaces_unsupported() {
         snapshots: Some(snapshots),
     };
 
-    let err = hoist(&lockfile, &HoistOpts::default()).expect_err("peer dep should bail");
-    match err {
-        HoistError::UnsupportedPeerDependency { ident, peers } => {
-            assert_eq!(ident, "widget@1.0.0", "carries the offending ident: {ident}");
-            assert!(peers.contains("react"), "carries the peer name set: {peers:?}");
-        }
-        other => panic!("expected UnsupportedPeerDependency, got {other:?}"),
-    }
+    let result = hoist(&lockfile, &HoistOpts::default()).expect("peer-aware hoist should succeed");
+    let root_children = result.dependencies.borrow();
+    let mut names: Vec<&str> = root_children.iter().map(|d| d.0.name.as_str()).collect();
+    names.sort();
+    // Root has the two direct deps; `widget` is NOT at root.
+    assert_eq!(names, ["app", "react"], "widget stays under app: {result:#?}");
+    let app = root_children.iter().find(|d| d.0.name == "app").unwrap().0.clone();
+    let app_kids = app.dependencies.borrow();
+    let app_names: Vec<&str> = app_kids.iter().map(|d| d.0.name.as_str()).collect();
+    assert!(
+        app_names.contains(&"widget"),
+        "widget nested under app to keep ancestor peer resolution: {app_names:?}",
+    );
+    // The conflicting react@17 also stays nested under app
+    // (parent-wins kicked in because root already has react@18).
+    assert!(app_names.contains(&"react"), "app keeps its own react@17: {app_names:?}");
+}
+
+/// Regression for the stale-ancestor-path bug: a peer-constrained
+/// leaf whose intermediate parent hoists to the root must be
+/// evaluated against the parent's *post-hoist* ancestor chain, not
+/// against the (now-irrelevant) original chain. The previous BFS
+/// captured the path at queue time, so when an intermediate node
+/// got hoisted between being queued and dequeued, the leaf would
+/// be checked against ex-ancestors and over-refused.
+///
+/// Setup: `root → {app, react@18}`, `app → {react@17, mid}`,
+/// `mid → terminal (peer: react)`. After hoist:
+/// - `app` and `react@18` are direct deps of root.
+/// - `react@17` stays under `app` because root's `react` slot is
+///   already taken by `react@18` (parent-wins).
+/// - `mid` has no name conflict at root, so it hoists.
+/// - `terminal` has peer `react`. With the *post-hoist* path
+///   `[root, mid]`, neither `mid` nor `root` provides a peer
+///   ident that disagrees with what `root` carries
+///   (`root.react@18` is consistent with itself), so `terminal`
+///   hoists too. The previous BFS would have used the stale path
+///   `[root, app, mid]`, seen `app.react@17 ≠ root.react@18`, and
+///   refused — leaving terminal nested under `mid` for no real
+///   reason.
+#[test]
+fn peer_check_uses_post_hoist_ancestor_path_not_queue_time_path() {
+    let mut importers = HashMap::new();
+    let mut root_deps = ResolvedDependencyMap::new();
+    root_deps.insert(pkg_name("app"), resolved_dep("1.0.0"));
+    root_deps.insert(pkg_name("react"), resolved_dep("18.0.0"));
+    importers.insert(
+        Lockfile::ROOT_IMPORTER_KEY.to_string(),
+        ProjectSnapshot { dependencies: Some(root_deps), ..ProjectSnapshot::default() },
+    );
+
+    let mut snapshots = HashMap::new();
+    let mut app_deps = HashMap::new();
+    app_deps.insert(pkg_name("react"), SnapshotDepRef::Plain(ver_peer("17.0.0")));
+    app_deps.insert(pkg_name("mid"), SnapshotDepRef::Plain(ver_peer("1.0.0")));
+    snapshots.insert(
+        dep_key("app", "1.0.0"),
+        SnapshotEntry { dependencies: Some(app_deps), ..SnapshotEntry::default() },
+    );
+    let mut mid_deps = HashMap::new();
+    mid_deps.insert(pkg_name("terminal"), SnapshotDepRef::Plain(ver_peer("1.0.0")));
+    snapshots.insert(
+        dep_key("mid", "1.0.0"),
+        SnapshotEntry { dependencies: Some(mid_deps), ..SnapshotEntry::default() },
+    );
+    snapshots.insert(dep_key("react", "17.0.0"), SnapshotEntry::default());
+    snapshots.insert(dep_key("react", "18.0.0"), SnapshotEntry::default());
+    snapshots.insert(dep_key("terminal", "1.0.0"), SnapshotEntry::default());
+
+    let mut packages = HashMap::new();
+    packages.insert(dep_key("terminal", "1.0.0").without_peer(), pkg_metadata_with_peer("react"));
+
+    let lockfile = Lockfile {
+        lockfile_version: lockfile_version(),
+        settings: None,
+        overrides: None,
+        importers,
+        packages: Some(packages),
+        snapshots: Some(snapshots),
+    };
+
+    let result = hoist(&lockfile, &HoistOpts::default()).expect("hoist should succeed");
+    let root_children = result.dependencies.borrow();
+    let mut names: Vec<&str> = root_children.iter().map(|d| d.0.name.as_str()).collect();
+    names.sort();
+    // The whole chain flattens: mid (no name conflict) hoists to
+    // root, and terminal (peer-friendly along its post-hoist
+    // path) hoists past mid.
+    assert_eq!(
+        names,
+        ["app", "mid", "react", "terminal"],
+        "mid and terminal hoist freely: {result:#?}",
+    );
+    let app = root_children.iter().find(|d| d.0.name == "app").unwrap().0.clone();
+    let app_deps = app.dependencies.borrow();
+    let app_names: Vec<&str> = app_deps.iter().map(|d| d.0.name.as_str()).collect();
+    // app keeps its conflicting react@17 (parent-wins), but mid
+    // has moved to root so app no longer carries it.
+    assert_eq!(app_names, ["react"], "app retains conflicting react@17: {app_names:?}");
+    drop(app_deps);
+    let mid = root_children.iter().find(|d| d.0.name == "mid").unwrap().0.clone();
+    assert!(mid.dependencies.borrow().is_empty(), "mid stripped of terminal: {mid:#?}");
+}
+
+/// Peer-friendly hoist: `app → widget (peer: react)`, `app → react@18`,
+/// `root → react@18`. The peer name `react` is provided by both
+/// `app` and the root with the *same* ident (`react@18`, shared `Rc`
+/// thanks to the wrapper's identity dedup), so hoisting `widget` to
+/// root doesn't change its peer resolution — the algorithm allows
+/// the hoist.
+#[test]
+fn peer_constrained_node_hoists_when_ancestor_and_root_agree() {
+    let mut importers = HashMap::new();
+    let mut root_deps = ResolvedDependencyMap::new();
+    root_deps.insert(pkg_name("app"), resolved_dep("1.0.0"));
+    root_deps.insert(pkg_name("react"), resolved_dep("18.0.0"));
+    importers.insert(
+        Lockfile::ROOT_IMPORTER_KEY.to_string(),
+        ProjectSnapshot { dependencies: Some(root_deps), ..ProjectSnapshot::default() },
+    );
+
+    let mut snapshots = HashMap::new();
+    let mut app_deps = HashMap::new();
+    app_deps.insert(pkg_name("widget"), SnapshotDepRef::Plain(ver_peer("1.0.0")));
+    app_deps.insert(pkg_name("react"), SnapshotDepRef::Plain(ver_peer("18.0.0")));
+    snapshots.insert(
+        dep_key("app", "1.0.0"),
+        SnapshotEntry { dependencies: Some(app_deps), ..SnapshotEntry::default() },
+    );
+    snapshots.insert(dep_key("widget", "1.0.0"), SnapshotEntry::default());
+    snapshots.insert(dep_key("react", "18.0.0"), SnapshotEntry::default());
+
+    let mut packages = HashMap::new();
+    packages.insert(dep_key("widget", "1.0.0").without_peer(), pkg_metadata_with_peer("react"));
+
+    let lockfile = Lockfile {
+        lockfile_version: lockfile_version(),
+        settings: None,
+        overrides: None,
+        importers,
+        packages: Some(packages),
+        snapshots: Some(snapshots),
+    };
+
+    let result = hoist(&lockfile, &HoistOpts::default()).expect("peer-aware hoist should succeed");
+    let root_children = result.dependencies.borrow();
+    let mut names: Vec<&str> = root_children.iter().map(|d| d.0.name.as_str()).collect();
+    names.sort();
+    // widget hoists to root because the peer resolves identically
+    // at root and at app.
+    assert_eq!(names, ["app", "react", "widget"], "widget hoists past app: {result:#?}");
+    let app = root_children.iter().find(|d| d.0.name == "app").unwrap().0.clone();
+    assert!(
+        app.dependencies.borrow().is_empty(),
+        "app stripped of its hoisted widget + dedup'd react: {app:#?}",
+    );
 }
 
 /// Non-empty `hoisting_limits` surfaces `UnsupportedHoistingLimits`.

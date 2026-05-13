@@ -7,13 +7,38 @@ use miette::Diagnostic;
 use pacquet_package_is_installable::SupportedArchitectures;
 use pacquet_store_dir::StoreDir;
 use pipe_trait::Pipe;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::{
     collections::HashMap,
     fs,
     io::{self, ErrorKind},
     path::{Path, PathBuf},
 };
+
+/// `serde` helper for fields that need to distinguish "missing key"
+/// from "explicit null" in YAML / JSON. Used by `hoist_pattern` and
+/// `public_hoist_pattern` so an explicit `hoistPattern: null` in
+/// `pnpm-workspace.yaml` propagates as `Some(None)` (= "disable this
+/// side"), while a missing key falls through to the field's serde
+/// default (`None`, = "leave the config default in place").
+///
+/// Field shape: `Option<Option<Vec<String>>>`.
+/// - `None` — key not present in yaml. `apply_to` skips the field.
+/// - `Some(None)` — explicit `null`. `apply_to` overwrites
+///   `Config.<field>` with `None`, mirroring upstream's
+///   `hoistPattern != null` guard treating null as "feature disabled".
+/// - `Some(Some(vec))` — explicit list. `apply_to` overwrites
+///   `Config.<field>` with `Some(vec)`.
+///
+/// Stand-alone helper rather than reaching for `serde_with` (not in
+/// the workspace deps) — the body is one line.
+fn deserialize_double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
 
 /// Settings readable from `pnpm-workspace.yaml`.
 ///
@@ -46,8 +71,27 @@ use std::{
 #[serde(rename_all = "camelCase", default)]
 pub struct WorkspaceSettings {
     pub hoist: Option<bool>,
-    pub hoist_pattern: Option<Vec<String>>,
-    pub public_hoist_pattern: Option<Vec<String>>,
+
+    /// Tri-state `hoistPattern`. The deserializer wraps a plain
+    /// `Option<Vec<String>>` in an extra `Some` so the three yaml
+    /// states are distinguishable:
+    ///
+    /// - `None` — key absent in yaml → `apply_to` skips the field
+    ///   (defaults stay).
+    /// - `Some(None)` — explicit `hoistPattern: null` → `apply_to`
+    ///   writes `Config.hoist_pattern = None`, disabling private
+    ///   hoisting and contributing to the install-time
+    ///   `is_some() || is_some()` short-circuit guard. Mirrors
+    ///   upstream's `hoistPattern != null` semantics.
+    /// - `Some(Some(vec))` — explicit list → `apply_to` writes
+    ///   `Config.hoist_pattern = Some(vec)`.
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub hoist_pattern: Option<Option<Vec<String>>>,
+
+    /// Tri-state `publicHoistPattern`. Same semantics as
+    /// [`Self::hoist_pattern`].
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub public_hoist_pattern: Option<Option<Vec<String>>>,
     pub shamefully_hoist: Option<bool>,
     pub store_dir: Option<String>,
     pub modules_dir: Option<String>,
@@ -231,7 +275,7 @@ impl WorkspaceSettings {
         }
 
         apply! {
-            hoist, hoist_pattern, public_hoist_pattern, shamefully_hoist,
+            hoist, shamefully_hoist,
             node_linker, symlink, package_import_method, modules_cache_max_age,
             lockfile, prefer_frozen_lockfile, lockfile_include_tarball_url,
             auto_install_peers, dedupe_peer_dependents, strict_peer_dependencies,
@@ -241,6 +285,39 @@ impl WorkspaceSettings {
             fetch_retry_mintimeout, fetch_retry_maxtimeout,
             enable_global_virtual_store,
             git_shallow_hosts,
+        }
+
+        // `hoist_pattern` and `public_hoist_pattern` carry the
+        // tri-state described on [`deserialize_double_option`]:
+        // outer `None` means "key missing — leave config defaults in
+        // place"; outer `Some(inner)` means the user wrote something,
+        // and `inner` is what they wrote (`None` for explicit null,
+        // `Some(vec)` for a list). The inner value is assigned to
+        // `Config.<field>` directly so an explicit `hoistPattern: null`
+        // disables hoisting on that side via the install-time
+        // `is_some() || is_some()` guard, matching upstream's
+        // `!= null` semantics.
+        if let Some(inner) = self.hoist_pattern {
+            config.hoist_pattern = inner;
+        }
+        if let Some(inner) = self.public_hoist_pattern {
+            config.public_hoist_pattern = inner;
+        }
+
+        // `hoist: false` nullifies `hoist_pattern` so the install-time
+        // `is_some() || is_some()` guard short-circuits private hoisting
+        // regardless of any explicit `hoist_pattern` the user (or
+        // pacquet's defaults) supplied. Mirrors upstream's
+        // [`projectConfig.ts`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/projectConfig.ts#L72-L75)
+        // — `result.hoist === false ⇒ hoistPattern: undefined`.
+        // `publicHoistPattern` intentionally NOT nullified here:
+        // upstream doesn't either; public hoisting is governed by
+        // its own pattern + the legacy `shamefullyHoist` flag.
+        // Applied AFTER `hoist_pattern` assignment so a yaml that sets
+        // both `hoist: false` and `hoistPattern: ["..."]` still
+        // disables — `hoist: false` wins, matching upstream.
+        if !config.hoist {
+            config.hoist_pattern = None;
         }
 
         if let Some(v) = self.modules_dir {

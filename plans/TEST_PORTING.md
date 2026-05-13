@@ -97,39 +97,39 @@ Rust port notes:
 
 Primary tests:
 
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:24` `should hoist dependencies` repeats install with `hoistPattern: '*'` and `frozenLockfile: true`.
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:53` `should hoist dependencies to the root of node_modules when publicHoistPattern is used` covers baseline public hoist behavior.
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:71` `public hoist should not override directories that are already in the root of node_modules`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:89` `should hoist some dependencies to the root of node_modules when publicHoistPattern is used and others to the virtual store directory` covers combined private and public hoist patterns.
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:107` `should hoist dependencies by pattern` covers pattern-specific private hoisting.
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:121` `should remove hoisted dependencies`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:137` `should not override root packages with hoisted dependencies`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:148` `should rehoist when uninstalling a package`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:169` `should rehoist after running a general install`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:201` `should not override aliased dependencies`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:209` `hoistPattern=* throws exception when executed on node_modules installed w/o the option`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:220` `hoistPattern=undefined throws exception when executed on node_modules installed with hoist-pattern=*`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:233` `hoist by alias`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:249` `should remove aliased hoisted dependencies`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:272` `should update .modules.yaml when pruning if we are flattening`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:288` `should rehoist after pruning`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:320` `should hoist correctly peer dependencies`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:327` `should uninstall correctly peer dependencies`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:341` `hoist-pattern: hoist all dependencies to the virtual store node_modules` covers workspace install followed by frozen reinstall.
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:423` `hoist when updating in one of the workspace projects`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:514` `should recreate node_modules with hoisting`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:540` `hoisting should not create a broken symlink to a skipped optional dependency` covers hoisting with skipped optional packages.
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:567` `the hoisted packages should not override the bin files of the direct dependencies` covers public hoist bin precedence after frozen reinstall.
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:587` `hoist packages which is in the dependencies tree of the selected projects`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:682` `only hoist packages which is in the dependencies tree of the selected projects with sub dependencies`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:790` `should add extra node paths to command shims`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:799` `should not add extra node paths to command shims, when extend-node-path is set to false`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:813` `hoistWorkspacePackages should hoist all workspace projects` covers workspace package hoisting and frozen reinstall.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:24` `should hoist dependencies` repeats install with `hoistPattern: '*'` and `frozenLockfile: true`. Single-importer subset ported as `private_hoist_default_pattern_hoists_transitives` in `crates/cli/tests/hoist.rs`. Repeat-install map preservation lives in the `known_failures` module (blocked on partial install, pnpm/pacquet#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:53` `should hoist dependencies to the root of node_modules when publicHoistPattern is used` covers baseline public hoist behavior. Ported as `public_hoist_star_hoists_to_root_node_modules`.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:71` `public hoist should not override directories that are already in the root of node_modules`. Stubbed in `known_failures::public_hoist_preserves_existing_root_directories` — pacquet's `symlink_package` does the conservative EEXIST swallow but not upstream's external-symlink introspection.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:89` `should hoist some dependencies to the root of node_modules when publicHoistPattern is used and others to the virtual store directory` covers combined private and public hoist patterns. Stubbed in `known_failures::combined_public_and_private_hoist_patterns_split_targets` — pacquet's algo handles it (covered by `public_pattern_wins_ties` unit test) but the upstream test uses package set the registry mock doesn't carry.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:107` `should hoist dependencies by pattern` covers pattern-specific private hoisting. Ported as `private_hoist_pattern_filters_aliases`.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:121` `should remove hoisted dependencies`. Stubbed in `known_failures::should_remove_hoisted_dependencies` (partial install, #433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:137` `should not override root packages with hoisted dependencies`. Stubbed in `known_failures::should_not_override_root_packages_with_hoisted_deps` (#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:148` `should rehoist when uninstalling a package`. Stubbed (#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:169` `should rehoist after running a general install`. Stubbed (#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:201` `should not override aliased dependencies`. Stubbed (#433 + alias-aware install plumbing).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:209` `hoistPattern=* throws exception when executed on node_modules installed w/o the option`. Stubbed (#433 — pattern-change detection across `.modules.yaml` reads).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:220` `hoistPattern=undefined throws exception when executed on node_modules installed with hoist-pattern=*`. Stubbed (#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:233` `hoist by alias`. Stubbed in `known_failures::hoist_by_alias` — algo is correct (unit-tested) but end-to-end exercises alias plumbing not all wired.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:249` `should remove aliased hoisted dependencies`. Stubbed (#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:272` `should update .modules.yaml when pruning if we are flattening`. Stubbed (#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:288` `should rehoist after pruning`. Stubbed (#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:320` `should hoist correctly peer dependencies`. Stubbed in `known_failures::should_hoist_correctly_peer_dependencies` — multi-variant peer install path not exercised.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:327` `should uninstall correctly peer dependencies`. Stubbed (#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:341` `hoist-pattern: hoist all dependencies to the virtual store node_modules` covers workspace install followed by frozen reinstall. Basic workspace shape ported as `workspace_hoist_walks_every_importer`; the upstream test additionally asserts preservation across re-installs which still needs partial install (#433) — stubbed in `known_failures::workspace_hoist_all_to_virtual_store_node_modules`.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:423` `hoist when updating in one of the workspace projects`. Stubbed in `known_failures::workspace_hoist_when_updating_one_project` — needs `pnpm add`-equivalent manifest mutation.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:514` `should recreate node_modules with hoisting`. Stubbed (#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:540` `hoisting should not create a broken symlink to a skipped optional dependency` covers hoisting with skipped optional packages. Stubbed in `known_failures::hoisting_skips_broken_symlink_for_skipped_optional` — pacquet doesn't yet skip optional deps on platform constraints.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:567` `the hoisted packages should not override the bin files of the direct dependencies` covers public hoist bin precedence after frozen reinstall. Stubbed in `known_failures::hoisted_packages_dont_override_direct_dep_bins` — bin-conflict resolution rules not implemented.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:587` `hoist packages which is in the dependencies tree of the selected projects`. Stubbed in `known_failures::workspace_hoist_packages_in_selected_projects_tree` — needs `--filter` selected-projects install, which workspace install (#443) didn't implement.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:682` `only hoist packages which is in the dependencies tree of the selected projects with sub dependencies`. Stubbed (`--filter` selected-projects install).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:790` `should add extra node paths to command shims`. Stubbed in `known_failures::should_add_extra_node_paths_to_command_shims` — `extendNodePath` not implemented.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:799` `should not add extra node paths to command shims, when extend-node-path is set to false`. Stubbed (extendNodePath).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:813` `hoistWorkspacePackages should hoist all workspace projects` covers workspace package hoisting and frozen reinstall. Stubbed in `known_failures::hoist_workspace_packages_hoists_all_workspace_projects` — needs the `hoistedWorkspacePackages` shape pacquet doesn't model yet (links workspace projects themselves into the hoist tree).
 
 Headless module-manifest checks:
 
-- [ ] `TypeScript repo: installing/deps-restorer/test/index.ts:569` `installing with hoistPattern=*` asserts private `hoistedDependencies` in `.modules.yaml`.
-- [ ] `TypeScript repo: installing/deps-restorer/test/index.ts:628` `installing with publicHoistPattern=*` asserts public `hoistedDependencies` in `.modules.yaml`.
+- [x] `TypeScript repo: installing/deps-restorer/test/index.ts:569` `installing with hoistPattern=*` asserts private `hoistedDependencies` in `.modules.yaml`. Ported as `modules_yaml_records_hoisted_dependencies` and `private_hoist_links_bins` in `crates/cli/tests/hoist.rs`.
+- [x] `TypeScript repo: installing/deps-restorer/test/index.ts:628` `installing with publicHoistPattern=*` asserts public `hoistedDependencies` in `.modules.yaml`. Ported as `public_hoist_star_hoists_to_root_node_modules` and `public_hoist_bin_is_linked_via_root_bin_dir`.
 - [ ] `TypeScript repo: installing/deps-restorer/test/index.ts:690` `installing with publicHoistPattern=* in a project with external lockfile` covers headless public hoist with an external lockfile/project root split.
 - [ ] `TypeScript repo: installing/deps-installer/test/install/sideEffects.ts:50` `caching side effects of native package when hoisting is used` is skipped upstream but documents side-effects cache behavior under private hoisting.
 
@@ -566,46 +566,46 @@ Install tests:
 - [ ] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:105` `from a github repo with different name`
 - [ ] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:150` `a subdependency is from a github repo with different name`
 - [ ] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:174` `from a git repo`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:206` `from a github repo that has no package.json file`
+- [x] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:206` `from a github repo that has no package.json file` — covered at fetcher level by `crates/git-fetcher/src/fetcher/tests.rs::fetcher_handles_repo_without_package_json`. Full install-level test deferred until a non-resolver lockfile fixture lands.
 - [ ] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:276` `re-adding a git repo with a different tag`
 - [ ] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:323` `should not update when adding unrelated dependency`
 - [ ] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:354` `git-hosted repository is not added to the store if it fails to be built`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:366` `from subdirectories of a git repo`
+- [x] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:366` `from subdirectories of a git repo` — covered at fetcher level by `fetcher_packs_subfolder_when_path_set`. Full install-level test deferred (Stage 2 resolver dependency).
 - [ ] `TypeScript repo: installing/deps-installer/test/install/fromRepo.ts:389` `no hash character for github subdirectory install`
 - [ ] `TypeScript repo: installing/deps-installer/test/install/lifecycleScripts.ts:311` `run prepare script for git-hosted dependencies`
 
 Fetcher/resolver/store tests:
 
-- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:50` `fetch`
-- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:69` `fetch a package from Git sub folder`
-- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:87` `prevent directory traversal attack when using Git sub folder`
-- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:108` `prevent directory traversal attack when using Git sub folder #2`
-- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:129` `fetch a package from Git that has a prepare script`
-- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:150` `fetch a package without a package.json`
-- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:169` `fetch a big repository`
-- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:183` `still able to shallow fetch for allowed hosts`
-- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:212` `fail when preparing a git-hosted package`
-- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:230` `fail when preparing a git-hosted package with a partial commit`
-- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:247` `do not build the package when scripts are ignored`
-- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:263` `block git package with prepare script`
-- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:280` `allow git package with prepare script`
-- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:304` `fetch only the included files`
-- [ ] `TypeScript repo: fetching/tarball-fetcher/test/fetch.ts:455` `fetch a big repository`
-- [ ] `TypeScript repo: fetching/tarball-fetcher/test/fetch.ts:472` `fail when preparing a git-hosted package`
-- [ ] `TypeScript repo: fetching/tarball-fetcher/test/fetch.ts:490` `take only the files included in the package, when fetching a git-hosted package`
-- [ ] `TypeScript repo: fetching/tarball-fetcher/test/fetch.ts:534` `do not build the package when scripts are ignored`
-- [ ] `TypeScript repo: fetching/tarball-fetcher/test/fetch.ts:580` `use the subfolder when path is present`
-- [ ] `TypeScript repo: fetching/tarball-fetcher/test/fetch.ts:610` `prevent directory traversal attack when path is present`
-- [ ] `TypeScript repo: fetching/tarball-fetcher/test/fetch.ts:637` `fail when path is not exists`
+- [x] `TypeScript repo: fetching/git-fetcher/test/index.ts:50` `fetch` — `crates/git-fetcher/src/fetcher/tests.rs::fetcher_imports_package_into_cas`.
+- [x] `TypeScript repo: fetching/git-fetcher/test/index.ts:69` `fetch a package from Git sub folder` — `fetcher_packs_subfolder_when_path_set`.
+- [x] `TypeScript repo: fetching/git-fetcher/test/index.ts:87` `prevent directory traversal attack when using Git sub folder` — `prepare_package::tests::safe_join_path_rejects_escapes` + `cas_io::tests::materialize_into_rejects_traversal`.
+- [x] `TypeScript repo: fetching/git-fetcher/test/index.ts:108` `prevent directory traversal attack when using Git sub folder #2` — same coverage as above (`join_checked` rejects every non-`Normal` component variant).
+- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:129` `fetch a package from Git that has a prepare script` — needs a real package manager on the test host to actually run the script. Defer until a `skip-if-no-npm` test helper exists.
+- [x] `TypeScript repo: fetching/git-fetcher/test/index.ts:150` `fetch a package without a package.json` — `fetcher_handles_repo_without_package_json`.
+- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:169` `fetch a big repository` — perf benchmark, not a correctness test; skip from the porting plan.
+- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:183` `still able to shallow fetch for allowed hosts` — requires a PATH-shimmed `git` to spy on argv. `should_use_shallow_matches_known_host` covers the predicate; the end-to-end `fetch --depth 1` assertion is deferred.
+- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:212` `fail when preparing a git-hosted package` — needs a real failing prepare script (and thus a real package manager). Deferred alongside `index.ts:129`.
+- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:230` `fail when preparing a git-hosted package with a partial commit` — Stage 2 (resolver concern).
+- [x] `TypeScript repo: fetching/git-fetcher/test/index.ts:247` `do not build the package when scripts are ignored` — `fetcher_skips_build_when_ignore_scripts`.
+- [x] `TypeScript repo: fetching/git-fetcher/test/index.ts:263` `block git package with prepare script` — `fetcher_blocks_build_when_not_allowed`.
+- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:280` `allow git package with prepare script` — needs a real package manager. Deferred.
+- [x] `TypeScript repo: fetching/git-fetcher/test/index.ts:304` `fetch only the included files` — `tarball_fetcher::tests::filters_files_outside_files_field` (same packlist code path).
+- [ ] `TypeScript repo: fetching/tarball-fetcher/test/fetch.ts:455` `fetch a big repository` — perf benchmark, not a correctness test; skip.
+- [ ] `TypeScript repo: fetching/tarball-fetcher/test/fetch.ts:472` `fail when preparing a git-hosted package` — needs a real failing prepare script. Deferred.
+- [x] `TypeScript repo: fetching/tarball-fetcher/test/fetch.ts:490` `take only the files included in the package, when fetching a git-hosted package` — `tarball_fetcher::tests::filters_files_outside_files_field`.
+- [ ] `TypeScript repo: fetching/tarball-fetcher/test/fetch.ts:534` `do not build the package when scripts are ignored` — git-fetcher equivalent covered (`fetcher_skips_build_when_ignore_scripts`); a tarball-side mirror is straightforward but not yet written.
+- [x] `TypeScript repo: fetching/tarball-fetcher/test/fetch.ts:580` `use the subfolder when path is present` — `tarball_fetcher::tests::path_field_packs_only_subdirectory`.
+- [x] `TypeScript repo: fetching/tarball-fetcher/test/fetch.ts:610` `prevent directory traversal attack when path is present` — `tarball_path_traversal_attack_is_rejected`.
+- [x] `TypeScript repo: fetching/tarball-fetcher/test/fetch.ts:637` `fail when path is not exists` — `tarball_path_to_missing_subdir_is_rejected`.
 - [ ] `TypeScript repo: resolving/git-resolver/test/index.ts:188` `resolveFromGit() with sub folder`
 - [ ] `TypeScript repo: resolving/git-resolver/test/index.ts:211` `resolveFromGit() with both sub folder and branch`
 - [ ] `TypeScript repo: resolving/git-resolver/test/index.ts:482` `resolve a private repository using the HTTPS protocol without auth token`
 - [ ] `TypeScript repo: resolving/git-resolver/test/index.ts:526` `resolve a private repository using the HTTPS protocol and an auth token`
-- [ ] `TypeScript repo: installing/package-requester/test/index.ts:884` `fetch a git package without a package.json`
+- [x] `TypeScript repo: installing/package-requester/test/index.ts:884` `fetch a git package without a package.json` — covered alongside `fetching/git-fetcher/test/index.ts:150` via `fetcher_handles_repo_without_package_json`.
 - [ ] `TypeScript repo: installing/deps-installer/test/install/peerDependencies.ts:30` `don't fail when peer dependency is fetched from GitHub`
 - [ ] `TypeScript repo: installing/deps-installer/test/lockfile.ts:600` `updating package that has a github-hosted dependency`
-- [ ] `TypeScript repo: store/pkg-finder/test/readPackageFileMap.test.ts:67` `should resolve git-hosted tarball packages (no type, has tarball)`
-- [ ] `TypeScript repo: store/pkg-finder/test/readPackageFileMap.test.ts:84` `should resolve git dependencies with type "git" and return readable file paths`
+- [x] `TypeScript repo: store/pkg-finder/test/readPackageFileMap.test.ts:67` `should resolve git-hosted tarball packages (no type, has tarball)` — write side covered by `tarball_fetcher::tests::writes_index_row_when_writer_provided`; read side reuses the existing tarball-warm prefetch (no git-specific code path).
+- [x] `TypeScript repo: store/pkg-finder/test/readPackageFileMap.test.ts:84` `should resolve git dependencies with type "git" and return readable file paths` — same coverage: the write side produces a `gitHostedStoreIndexKey` row at `pkg_id\tbuilt` (see `create_virtual_store::tests::snapshot_cache_key_for_git_resolution_uses_git_hosted_key` for the read-side key shape pin).
 
 Skipped upstream tests to track:
 
