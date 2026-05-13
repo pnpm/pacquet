@@ -558,9 +558,14 @@ pub struct IgnoredScriptsLog {
 /// that picks the right shape depending on which variant the emit
 /// site constructs. The pairing is not type-enforced against
 /// `reason` (a `BuildFailure` reason with a
-/// `ResolutionFailure` package is constructible in Rust), but every
-/// emit site is centralized inside this crate, so the constructor
-/// discipline lives there rather than in the type.
+/// `ResolutionFailure` package is constructible in Rust); emit
+/// sites live in `pacquet-package-manager`
+/// (`installability.rs`, `build_modules.rs`,
+/// `create_virtual_store.rs` for slice 4) and must keep the
+/// pairing correct by hand. Tightening this into a closed-set
+/// builder API would constrain a future resolver port without
+/// adding much real safety, so it's left to convention until a
+/// site actually mis-pairs.
 ///
 /// `parents` is a TODO upstream too (see
 /// `during-install/src/index.ts:227`) and is omitted here.
