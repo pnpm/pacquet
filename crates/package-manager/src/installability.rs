@@ -141,20 +141,20 @@ pub fn compute_skipped_snapshots<R: Reporter>(
     // Fast path: if no package in the lockfile declares any
     // installability constraint, every snapshot is trivially
     // installable. Skip the per-snapshot
-    // `without_peer()` / `to_string()` / `package_is_installable`
-    // loop entirely. Pacquet has no resolver so the lockfile's
-    // packages map is fixed for the duration of the install; one
-    // linear scan early is much cheaper than walking the snapshots
-    // map and decomposing each metadata row only to find no
-    // constraints to evaluate.
+    // `without_peer()` / `to_string()` / `check_package` loop
+    // entirely. Pacquet has no resolver so the lockfile's packages
+    // map is fixed for the duration of the install; one linear scan
+    // early is much cheaper than walking the snapshots map and
+    // decomposing each metadata row only to find no constraints to
+    // evaluate.
     //
     // Concretely on the integrated benchmark (1352 packages with no
     // platform / engine constraints): drops ~1352 `String` and
     // `PackageKey` allocations and the matching number of
-    // `package_is_installable` calls. The scan is O(N) on `packages`
-    // — same shape as the loop it short-circuits — but does at most
-    // four `Option::is_some` checks per row and short-circuits on
-    // the first declared constraint.
+    // `check_package` calls. The scan is O(N) on `packages` — same
+    // shape as the loop it short-circuits — but does at most four
+    // `Option::is_some` checks per row and short-circuits on the
+    // first declared constraint.
     if !any_installability_constraint(packages) {
         return Ok(SkippedSnapshots::new());
     }
