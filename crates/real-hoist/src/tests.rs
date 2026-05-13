@@ -4,7 +4,10 @@ use pacquet_lockfile::{
     ProjectSnapshot, ResolvedDependencyMap, ResolvedDependencySpec, SnapshotDepRef, SnapshotEntry,
 };
 use pretty_assertions::assert_eq;
-use std::{collections::HashMap, rc::Rc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    rc::Rc,
+};
 
 fn lockfile_version() -> LockfileVersion<9> {
     LockfileVersion::<9>::try_from(ComVer::new(9, 0)).expect("lockfileVersion 9.0 is compatible")
@@ -729,21 +732,252 @@ fn multi_round_unlocks_peer_friendly_hoist_after_blocker_moves() {
     assert!(app.dependencies.borrow().is_empty(), "app stripped after multi-round: {app:#?}");
 }
 
-/// Non-empty `hoisting_limits` surfaces `UnsupportedHoistingLimits`.
-/// The algorithm doesn't honor limits today, so flattening past
-/// them would silently violate the borders the caller asked to
-/// keep.
+/// `hoisting_limits` blocks a single name from hoisting to root.
+/// Ports the spirit of upstream's `should not hoist packages past
+/// hoist boundary`. Setup: `root → a → b`. With no limits, `b`
+/// would flatten to root (see `one_transitive_dep_hoists_to_root`).
+/// With `hoisting_limits[".@"] = {b}`, `b` stays under `a`.
 #[test]
-fn non_empty_hoisting_limits_surfaces_unsupported() {
-    let lockfile = empty_lockfile();
-    let mut opts = HoistOpts::default();
-    opts.hoisting_limits.insert(".@".to_string(), Default::default());
+fn hoisting_limits_keeps_blocked_name_at_parent() {
+    let mut importers = HashMap::new();
+    let mut root_deps = ResolvedDependencyMap::new();
+    root_deps.insert(pkg_name("a"), resolved_dep("1.0.0"));
+    importers.insert(
+        Lockfile::ROOT_IMPORTER_KEY.to_string(),
+        ProjectSnapshot { dependencies: Some(root_deps), ..ProjectSnapshot::default() },
+    );
 
-    let err = hoist(&lockfile, &opts).expect_err("hoisting_limits should bail");
-    match err {
-        HoistError::UnsupportedHoistingLimits { len } => assert_eq!(len, 1),
-        other => panic!("expected UnsupportedHoistingLimits, got {other:?}"),
-    }
+    let mut snapshots = HashMap::new();
+    let mut a_deps = HashMap::new();
+    a_deps.insert(pkg_name("b"), SnapshotDepRef::Plain(ver_peer("1.0.0")));
+    snapshots.insert(
+        dep_key("a", "1.0.0"),
+        SnapshotEntry { dependencies: Some(a_deps), ..SnapshotEntry::default() },
+    );
+    snapshots.insert(dep_key("b", "1.0.0"), SnapshotEntry::default());
+
+    let lockfile = Lockfile {
+        lockfile_version: lockfile_version(),
+        settings: None,
+        overrides: None,
+        importers,
+        packages: None,
+        snapshots: Some(snapshots),
+    };
+
+    let mut blocked = BTreeSet::new();
+    blocked.insert("b".to_string());
+    let mut opts = HoistOpts::default();
+    opts.hoisting_limits.insert(".@".to_string(), blocked);
+
+    let result = hoist(&lockfile, &opts).expect("hoist with limits should succeed");
+    let root_children = result.dependencies.borrow();
+    let mut names: Vec<&str> = root_children.iter().map(|d| d.0.name.as_str()).collect();
+    names.sort();
+    assert_eq!(names, ["a"], "b stayed below the limit: {result:#?}");
+    let a = root_children.iter().find(|d| d.0.name == "a").unwrap().0.clone();
+    let a_deps = a.dependencies.borrow();
+    let a_names: Vec<&str> = a_deps.iter().map(|d| d.0.name.as_str()).collect();
+    assert_eq!(a_names, ["b"], "b remains under a: {a_names:?}");
+}
+
+/// Multiple blocked names work the same way — each one stays at
+/// its declaring parent. Ports the spirit of upstream's `should
+/// not hoist multiple package past nohoist root`.
+#[test]
+fn hoisting_limits_blocks_multiple_names() {
+    let mut importers = HashMap::new();
+    let mut root_deps = ResolvedDependencyMap::new();
+    root_deps.insert(pkg_name("a"), resolved_dep("1.0.0"));
+    importers.insert(
+        Lockfile::ROOT_IMPORTER_KEY.to_string(),
+        ProjectSnapshot { dependencies: Some(root_deps), ..ProjectSnapshot::default() },
+    );
+
+    let mut snapshots = HashMap::new();
+    let mut a_deps = HashMap::new();
+    a_deps.insert(pkg_name("b"), SnapshotDepRef::Plain(ver_peer("1.0.0")));
+    a_deps.insert(pkg_name("c"), SnapshotDepRef::Plain(ver_peer("1.0.0")));
+    a_deps.insert(pkg_name("d"), SnapshotDepRef::Plain(ver_peer("1.0.0")));
+    snapshots.insert(
+        dep_key("a", "1.0.0"),
+        SnapshotEntry { dependencies: Some(a_deps), ..SnapshotEntry::default() },
+    );
+    snapshots.insert(dep_key("b", "1.0.0"), SnapshotEntry::default());
+    snapshots.insert(dep_key("c", "1.0.0"), SnapshotEntry::default());
+    snapshots.insert(dep_key("d", "1.0.0"), SnapshotEntry::default());
+
+    let lockfile = Lockfile {
+        lockfile_version: lockfile_version(),
+        settings: None,
+        overrides: None,
+        importers,
+        packages: None,
+        snapshots: Some(snapshots),
+    };
+
+    let mut blocked = BTreeSet::new();
+    blocked.insert("b".to_string());
+    blocked.insert("c".to_string());
+    let mut opts = HoistOpts::default();
+    opts.hoisting_limits.insert(".@".to_string(), blocked);
+
+    let result = hoist(&lockfile, &opts).expect("hoist with limits should succeed");
+    let root_children = result.dependencies.borrow();
+    let mut names: Vec<&str> = root_children.iter().map(|d| d.0.name.as_str()).collect();
+    names.sort();
+    // Only `a` (direct dep) and `d` (not blocked) sit at root; b
+    // and c stay nested under a.
+    assert_eq!(names, ["a", "d"], "blocked names stayed at a: {result:#?}");
+    let a = root_children.iter().find(|d| d.0.name == "a").unwrap().0.clone();
+    let a_deps = a.dependencies.borrow();
+    let mut a_names: Vec<&str> = a_deps.iter().map(|d| d.0.name.as_str()).collect();
+    a_names.sort();
+    assert_eq!(a_names, ["b", "c"], "a kept its blocked deps: {a_names:?}");
+}
+
+/// `hoisting_limits` keyed on a different importer (one we don't
+/// hoist into) is silently ignored. The wrapper passes the whole
+/// map through, and the algorithm only consults entries matching
+/// the current root locator. Sanity test for non-interference.
+#[test]
+fn hoisting_limits_keyed_on_unrelated_importer_is_inert() {
+    let mut importers = HashMap::new();
+    let mut root_deps = ResolvedDependencyMap::new();
+    root_deps.insert(pkg_name("a"), resolved_dep("1.0.0"));
+    importers.insert(
+        Lockfile::ROOT_IMPORTER_KEY.to_string(),
+        ProjectSnapshot { dependencies: Some(root_deps), ..ProjectSnapshot::default() },
+    );
+
+    let mut snapshots = HashMap::new();
+    let mut a_deps = HashMap::new();
+    a_deps.insert(pkg_name("b"), SnapshotDepRef::Plain(ver_peer("1.0.0")));
+    snapshots.insert(
+        dep_key("a", "1.0.0"),
+        SnapshotEntry { dependencies: Some(a_deps), ..SnapshotEntry::default() },
+    );
+    snapshots.insert(dep_key("b", "1.0.0"), SnapshotEntry::default());
+
+    let lockfile = Lockfile {
+        lockfile_version: lockfile_version(),
+        settings: None,
+        overrides: None,
+        importers,
+        packages: None,
+        snapshots: Some(snapshots),
+    };
+
+    let mut blocked = BTreeSet::new();
+    blocked.insert("b".to_string());
+    let mut opts = HoistOpts::default();
+    // Wrong key — `packages/foo@workspace:packages/foo`, not `.@`.
+    opts.hoisting_limits.insert("packages/foo@workspace:packages/foo".to_string(), blocked);
+
+    let result = hoist(&lockfile, &opts).expect("hoist should succeed");
+    let root_children = result.dependencies.borrow();
+    let mut names: Vec<&str> = root_children.iter().map(|d| d.0.name.as_str()).collect();
+    names.sort();
+    // b still hoists because the limits don't apply to `.@`.
+    assert_eq!(names, ["a", "b"], "limits keyed elsewhere don't affect root hoist: {result:#?}");
+}
+
+/// Self-dependency: a package that lists itself as a transitive
+/// dep. Upstream tolerates this (see `should tolerate
+/// self-dependencies` in `@yarnpkg/nm/tests/hoist.test.ts`).
+/// The wrapper's dedup-by-cache keeps a single `Rc` for `a@1`,
+/// and the hoist sees the back-edge to itself as a cycle that
+/// the BFS/DFS skips. No infinite loop, sane output.
+#[test]
+fn self_dependency_does_not_loop() {
+    let mut importers = HashMap::new();
+    let mut root_deps = ResolvedDependencyMap::new();
+    root_deps.insert(pkg_name("a"), resolved_dep("1.0.0"));
+    importers.insert(
+        Lockfile::ROOT_IMPORTER_KEY.to_string(),
+        ProjectSnapshot { dependencies: Some(root_deps), ..ProjectSnapshot::default() },
+    );
+
+    // a@1 depends on itself.
+    let mut snapshots = HashMap::new();
+    let mut a_deps = HashMap::new();
+    a_deps.insert(pkg_name("a"), SnapshotDepRef::Plain(ver_peer("1.0.0")));
+    snapshots.insert(
+        dep_key("a", "1.0.0"),
+        SnapshotEntry { dependencies: Some(a_deps), ..SnapshotEntry::default() },
+    );
+
+    let lockfile = Lockfile {
+        lockfile_version: lockfile_version(),
+        settings: None,
+        overrides: None,
+        importers,
+        packages: None,
+        snapshots: Some(snapshots),
+    };
+
+    let result = hoist(&lockfile, &HoistOpts::default()).expect("self-dep should not loop");
+    let root_children = result.dependencies.borrow();
+    let names: Vec<&str> = root_children.iter().map(|d| d.0.name.as_str()).collect();
+    assert_eq!(names, ["a"], "single a at root: {result:#?}");
+    let a = root_children.iter().find(|d| d.0.name == "a").unwrap().0.clone();
+    // The self-edge is dedup'd by the wrapper's identity cache to
+    // the same Rc as the root's `a`. During hoist, the back-edge
+    // to root is skipped; the self-edge under a is dedup'd as
+    // SameNode (a is at root via the same Rc) and stripped.
+    assert!(a.dependencies.borrow().is_empty(), "self-edge stripped: {a:#?}");
+}
+
+/// Basic two-node cycle: `a → b → a`. Both packages share the
+/// `Rc` for `a` and `b` thanks to the wrapper's dedup, so the
+/// hoist back-edge is skipped and the algorithm terminates.
+/// Ports the spirit of upstream's `should support basic cyclic
+/// dependencies`.
+#[test]
+fn basic_cyclic_dependency_terminates() {
+    let mut importers = HashMap::new();
+    let mut root_deps = ResolvedDependencyMap::new();
+    root_deps.insert(pkg_name("a"), resolved_dep("1.0.0"));
+    importers.insert(
+        Lockfile::ROOT_IMPORTER_KEY.to_string(),
+        ProjectSnapshot { dependencies: Some(root_deps), ..ProjectSnapshot::default() },
+    );
+
+    // a → b → a (cycle).
+    let mut snapshots = HashMap::new();
+    let mut a_deps = HashMap::new();
+    a_deps.insert(pkg_name("b"), SnapshotDepRef::Plain(ver_peer("1.0.0")));
+    let mut b_deps = HashMap::new();
+    b_deps.insert(pkg_name("a"), SnapshotDepRef::Plain(ver_peer("1.0.0")));
+    snapshots.insert(
+        dep_key("a", "1.0.0"),
+        SnapshotEntry { dependencies: Some(a_deps), ..SnapshotEntry::default() },
+    );
+    snapshots.insert(
+        dep_key("b", "1.0.0"),
+        SnapshotEntry { dependencies: Some(b_deps), ..SnapshotEntry::default() },
+    );
+
+    let result = hoist(
+        &Lockfile {
+            lockfile_version: lockfile_version(),
+            settings: None,
+            overrides: None,
+            importers,
+            packages: None,
+            snapshots: Some(snapshots),
+        },
+        &HoistOpts::default(),
+    )
+    .expect("cycle should not loop");
+    let root_children = result.dependencies.borrow();
+    let mut names: Vec<&str> = root_children.iter().map(|d| d.0.name.as_str()).collect();
+    names.sort();
+    assert_eq!(names, ["a", "b"], "both a and b flatten to root: {result:#?}");
+    let a = root_children.iter().find(|d| d.0.name == "a").unwrap().0.clone();
+    let b = root_children.iter().find(|d| d.0.name == "b").unwrap().0.clone();
+    assert!(a.dependencies.borrow().is_empty(), "a's b hoisted away: {a:#?}");
+    assert!(b.dependencies.borrow().is_empty(), "b's back-edge to a stripped: {b:#?}");
 }
 
 /// A lockfile with importers beyond `.` (a workspace) surfaces
