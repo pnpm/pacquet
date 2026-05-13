@@ -149,6 +149,32 @@ pub enum LogEvent {
     /// Emit site: <https://github.com/pnpm/pnpm/blob/80037699fb/installing/deps-installer/src/install/index.ts#L414>.
     #[serde(rename = "pnpm:ignored-scripts")]
     IgnoredScripts(IgnoredScriptsLog),
+
+    /// One per optional-dependency that pnpm decided to skip rather
+    /// than fail the install over. Reason discriminates the cause —
+    /// pacquet currently only emits `build_failure` (from
+    /// `BuildModules` when a postinstall fails on an optional dep);
+    /// the `unsupported_engine` / `unsupported_platform` /
+    /// `resolution_failure` reasons upstream uses come from earlier
+    /// phases that haven't landed in pacquet yet.
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/core/core-loggers/src/skippedOptionalDependencyLogger.ts>.
+    /// Emit site (build_failure): <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L218-L240>.
+    #[serde(rename = "pnpm:skipped-optional-dependency")]
+    SkippedOptionalDependency(SkippedOptionalDependencyLog),
+
+    /// One per snapshot whose `<virtual_store_dir>/...` directory
+    /// has gone missing on disk even though the current lockfile
+    /// records it as installed (`pnpm:_broken_node_modules`). The
+    /// frozen-lockfile path emits one of these per missing slot
+    /// before falling through to a full re-install of that snapshot.
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L37>
+    /// (channel declaration) and
+    /// <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L258>
+    /// (per-snapshot emit site).
+    #[serde(rename = "pnpm:_broken_node_modules")]
+    BrokenModules(BrokenModulesLog),
 }
 
 /// `pnpm:context` payload.
@@ -208,7 +234,7 @@ pub struct PackageImportMethodLog {
 }
 
 /// Wire-format import method. pnpm only knows three values; pacquet's
-/// config enum (`pacquet_npmrc::PackageImportMethod`) carries `Auto`
+/// config enum (`pacquet_config::PackageImportMethod`) carries `Auto`
 /// and `CloneOrCopy` on top of those, but those are dispatched-on by
 /// the auto-importer's fallback chain, not emitted. The wire value is
 /// the resolved method `link_file` actually used — `Clone` /
@@ -515,6 +541,70 @@ pub enum LifecycleStdio {
 pub struct IgnoredScriptsLog {
     pub level: LogLevel,
     pub package_names: Vec<String>,
+}
+
+/// `pnpm:skipped-optional-dependency` payload.
+///
+/// Upstream's `SkippedOptionalDependencyMessage` is a discriminated
+/// union over `reason` with two distinct `package` shapes:
+/// `build_failure` / `unsupported_engine` / `unsupported_platform`
+/// all carry `package: { id, name, version }`; `resolution_failure`
+/// carries `package: { name?, version?, bareSpecifier }` with no
+/// `id`. This struct models only the **first** shape — the three
+/// reasons that share `{ id, name, version }`. The
+/// `ResolutionFailure` variant in [`SkippedOptionalReason`] is
+/// declared for forward compatibility on the enum side, but its
+/// distinct `package` shape means a `ResolutionFailure` emit will
+/// require a sibling struct (or a `#[serde(untagged)]` enum
+/// substituting for `SkippedOptionalDependencyLog`) — not just
+/// flipping the `reason` value. Refactoring is deferred until
+/// pacquet actually has a resolver-time emit site to produce that
+/// payload.
+///
+/// `parents` is a TODO upstream too (see
+/// `during-install/src/index.ts:227`) and is omitted here.
+#[derive(Debug, Clone, Serialize)]
+pub struct SkippedOptionalDependencyLog {
+    pub level: LogLevel,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
+    pub package: SkippedOptionalPackage,
+    pub prefix: String,
+    pub reason: SkippedOptionalReason,
+}
+
+/// Package identifier carried on a [`SkippedOptionalDependencyLog`].
+/// Matches the upstream "non-resolution-failure" branch of
+/// `SkippedOptionalDependencyMessage` at
+/// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/core/core-loggers/src/skippedOptionalDependencyLogger.ts#L15-L19>.
+#[derive(Debug, Clone, Serialize)]
+pub struct SkippedOptionalPackage {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+}
+
+/// Discriminator on a [`SkippedOptionalDependencyLog`]. Only
+/// `BuildFailure` lands at pacquet's current emit sites; the others
+/// are kept in the enum for forward compatibility so callers don't
+/// have to widen the type when more reasons are wired up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkippedOptionalReason {
+    BuildFailure,
+    UnsupportedEngine,
+    UnsupportedPlatform,
+    ResolutionFailure,
+}
+
+/// `pnpm:_broken_node_modules` payload. `missing` is the absolute
+/// path to the snapshot's `node_modules/<pkg>` slot that the current-
+/// lockfile lookup expected on disk but didn't find. Mirrors the
+/// payload upstream emits at <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L258>.
+#[derive(Debug, Clone, Serialize)]
+pub struct BrokenModulesLog {
+    pub level: LogLevel,
+    pub missing: String,
 }
 
 /// Severity level on the [bunyan]-shaped envelope.

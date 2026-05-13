@@ -5,11 +5,12 @@ use pretty_assertions::assert_eq;
 use serde_json::Value;
 
 use crate::{
-    AddedRoot, ContextLog, DependencyType, Envelope, FetchingProgressLog, FetchingProgressMessage,
-    GetHostName, IgnoredScriptsLog, LifecycleLog, LifecycleMessage, LifecycleStdio, LogEvent,
-    LogLevel, PackageImportMethod, PackageImportMethodLog, PackageManifestLog,
-    PackageManifestMessage, ProgressLog, ProgressMessage, RealApi, RemovedRoot, Reporter,
-    RequestRetryError, RequestRetryLog, RootLog, RootMessage, SilentReporter, Stage, StageLog,
+    AddedRoot, BrokenModulesLog, ContextLog, DependencyType, Envelope, FetchingProgressLog,
+    FetchingProgressMessage, GetHostName, IgnoredScriptsLog, LifecycleLog, LifecycleMessage,
+    LifecycleStdio, LogEvent, LogLevel, PackageImportMethod, PackageImportMethodLog,
+    PackageManifestLog, PackageManifestMessage, ProgressLog, ProgressMessage, RealApi, RemovedRoot,
+    Reporter, RequestRetryError, RequestRetryLog, RootLog, RootMessage, SilentReporter,
+    SkippedOptionalDependencyLog, SkippedOptionalPackage, SkippedOptionalReason, Stage, StageLog,
     StatsLog, StatsMessage, SummaryLog,
 };
 
@@ -95,7 +96,7 @@ fn summary_event_matches_pnpm_wire_shape() {
 
 /// Package-import-method log carries the chosen method as one of
 /// pnpm's three lowercase strings; anything else (e.g. the
-/// kebab-case `clone-or-copy` that `pacquet_npmrc::PackageImportMethod`
+/// kebab-case `clone-or-copy` that `pacquet_config::PackageImportMethod`
 /// deserializes from) would silently fail to render.
 #[test]
 fn package_import_method_event_matches_pnpm_wire_shape() {
@@ -574,6 +575,102 @@ fn ignored_scripts_event_matches_pnpm_wire_shape() {
     assert_eq!(json["name"], "pnpm:ignored-scripts");
     assert_eq!(json["level"], "debug");
     assert_eq!(json["packageNames"], serde_json::json!(["foo@1.0.0", "bar@2.0.0"]));
+}
+
+/// `pnpm:skipped-optional-dependency` matches upstream's wire
+/// shape: top-level `details`, `package: { id, name, version }`,
+/// `prefix`, and `reason` (snake_case). Mirrors
+/// `SkippedOptionalDependencyMessage` at
+/// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/core/core-loggers/src/skippedOptionalDependencyLogger.ts>.
+#[test]
+fn skipped_optional_dependency_event_matches_pnpm_wire_shape() {
+    let event = LogEvent::SkippedOptionalDependency(SkippedOptionalDependencyLog {
+        level: LogLevel::Debug,
+        details: Some("build failed: exit code 1".to_string()),
+        package: SkippedOptionalPackage {
+            id: "/foo/1.0.0".to_string(),
+            name: "foo".to_string(),
+            version: "1.0.0".to_string(),
+        },
+        prefix: "/projects/x".to_string(),
+        reason: SkippedOptionalReason::BuildFailure,
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+    dbg!(&json);
+    assert_eq!(json["name"], "pnpm:skipped-optional-dependency");
+    assert_eq!(json["level"], "debug");
+    assert_eq!(json["reason"], "build_failure");
+    assert_eq!(json["details"], "build failed: exit code 1");
+    assert_eq!(json["prefix"], "/projects/x");
+    assert_eq!(json["package"]["id"], "/foo/1.0.0");
+    assert_eq!(json["package"]["name"], "foo");
+    assert_eq!(json["package"]["version"], "1.0.0");
+}
+
+/// `details` is optional upstream and must be omitted from the wire
+/// when absent (`skip_serializing_if = "Option::is_none"`).
+#[test]
+fn skipped_optional_omits_absent_details() {
+    let event = LogEvent::SkippedOptionalDependency(SkippedOptionalDependencyLog {
+        level: LogLevel::Debug,
+        details: None,
+        package: SkippedOptionalPackage {
+            id: "/bar/2.0.0".to_string(),
+            name: "bar".to_string(),
+            version: "2.0.0".to_string(),
+        },
+        prefix: "/projects/y".to_string(),
+        reason: SkippedOptionalReason::BuildFailure,
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+    assert!(json.get("details").is_none(), "details must be omitted when absent, got {json:?}");
+}
+
+/// `pnpm:_broken_node_modules` carries a single `missing` field with
+/// the absolute path of the slot that should have been on disk but
+/// wasn't. Mirrors upstream's emit shape at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L258>.
+#[test]
+fn broken_modules_event_matches_pnpm_wire_shape() {
+    let event = LogEvent::BrokenModules(BrokenModulesLog {
+        level: LogLevel::Debug,
+        missing: "/proj/node_modules/.pacquet/react@18.0.0/node_modules/react".to_string(),
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+    assert_eq!(json["name"], "pnpm:_broken_node_modules");
+    assert_eq!(json["level"], "debug");
+    assert_eq!(json["missing"], "/proj/node_modules/.pacquet/react@18.0.0/node_modules/react");
+}
+
+/// All four reason variants serialize as the snake_case strings
+/// pnpm's reporter dispatches on.
+#[test]
+fn skipped_optional_reason_serializes_in_pnpm_form() {
+    let cases = [
+        (SkippedOptionalReason::BuildFailure, "build_failure"),
+        (SkippedOptionalReason::UnsupportedEngine, "unsupported_engine"),
+        (SkippedOptionalReason::UnsupportedPlatform, "unsupported_platform"),
+        (SkippedOptionalReason::ResolutionFailure, "resolution_failure"),
+    ];
+    for (reason, expected) in cases {
+        let json = serde_json::to_string(&reason).expect("serialize reason");
+        assert_eq!(json, format!("\"{expected}\""), "{reason:?} must serialize as {expected:?}");
+    }
 }
 
 /// Phase markers serialize as the snake_case strings pnpm uses.

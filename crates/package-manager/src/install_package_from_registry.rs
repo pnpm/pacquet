@@ -1,11 +1,11 @@
 use crate::{
-    CreateCasFilesError, SymlinkPackageError, create_cas_files,
+    ImportIndexedDirError, ImportIndexedDirOpts, SymlinkPackageError, import_indexed_dir,
     retry_config::retry_opts_from_config, symlink_package,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
+use pacquet_config::Config;
 use pacquet_network::ThrottledClient;
-use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::PackageManifest;
 use pacquet_registry::{Package, PackageTag, PackageVersion, RegistryError};
 use pacquet_reporter::{LogEvent, LogLevel, ProgressLog, ProgressMessage, Reporter};
@@ -34,7 +34,7 @@ use std::{
 pub struct InstallPackageFromRegistry<'a> {
     pub tarball_mem_cache: &'a MemCache,
     pub http_client: &'a ThrottledClient,
-    pub config: &'static Npmrc,
+    pub config: &'static Config,
     pub store_index: Option<&'a SharedReadonlyStoreIndex>,
     pub store_index_writer: Option<&'a Arc<StoreIndexWriter>>,
     /// Install-scoped `verifiedFilesCache` shared across every
@@ -58,7 +58,7 @@ pub struct InstallPackageFromRegistry<'a> {
 pub enum InstallPackageFromRegistryError {
     FetchFromRegistry(#[error(source)] RegistryError),
     DownloadTarballToStore(#[error(source)] TarballError),
-    CreateCasFiles(#[error(source)] CreateCasFilesError),
+    ImportIndexedDir(#[error(source)] ImportIndexedDirError),
     SymlinkPackage(#[error(source)] SymlinkPackageError),
 }
 
@@ -182,8 +182,14 @@ impl<'a> InstallPackageFromRegistry<'a> {
 
         tracing::info!(target: "pacquet::import", ?save_path, ?symlink_path, "Import package");
 
-        create_cas_files::<R>(logged_methods, config.package_import_method, &save_path, &cas_paths)
-            .map_err(InstallPackageFromRegistryError::CreateCasFiles)?;
+        import_indexed_dir::<R>(
+            logged_methods,
+            config.package_import_method,
+            &save_path,
+            &cas_paths,
+            ImportIndexedDirOpts::default(),
+        )
+        .map_err(InstallPackageFromRegistryError::ImportIndexedDir)?;
 
         symlink_package(&save_path, &symlink_path)
             .map_err(InstallPackageFromRegistryError::SymlinkPackage)?;

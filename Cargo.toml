@@ -13,21 +13,28 @@ repository  = "https://github.com/pnpm/pacquet"
 
 [workspace.dependencies]
 # Crates
-pacquet-cli              = { path = "crates/cli" }
-pacquet-fs               = { path = "crates/fs" }
-pacquet-registry         = { path = "crates/registry" }
-pacquet-tarball          = { path = "crates/tarball" }
-pacquet-testing-utils    = { path = "crates/testing-utils" }
-pacquet-package-manifest = { path = "crates/package-manifest" }
-pacquet-package-manager  = { path = "crates/package-manager" }
-pacquet-lockfile         = { path = "crates/lockfile" }
-pacquet-modules-yaml     = { path = "crates/modules-yaml" }
-pacquet-network          = { path = "crates/network" }
-pacquet-npmrc            = { path = "crates/npmrc" }
-pacquet-executor         = { path = "crates/executor" }
-pacquet-diagnostics      = { path = "crates/diagnostics" }
-pacquet-store-dir        = { path = "crates/store-dir" }
-pacquet-reporter         = { path = "crates/reporter" }
+pacquet-cli                    = { path = "crates/cli" }
+pacquet-cmd-shim               = { path = "crates/cmd-shim" }
+pacquet-fs                     = { path = "crates/fs" }
+pacquet-registry               = { path = "crates/registry" }
+pacquet-tarball                = { path = "crates/tarball" }
+pacquet-testing-utils          = { path = "crates/testing-utils" }
+pacquet-package-manifest       = { path = "crates/package-manifest" }
+pacquet-package-manager        = { path = "crates/package-manager" }
+pacquet-package-is-installable = { path = "crates/package-is-installable" }
+pacquet-lockfile               = { path = "crates/lockfile" }
+pacquet-modules-yaml           = { path = "crates/modules-yaml" }
+pacquet-network                = { path = "crates/network" }
+pacquet-config                 = { path = "crates/config" }
+pacquet-executor               = { path = "crates/executor" }
+pacquet-git-fetcher            = { path = "crates/git-fetcher" }
+pacquet-diagnostics            = { path = "crates/diagnostics" }
+pacquet-graph-hasher           = { path = "crates/graph-hasher" }
+pacquet-store-dir              = { path = "crates/store-dir" }
+pacquet-reporter               = { path = "crates/reporter" }
+pacquet-patching               = { path = "crates/patching" }
+pacquet-real-hoist             = { path = "crates/real-hoist" }
+pacquet-workspace              = { path = "crates/workspace" }
 
 # Tasks
 pacquet-registry-mock = { path = "tasks/registry-mock" }
@@ -39,6 +46,7 @@ command-extra = { version = "1.0.0" }
 base64 = { version = "0.22.1" }
 dashmap = { version = "6.1.0" }
 derive_more = { version = "2.1.1", features = ["full"] }
+diffy = { version = "0.5.0" }
 dunce = { version = "1.0.5" }
 home = { version = "0.5.12" }
 httpdate = { version = "1.0.3" }
@@ -52,6 +60,7 @@ num_cpus = { version = "1.17.0" }
 os_display = { version = "0.1.4" }
 reflink-copy = { version = "0.1.29" }
 junction = { version = "2.0.0" }
+libc = { version = "0.2.185" }
 reqwest = { version = "0.13", default-features = false, features = [
   "hickory-dns",
   "json",
@@ -65,7 +74,6 @@ rayon = { version = "1.12.0" }
 rmp-serde = { version = "1.3.0" }
 rusqlite = { version = "0.39.0", features = ["bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }
-serde_ini = { version = "0.2.0" }
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
 serde-saphyr = { version = "0.0.26" }
 # 0.11 removes the LowerHex impl on Output; revisit after upstream/consumers catch up
@@ -81,6 +89,7 @@ tracing            = { version = "0.1.44" }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tokio              = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 walkdir            = { version = "2.5.0" }
+wax                = { version = "0.7.0" }
 which              = { version = "8.0.2" }
 zune-inflate       = { version = "0.2.54" }
 

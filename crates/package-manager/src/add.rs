@@ -1,9 +1,9 @@
 use crate::{Install, InstallError, ResolvedPackages};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
+use pacquet_config::Config;
 use pacquet_lockfile::Lockfile;
 use pacquet_network::ThrottledClient;
-use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::PackageManifestError;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::{PackageTag, PackageVersion};
@@ -20,12 +20,16 @@ where
     pub tarball_mem_cache: &'a MemCache,
     pub resolved_packages: &'a ResolvedPackages,
     pub http_client: &'a ThrottledClient,
-    pub config: &'static Npmrc,
+    pub config: &'static Config,
     pub manifest: &'a mut PackageManifest,
     pub lockfile: Option<&'a Lockfile>,
     pub list_dependency_groups: ListDependencyGroups, // must be a function because it is called multiple times
     pub package_name: &'a str, // TODO: 1. support version range, 2. multiple arguments, 3. name this `packages`
     pub save_exact: bool,      // TODO: add `save-exact` to `.npmrc`, merge configs, and remove this
+    /// CLI-merged `supportedArchitectures` forwarded to the
+    /// `Install` run that follows the manifest mutation. See
+    /// [`Install::supported_architectures`].
+    pub supported_architectures: Option<pacquet_package_is_installable::SupportedArchitectures>,
 }
 
 /// Error type of [`Add`].
@@ -56,6 +60,7 @@ where
             package_name,
             save_exact,
             resolved_packages,
+            supported_architectures,
         } = self;
 
         let latest_version = PackageVersion::fetch_from_registry(
@@ -84,6 +89,7 @@ where
             dependency_groups: list_dependency_groups(),
             frozen_lockfile: false,
             resolved_packages,
+            supported_architectures,
         }
         .run::<R>()
         .await

@@ -1,32 +1,116 @@
 use crate::{
-    InstallPackageBySnapshot, InstallPackageBySnapshotError, store_init::init_store_dir_best_effort,
+    InstallPackageBySnapshot, InstallPackageBySnapshotError, SkippedSnapshots,
+    store_init::init_store_dir_best_effort,
 };
 use derive_more::{Display, Error};
 use futures_util::future;
 use miette::Diagnostic;
-use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
-use pacquet_network::ThrottledClient;
-use pacquet_npmrc::Npmrc;
-use pacquet_reporter::{
-    LogEvent, LogLevel, ProgressLog, ProgressMessage, Reporter, StatsLog, StatsMessage,
+use pacquet_config::Config;
+use pacquet_lockfile::{
+    LockfileResolution, PackageKey, PackageMetadata, PkgNameVerPeer, SnapshotEntry,
 };
-use pacquet_store_dir::{SharedVerifiedFilesCache, StoreIndex, StoreIndexWriter, store_index_key};
-use pacquet_tarball::prefetch_cas_paths;
+use pacquet_network::ThrottledClient;
+use pacquet_reporter::{
+    BrokenModulesLog, LogEvent, LogLevel, ProgressLog, ProgressMessage, Reporter, StatsLog,
+    StatsMessage,
+};
+use pacquet_store_dir::{
+    SharedVerifiedFilesCache, StoreIndex, StoreIndexWriter, git_hosted_store_index_key,
+    store_index_key,
+};
+use pacquet_tarball::{PrefetchResult, prefetch_cas_paths};
 use pipe_trait::Pipe;
-use std::{collections::HashMap, sync::atomic::AtomicU8};
+use std::{collections::HashMap, path::PathBuf, sync::atomic::AtomicU8};
+
+/// Bundled package manifests recovered from the SQLite store index
+/// during [`CreateVirtualStore::run`], keyed by the same
+/// `PkgNameVerPeer` (without peer suffix) that
+/// [`pacquet_lockfile::Lockfile::packages`] uses. Consumed by the
+/// bin-linker so it doesn't have to re-read `package.json` per child
+/// during [`crate::LinkVirtualStoreBins::run`].
+///
+/// Only covers the warm-batch packages (those whose tarball was
+/// already in the CAFS at install start). Cold-batch packages — ones
+/// pacquet had to download — are absent and the bin linker falls
+/// back to disk reads for them. That matches pnpm's behaviour for
+/// installs that mix warm and cold packages: pnpm's bin linker
+/// reads from `pkgFilesIndex.manifest` for warm fetches and from
+/// `dep.fetching()?.bundledManifest` for cold ones, but the cold
+/// path's `bundledManifest` isn't plumbed through pacquet yet.
+pub type PackageManifests = HashMap<PkgNameVerPeer, std::sync::Arc<serde_json::Value>>;
+
+/// Per-snapshot side-effects-cache overlays, keyed by the snapshot's
+/// `PackageKey` and then by the dep-state cache key (the string
+/// `pacquet_graph_hasher::calc_dep_state` produces). The inner map
+/// is the post-build files map for that cache key — already with
+/// the `added` / `deleted` overlay applied against the base files
+/// (see `pacquet_store_dir::VerifyResult.side_effects_maps`).
+///
+/// Multiple snapshot peer-variants of the same package share one
+/// `Arc<_>` value — the store-index row is keyed peer-stripped, so
+/// each `PackageKey::without_peer()` lookup returns the same
+/// underlying map.
+///
+/// Hands off to `BuildModules`'s `is_built` gate (pnpm/pacquet#421):
+/// for a snapshot whose `calc_dep_state` cache key matches an entry
+/// here, the build is skipped — pacquet treats the package as
+/// already built (typically because pnpm seeded the cache on a
+/// previous install).
+pub type SideEffectsMapsBySnapshot =
+    HashMap<PackageKey, std::sync::Arc<HashMap<String, HashMap<String, PathBuf>>>>;
+
+/// Output of [`CreateVirtualStore::run`]. Bundles the bin-link
+/// manifest cache and the per-snapshot side-effects-cache overlays
+/// the build-phase needs.
+pub struct CreateVirtualStoreOutput {
+    pub package_manifests: PackageManifests,
+    pub side_effects_maps_by_snapshot: SideEffectsMapsBySnapshot,
+}
 
 /// This subroutine generates filesystem layout for the virtual store at `node_modules/.pacquet`.
 #[must_use]
 pub struct CreateVirtualStore<'a> {
     pub http_client: &'a ThrottledClient,
-    pub config: &'static Npmrc,
+    pub config: &'static Config,
     pub packages: Option<&'a HashMap<PackageKey, PackageMetadata>>,
     pub snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,
+    /// Snapshots and per-version metadata recorded by the previous
+    /// install, parsed from `<virtual_store_dir>/lock.yaml`. `None`
+    /// on a first install (the file doesn't exist). When present,
+    /// per-snapshot lookups against this drive the
+    /// `lockfileToDepGraph`-equivalent skip decision — see
+    /// [`CreateVirtualStore::run`].
+    pub current_snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,
+    pub current_packages: Option<&'a HashMap<PackageKey, PackageMetadata>>,
+    /// Install-scoped precomputed slot-directory mapping (GVS-aware).
+    /// Used by both the warm batch and the cold batch to decide where
+    /// each snapshot's `node_modules/<pkg>` lands. See
+    /// [`crate::VirtualStoreLayout`].
+    pub layout: &'a crate::VirtualStoreLayout,
     /// Install-scoped dedupe state for `pnpm:package-import-method`.
     /// See `link_file::log_method_once`.
     pub logged_methods: &'a AtomicU8,
     /// Install root, threaded into reporter `requester` fields.
     pub requester: &'a str,
+    /// Shared store-index writer for the install. Owned by
+    /// `InstallFrozenLockfile`, threaded down here for the cold-batch
+    /// download path's `InstallPackageBySnapshot` and also reused by
+    /// `BuildModules` for the side-effects-cache WRITE path.
+    pub store_index_writer: &'a std::sync::Arc<StoreIndexWriter>,
+    /// `allowBuilds` gate, shared with `BuildModules`. The cold-batch
+    /// path threads this into the git fetcher so `preparePackage` can
+    /// reject `GIT_DEP_PREPARE_NOT_ALLOWED` for packages that aren't
+    /// allowlisted. Computed once per install in
+    /// [`crate::InstallFrozenLockfile::run`].
+    pub allow_build_policy: &'a crate::AllowBuildPolicy,
+    /// Snapshots the installability pass marked optional+incompatible
+    /// on this host. Their virtual-store slots are not created — the
+    /// warm/cold partition skips them, and the bundled-manifest +
+    /// side-effects-cache lookups they would feed downstream phases
+    /// are likewise omitted. Mirrors pnpm's `lockfileToDepGraph`
+    /// behavior of materializing only non-skipped snapshots in the
+    /// graph passed to the build phase.
+    pub skipped: &'a SkippedSnapshots,
 }
 
 /// Error type of [`CreateVirtualStore`].
@@ -49,54 +133,38 @@ pub enum CreateVirtualStoreError {
 }
 
 impl<'a> CreateVirtualStore<'a> {
-    /// Execute the subroutine.
-    pub async fn run<R: Reporter>(self) -> Result<(), CreateVirtualStoreError> {
+    /// Execute the subroutine. Returns the set of bundled manifests
+    /// recovered from `index.db` for the warm-batch slots — the
+    /// bin linker uses these to avoid re-reading `package.json` per
+    /// child. See [`PackageManifests`].
+    pub async fn run<R: Reporter>(
+        self,
+    ) -> Result<CreateVirtualStoreOutput, CreateVirtualStoreError> {
         let CreateVirtualStore {
             http_client,
             config,
             packages,
             snapshots,
+            current_snapshots,
+            current_packages,
+            layout,
             logged_methods,
             requester,
+            store_index_writer,
+            allow_build_policy,
+            skipped,
         } = self;
 
         let Some(snapshots) = snapshots else {
             // No snapshots to install. If the lockfile also has no project deps
             // this is a valid no-op; if it does, pnpm would have populated
             // `snapshots`, so bailing out here is safe enough for v9.
-            return Ok(());
+            return Ok(CreateVirtualStoreOutput {
+                package_manifests: PackageManifests::new(),
+                side_effects_maps_by_snapshot: SideEffectsMapsBySnapshot::new(),
+            });
         };
         let packages = packages.ok_or(CreateVirtualStoreError::MissingPackagesSection)?;
-
-        // `pnpm:stats added` mirrors pnpm's emit at
-        // <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-installer/src/install/link.ts#L363>:
-        // one event per project once the orchestrator has decided
-        // how many packages will land in the virtual store. Pnpm
-        // reports `newDepPathsSet.size` (the *delta* between current
-        // and wanted lockfile); pacquet has no current-lockfile
-        // tracking yet, so every install looks like a fresh install
-        // and `added` ends up as the total snapshot count. Once the
-        // current-lockfile path lands the count will narrow to the
-        // diff, matching pnpm exactly.
-        //
-        // `pnpm:stats removed: 0` mirrors the no-current-lockfile
-        // branch of
-        // <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-restorer/src/index.ts#L290>:
-        // pnpm emits a placeholder `0` when there's nothing to prune
-        // so consumers don't render a stale "removed" count from a
-        // previous install. Pacquet has no pruning pipeline yet, so
-        // the placeholder is the truthful value today.
-        R::emit(&LogEvent::Stats(StatsLog {
-            level: LogLevel::Debug,
-            message: StatsMessage::Added {
-                prefix: requester.to_owned(),
-                added: snapshots.len() as u64,
-            },
-        }));
-        R::emit(&LogEvent::Stats(StatsLog {
-            level: LogLevel::Debug,
-            message: StatsMessage::Removed { prefix: requester.to_owned(), removed: 0 },
-        }));
 
         // Open the read-only SQLite index once for the whole run instead of
         // per snapshot. Every `InstallPackageBySnapshot` performs a cache
@@ -144,24 +212,18 @@ impl<'a> CreateVirtualStore<'a> {
             };
         let store_index_ref = store_index.as_ref();
 
-        // Spawn the batched store-index writer. A single `spawn_blocking`
-        // task owns the writable SQLite connection for the whole install;
-        // every successfully extracted tarball just sends a row to it and
-        // the task flushes them in batched transactions. The old per-
-        // tarball `StoreIndex::open` + solo-INSERT pattern dominated
-        // install wall time on slow-metadata filesystems (#263) because
-        // each open is ~15 ms of metadata work on APFS and tokio's
-        // blocking pool grew to 500+ threads to service them.
+        // The batched store-index writer is now owned by the caller
+        // (`InstallFrozenLockfile::run`) so it survives past
+        // `CreateVirtualStore::run` and gets reused by the build
+        // phase's side-effects-cache WRITE path. Pacquet's original
+        // pattern was to spawn it here and drain it before returning,
+        // but the build phase needs to queue rows after the install
+        // path finishes — see pnpm/pnpm@7e3145f9fc:building/during-install/src/index.ts:198-216.
         //
-        // We drop our own copy of the `Arc<StoreIndexWriter>` after the
-        // `try_join_all` below so the channel can close once every tarball
-        // task has dropped its clone; then `.await` on the join handle
-        // waits for the final batch to flush before returning. A writer-
-        // side `JoinError` or open failure is surfaced at `warn!` and
-        // degraded to "no writer" — the install still succeeds, missing
-        // rows just force a re-download on the next install.
-        let (store_index_writer, writer_task) = StoreIndexWriter::spawn(store_dir);
-        let store_index_writer_ref = Some(&store_index_writer);
+        // The cold-batch download path uses the same writer through
+        // `InstallPackageBySnapshot.store_index_writer`, so the design
+        // is unchanged from the writer's perspective.
+        let store_index_writer_ref = Some(store_index_writer);
 
         // Install-scoped `verifiedFilesCache`. One `Arc<DashSet>` lives
         // for the duration of the install; every per-snapshot fetch
@@ -205,26 +267,184 @@ impl<'a> CreateVirtualStore<'a> {
         // Sort + dedup the prefetch input so `prefetch_cas_paths`
         // doesn't redo identical SELECT + integrity-check work for
         // every peer variant.
-        // Validate every snapshot upfront so a malformed lockfile
-        // (missing metadata, missing tarball integrity, currently-
-        // unsupported directory / git resolution) errors out *before*
-        // we start the warm batch. Previously we collapsed those
-        // cases into `None` and let them fall through to the cold
-        // batch, which meant the warm rayon batch ran to completion
-        // (~6 s on `alot7`) before the actual error fired.
-        type SnapshotWithCacheKey<'a> = (&'a PackageKey, &'a SnapshotEntry, Option<String>);
-        let snapshot_entries: Vec<SnapshotWithCacheKey<'_>> = snapshots
+        // Per-snapshot skip pass: drop snapshots that don't need
+        // installing.
+        //
+        // Two reasons a snapshot can be dropped from the install graph:
+        //
+        // 1. **Installability skip (this PR)** — `SkippedSnapshots`
+        //    contains it because the host's `engines` / `cpu` / `os`
+        //    / `libc` don't satisfy the package's constraints and the
+        //    snapshot is `optional`. Mirrors pnpm's `lockfileToDepGraph`
+        //    behavior at
+        //    <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L194>
+        //    where skipped depPaths are dropped from the graph the
+        //    builder iterates. These snapshots also stay out of the
+        //    `skipped_entries` cache-key pass — they were never
+        //    supposed to be installed, so there are no store-index
+        //    rows to keep alive.
+        //
+        // 2. **Current-lockfile skip (main #442)** — the previous
+        //    install also installed this snapshot (`current_snapshots`)
+        //    with the same dependency wiring + integrity, AND its
+        //    virtual-store slot still exists on disk. Mirrors
+        //    upstream's gate at
+        //    <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L246-L260>.
+        //    These DO land in `skipped_entries` so `BuildModules`'s
+        //    `is_built` cache lookup can short-circuit re-runs of
+        //    allowed-build scripts on warm reinstalls.
+        //
+        // Run this *before* deriving cache keys so unchanged
+        // directory-backed snapshots aren't tripped by
+        // `snapshot_cache_key`'s `UnsupportedResolution`.
+        //
+        // Route the slot-existence probe through `layout.slot_dir` so
+        // GVS-on installs check the correct path. The probe used to
+        // hard-code `<config.virtual_store_dir>/<flat-name>`, which is
+        // the legacy layout — under GVS, slots live at
+        // `<global_virtual_store_dir>/<scope>/<name>/<ver>/<hash>` and
+        // the legacy path is empty, so the skip gate would
+        // incorrectly mark every warm slot as "broken" and emit
+        // `BrokenModules` for the wrong path.
+        let survivors: Vec<(&PackageKey, &SnapshotEntry)> = snapshots
             .iter()
+            // Reason 1: installability skip. Drop entirely.
+            .filter(|(snapshot_key, _)| !skipped.contains(snapshot_key))
+            // Reason 2: current-lockfile skip. Drop survivors that
+            // already match the previous install.
+            .filter(|(snapshot_key, snapshot)| {
+                let Some(current_snapshots) = current_snapshots else { return true };
+                let Some(current_snapshot) = current_snapshots.get(*snapshot_key) else {
+                    return true;
+                };
+                if !snapshot_deps_equal(current_snapshot, snapshot) {
+                    return true;
+                }
+                let current_metadata =
+                    current_packages.and_then(|p| p.get(&snapshot_key.without_peer()));
+                let wanted_metadata = packages.get(&snapshot_key.without_peer());
+                if !integrity_equal(current_metadata, wanted_metadata) {
+                    return true;
+                }
+                let dir = layout
+                    .slot_dir(snapshot_key)
+                    .join("node_modules")
+                    .join(snapshot_key.name.to_string());
+                if dir.is_dir() {
+                    false
+                } else {
+                    R::emit(&LogEvent::BrokenModules(BrokenModulesLog {
+                        level: LogLevel::Debug,
+                        missing: dir.to_string_lossy().into_owned(),
+                    }));
+                    true
+                }
+            })
+            .collect();
+
+        // Validate every surviving snapshot upfront so a malformed
+        // lockfile (missing metadata, missing tarball integrity,
+        // currently-unsupported directory / git resolution) errors
+        // out *before* we start the warm batch. Previously we
+        // collapsed those cases into `None` and let them fall through
+        // to the cold batch, which meant the warm rayon batch ran to
+        // completion (~6 s on `alot7`) before the actual error fired.
+        //
+        // Cache-key derivation runs in two passes:
+        //
+        // - *Survivors* go through the strict path (this `?`). Their
+        //   resolutions have to be valid because the install will
+        //   actually fetch + link them.
+        // - *Skipped* snapshots get a lenient pass below: cache keys
+        //   are derived if possible, and any per-snapshot error is
+        //   swallowed. Reason: skipped snapshots aren't being
+        //   re-installed, but their store-index rows still need to
+        //   land in `side_effects_maps_by_snapshot` so
+        //   [`crate::BuildModules`]'s `is_built` gate can skip
+        //   re-running build scripts on warm reinstalls (review on
+        //   #442 — without this, allowed-build packages re-execute
+        //   their scripts every install, costing seconds on the
+        //   warm-reinstall path).
+        type SnapshotWithCacheKey<'a> = (&'a PackageKey, &'a SnapshotEntry, Option<String>);
+        let snapshot_entries: Vec<SnapshotWithCacheKey<'_>> = survivors
+            .into_iter()
             .map(|(snapshot_key, snapshot)| {
                 snapshot_cache_key(snapshot_key, packages).map(|key| (snapshot_key, snapshot, key))
             })
             .collect::<Result<_, _>>()?;
-        let mut cache_key_refs: Vec<&str> =
-            snapshot_entries.iter().filter_map(|(_, _, k)| k.as_deref()).collect();
+
+        // Cache keys for the *skipped* snapshots (i.e. snapshots
+        // present in `snapshots` but absent from `snapshot_entries`).
+        // Derived leniently so an unsupported / malformed skipped
+        // entry doesn't fail the install — it just contributes no
+        // prefetch row, which is the same outcome as if the skip
+        // filter had not engaged. Built as a parallel `Vec` so the
+        // downstream `package_manifests` /
+        // `side_effects_maps_by_snapshot` loop sees the full snapshot
+        // set, not just survivors.
+        let survivor_keys: std::collections::HashSet<&PackageKey> =
+            snapshot_entries.iter().map(|(k, _, _)| *k).collect();
+        let skipped_entries: Vec<SnapshotWithCacheKey<'_>> = snapshots
+            .iter()
+            .filter(|(snapshot_key, _)| !survivor_keys.contains(snapshot_key))
+            // Installability-skipped snapshots are excluded from
+            // `skipped_entries` too — they were never installed, so
+            // there's no store-index row to keep warm for the
+            // build-cache lookup. Only the current-lockfile-skip
+            // path (`survivors` filtered above) should contribute
+            // here.
+            .filter(|(snapshot_key, _)| !skipped.contains(snapshot_key))
+            .map(|(snapshot_key, snapshot)| {
+                let cache_key = snapshot_cache_key(snapshot_key, packages).ok().flatten();
+                (snapshot_key, snapshot, cache_key)
+            })
+            .collect();
+
+        // `pnpm:stats added` mirrors pnpm's emit at
+        // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/link.ts#L363>:
+        // one event per project once the orchestrator has decided
+        // how many packages will land in the virtual store. Upstream
+        // reports `newDepPathsSet.size`, the *delta* between current
+        // and wanted lockfile; pacquet computes the same delta as the
+        // post-skip-filter snapshot count so a warm reinstall against
+        // an unchanged lockfile reports `added: 0`.
+        //
+        // `pnpm:stats removed: 0` mirrors the no-current-lockfile
+        // branch of
+        // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/index.ts#L290>:
+        // pnpm emits a placeholder `0` when there's nothing to prune
+        // so consumers don't render a stale "removed" count from a
+        // previous install. Pacquet has no pruning pipeline yet, so
+        // the placeholder is the truthful value today.
+        R::emit(&LogEvent::Stats(StatsLog {
+            level: LogLevel::Debug,
+            message: StatsMessage::Added {
+                prefix: requester.to_owned(),
+                added: snapshot_entries.len() as u64,
+            },
+        }));
+        R::emit(&LogEvent::Stats(StatsLog {
+            level: LogLevel::Debug,
+            message: StatsMessage::Removed { prefix: requester.to_owned(), removed: 0 },
+        }));
+
+        // Union the cache keys from survivors and skipped snapshots
+        // so the prefetch covers everyone the build phase might need
+        // to gate on. Sorted + deduplicated to avoid redundant SQL
+        // queries in `prefetch_cas_paths`.
+        let mut cache_key_refs: Vec<&str> = snapshot_entries
+            .iter()
+            .chain(skipped_entries.iter())
+            .filter_map(|(_, _, k)| k.as_deref())
+            .collect();
         cache_key_refs.sort_unstable();
         cache_key_refs.dedup();
         let cache_keys: Vec<String> = cache_key_refs.into_iter().map(String::from).collect();
-        let prefetched = prefetch_cas_paths(
+        let PrefetchResult {
+            cas_paths: prefetched,
+            manifests: prefetched_manifests,
+            side_effects_maps: prefetched_side_effects,
+        } = prefetch_cas_paths(
             store_index.clone(),
             store_dir,
             cache_keys,
@@ -266,14 +486,68 @@ impl<'a> CreateVirtualStore<'a> {
         // local alias drifting (Copilot review on #292).
         let mut warm = Vec::with_capacity(snapshot_entries.len());
         let mut cold: Vec<(&PackageKey, &SnapshotEntry)> = Vec::new();
+        // Build a `metadata_key -> manifest` lookup from the prefetched
+        // index rows. Snapshot keys differ across peer-resolved
+        // variants of the same package (`react-dom@17.0.2(react@...)`),
+        // but the bundled manifest is identical across variants
+        // because every variant resolves to the same tarball. Keying
+        // by [`PkgNameVerPeer::without_peer`] collapses the variants
+        // to one entry: same shape as
+        // [`pacquet_lockfile::Lockfile::packages`], which is what the
+        // bin linker already looks up by.
+        let mut package_manifests: PackageManifests =
+            HashMap::with_capacity(prefetched_manifests.len());
+        let mut side_effects_maps_by_snapshot: SideEffectsMapsBySnapshot =
+            HashMap::with_capacity(prefetched_side_effects.len());
+
+        // First pass: process *skipped* snapshots into the bin-
+        // manifest cache and the side-effects map. They don't enter
+        // the warm/cold partition (no link work to do), but their
+        // store-index rows are needed downstream so
+        // [`crate::BuildModules`]'s `is_built` gate can fire — without
+        // these entries, packages with `allowBuilds: true` would
+        // re-execute their lifecycle scripts on every warm reinstall.
+        for (snapshot_key, _snapshot, cache_key) in &skipped_entries {
+            if let Some(cache_key) = cache_key.as_deref()
+                && let Some(manifest) = prefetched_manifests.get(cache_key)
+            {
+                package_manifests
+                    .entry(snapshot_key.without_peer())
+                    .or_insert_with(|| std::sync::Arc::clone(manifest));
+            }
+            if let Some(cache_key) = cache_key.as_deref()
+                && let Some(maps) = prefetched_side_effects.get(cache_key)
+            {
+                side_effects_maps_by_snapshot
+                    .insert((*snapshot_key).clone(), std::sync::Arc::clone(maps));
+            }
+        }
+
+        // Second pass: survivors. Same loop as above plus the
+        // warm/cold partition that decides which snapshots run the
+        // link work.
         for (snapshot_key, snapshot, cache_key) in &snapshot_entries {
+            if let Some(cache_key) = cache_key.as_deref()
+                && let Some(manifest) = prefetched_manifests.get(cache_key)
+            {
+                package_manifests
+                    .entry(snapshot_key.without_peer())
+                    .or_insert_with(|| std::sync::Arc::clone(manifest));
+            }
+            // Peer-variants of the same package share the same
+            // store-index row → the same `Arc<_>`. Cheap to share.
+            if let Some(cache_key) = cache_key.as_deref()
+                && let Some(maps) = prefetched_side_effects.get(cache_key)
+            {
+                side_effects_maps_by_snapshot
+                    .insert((*snapshot_key).clone(), std::sync::Arc::clone(maps));
+            }
             match cache_key.as_deref().and_then(|k| prefetched.get(k)) {
                 Some(cas_paths) => warm.push((snapshot_key, snapshot, cas_paths)),
                 None => cold.push((snapshot_key, snapshot)),
             }
         }
 
-        let virtual_store_dir = &config.virtual_store_dir;
         let import_method = config.package_import_method;
         {
             use rayon::prelude::*;
@@ -296,7 +570,7 @@ impl<'a> CreateVirtualStore<'a> {
                     emit_warm_snapshot_progress::<R>(&package_id, requester);
 
                     crate::CreateVirtualDirBySnapshot {
-                        virtual_store_dir,
+                        layout,
                         cas_paths: cas_paths.as_ref(),
                         import_method,
                         logged_methods,
@@ -339,6 +613,7 @@ impl<'a> CreateVirtualStore<'a> {
                     InstallPackageBySnapshot {
                         http_client,
                         config,
+                        layout,
                         store_index: store_index_ref,
                         store_index_writer: store_index_writer_ref,
                         prefetched_cas_paths: prefetched_ref,
@@ -348,6 +623,7 @@ impl<'a> CreateVirtualStore<'a> {
                         package_key: snapshot_key,
                         metadata,
                         snapshot,
+                        allow_build_policy,
                     }
                     .run::<R>()
                     .await
@@ -357,26 +633,13 @@ impl<'a> CreateVirtualStore<'a> {
                 .await?;
         }
 
-        // Drop the orchestration's sender so the channel closes once every
-        // per-tarball clone has also dropped; then wait for the writer task
-        // to flush its final batch. Swallow any error with `warn!` — we've
-        // already done the install and cache-miss degradation is fine.
-        drop(store_index_writer);
-        match writer_task.await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => tracing::warn!(
-                target: "pacquet::install",
-                ?error,
-                "store-index writer task returned an error; some rows may not be persisted",
-            ),
-            Err(error) => tracing::warn!(
-                target: "pacquet::install",
-                ?error,
-                "store-index writer task panicked; some rows may not be persisted",
-            ),
-        }
+        // The writer is owned by the caller now. They drop their
+        // sender and await the join handle after the build phase
+        // finishes, so the final batch flushes after every queued
+        // row from both the download path and the WRITE-path
+        // upload.
 
-        Ok(())
+        Ok(CreateVirtualStoreOutput { package_manifests, side_effects_maps_by_snapshot })
     }
 }
 
@@ -415,38 +678,91 @@ fn snapshot_cache_key(
             metadata_key: metadata_key.to_string(),
         }
     })?;
-    let integrity = match &metadata.resolution {
-        LockfileResolution::Tarball(t) => t
-            .integrity
-            .as_ref()
-            .ok_or_else(|| {
-                CreateVirtualStoreError::InstallPackageBySnapshot(
-                    InstallPackageBySnapshotError::MissingTarballIntegrity {
-                        package_key: snapshot_key.to_string(),
-                    },
-                )
-            })?
-            .to_string(),
-        LockfileResolution::Registry(r) => r.integrity.to_string(),
-        LockfileResolution::Directory(_) => {
-            return Err(CreateVirtualStoreError::InstallPackageBySnapshot(
-                InstallPackageBySnapshotError::UnsupportedResolution {
-                    package_key: snapshot_key.to_string(),
-                    resolution_kind: "directory",
-                },
-            ));
-        }
-        LockfileResolution::Git(_) => {
-            return Err(CreateVirtualStoreError::InstallPackageBySnapshot(
-                InstallPackageBySnapshotError::UnsupportedResolution {
-                    package_key: snapshot_key.to_string(),
-                    resolution_kind: "git",
-                },
-            ));
-        }
-    };
     let pkg_id = metadata_key.to_string();
-    Ok(Some(store_index_key(&integrity, &pkg_id)))
+    match &metadata.resolution {
+        LockfileResolution::Tarball(t) if t.git_hosted == Some(true) => {
+            // Git-hosted tarballs land in the CAS via
+            // `pacquet_git_fetcher::GitHostedTarballFetcher` and the
+            // row is written under `gitHostedStoreIndexKey(pkg_id,
+            // built)` rather than the integrity-based key. Use the
+            // same key shape here so the warm prefetch finds the
+            // row on a re-install. `built = true` matches the
+            // dispatcher's `!ignore_scripts` default — when ignore-
+            // scripts becomes configurable both sites flip together.
+            Ok(Some(git_hosted_store_index_key(&pkg_id, true)))
+        }
+        LockfileResolution::Tarball(t) => {
+            let integrity = t
+                .integrity
+                .as_ref()
+                .ok_or_else(|| {
+                    CreateVirtualStoreError::InstallPackageBySnapshot(
+                        InstallPackageBySnapshotError::MissingTarballIntegrity {
+                            package_key: snapshot_key.to_string(),
+                        },
+                    )
+                })?
+                .to_string();
+            Ok(Some(store_index_key(&integrity, &pkg_id)))
+        }
+        LockfileResolution::Registry(r) => {
+            Ok(Some(store_index_key(&r.integrity.to_string(), &pkg_id)))
+        }
+        LockfileResolution::Directory(_) => Err(CreateVirtualStoreError::InstallPackageBySnapshot(
+            InstallPackageBySnapshotError::UnsupportedResolution {
+                package_key: snapshot_key.to_string(),
+                resolution_kind: "directory",
+            },
+        )),
+        LockfileResolution::Git(_) => {
+            // `Git` resolutions land in CAS via
+            // `pacquet_git_fetcher::GitFetcher`, which writes the
+            // row under the same `gitHostedStoreIndexKey` shape as
+            // the git-hosted tarball path. Returning the key here
+            // lets the warm prefetch reuse a previous install's
+            // clone + checkout + prepare + packlist work — without
+            // this, every git install cold-paths regardless of
+            // whether the snapshot is already in `index.db`.
+            Ok(Some(git_hosted_store_index_key(&pkg_id, true)))
+        }
+    }
+}
+
+/// Two snapshots agree on dependency wiring when both their
+/// `dependencies` and `optionalDependencies` maps are equal in
+/// upstream's sense — an absent map and an empty map are equivalent
+/// (`equals({}, undefined)` and `isEmpty({}) === isEmpty(undefined)`
+/// both hold in Ramda). Mirrors the AND-pair in
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L246-L260>:
+/// the deps check is the `depIsPresent && equals(...)` arm and the
+/// optional-deps check is the `isEmpty(...) && isEmpty(...) ||
+/// equals(...)` arm folded together.
+fn snapshot_deps_equal(current: &SnapshotEntry, wanted: &SnapshotEntry) -> bool {
+    fn maps_equal<K, V>(a: Option<&HashMap<K, V>>, b: Option<&HashMap<K, V>>) -> bool
+    where
+        K: std::cmp::Eq + std::hash::Hash,
+        V: PartialEq,
+    {
+        match (a, b) {
+            (None, None) => true,
+            (Some(m), None) | (None, Some(m)) => m.is_empty(),
+            (Some(x), Some(y)) => x == y,
+        }
+    }
+    maps_equal(current.dependencies.as_ref(), wanted.dependencies.as_ref())
+        && maps_equal(current.optional_dependencies.as_ref(), wanted.optional_dependencies.as_ref())
+}
+
+/// Compare the `integrity` field on two `packages:` entries. Mirrors
+/// upstream's `isIntegrityEqual` helper at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L366>:
+/// only the tarball/registry-style integrity participates in the
+/// check; directory and git resolutions yield `None` on both sides,
+/// which we treat as "unchanged" so the existing slot is reused.
+fn integrity_equal(current: Option<&PackageMetadata>, wanted: Option<&PackageMetadata>) -> bool {
+    let current_integrity = current.and_then(|m| m.resolution.integrity());
+    let wanted_integrity = wanted.and_then(|m| m.resolution.integrity());
+    current_integrity == wanted_integrity
 }
 
 /// `pnpm:progress` `resolved` + `found_in_store` for a frozen-lockfile

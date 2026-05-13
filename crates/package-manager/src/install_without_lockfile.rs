@@ -1,14 +1,15 @@
 use crate::{
-    InstallPackageFromRegistry, InstallPackageFromRegistryError,
-    store_init::init_store_dir_best_effort,
+    InstallPackageFromRegistry, InstallPackageFromRegistryError, LinkVirtualStoreBins,
+    LinkVirtualStoreBinsError, store_init::init_store_dir_best_effort,
 };
 use async_recursion::async_recursion;
 use dashmap::DashSet;
 use derive_more::{Display, Error};
 use futures_util::future;
 use miette::Diagnostic;
+use pacquet_cmd_shim::{LinkBinsError, RealApi, link_bins};
+use pacquet_config::Config;
 use pacquet_network::ThrottledClient;
-use pacquet_npmrc::Npmrc;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry::PackageVersion;
 use pacquet_reporter::{LogEvent, LogLevel, Reporter, Stage, StageLog};
@@ -37,7 +38,7 @@ pub struct InstallWithoutLockfile<'a, DependencyGroupList> {
     pub tarball_mem_cache: &'a MemCache,
     pub resolved_packages: &'a ResolvedPackages,
     pub http_client: &'a ThrottledClient,
-    pub config: &'static Npmrc,
+    pub config: &'static Config,
     pub manifest: &'a PackageManifest,
     pub dependency_groups: DependencyGroupList,
     /// Install-scoped dedupe state for `pnpm:package-import-method`.
@@ -52,6 +53,12 @@ pub struct InstallWithoutLockfile<'a, DependencyGroupList> {
 pub enum InstallWithoutLockfileError {
     #[diagnostic(transparent)]
     InstallPackageFromRegistry(#[error(source)] InstallPackageFromRegistryError),
+
+    #[diagnostic(transparent)]
+    LinkBins(#[error(source)] LinkBinsError),
+
+    #[diagnostic(transparent)]
+    LinkVirtualStoreBins(#[error(source)] LinkVirtualStoreBinsError),
 }
 
 impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
@@ -182,7 +189,46 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
             ),
         }
 
-        // Mirrors upstream `link.ts:167-170` — `importing_done` fires once
+        // Link bins. Direct dependencies first (root project's
+        // `node_modules/.bin`) and then per-slot children inside the
+        // virtual store. Mirrors the same two-call shape as
+        // `install_frozen_lockfile.rs`. We re-walk `<modules_dir>` instead
+        // of replaying the manifest because the `dependency_groups`
+        // iterator was already consumed by the install loop above; pnpm's
+        // own `linkBins(modulesDir, binsDir)` overload uses the same
+        // strategy.
+        link_bins::<RealApi>(&config.modules_dir, &config.modules_dir.join(".bin"))
+            .map_err(InstallWithoutLockfileError::LinkBins)?;
+
+        // No lockfile here, so no prefetched manifests are available —
+        // fall back to the legacy readdir-driven path (slots discovered
+        // by walking `<virtual_store_dir>`, child manifests read from
+        // disk). The frozen-lockfile path skips both via
+        // [`LinkVirtualStoreBins::snapshots`] / `package_manifests`.
+        //
+        // The bin linker also doesn't need GVS-aware slot lookups
+        // here: without snapshots there are no GVS slot directories to
+        // compute. Construct a legacy layout so the readdir path
+        // enumerates `config.virtual_store_dir` exactly as before. GVS
+        // is scoped to frozen-lockfile installs (pnpm/pacquet#432); the
+        // without-lockfile fallback stays project-local.
+        let layout = crate::VirtualStoreLayout::legacy(config.virtual_store_dir.clone());
+        let empty_manifests = std::collections::HashMap::new();
+        let empty_skipped = crate::SkippedSnapshots::new();
+        LinkVirtualStoreBins {
+            layout: &layout,
+            snapshots: None,
+            packages: None,
+            package_manifests: &empty_manifests,
+            // The without-lockfile path has no installability check
+            // (no `packages:` metadata to evaluate constraints
+            // against), so the skip set is empty by definition.
+            skipped: &empty_skipped,
+        }
+        .run()
+        .map_err(InstallWithoutLockfileError::LinkVirtualStoreBins)?;
+
+        // Mirrors upstream `link.ts:167-170`: `importing_done` fires once
         // extraction and symlink linking are complete. The without-lockfile
         // path does not run lifecycle scripts today, so emitting here also
         // marks end-of-install for reporters.

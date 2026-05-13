@@ -415,7 +415,7 @@ async fn prefetch_cas_paths_returns_hits_for_live_index_rows() {
     )
     .await;
 
-    let map = prefetched.get(&index_key).expect("hit");
+    let map = prefetched.cas_paths.get(&index_key).expect("hit");
     assert_eq!(map.get("package.json"), Some(&pkg_json_path));
     drop(store_dir);
 }
@@ -471,7 +471,7 @@ async fn prefetch_cas_paths_omits_failed_integrity_entries() {
     .await;
 
     assert!(
-        !prefetched.contains_key(&index_key),
+        !prefetched.cas_paths.contains_key(&index_key),
         "row that fails integrity must not appear in prefetch result",
     );
     drop(store_dir);
@@ -527,7 +527,7 @@ async fn prefetch_cas_paths_skips_filesystem_checks_when_verify_disabled() {
     )
     .await;
 
-    let map = prefetched.get(&index_key).expect(
+    let map = prefetched.cas_paths.get(&index_key).expect(
         "verify=false should trust the index row and surface the entry without checking disk",
     );
     assert!(map.contains_key("package.json"));

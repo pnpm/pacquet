@@ -1,7 +1,7 @@
 use super::InstallPackageFromRegistry;
 use node_semver::Version;
+use pacquet_config::Config;
 use pacquet_network::ThrottledClient;
-use pacquet_npmrc::Npmrc;
 use pacquet_registry_mock::AutoMockInstance;
 use pacquet_reporter::{LogEvent, ProgressMessage, Reporter, SilentReporter};
 use pacquet_store_dir::{SharedVerifiedFilesCache, StoreDir};
@@ -14,8 +14,8 @@ use std::{
 };
 use tempfile::tempdir;
 
-fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path) -> Npmrc {
-    Npmrc {
+fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path) -> Config {
+    Config {
         hoist: false,
         hoist_pattern: vec![],
         public_hoist_pattern: vec![],
@@ -25,6 +25,8 @@ fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path)
         node_linker: Default::default(),
         symlink: false,
         virtual_store_dir: virtual_store_dir.to_path_buf(),
+        enable_global_virtual_store: false,
+        global_virtual_store_dir: virtual_store_dir.to_path_buf(),
         package_import_method: Default::default(),
         modules_cache_max_age: 0,
         lockfile: false,
@@ -36,10 +38,21 @@ fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path)
         strict_peer_dependencies: false,
         resolve_peers_from_workspace_root: false,
         verify_store_integrity: true,
+        side_effects_cache: true,
+        side_effects_cache_readonly: false,
         fetch_retries: 2,
         fetch_retry_factor: 10,
         fetch_retry_mintimeout: 10_000,
         fetch_retry_maxtimeout: 60_000,
+        workspace_dir: None,
+        patched_dependencies: None,
+        allow_builds: Default::default(),
+        dangerously_allow_all_builds: false,
+        scripts_prepend_node_path: Default::default(),
+        unsafe_perm: true,
+        child_concurrency: 1,
+        git_shallow_hosts: pacquet_config::default_git_shallow_hosts(),
+        supported_architectures: None,
         auth_headers: Default::default(),
     }
 }
@@ -49,7 +62,7 @@ pub async fn should_find_package_version_from_registry() {
     let store_dir = tempdir().unwrap();
     let modules_dir = tempdir().unwrap();
     let virtual_store_dir = tempdir().unwrap();
-    let config: &'static Npmrc =
+    let config: &'static Config =
         create_config(store_dir.path(), modules_dir.path(), virtual_store_dir.path())
             .pipe(Box::new)
             .pipe(Box::leak);
@@ -128,7 +141,7 @@ async fn no_lockfile_install_emits_progress_sequence() {
 
     let mut config = create_config(store_dir.path(), modules_dir.path(), virtual_store_dir.path());
     config.registry = mock_instance.url();
-    let config: &'static Npmrc = config.pipe(Box::new).pipe(Box::leak);
+    let config: &'static Config = config.pipe(Box::new).pipe(Box::leak);
 
     let http_client = ThrottledClient::new_for_installs();
     let verified_files_cache = SharedVerifiedFilesCache::default();

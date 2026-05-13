@@ -1,6 +1,6 @@
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_npmrc::PackageImportMethod;
+use pacquet_config::PackageImportMethod;
 use pacquet_reporter::{
     LogEvent, LogLevel, PackageImportMethod as WireImportMethod, PackageImportMethodLog, Reporter,
 };
@@ -110,8 +110,8 @@ fn log_method_once<R: Reporter>(logged: &AtomicU8, flag: u8, method: WireImportM
 ///   `importFile` (see `fs/indexed-pkg-importer/src/importIndexedDir.ts`,
 ///   `tryImportIndexedDir`), which mkdirs the unique parent set
 ///   sequentially up-front and then calls into the import primitive
-///   per file. [`create_cas_files`](crate::create_cas_files()) is the
-///   production caller and handles that pre-pass.
+///   per file. [`import_indexed_dir`](crate::import_indexed_dir()) is
+///   the production caller and handles that pre-pass.
 pub fn link_file<R: Reporter>(
     logged: &AtomicU8,
     method: PackageImportMethod,

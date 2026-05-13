@@ -15,6 +15,7 @@ pacquet-fs = { workspace = true }
 
 dashmap       = { workspace = true }
 derive_more   = { workspace = true }
+dunce         = { workspace = true }
 miette        = { workspace = true }
 rmp-serde     = { workspace = true }
 rusqlite      = { workspace = true }

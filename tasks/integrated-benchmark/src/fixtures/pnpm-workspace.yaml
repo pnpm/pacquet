@@ -1,5 +1,21 @@
 storeDir: ./store-dir
 
+# Pin the virtual-store layout to the legacy project-local shape
+# (`<project>/node_modules/.pnpm`) so the benchmark continues to
+# compare apples-to-apples across pacquet revisions.
+#
+# Pacquet's default flipped to `enableGlobalVirtualStore: true` in
+# pnpm/pacquet#432 (pnpm v11 parity), but the benchmark's job is
+# to track isolated-linker performance across `pacquet@HEAD` vs
+# `pacquet@main` vs `pnpm`. With GVS on, slot directories move to
+# `<storeDir>/links/<scope>/<name>/<version>/<hash>` — a different
+# disk layout from what pre-#432 revisions and pacquet's
+# project-local baseline produce, so leaving the default in place
+# would silently change what the numbers measure. Flip this to
+# `true` in a `--fixture-dir` override (or drop the line entirely)
+# to benchmark the GVS path on its own terms.
+enableGlobalVirtualStore: false
+
 # Force pnpm to install every optional dependency in the lockfile
 # regardless of the runner's own os/cpu/libc, so its install payload
 # matches pacquet's (which currently installs every snapshot in the
