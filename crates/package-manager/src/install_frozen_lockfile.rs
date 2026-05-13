@@ -358,17 +358,18 @@ where
             }
         }
 
-        // `--no-runtime` (or `config.skip_runtimes`): exclude every
-        // snapshot whose `packages:` metadata carries a `Binary` or
-        // `Variations` resolution. Mirrors pnpm's
-        // [`skipRuntimes`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/index.ts)
-        // gate, with a wider blast radius: pnpm filters runtimes
-        // out of `dependenciesByProjectId` so transitive runtime
-        // deps (rare) still install, whereas pacquet drops the
-        // snapshot entirely. Practical effect is the same for the
-        // common case — runtimes are top-level deps in nearly every
-        // real-world project — and the simpler shape composes with
-        // the rest of the skip-set plumbing.
+        // `--no-runtime` (or `config.skip_runtimes`): exclude
+        // every project-direct runtime dependency. Mirrors
+        // pnpm's `skipRuntimes` filter at
+        // [`installing/deps-installer/src/install/index.ts`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/index.ts#L1374-L1387)
+        // exactly — iterate each importer's direct deps and add
+        // the runtime ones to the skip set; transitive runtime
+        // entries (which would be unusual but possible) stay in
+        // the install. Upstream's discriminator is the
+        // `depPath.includes('@runtime:')` substring check on the
+        // resolved depPath; pacquet's lockfile preserves the
+        // `@runtime:` substring in the snapshot key, so the same
+        // string-test works here.
         //
         // Re-using `add_optional_excluded` keeps the bucket count
         // (and `.modules.yaml.skipped` semantics) unchanged: like
@@ -377,13 +378,38 @@ where
         // `.modules.yaml.skipped` — a future install without the
         // flag must bring the runtime back.
         if skip_runtimes && let Some(pkgs) = packages {
-            for (key, meta) in pkgs {
-                if matches!(
-                    meta.resolution,
-                    pacquet_lockfile::LockfileResolution::Binary(_)
-                        | pacquet_lockfile::LockfileResolution::Variations(_),
-                ) {
-                    skipped.add_optional_excluded(key.clone());
+            for importer in importers.values() {
+                for dep_map in [
+                    importer.dependencies.as_ref(),
+                    importer.dev_dependencies.as_ref(),
+                    importer.optional_dependencies.as_ref(),
+                ] {
+                    let Some(dep_map) = dep_map else { continue };
+                    for (alias, spec) in dep_map {
+                        let Some(version) = spec.version.as_regular() else { continue };
+                        // Build the candidate snapshot key from
+                        // (alias, version). For non-aliased deps
+                        // this is the depPath verbatim; aliased
+                        // runtime deps (unusual) won't match
+                        // `packages` here, matching pnpm's lookup
+                        // by depPath rather than by alias.
+                        let candidate = format!("{alias}@{version}");
+                        if !candidate.contains("@runtime:") {
+                            continue;
+                        }
+                        let Ok(key) = candidate.parse::<pacquet_lockfile::PackageKey>() else {
+                            continue;
+                        };
+                        if let Some(meta) = pkgs.get(&key)
+                            && matches!(
+                                &meta.resolution,
+                                pacquet_lockfile::LockfileResolution::Binary(_)
+                                    | pacquet_lockfile::LockfileResolution::Variations(_),
+                            )
+                        {
+                            skipped.add_optional_excluded(key);
+                        }
+                    }
                 }
             }
         }
