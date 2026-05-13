@@ -1967,6 +1967,7 @@ dependencies = [
  "indexmap",
  "libc",
  "miette 7.6.0",
+ "pacquet-network",
  "pacquet-package-is-installable",
  "pacquet-patching",
  "pacquet-store-dir",
@@ -1976,6 +1977,7 @@ dependencies = [
  "serde-saphyr",
  "smart-default",
  "tempfile",
+ "tracing",
 ]
 
 [[package]]
@@ -2123,6 +2125,7 @@ name = "pacquet-network"
 version = "0.0.1"
 dependencies = [
  "pipe-trait",
+ "pretty_assertions",
  "reqwest",
  "tokio",
 ]
@@ -2232,6 +2235,7 @@ version = "0.0.1"
 dependencies = [
  "derive_more",
  "miette 7.6.0",
+ "mockito",
  "node-semver",
  "pacquet-diagnostics",
  "pacquet-network",

@@ -440,28 +440,28 @@ Install tests:
 
 Auth header tests:
 
-- [ ] `TypeScript repo: network/auth-header/test/getAuthHeadersFromConfig.test.ts:32` `should convert auth token to Bearer header`
-- [ ] `TypeScript repo: network/auth-header/test/getAuthHeadersFromConfig.test.ts:42` `should convert basicAuth to Basic header`
-- [ ] `TypeScript repo: network/auth-header/test/getAuthHeadersFromConfig.test.ts:50` `should handle default registry auth (empty key)`
+- [x] `TypeScript repo: network/auth-header/test/getAuthHeadersFromConfig.test.ts:32` `should convert auth token to Bearer header`
+- [x] `TypeScript repo: network/auth-header/test/getAuthHeadersFromConfig.test.ts:42` `should convert basicAuth to Basic header`
+- [x] `TypeScript repo: network/auth-header/test/getAuthHeadersFromConfig.test.ts:50` `should handle default registry auth (empty key)`
 - [ ] `TypeScript repo: network/auth-header/test/getAuthHeadersFromConfig.test.ts:58` `should execute tokenHelper`
 - [ ] `TypeScript repo: network/auth-header/test/getAuthHeadersFromConfig.test.ts:66` `should prepend Bearer to raw token from tokenHelper`
 - [ ] `TypeScript repo: network/auth-header/test/getAuthHeadersFromConfig.test.ts:74` `should throw an error if the token helper fails`
 - [ ] `TypeScript repo: network/auth-header/test/getAuthHeadersFromConfig.test.ts:79` `should throw an error if the token helper returns an empty token`
-- [ ] `TypeScript repo: network/auth-header/test/getAuthHeaderByURI.ts:11` `getAuthHeaderByURI()`
-- [ ] `TypeScript repo: network/auth-header/test/getAuthHeaderByURI.ts:22` `getAuthHeaderByURI() basic auth without settings`
-- [ ] `TypeScript repo: network/auth-header/test/getAuthHeaderByURI.ts:30` `getAuthHeaderByURI() basic auth with settings`
-- [ ] `TypeScript repo: network/auth-header/test/getAuthHeaderByURI.ts:41` `getAuthHeaderByURI() https port 443 checks`
-- [ ] `TypeScript repo: network/auth-header/test/getAuthHeaderByURI.ts:49` `getAuthHeaderByURI() when default ports are specified`
-- [ ] `TypeScript repo: network/auth-header/test/getAuthHeaderByURI.ts:61` `getAuthHeaderByURI() when the registry has pathnames`
-- [ ] `TypeScript repo: network/auth-header/test/getAuthHeaderByURI.ts:72` `getAuthHeaderByURI() with default registry auth`
+- [x] `TypeScript repo: network/auth-header/test/getAuthHeaderByURI.ts:11` `getAuthHeaderByURI()`
+- [x] `TypeScript repo: network/auth-header/test/getAuthHeaderByURI.ts:22` `getAuthHeaderByURI() basic auth without settings`
+- [x] `TypeScript repo: network/auth-header/test/getAuthHeaderByURI.ts:30` `getAuthHeaderByURI() basic auth with settings`
+- [x] `TypeScript repo: network/auth-header/test/getAuthHeaderByURI.ts:41` `getAuthHeaderByURI() https port 443 checks`
+- [x] `TypeScript repo: network/auth-header/test/getAuthHeaderByURI.ts:49` `getAuthHeaderByURI() when default ports are specified`
+- [x] `TypeScript repo: network/auth-header/test/getAuthHeaderByURI.ts:61` `getAuthHeaderByURI() when the registry has pathnames`
+- [x] `TypeScript repo: network/auth-header/test/getAuthHeaderByURI.ts:72` `getAuthHeaderByURI() with default registry auth`
 
 Auth config parsing and precedence tests:
 
 - [ ] `TypeScript repo: config/reader/test/index.ts:481` `auth tokens from pnpm auth file override ~/.npmrc`
 - [ ] `TypeScript repo: config/reader/test/index.ts:523` `workspace .npmrc overrides pnpm auth file`
-- [ ] `TypeScript repo: config/reader/test/parseCreds.test.ts:15` `authToken`
-- [ ] `TypeScript repo: config/reader/test/parseCreds.test.ts:23` `authPairBase64`
-- [ ] `TypeScript repo: config/reader/test/parseCreds.test.ts:49` `authUsername and authPassword`
+- [x] `TypeScript repo: config/reader/test/parseCreds.test.ts:15` `authToken`
+- [x] `TypeScript repo: config/reader/test/parseCreds.test.ts:23` `authPairBase64`
+- [x] `TypeScript repo: config/reader/test/parseCreds.test.ts:49` `authUsername and authPassword`
 - [ ] `TypeScript repo: config/reader/test/parseCreds.test.ts:69` `tokenHelper`
 
 Fetcher tests:

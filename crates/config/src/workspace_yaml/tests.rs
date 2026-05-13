@@ -429,6 +429,27 @@ fn find_propagates_when_manifest_path_is_a_directory() {
     drop(tmp); // clean up
 }
 
+/// A `pnpm-workspace.yaml` whose contents do not parse as YAML must
+/// surface as `ParseYaml` (not `ReadFile`, not silently dropped),
+/// matching pnpm's `readManifestRaw` behaviour where parse failures
+/// abort the install rather than fall through to defaults.
+#[test]
+fn find_propagates_parse_yaml_error_on_malformed_manifest() {
+    let tmp = tempfile::tempdir().unwrap();
+    let manifest = tmp.path().join(WORKSPACE_MANIFEST_FILENAME);
+    // Unmatched bracket; serde-saphyr rejects.
+    fs::write(&manifest, "storeDir: [unterminated\n").unwrap();
+
+    let err = WorkspaceSettings::find_and_load(tmp.path())
+        .expect_err("malformed yaml must surface as ParseYaml");
+    let LoadWorkspaceYamlError::ParseYaml { path, .. } = err else {
+        panic!("expected ParseYaml, got {err:?}");
+    };
+    assert_eq!(path, manifest);
+
+    drop(tmp); // clean up
+}
+
 #[test]
 fn find_returns_none_when_no_manifest() {
     let tmp = tempfile::tempdir().unwrap();

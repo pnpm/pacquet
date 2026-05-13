@@ -1,3 +1,7 @@
+mod auth;
+
+pub use auth::{AuthHeaders, base64_encode, nerf_dart};
+
 use reqwest::{
     Client,
     header::{HeaderMap, HeaderValue, USER_AGENT},

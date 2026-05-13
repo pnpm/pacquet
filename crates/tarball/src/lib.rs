@@ -10,7 +10,7 @@ use dashmap::DashMap;
 use derive_more::{Display, Error, From};
 use miette::Diagnostic;
 use pacquet_fs::file_mode;
-use pacquet_network::ThrottledClient;
+use pacquet_network::{AuthHeaders, ThrottledClient};
 use pacquet_reporter::{
     FetchingProgressLog, FetchingProgressMessage, LogEvent, LogLevel, ProgressLog, ProgressMessage,
     Reporter, RequestRetryError, RequestRetryLog,
@@ -927,6 +927,13 @@ pub struct DownloadTarballToStore<'a> {
     /// with `package_integrity` to form the SQLite index key per pnpm v11's
     /// `storeIndexKey`.
     pub package_id: &'a str,
+    /// URL-keyed `Authorization` header lookup, built from the parsed
+    /// `.npmrc` creds. Resolved per request so a tarball served from a
+    /// different host than the registry still picks up its own header.
+    /// Mirrors pnpm's
+    /// [`getAuthHeaderByURI`](https://github.com/pnpm/pnpm/blob/601317e7a3/network/auth-header/src/index.ts)
+    /// pattern.
+    pub auth_headers: &'a AuthHeaders,
     /// Install root the fetch belongs to. Threaded into the
     /// `pnpm:progress` `requester` field on `fetched` /
     /// `found_in_store` events. Same value as the
@@ -1041,6 +1048,10 @@ fn is_transient_error(err: &TarballError) -> bool {
 /// pQueue and #281's EMFILE fix), then dropped before the
 /// `post_download_semaphore` permit gates the CPU-bound checksum +
 /// decode + extract step.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "arg count is set by upstream pnpm's fetcher signature"
+)]
 async fn fetch_and_extract_once<R: Reporter>(
     http_client: &ThrottledClient,
     package_url: &str,
@@ -1049,6 +1060,7 @@ async fn fetch_and_extract_once<R: Reporter>(
     package_id: &str,
     attempt: u32,
     store_dir: &'static StoreDir,
+    auth_headers: &AuthHeaders,
 ) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
     let network_error =
         |error| TarballError::FetchTarball(NetworkError { url: package_url.to_string(), error });
@@ -1058,6 +1070,15 @@ async fn fetch_and_extract_once<R: Reporter>(
     // batch of futures `connect()` while previous bodies are still
     // draining, breaking the bound on concurrent open sockets.
     let client = http_client.acquire().await;
+    let mut request = client.get(package_url);
+    // Match pnpm's tarball download path
+    // ([`remoteTarballFetcher.ts`](https://github.com/pnpm/pnpm/blob/601317e7a3/fetching/tarball-fetcher/src/remoteTarballFetcher.ts#L66-L70)):
+    // resolve the per-URL auth header and attach it. Tarball hosts that
+    // differ from the metadata host still pick up the header keyed at
+    // the registry's nerf-darted URI.
+    if let Some(value) = auth_headers.for_url(package_url) {
+        request = request.header("authorization", value);
+    }
 
     // `pnpm:fetching-progress started` mirrors pnpm's per-attempt
     // emit at
@@ -1081,7 +1102,7 @@ async fn fetch_and_extract_once<R: Reporter>(
     // reporter's `reportBigTarballsProgress` filters on
     // `log.attempt === 1` (so retries don't reset the progress
     // line), so a zero would silence every "Downloading ..." line.
-    let send_result = client.get(package_url).send().await;
+    let send_result = request.send().await;
     let size = send_result.as_ref().ok().and_then(|r| r.content_length());
     R::emit(&LogEvent::FetchingProgress(FetchingProgressLog {
         level: LogLevel::Debug,
@@ -1287,6 +1308,7 @@ async fn fetch_and_extract_with_retry<R: Reporter>(
     requester: &str,
     store_dir: &'static StoreDir,
     retry_opts: RetryOpts,
+    auth_headers: &AuthHeaders,
 ) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
     let mut attempt: u32 = 0;
     loop {
@@ -1298,6 +1320,7 @@ async fn fetch_and_extract_with_retry<R: Reporter>(
             package_id,
             attempt,
             store_dir,
+            auth_headers,
         )
         .await;
         match result {
@@ -1481,6 +1504,7 @@ impl<'a> DownloadTarballToStore<'a> {
             verify_store_integrity,
             prefetched_cas_paths,
             retry_opts,
+            auth_headers,
             ..
         } = self;
         let store_index = self.store_index.clone();
@@ -1563,6 +1587,7 @@ impl<'a> DownloadTarballToStore<'a> {
             requester,
             store_dir,
             retry_opts,
+            auth_headers,
         )
         .await?;
 
