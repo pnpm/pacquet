@@ -48,6 +48,19 @@ pub enum PruneError {
         #[error(source)]
         error: io::Error,
     },
+
+    /// `read_dir` on a sweep-phase directory
+    /// (`<store>/links/<scope>/...`) failed with something other
+    /// than `NotFound`. Surfaces because silently treating it as
+    /// "empty" would leave unreachable slot directories in place
+    /// the next time the prune walker can't see them either.
+    #[display("Failed to read sweep directory {path:?}: {error}")]
+    #[diagnostic(code(pacquet_store_dir::prune::read_sweep_dir))]
+    ReadSweepDir {
+        path: PathBuf,
+        #[error(source)]
+        error: io::Error,
+    },
 }
 
 impl StoreDir {
@@ -63,8 +76,10 @@ impl StoreDir {
     ///   reporter into store-dir, so the message goes to stderr via
     ///   `eprintln!` until [#344] lands the proper reporter wiring.
     /// - Otherwise: mark-and-sweep as documented in the module-level
-    ///   comment. Returns the count of removed slot directories (zero
-    ///   when nothing was unreachable).
+    ///   comment. The removed-slot count is reported to stderr to
+    ///   match upstream's `globalInfo("Removed N package(s) ...")`
+    ///   message — the function itself returns `()` like upstream's
+    ///   `Promise<void>` shape.
     ///
     /// Returns `Ok(())` on success; surfaces I/O errors from the mark
     /// or sweep walks as [`PruneError`]. Stale registry entries are
@@ -122,6 +137,14 @@ fn find_all_node_modules_dirs(project_dir: &Path) -> Vec<PathBuf> {
     return out;
 
     fn scan(dir: &Path, out: &mut Vec<PathBuf>) {
+        // Swallow every `read_dir` error — matches upstream's
+        // [`scan`'s bare `catch { return }`](https://github.com/pnpm/pnpm/blob/94240bc046/store/controller/src/storeController/pruneGlobalVirtualStore.ts#L67-L73).
+        // A permission failure inside a workspace package would make
+        // `prune` over-aggressive (its node_modules wouldn't be
+        // marked), but tightening this without an upstream change
+        // would diverge from pnpm's behaviour — and `pacquet store
+        // prune` shares a store directory with `pnpm store prune`,
+        // so the two must agree on what counts as reachable.
         let Ok(entries) = fs::read_dir(dir) else {
             return;
         };
@@ -172,6 +195,12 @@ fn walk_symlinks_to_store(
         return;
     }
 
+    // Swallow every `read_dir` error — matches upstream's
+    // [`walkSymlinksToStore`'s bare `catch { return }`](https://github.com/pnpm/pnpm/blob/94240bc046/store/controller/src/storeController/pruneGlobalVirtualStore.ts#L116-L121).
+    // Same caveat as in [`find_all_node_modules_dirs`]: tightening
+    // this would diverge from pnpm and risk a `pacquet store
+    // prune` deciding more slots are unreachable than a parallel
+    // `pnpm store prune` would.
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -244,10 +273,10 @@ fn remove_unreachable_packages(
     reachable: &HashSet<PathBuf>,
 ) -> Result<usize, PruneError> {
     let mut count = 0usize;
-    let scopes = list_subdirs(links_dir);
+    let scopes = list_subdirs(links_dir)?;
     for scope in &scopes {
         let scope_path = links_dir.join(scope);
-        let pkg_names = list_subdirs(&scope_path);
+        let pkg_names = list_subdirs(&scope_path)?;
         let mut removed_pkgs = 0;
         for pkg_name in &pkg_names {
             let pkg_dir = scope_path.join(pkg_name);
@@ -274,12 +303,12 @@ fn remove_unreachable_versions(
     pkg_rel: &Path,
     reachable: &HashSet<PathBuf>,
 ) -> Result<(usize, bool), PruneError> {
-    let versions = list_subdirs(pkg_dir);
+    let versions = list_subdirs(pkg_dir)?;
     let mut count = 0usize;
     let mut removed_versions = 0;
     for version in &versions {
         let version_dir = pkg_dir.join(version);
-        let hashes = list_subdirs(&version_dir);
+        let hashes = list_subdirs(&version_dir)?;
         let mut removed_hashes = 0;
         for hash in &hashes {
             let slot_rel = pkg_rel.join(version).join(hash);
@@ -298,9 +327,21 @@ fn remove_unreachable_versions(
     Ok((count, removed_versions == versions.len() && !versions.is_empty()))
 }
 
-fn list_subdirs(dir: &Path) -> Vec<std::ffi::OsString> {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return Vec::new();
+/// Mirrors upstream's
+/// [`getSubdirsSafely`](https://github.com/pnpm/pnpm/blob/94240bc046/store/controller/src/storeController/pruneGlobalVirtualStore.ts#L282-L299):
+/// returns the names of every directory entry under `dir`, swallowing
+/// only `NotFound` (the path raced with a parallel install or the
+/// shape just isn't materialised yet) and surfacing other I/O errors
+/// as [`PruneError::ReadSweepDir`]. A permission failure here would
+/// otherwise mark the entire scope as "no children" and the
+/// downstream sweep could leave orphan files in place.
+fn list_subdirs(dir: &Path) -> Result<Vec<std::ffi::OsString>, PruneError> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(PruneError::ReadSweepDir { path: dir.to_path_buf(), error });
+        }
     };
     let mut out = Vec::new();
     for entry in entries.flatten() {
@@ -308,7 +349,7 @@ fn list_subdirs(dir: &Path) -> Vec<std::ffi::OsString> {
             out.push(entry.file_name());
         }
     }
-    out
+    Ok(out)
 }
 
 fn remove_dir_if_present(path: &Path) -> Result<(), PruneError> {

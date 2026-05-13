@@ -15,7 +15,7 @@
 use crate::StoreDir;
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_fs::symlink_dir;
+use pacquet_fs::{remove_symlink_dir, symlink_dir};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -137,8 +137,11 @@ pub fn register_project(
             if canonical_existing == canonical_project {
                 return Ok(());
             }
-            // Mismatch — remove the stale entry and recreate.
-            fs::remove_file(&link_path).map_err(|error| RegisterProjectError::RemoveStale {
+            // Mismatch — remove the stale entry and recreate. The
+            // entry is a directory symlink on Unix (file-shaped) and
+            // a junction on Windows (directory-shaped); the helper
+            // covers both.
+            remove_symlink_dir(&link_path).map_err(|error| RegisterProjectError::RemoveStale {
                 project_dir: project_dir.to_path_buf(),
                 link_path: link_path.clone(),
                 old_target: existing_target.clone(),
@@ -267,15 +270,25 @@ pub fn get_registered_projects(
         if name_str.starts_with('.') {
             continue;
         }
+        let link_path = entry.path();
         // Only symlinks (junctions on Windows count via `is_symlink`).
-        let file_type = match entry.file_type() {
-            Ok(ft) => ft,
-            Err(_) => continue,
-        };
+        // Surfacing `file_type()` errors instead of swallowing them:
+        // a permission failure here would otherwise silently drop a
+        // live registry entry, and a downstream prune could then
+        // remove slots that project still references. Upstream's
+        // `entry.isSymbolicLink()` cannot fail (Node returns the
+        // bit it already loaded with `withFileTypes: true`), so
+        // there's no upstream analogue to mirror — we err on the
+        // side of strictness.
+        let file_type = entry.file_type().map_err(|error| {
+            GetRegisteredProjectsError::EntryInaccessible {
+                link_path: link_path.clone(),
+                error,
+            }
+        })?;
         if !file_type.is_symlink() {
             continue;
         }
-        let link_path = entry.path();
 
         let target = match fs::read_link(&link_path) {
             Ok(target) => target,
@@ -300,7 +313,10 @@ pub fn get_registered_projects(
         match fs::metadata(&absolute_target) {
             Ok(_) => projects.push(absolute_target),
             Err(error) if error.kind() == ErrorKind::NotFound => {
-                fs::remove_file(&link_path).map_err(|error| {
+                // Use the cross-platform helper: the registry entry
+                // is a directory symlink on Unix and a junction on
+                // Windows, which need different syscalls to unlink.
+                remove_symlink_dir(&link_path).map_err(|error| {
                     GetRegisteredProjectsError::UnlinkStale { link_path: link_path.clone(), error }
                 })?;
             }
