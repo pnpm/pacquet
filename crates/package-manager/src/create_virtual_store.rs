@@ -252,7 +252,7 @@ impl<'a> CreateVirtualStore<'a> {
         // Mirrors upstream's gate at
         // <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L246-L260>.
         // When the cache key matches but the directory is gone (user
-        // ran `rm -rf node_modules/.pnpm/...`, antivirus quarantine,
+        // ran `rm -rf <virtual_store_dir>/...`, antivirus quarantine,
         // etc.) we emit the `_broken_node_modules` debug event and
         // fall through to the full install path for that snapshot.
         //

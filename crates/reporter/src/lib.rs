@@ -163,11 +163,11 @@ pub enum LogEvent {
     #[serde(rename = "pnpm:skipped-optional-dependency")]
     SkippedOptionalDependency(SkippedOptionalDependencyLog),
 
-    /// One per snapshot whose `node_modules/.pnpm/...` directory has
-    /// gone missing on disk even though the current lockfile records
-    /// it as installed (`pnpm:_broken_node_modules`). The frozen-
-    /// lockfile path emits one of these per missing slot before
-    /// falling through to a full re-install of that snapshot.
+    /// One per snapshot whose `<virtual_store_dir>/...` directory
+    /// has gone missing on disk even though the current lockfile
+    /// records it as installed (`pnpm:_broken_node_modules`). The
+    /// frozen-lockfile path emits one of these per missing slot
+    /// before falling through to a full re-install of that snapshot.
     ///
     /// Upstream: <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L37>
     /// (channel declaration) and
