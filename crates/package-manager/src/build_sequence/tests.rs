@@ -258,3 +258,84 @@ fn skipped_patched_snapshot_does_not_enter_build_queue() {
         "skipped+patched snapshot must not be queued for build, got {chunks:?}",
     );
 }
+
+/// A snapshot reachable *only* via a skipped optional parent must not
+/// enter the build queue, even if it requires a build. Pnpm's
+/// `lockfileToDepGraph` removes skipped depPaths from the graph
+/// entirely, so descendants reachable only via that edge are
+/// effectively orphans in the build phase.
+///
+/// Setup: root → S (skipped) → C (requires_build). Without the
+/// skip-before-recurse gate, the walk would step through S into C,
+/// see C as buildable, and queue both C and ancestors that look like
+/// they need to be sequenced before C. With the gate, S's subtree
+/// isn't visited; C never enters the queue.
+#[test]
+fn skipped_parent_does_not_drag_descendants_into_build_queue() {
+    use std::collections::HashSet;
+
+    let root_key = key("root", "1.0.0");
+    let s_key = key("s", "1.0.0");
+    let c_key = key("c", "1.0.0");
+    let snapshots = HashMap::from([
+        (root_key.clone(), snap(&[("s", "1.0.0")])),
+        (s_key.clone(), snap(&[("c", "1.0.0")])),
+        (c_key.clone(), snap(&[])),
+    ]);
+    let requires_build =
+        requires([(root_key.clone(), false), (s_key.clone(), false), (c_key.clone(), true)]);
+    let importers = root_importers(&[("root", "1.0.0")]);
+
+    let skipped = SkippedSnapshots::from_set(HashSet::from([s_key]));
+
+    let chunks = build_sequence(&requires_build, None, &snapshots, &importers, &skipped);
+
+    assert!(
+        chunks.is_empty(),
+        "C (buildable) reachable only via skipped S must not be queued, got {chunks:?}",
+    );
+}
+
+/// A snapshot reachable via BOTH a skipped parent and a non-skipped
+/// parent must still enter the build queue if it requires building —
+/// pnpm doesn't propagate "skipped" status to descendants reached by
+/// any other (non-skipped) path. This pins that the
+/// skip-before-recurse gate doesn't accidentally poison `walked` for
+/// the alternate branch.
+///
+/// Setup: root → {S (skipped), B}, both S and B → C (requires_build).
+/// Even though S is skipped, B still pulls C into the build graph.
+#[test]
+fn descendant_with_non_skipped_parent_still_builds() {
+    use std::collections::HashSet;
+
+    let root_key = key("root", "1.0.0");
+    let s_key = key("s", "1.0.0");
+    let b_key = key("b", "1.0.0");
+    let c_key = key("c", "1.0.0");
+    let snapshots = HashMap::from([
+        (root_key.clone(), snap(&[("s", "1.0.0"), ("b", "1.0.0")])),
+        (s_key.clone(), snap(&[("c", "1.0.0")])),
+        (b_key.clone(), snap(&[("c", "1.0.0")])),
+        (c_key.clone(), snap(&[])),
+    ]);
+    let requires_build = requires([
+        (root_key.clone(), false),
+        (s_key.clone(), false),
+        (b_key.clone(), false),
+        (c_key.clone(), true),
+    ]);
+    let importers = root_importers(&[("root", "1.0.0")]);
+
+    let skipped = SkippedSnapshots::from_set(HashSet::from([s_key]));
+
+    let chunks = build_sequence(&requires_build, None, &snapshots, &importers, &skipped);
+
+    let flat: Vec<_> = chunks.into_iter().flatten().collect();
+    assert!(flat.contains(&c_key), "C reached via non-skipped B must build, got {flat:?}");
+    assert!(flat.contains(&b_key), "B (ancestor of buildable C) must appear, got {flat:?}");
+    assert!(
+        flat.contains(&root_key),
+        "root (ancestor of buildable subtree) must appear, got {flat:?}",
+    );
+}

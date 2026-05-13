@@ -206,23 +206,31 @@ fn get_subgraph_to_build(
         if walked.contains(dep_path) {
             continue;
         }
+
+        // A skipped snapshot never had its virtual-store slot
+        // created, so neither requires-build nor a configured
+        // patch can produce work. Mirrors pnpm's `lockfileToDepGraph`
+        // flow where skipped depPaths are dropped from `depGraph`
+        // entirely: a child reachable only via a skipped edge
+        // doesn't enter the build graph either. Gate *before*
+        // recursion so a skipped optional doesn't drag its
+        // transitive deps into the walk via an edge pnpm wouldn't
+        // see.
+        //
+        // A descendant of a skipped node that's ALSO reachable from
+        // a non-skipped root still gets visited normally on that
+        // other branch, because we don't poison `walked` for the
+        // child here — we just skip this edge.
+        if ctx.skipped.contains(dep_path) {
+            walked.insert(dep_path.clone());
+            continue;
+        }
+
         walked.insert(dep_path.clone());
 
         let child_paths = ctx.children.get(dep_path).cloned().unwrap_or_default();
         let child_should_be_built =
             get_subgraph_to_build(&child_paths, ctx, nodes_to_build_set, nodes_to_build, walked);
-
-        // A skipped snapshot never had its virtual-store slot
-        // created, so neither requires-build (no extracted manifest
-        // to inspect) nor a configured patch (nothing on disk to
-        // patch) can produce work. Gate before consulting
-        // `requires_build` / `patches` so a patched-but-skipped
-        // optional doesn't enter the queue and rely on the
-        // `pkg_dir.exists()` defensive return in
-        // `build_one_snapshot`.
-        if ctx.skipped.contains(dep_path) {
-            continue;
-        }
 
         let needs_build = ctx.requires_build.get(dep_path).copied().unwrap_or(false);
         let has_patch = ctx.patches.is_some_and(|p| p.contains_key(&dep_path.without_peer()));
