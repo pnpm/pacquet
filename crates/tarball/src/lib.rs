@@ -726,11 +726,11 @@ fn extract_zip_entries(
         }
 
         // Strip the archive's top-level basename (`prefix` on
-        // [`crate::BinaryResolution`]) so the ignore filter sees the
-        // same relative paths upstream's regex does. If the entry
-        // path doesn't start with `{prefix}/` we use the raw name —
-        // pnpm's slice does the same (no-op when the entry already
-        // lives at the archive root).
+        // `pacquet_lockfile::BinaryResolution`) so the ignore filter
+        // sees the same relative paths upstream's regex does. If the
+        // entry path doesn't start with `{prefix}/` we use the raw
+        // name — pnpm's slice does the same (no-op when the entry
+        // already lives at the archive root).
         let cleaned = match basename_prefix.as_deref() {
             Some(prefix) => raw_name.strip_prefix(prefix).unwrap_or(&raw_name).to_string(),
             None => raw_name.clone(),
@@ -2136,10 +2136,10 @@ pub struct DownloadZipArchiveToStore<'a> {
     pub requester: &'a str,
     pub prefetched_cas_paths: Option<&'a PrefetchedCasPaths>,
     pub retry_opts: RetryOpts,
-    /// Basename of the archive's top-level directory, mirroring
-    /// [`crate::BinaryResolution::prefix`]. The zip extractor
-    /// strips `{prefix}/` from each entry path before the
-    /// ignore-filter check and the CAS write, so downstream
+    /// Basename of the archive's top-level directory, mirroring the
+    /// `prefix` field on `pacquet_lockfile::BinaryResolution`. The
+    /// zip extractor strips `{prefix}/` from each entry path before
+    /// the ignore-filter check and the CAS write, so downstream
     /// consumers see paths relative to the package root rather than
     /// the runtime-version-stamped wrapper directory.
     pub archive_prefix: Option<&'a str>,
