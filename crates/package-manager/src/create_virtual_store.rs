@@ -303,6 +303,22 @@ impl<'a> CreateVirtualStore<'a> {
         // collapsed those cases into `None` and let them fall through
         // to the cold batch, which meant the warm rayon batch ran to
         // completion (~6 s on `alot7`) before the actual error fired.
+        //
+        // Cache-key derivation runs in two passes:
+        //
+        // - *Survivors* go through the strict path (this `?`). Their
+        //   resolutions have to be valid because the install will
+        //   actually fetch + link them.
+        // - *Skipped* snapshots get a lenient pass below: cache keys
+        //   are derived if possible, and any per-snapshot error is
+        //   swallowed. Reason: skipped snapshots aren't being
+        //   re-installed, but their store-index rows still need to
+        //   land in `side_effects_maps_by_snapshot` so
+        //   [`crate::BuildModules`]'s `is_built` gate can skip
+        //   re-running build scripts on warm reinstalls (review on
+        //   #442 — without this, allowed-build packages re-execute
+        //   their scripts every install, costing seconds on the
+        //   warm-reinstall path).
         type SnapshotWithCacheKey<'a> = (&'a PackageKey, &'a SnapshotEntry, Option<String>);
         let snapshot_entries: Vec<SnapshotWithCacheKey<'_>> = survivors
             .into_iter()
@@ -310,6 +326,27 @@ impl<'a> CreateVirtualStore<'a> {
                 snapshot_cache_key(snapshot_key, packages).map(|key| (snapshot_key, snapshot, key))
             })
             .collect::<Result<_, _>>()?;
+
+        // Cache keys for the *skipped* snapshots (i.e. snapshots
+        // present in `snapshots` but absent from `snapshot_entries`).
+        // Derived leniently so an unsupported / malformed skipped
+        // entry doesn't fail the install — it just contributes no
+        // prefetch row, which is the same outcome as if the skip
+        // filter had not engaged. Built as a parallel `Vec` so the
+        // downstream `package_manifests` /
+        // `side_effects_maps_by_snapshot` loop sees the full snapshot
+        // set, not just survivors.
+        let survivor_keys: std::collections::HashSet<&PackageKey> =
+            snapshot_entries.iter().map(|(k, _, _)| *k).collect();
+        let skipped_entries: Vec<SnapshotWithCacheKey<'_>> = snapshots
+            .iter()
+            .filter(|(snapshot_key, _)| !survivor_keys.contains(snapshot_key))
+            .map(|(snapshot_key, snapshot)| {
+                let cache_key = snapshot_cache_key(snapshot_key, packages).ok().flatten();
+                (snapshot_key, snapshot, cache_key)
+            })
+            .collect();
+
         // `pnpm:stats added` mirrors pnpm's emit at
         // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/link.ts#L363>:
         // one event per project once the orchestrator has decided
@@ -338,8 +375,15 @@ impl<'a> CreateVirtualStore<'a> {
             message: StatsMessage::Removed { prefix: requester.to_owned(), removed: 0 },
         }));
 
-        let mut cache_key_refs: Vec<&str> =
-            snapshot_entries.iter().filter_map(|(_, _, k)| k.as_deref()).collect();
+        // Union the cache keys from survivors and skipped snapshots
+        // so the prefetch covers everyone the build phase might need
+        // to gate on. Sorted + deduplicated to avoid redundant SQL
+        // queries in `prefetch_cas_paths`.
+        let mut cache_key_refs: Vec<&str> = snapshot_entries
+            .iter()
+            .chain(skipped_entries.iter())
+            .filter_map(|(_, _, k)| k.as_deref())
+            .collect();
         cache_key_refs.sort_unstable();
         cache_key_refs.dedup();
         let cache_keys: Vec<String> = cache_key_refs.into_iter().map(String::from).collect();
@@ -402,6 +446,33 @@ impl<'a> CreateVirtualStore<'a> {
             HashMap::with_capacity(prefetched_manifests.len());
         let mut side_effects_maps_by_snapshot: SideEffectsMapsBySnapshot =
             HashMap::with_capacity(prefetched_side_effects.len());
+
+        // First pass: process *skipped* snapshots into the bin-
+        // manifest cache and the side-effects map. They don't enter
+        // the warm/cold partition (no link work to do), but their
+        // store-index rows are needed downstream so
+        // [`crate::BuildModules`]'s `is_built` gate can fire — without
+        // these entries, packages with `allowBuilds: true` would
+        // re-execute their lifecycle scripts on every warm reinstall.
+        for (snapshot_key, _snapshot, cache_key) in &skipped_entries {
+            if let Some(cache_key) = cache_key.as_deref()
+                && let Some(manifest) = prefetched_manifests.get(cache_key)
+            {
+                package_manifests
+                    .entry(snapshot_key.without_peer())
+                    .or_insert_with(|| std::sync::Arc::clone(manifest));
+            }
+            if let Some(cache_key) = cache_key.as_deref()
+                && let Some(maps) = prefetched_side_effects.get(cache_key)
+            {
+                side_effects_maps_by_snapshot
+                    .insert((*snapshot_key).clone(), std::sync::Arc::clone(maps));
+            }
+        }
+
+        // Second pass: survivors. Same loop as above plus the
+        // warm/cold partition that decides which snapshots run the
+        // link work.
         for (snapshot_key, snapshot, cache_key) in &snapshot_entries {
             if let Some(cache_key) = cache_key.as_deref()
                 && let Some(manifest) = prefetched_manifests.get(cache_key)
