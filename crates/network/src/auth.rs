@@ -140,7 +140,11 @@ impl AuthHeaders {
         // `getAuthHeaderByURI`. `parts[0..3]` is `["", "", host]`, so
         // joined with `/` it is `//host`; the loop slices through
         // `parts[..i]` and re-joins, then appends a trailing slash.
-        for i in (3..=upper).rev() {
+        // Exclusive upper bound mirrors upstream's `Math.min(parts.length,
+        // maxParts) - 1`; the included extra iteration would always build
+        // a key ending in `//` (the trailing empty segment from
+        // `nerfed.split('/')` plus the appended `/`) and never match.
+        for i in (3..upper).rev() {
             let key = format!("{}/", parts[..i].join("/"));
             if let Some(value) = self.by_uri.get(&key) {
                 return Some(value.as_str());
