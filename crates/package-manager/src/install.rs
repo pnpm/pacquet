@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, sync::atomic::AtomicU8, time::SystemTime};
 
 use crate::{
     HoistedDependencies, InstallFrozenLockfile, InstallFrozenLockfileError, InstallWithoutLockfile,
-    InstallWithoutLockfileError, ResolvedPackages,
+    InstallWithoutLockfileError, ResolvedPackages, ValidateModulesError, validate_modules,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
@@ -12,7 +12,8 @@ use pacquet_lockfile::{
 };
 use pacquet_modules_yaml::{
     DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH, IncludedDependencies, LayoutVersion, Modules,
-    NodeLinker as ModulesNodeLinker, RealApi, WriteModulesError, write_modules_manifest,
+    NodeLinker as ModulesNodeLinker, ReadModulesError, RealApi, WriteModulesError,
+    read_modules_manifest, write_modules_manifest,
 };
 use pacquet_network::ThrottledClient;
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
@@ -122,6 +123,27 @@ pub enum InstallError {
 
     #[diagnostic(transparent)]
     FindWorkspaceDir(#[error(source)] pacquet_workspace::FindWorkspaceDirError),
+
+    /// `node_modules/.modules.yaml` exists but couldn't be read or
+    /// parsed. A corrupt manifest is a hard error rather than a
+    /// silent skip — re-running the install over a corrupt
+    /// `.modules.yaml` would silently overwrite it without
+    /// validating the prior layout.
+    #[diagnostic(transparent)]
+    ReadModulesManifest(#[error(source)] ReadModulesError),
+
+    /// The recorded `.modules.yaml` doesn't match the current
+    /// install's effective options on at least one
+    /// layout-driving axis (`hoistPattern`, `publicHoistPattern`,
+    /// `included`, `storeDir`, `virtualStoreDir`,
+    /// `virtualStoreDirMaxLength`). Mirrors upstream pnpm's
+    /// `validateModules` + `checkCompatibility` errors. Users
+    /// resolve this by either restoring the previous setting or
+    /// running `pacquet install --force` (the purge path tracked
+    /// in #464 §B is not yet implemented; today the user wipes
+    /// `node_modules/` manually).
+    #[diagnostic(transparent)]
+    ValidateModules(#[error(source)] ValidateModulesError),
 }
 
 impl<'a, DependencyGroupList> Install<'a, DependencyGroupList>
@@ -206,6 +228,24 @@ where
         let current_lockfile =
             Lockfile::load_current_from_virtual_store_dir(&config.virtual_store_dir)
                 .map_err(InstallError::LoadCurrentLockfile)?;
+
+        // Validate the on-disk `.modules.yaml` (if any) against the
+        // current install's effective options. Mirrors upstream's
+        // [`validateModules`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/validateModules.ts)
+        // composed with [`checkCompatibility`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/checkCompatibility/index.ts).
+        // A missing manifest (`Ok(None)`) is the first-install case
+        // — no validation. A drift on any layout-affecting axis
+        // (hoist patterns, `included`, store paths) errors out so
+        // a re-install with new yaml settings doesn't silently leave
+        // the prior layout behind. The `--force` purge path is the
+        // §B follow-up tracked under #464; today the user wipes
+        // `node_modules/` manually after seeing the error.
+        if let Some(modules) = read_modules_manifest::<RealApi>(&config.modules_dir)
+            .map_err(InstallError::ReadModulesManifest)?
+        {
+            validate_modules(&modules, config, included, &workspace_root, &config.modules_dir)
+                .map_err(InstallError::ValidateModules)?;
+        }
 
         // `pnpm:context` carries the directories pnpm's reporter prints
         // in the install header. `currentLockfileExists` mirrors

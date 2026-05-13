@@ -21,6 +21,7 @@ mod retry_config;
 mod store_init;
 mod symlink_direct_dependencies;
 mod symlink_package;
+mod validate_modules;
 mod version_policy;
 mod virtual_store_layout;
 
@@ -45,5 +46,6 @@ pub use link_bins::*;
 pub use link_file::*;
 pub use symlink_direct_dependencies::*;
 pub use symlink_package::*;
+pub use validate_modules::*;
 pub use version_policy::*;
 pub use virtual_store_layout::*;

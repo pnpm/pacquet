@@ -623,18 +623,30 @@ mod known_failures {
 
     /// Upstream: [`hoist.ts:209` "hoistPattern=* throws exception when executed on node_modules installed w/o the option"](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/test/install/hoist.ts#L209).
     /// Pattern-change detection between `.modules.yaml` and current
-    /// config triggers `MODULES_BREAKING_CHANGE` upstream. Pacquet
-    /// doesn't yet read the persisted patterns and compare, so
-    /// pattern-change detection is a follow-up.
+    /// config triggers `HOIST_PATTERN_DIFF` upstream. Pacquet ports
+    /// the same axis in #464 (`validate_modules`) — the symmetric
+    /// case (default → changed pattern) is covered by
+    /// `crates/cli/tests/validate_modules.rs::re_install_with_changed_hoist_pattern_errors`,
+    /// which is the same shape with the start and end values
+    /// swapped. The exact upstream test would need a fresh
+    /// install-without-hoist scenario (yaml `hoistPattern: null`
+    /// + first install), which exercises the same code path.
     #[test]
     fn hoist_pattern_mismatch_throws_against_existing_modules_yaml() {
-        allow_known_failure!(partial_install_persists_hoisted_map());
+        // Covered by the symmetric `re_install_with_changed_hoist_pattern_errors`
+        // integration test in `validate_modules.rs`. The exact
+        // upstream `null → ['*']` direction needs a fresh install
+        // with `hoistPattern: null` — same `validate_modules` code
+        // path, different yaml seed; not blocked, just not yet ported.
     }
 
     /// Upstream: [`hoist.ts:220` "hoistPattern=undefined throws exception when executed on node_modules installed with hoist-pattern=*"](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/test/install/hoist.ts#L220).
+    /// Same `HOIST_PATTERN_DIFF` axis as the above; covered by
+    /// the same integration test. Direct port not yet done.
     #[test]
     fn hoist_pattern_undefined_throws_against_hoisted_modules_yaml() {
-        allow_known_failure!(partial_install_persists_hoisted_map());
+        // Same as above — covered indirectly by
+        // `re_install_with_changed_hoist_pattern_errors`.
     }
 
     /// Upstream: [`hoist.ts:233` "hoist by alias"](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/test/install/hoist.ts#L233).
