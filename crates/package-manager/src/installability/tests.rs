@@ -11,7 +11,7 @@ use pacquet_reporter::{LogEvent, Reporter, SkippedOptionalReason};
 use pretty_assertions::assert_eq;
 
 use crate::installability::{
-    InstallabilityHost, any_installability_constraint, compute_skipped_snapshots,
+    InstallabilityHost, SkippedSnapshots, any_installability_constraint, compute_skipped_snapshots,
 };
 
 // Thread-local recording so the cargo-default parallel test runner
@@ -107,6 +107,7 @@ fn skip_optional_with_wrong_os() {
         &packages,
         &host("20.10.0", "darwin", "arm64"),
         "/proj",
+        SkippedSnapshots::new(),
     )
     .unwrap();
 
@@ -142,6 +143,7 @@ fn skip_optional_with_wrong_node_engine() {
         &packages,
         &host("20.10.0", "darwin", "arm64"),
         "/proj",
+        SkippedSnapshots::new(),
     )
     .unwrap();
 
@@ -170,6 +172,7 @@ fn compatible_snapshots_are_not_skipped() {
         &packages,
         &host("20.10.0", "darwin", "arm64"),
         "/proj",
+        SkippedSnapshots::new(),
     )
     .unwrap();
 
@@ -199,6 +202,7 @@ fn non_optional_incompatible_is_not_skipped() {
         &packages,
         &host("20.10.0", "darwin", "arm64"),
         "/proj",
+        SkippedSnapshots::new(),
     )
     .unwrap();
 
@@ -231,6 +235,7 @@ fn no_constraints_skips_the_per_snapshot_pass() {
         &packages,
         &host("20.10.0", "darwin", "arm64"),
         "/proj",
+        SkippedSnapshots::new(),
     )
     .unwrap();
 
@@ -331,6 +336,7 @@ fn duplicate_metadata_dedupes_reporter_events() {
         &packages,
         &host("20.10.0", "darwin", "arm64"),
         "/proj",
+        SkippedSnapshots::new(),
     )
     .unwrap();
 
@@ -375,9 +381,14 @@ fn supported_architectures_widens_accept_set_so_optional_stays() {
         libc: None,
     });
 
-    let skipped =
-        compute_skipped_snapshots::<RecordingReporter>(&snapshots, &packages, &host, "/proj")
-            .unwrap();
+    let skipped = compute_skipped_snapshots::<RecordingReporter>(
+        &snapshots,
+        &packages,
+        &host,
+        "/proj",
+        SkippedSnapshots::new(),
+    )
+    .unwrap();
 
     assert!(skipped.is_empty(), "supportedArchitectures.os=['darwin'] should keep the package");
     let events = take_events();
@@ -408,12 +419,109 @@ fn supported_architectures_does_not_implicitly_include_host() {
         libc: None,
     });
 
-    let skipped =
-        compute_skipped_snapshots::<RecordingReporter>(&snapshots, &packages, &host, "/proj")
-            .unwrap();
+    let skipped = compute_skipped_snapshots::<RecordingReporter>(
+        &snapshots,
+        &packages,
+        &host,
+        "/proj",
+        SkippedSnapshots::new(),
+    )
+    .unwrap();
 
     assert!(
         skipped.contains(&key),
         "supportedArchitectures.os=['linux'] should still skip a darwin-only package",
     );
+}
+
+/// A seeded snapshot bypasses the per-snapshot re-check entirely
+/// and emits no `pnpm:skipped-optional-dependency` event. Mirrors
+/// upstream's early return at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L194>:
+/// a snapshot listed in `.modules.yaml.skipped` from the previous
+/// install is treated as already skipped without re-running
+/// `package_is_installable`, so the user is not re-notified of a
+/// known skip on every reinstall.
+#[test]
+fn seeded_snapshot_short_circuits_recheck() {
+    reset_events();
+    let key = snapshot_key("for-legacy-node@1.0.0");
+    let mut snapshots = HashMap::new();
+    snapshots.insert(key.clone(), SnapshotEntry { optional: true, ..Default::default() });
+    let mut packages = HashMap::new();
+    // Metadata is still incompatible (`engines.node: "0.10"`).
+    // Without the short-circuit a recompute would skip the package
+    // AND emit a `pnpm:skipped-optional-dependency` event; with the
+    // short-circuit the snapshot stays in the seeded set without
+    // re-emitting.
+    packages.insert(key.clone(), synthetic_metadata(Some(&[("node", "0.10")]), None, None, None));
+
+    let seed = SkippedSnapshots::from_set([key.clone()].into_iter().collect());
+    let skipped = compute_skipped_snapshots::<RecordingReporter>(
+        &snapshots,
+        &packages,
+        &host("20.10.0", "darwin", "arm64"),
+        "/proj",
+        seed,
+    )
+    .unwrap();
+
+    assert!(skipped.contains(&key), "seeded key must survive the recompute");
+    let events = take_events();
+    assert!(
+        events.iter().all(|e| !matches!(e, LogEvent::SkippedOptionalDependency(_))),
+        "no SkippedOptionalDependency event must fire for a seeded snapshot, got {events:?}",
+    );
+}
+
+/// On the fast path (no constraint anywhere in the lockfile) the
+/// seed survives verbatim. Same upstream rationale as the seeded
+/// short-circuit: a previously skipped snapshot must not re-appear
+/// just because the lockfile's per-snapshot constraints were
+/// dropped between installs.
+#[test]
+fn fast_path_preserves_seed() {
+    reset_events();
+    let key = snapshot_key("previously-skipped@1.0.0");
+    let mut snapshots = HashMap::new();
+    snapshots.insert(key.clone(), SnapshotEntry { optional: true, ..Default::default() });
+    let mut packages = HashMap::new();
+    // Constraint-free metadata so `any_installability_constraint`
+    // returns false; the per-snapshot loop is short-circuited and
+    // the seed becomes the final set.
+    packages.insert(key.clone(), synthetic_metadata(None, None, None, None));
+
+    let seed = SkippedSnapshots::from_set([key.clone()].into_iter().collect());
+    let skipped = compute_skipped_snapshots::<RecordingReporter>(
+        &snapshots,
+        &packages,
+        &host("20.10.0", "darwin", "arm64"),
+        "/proj",
+        seed,
+    )
+    .unwrap();
+
+    assert_eq!(skipped.len(), 1, "fast path must keep the seed entry");
+    assert!(skipped.contains(&key));
+}
+
+/// `from_strings` silently drops unparsable depPath entries.
+/// Orphaned strings — e.g. a snapshot that has since been removed
+/// from the lockfile, or a malformed line from a hand-edited
+/// `.modules.yaml` — must not crash the read; they simply don't
+/// match any current key and survive as no-ops in the set.
+#[test]
+fn from_strings_skips_unparsable_entries() {
+    let set = SkippedSnapshots::from_strings([
+        "valid-pkg@1.0.0",
+        "@scope/pkg@2.0.0",
+        "",
+        "not a depPath",
+        "@@@no-version",
+    ]);
+    let key1: PackageKey = "valid-pkg@1.0.0".parse().unwrap();
+    let key2: PackageKey = "@scope/pkg@2.0.0".parse().unwrap();
+    assert_eq!(set.len(), 2);
+    assert!(set.contains(&key1));
+    assert!(set.contains(&key2));
 }

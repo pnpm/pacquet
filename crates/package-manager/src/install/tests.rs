@@ -3,7 +3,7 @@ use pacquet_config::Config;
 use pacquet_lockfile::Lockfile;
 use pacquet_modules_yaml::{
     DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH, LayoutVersion, Modules, NodeLinker, RealApi,
-    read_modules_manifest,
+    read_modules_manifest, write_modules_manifest,
 };
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry_mock::AutoMockInstance;
@@ -1525,6 +1525,183 @@ async fn frozen_lockfile_under_gvs_registers_each_workspace_importer() {
     ];
     expected.sort();
     assert_eq!(targets, expected, "every importer must have a registry entry");
+
+    drop(dir);
+}
+
+/// `build_modules_manifest` serializes the install-time
+/// [`SkippedSnapshots`] into `.modules.yaml.skipped` as a list of
+/// depPath strings. Mirrors upstream's
+/// `skipped: Array.from(ctx.skipped)` literal at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/index.ts#L1625>:
+/// each entry is the snapshot's [`PackageKey`] `Display` form
+/// (`name@version(peers)`), and ordering is handled by
+/// `write_modules_manifest`'s sort-on-write.
+///
+/// An empty set produces an empty list — covers the fresh-install
+/// case while pinning that the field is no longer
+/// `..Default::default()`'d away from the manifest.
+///
+/// [`SkippedSnapshots`]: super::super::SkippedSnapshots
+/// [`PackageKey`]: pacquet_lockfile::PackageKey
+#[test]
+fn build_modules_manifest_serializes_skipped_set() {
+    use crate::SkippedSnapshots;
+    use pacquet_lockfile::PackageKey;
+    use pacquet_modules_yaml::IncludedDependencies;
+    use std::collections::HashSet;
+
+    let dir = tempdir().unwrap();
+    let mut config = Config::new();
+    config.store_dir = dir.path().join("store").into();
+    config.modules_dir = dir.path().join("node_modules");
+    config.virtual_store_dir = dir.path().join("node_modules/.pacquet");
+    let config = config.leak();
+
+    let key1: PackageKey = "darwin-only-pkg@1.0.0".parse().unwrap();
+    let key2: PackageKey = "@scope/linux-only@2.3.4".parse().unwrap();
+    let mut set = HashSet::new();
+    set.insert(key1.clone());
+    set.insert(key2.clone());
+    let skipped = SkippedSnapshots::from_set(set);
+
+    let included = IncludedDependencies {
+        dependencies: true,
+        dev_dependencies: false,
+        optional_dependencies: true,
+    };
+    let manifest = super::build_modules_manifest(config, included, Default::default(), &skipped);
+
+    // Compare as sets — `build_modules_manifest` does not sort.
+    // Sort-on-write happens later inside `write_modules_manifest`,
+    // matching upstream's `saveModules.skipped.sort()` at
+    // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/modules-yaml/src/index.ts#L121>;
+    // the read-after-write order is covered by the integration
+    // test on the full install path.
+    let actual: HashSet<String> = manifest.skipped.iter().cloned().collect();
+    let expected: HashSet<String> = [key1.to_string(), key2.to_string()].into_iter().collect();
+    assert_eq!(actual, expected);
+}
+
+/// Empty `SkippedSnapshots` produces an empty `Modules.skipped`. The
+/// common case — most installs have no platform-mismatched optional
+/// deps — must keep the field present-but-empty so the on-disk
+/// shape stays uniform.
+#[test]
+fn build_modules_manifest_skipped_is_empty_on_empty_set() {
+    use crate::SkippedSnapshots;
+    use pacquet_modules_yaml::IncludedDependencies;
+
+    let dir = tempdir().unwrap();
+    let mut config = Config::new();
+    config.store_dir = dir.path().join("store").into();
+    config.modules_dir = dir.path().join("node_modules");
+    config.virtual_store_dir = dir.path().join("node_modules/.pacquet");
+    let config = config.leak();
+
+    let manifest = super::build_modules_manifest(
+        config,
+        IncludedDependencies::default(),
+        Default::default(),
+        &SkippedSnapshots::new(),
+    );
+    assert!(manifest.skipped.is_empty());
+}
+
+/// End-to-end read → seed → write loop. Pre-write
+/// `.modules.yaml.skipped` before a frozen-lockfile install runs;
+/// confirm the install picks up the seed and re-writes the file
+/// with the same key. The lockfile here has empty `snapshots: {}` so
+/// the constraint-free fast path runs — that's the branch in
+/// [`InstallFrozenLockfile::run`] that preserves the seed verbatim
+/// without calling `compute_skipped_snapshots`. Together with the
+/// unit tests on the slow path, this pins the full plumbing between
+/// `read_modules_manifest`, `compute_skipped_snapshots`'s seed
+/// arg, the threading out of [`InstallFrozenLockfileOutput`], and
+/// `build_modules_manifest`'s serialization.
+///
+/// [`InstallFrozenLockfile::run`]: super::super::InstallFrozenLockfile::run
+/// [`InstallFrozenLockfileOutput`]: super::super::InstallFrozenLockfileOutput
+#[tokio::test]
+async fn frozen_install_preserves_seeded_skipped_across_reinstall() {
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+    let mut config = Config::new();
+    config.lockfile = false;
+    config.store_dir = store_dir.clone().into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    let config = config.leak();
+
+    // Pre-write `.modules.yaml` with a non-empty `skipped` list —
+    // models the state left by a previous install that landed
+    // platform-mismatched optional deps. Two entries: one bare
+    // package and one scoped, so the parse-then-serialize round-trip
+    // covers both `name@version` and `@scope/name@version`.
+    let seeded_keys = ["previously-skipped@1.0.0", "@scope/also-skipped@2.3.4"];
+    let seed_modules = Modules {
+        layout_version: Some(LayoutVersion),
+        node_linker: Some(NodeLinker::Isolated),
+        store_dir: store_dir.display().to_string(),
+        virtual_store_dir: virtual_store_dir.to_string_lossy().into_owned(),
+        virtual_store_dir_max_length: DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,
+        skipped: seeded_keys.iter().map(|s| (*s).to_string()).collect(),
+        ..Default::default()
+    };
+    write_modules_manifest::<RealApi>(&modules_dir, seed_modules).expect("seed .modules.yaml");
+
+    // Empty lockfile drives the constraint-free fast path. The
+    // seed must survive verbatim.
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies: {}"
+        "packages: {}"
+        "snapshots: {}"
+    })
+    .expect("parse minimal v9 lockfile");
+
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        supported_architectures: None,
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await
+    .expect("frozen-lockfile install should succeed");
+
+    let written = modules_dir
+        .pipe_as_ref(read_modules_manifest::<RealApi>)
+        .expect("read .modules.yaml")
+        .expect("modules manifest exists");
+
+    // Both seed entries survive — proves the read → seed → write
+    // loop is fully wired. Order is the sort-on-write order:
+    // `@scope/...` < `previously-...` lexically, so the scoped
+    // entry leads.
+    assert_eq!(written.skipped.len(), 2, "both seeded entries must survive");
+    assert!(written.skipped.contains(&"previously-skipped@1.0.0".to_string()));
+    assert!(written.skipped.contains(&"@scope/also-skipped@2.3.4".to_string()));
+    let sorted: Vec<&str> = written.skipped.iter().map(String::as_str).collect();
+    assert_eq!(
+        sorted,
+        ["@scope/also-skipped@2.3.4", "previously-skipped@1.0.0"],
+        "write_modules_manifest must sort the list alphabetically",
+    );
 
     drop(dir);
 }
