@@ -55,13 +55,27 @@ pub struct InstallArgs {
     /// Don't generate a lockfile and fail if the lockfile is outdated.
     #[clap(long)]
     pub frozen_lockfile: bool,
+
+    /// Skip the install of any runtime dependencies
+    /// (`node@runtime:`, `deno@runtime:`, `bun@runtime:`).
+    /// Their archives aren't fetched, their slots aren't
+    /// materialized, and their bins aren't linked into
+    /// `node_modules/.bin/`. The rest of the install proceeds
+    /// normally. Mirrors pnpm's `--no-runtime` flag.
+    #[clap(long = "no-runtime")]
+    pub no_runtime: bool,
 }
 
 impl InstallArgs {
     pub async fn run<R: Reporter>(self, state: State) -> miette::Result<()> {
         let State { tarball_mem_cache, http_client, config, manifest, lockfile, resolved_packages } =
             &state;
-        let InstallArgs { dependency_options, supported_architectures, frozen_lockfile } = self;
+        let InstallArgs {
+            dependency_options,
+            supported_architectures,
+            frozen_lockfile,
+            no_runtime,
+        } = self;
 
         // Merge CLI overrides with the yaml-derived value before
         // handing off to the install pipeline. `state.config` is a
@@ -72,6 +86,11 @@ impl InstallArgs {
         let supported_architectures =
             supported_architectures.apply_to(config.supported_architectures.clone());
 
+        // Either the npmrc/yaml-derived setting or the CLI flag
+        // turns runtime-skipping on; pacquet doesn't expose a way
+        // to override yaml's `true` back to `false` from the CLI,
+        // matching pnpm's stance on the same flag.
+        let skip_runtimes = config.skip_runtimes || no_runtime;
         Install {
             tarball_mem_cache,
             http_client,
@@ -80,6 +99,7 @@ impl InstallArgs {
             lockfile: lockfile.as_ref(),
             dependency_groups: dependency_options.dependency_groups(),
             frozen_lockfile,
+            skip_runtimes,
             resolved_packages,
             supported_architectures,
         }

@@ -36,6 +36,14 @@ where
     pub lockfile: Option<&'a Lockfile>,
     pub dependency_groups: DependencyGroupList,
     pub frozen_lockfile: bool,
+    /// When `true`, runtime dependencies (`node@runtime:` /
+    /// `deno@runtime:` / `bun@runtime:`) are skipped — their
+    /// archives aren't fetched, their slots aren't materialized,
+    /// and their bins aren't linked. Computed at the CLI layer
+    /// from `config.skip_runtimes || --no-runtime`. The rest of
+    /// the install proceeds normally. See
+    /// `pacquet_config::Config::skip_runtimes`.
+    pub skip_runtimes: bool,
     /// `supportedArchitectures` after merging
     /// `Config::supported_architectures` from `pnpm-workspace.yaml`
     /// with the CLI per-axis overrides (`--cpu` / `--os` / `--libc`).
@@ -139,6 +147,7 @@ where
             lockfile,
             dependency_groups,
             frozen_lockfile,
+            skip_runtimes,
             supported_architectures,
         } = self;
 
@@ -287,6 +296,7 @@ where
                     workspace_root: &workspace_root,
                     requester: &prefix,
                     supported_architectures: supported_architectures.as_ref(),
+                    skip_runtimes,
                 }
                 .run::<R>()
                 .await

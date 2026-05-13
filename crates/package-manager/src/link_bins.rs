@@ -6,7 +6,7 @@ use pacquet_cmd_shim::{
     FsSetExecutable, FsWalkFiles, FsWrite, LinkBinsError, PackageBinSource, RealApi,
     link_bins_of_packages,
 };
-use pacquet_lockfile::{PackageKey, PackageMetadata, PkgName, SnapshotEntry};
+use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, PkgName, SnapshotEntry};
 use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
@@ -223,7 +223,23 @@ fn build_has_bin_set(
     Some(
         packages
             .iter()
-            .filter(|(_, meta)| meta.has_bin == Some(true))
+            .filter(|(_, meta)| {
+                // Runtime resolutions (`Binary` / `Variations`)
+                // always synthesize a `package.json` carrying the
+                // lockfile-declared `bin` field
+                // (see `synthesize_runtime_manifest_bytes` in
+                // `install_package_by_snapshot.rs`), so they
+                // always have bins — even when `hasBin` is absent
+                // from the lockfile metadata (which pnpm v11 does
+                // not emit for runtime entries today). Including
+                // them here unconditionally keeps the bin-link
+                // dispatch consistent with the synthesis step.
+                meta.has_bin == Some(true)
+                    || matches!(
+                        meta.resolution,
+                        LockfileResolution::Binary(_) | LockfileResolution::Variations(_),
+                    )
+            })
             .map(|(key, _)| key.clone())
             .collect(),
     )

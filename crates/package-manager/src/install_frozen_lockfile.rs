@@ -90,6 +90,14 @@ where
     /// platform-tagged optional-dependency filter respects user-
     /// supplied architecture overrides.
     pub supported_architectures: Option<&'a pacquet_package_is_installable::SupportedArchitectures>,
+
+    /// When `true`, runtime dependencies (`node@runtime:`,
+    /// `deno@runtime:`, `bun@runtime:`) — i.e. packages whose
+    /// metadata resolution is `Binary` or `Variations` — are
+    /// added to the install-time skip set and the rest of the
+    /// install ignores them. Computed at the CLI layer from
+    /// `config.skip_runtimes || --no-runtime`.
+    pub skip_runtimes: bool,
 }
 
 /// Error type of [`InstallFrozenLockfile`].
@@ -194,6 +202,7 @@ where
             workspace_root,
             requester,
             supported_architectures,
+            skip_runtimes,
         } = self;
         // Cloned so the iterator can be reused below for hoist's
         // direct-deps map. `Vec<DependencyGroup>` is tiny (≤4 enum
@@ -345,6 +354,62 @@ where
             for (key, snap) in snaps {
                 if snap.optional {
                     skipped.add_optional_excluded(key.clone());
+                }
+            }
+        }
+
+        // `--no-runtime` (or `config.skip_runtimes`): exclude
+        // every project-direct runtime dependency. Mirrors
+        // pnpm's `skipRuntimes` filter at
+        // [`installing/deps-installer/src/install/index.ts`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/index.ts#L1374-L1387)
+        // exactly — iterate each importer's direct deps and add
+        // the runtime ones to the skip set; transitive runtime
+        // entries (which would be unusual but possible) stay in
+        // the install. Upstream's discriminator is the
+        // `depPath.includes('@runtime:')` substring check on the
+        // resolved depPath; pacquet's lockfile preserves the
+        // `@runtime:` substring in the snapshot key, so the same
+        // string-test works here.
+        //
+        // Re-using `add_optional_excluded` keeps the bucket count
+        // (and `.modules.yaml.skipped` semantics) unchanged: like
+        // `--no-optional`, this is a transient user-driven
+        // exclusion that should *not* be persisted into
+        // `.modules.yaml.skipped` — a future install without the
+        // flag must bring the runtime back.
+        if skip_runtimes && let Some(pkgs) = packages {
+            for importer in importers.values() {
+                for dep_map in [
+                    importer.dependencies.as_ref(),
+                    importer.dev_dependencies.as_ref(),
+                    importer.optional_dependencies.as_ref(),
+                ] {
+                    let Some(dep_map) = dep_map else { continue };
+                    for (alias, spec) in dep_map {
+                        let Some(version) = spec.version.as_regular() else { continue };
+                        // Build the candidate snapshot key from
+                        // (alias, version). For non-aliased deps
+                        // this is the depPath verbatim; aliased
+                        // runtime deps (unusual) won't match
+                        // `packages` here, matching pnpm's lookup
+                        // by depPath rather than by alias.
+                        let candidate = format!("{alias}@{version}");
+                        if !candidate.contains("@runtime:") {
+                            continue;
+                        }
+                        let Ok(key) = candidate.parse::<pacquet_lockfile::PackageKey>() else {
+                            continue;
+                        };
+                        if let Some(meta) = pkgs.get(&key)
+                            && matches!(
+                                &meta.resolution,
+                                pacquet_lockfile::LockfileResolution::Binary(_)
+                                    | pacquet_lockfile::LockfileResolution::Variations(_),
+                            )
+                        {
+                            skipped.add_optional_excluded(key);
+                        }
+                    }
                 }
             }
         }
