@@ -320,11 +320,14 @@ where
         // a manifest failure can't leave a fresh current-lockfile
         // pointing at incomplete install state — the next frozen
         // reinstall would otherwise diff against a graph that never
-        // finished committing (review on #442). Today pacquet writes
-        // the wanted lockfile unchanged because there's only one
-        // importer to filter to; once workspace install (#431) lands
-        // this needs to narrow to the *filtered* lockfile (selected
-        // importers × engine filter).
+        // finished committing (review on #442).
+        //
+        // Workspace installs (#431) ship every importer's section of
+        // the wanted lockfile unchanged because the install fans out
+        // across all of them. Once `--filter` lands (Stage 2 of
+        // #299), this needs to narrow to the filtered lockfile
+        // (selected importers × engine filter) so the saved current
+        // lockfile reflects only what was actually materialized.
         if frozen_lockfile && let Some(lockfile) = lockfile {
             lockfile
                 .save_current_to_virtual_store_dir(&config.virtual_store_dir)

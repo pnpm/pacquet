@@ -3,8 +3,8 @@ use super::{
     WORKSPACE_DIR_ENV_VAR, find_workspace_dir, find_workspace_dir_from_env_with,
 };
 use crate::WORKSPACE_MANIFEST_FILENAME;
-use std::ffi::OsString;
 use pretty_assertions::assert_eq;
+use std::ffi::OsString;
 use std::fs;
 use tempfile::TempDir;
 
@@ -81,11 +81,7 @@ fn correct_filename_wins_over_misnamed_sibling() {
 #[test]
 fn empty_env_var_is_treated_as_unset() {
     let env = |name: &str| -> Option<OsString> {
-        if name == WORKSPACE_DIR_ENV_VAR {
-            Some(OsString::from(""))
-        } else {
-            None
-        }
+        if name == WORKSPACE_DIR_ENV_VAR { Some(OsString::from("")) } else { None }
     };
     assert_eq!(
         find_workspace_dir_from_env_with(env),
@@ -100,11 +96,7 @@ fn empty_env_var_is_treated_as_unset() {
 #[test]
 fn non_empty_env_var_resolves_verbatim() {
     let env = |name: &str| -> Option<OsString> {
-        if name == WORKSPACE_DIR_ENV_VAR {
-            Some(OsString::from("/explicit/root"))
-        } else {
-            None
-        }
+        if name == WORKSPACE_DIR_ENV_VAR { Some(OsString::from("/explicit/root")) } else { None }
     };
     assert_eq!(
         find_workspace_dir_from_env_with(env),
