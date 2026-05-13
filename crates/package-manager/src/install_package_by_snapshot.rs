@@ -134,15 +134,21 @@ impl<'a> InstallPackageBySnapshot<'a> {
                 });
             }
             LockfileResolution::Git(git_resolution) => {
-                let allow_build_closure: &(dyn Fn(&str, &str) -> bool + Send + Sync) =
-                    &|name, version| {
-                        // `AllowBuildPolicy::check` returns `None` when
-                        // the package is neither allow-listed nor deny-
-                        // listed. Default-deny (`None → false`) matches
-                        // pnpm v11's policy: build scripts have to be
-                        // explicitly opted in to run.
-                        allow_build_policy.check(name, version).unwrap_or(false)
-                    };
+                // Bind the closure to a named local before borrowing it
+                // into `GitFetcher.allow_build`. `&|...|` would create a
+                // reference to a temporary closure that has to outlive
+                // the `.await` below; routing through a `let` makes the
+                // owning storage explicit and removes any reliance on
+                // temporary-lifetime extension across an await point.
+                //
+                // `AllowBuildPolicy::check` returns `None` when the
+                // package is neither allow-listed nor deny-listed.
+                // Default-deny (`None → false`) matches pnpm v11's
+                // policy: build scripts have to be explicitly opted in
+                // to run.
+                let allow_build_closure = |name: &str, version: &str| {
+                    allow_build_policy.check(name, version).unwrap_or(false)
+                };
                 let scripts_prepend_node_path = match config.scripts_prepend_node_path {
                     pacquet_config::ScriptsPrependNodePath::Always => {
                         ExecScriptsPrependNodePath::Always
@@ -159,7 +165,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
                     commit: &git_resolution.commit,
                     path: git_resolution.path.as_deref(),
                     git_shallow_hosts: &config.git_shallow_hosts,
-                    allow_build: allow_build_closure,
+                    allow_build: &allow_build_closure,
                     ignore_scripts: false,
                     unsafe_perm: config.unsafe_perm,
                     user_agent: None,

@@ -262,7 +262,6 @@ fn deserialize_git_resolution_with_path() {
         "path: packages/sub"
     };
     let received: LockfileResolution = serde_saphyr::from_str(yaml).unwrap();
-    dbg!(&received);
     let expected = LockfileResolution::Git(GitResolution {
         repo: "https://github.com/ksxnodemodules/ts-pipe-compose.git".to_string(),
         commit: "e63c09e460269b0c535e4c34debf69bb91d57b22".to_string(),

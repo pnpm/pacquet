@@ -6,8 +6,19 @@ use crate::error::PreparePackageError;
 use pacquet_executor::ScriptsPrependNodePath;
 use pacquet_reporter::SilentReporter;
 use serde_json::json;
-use std::{collections::HashMap, fs, path::Path};
+use std::{collections::HashMap, fs, path::Path, sync::OnceLock};
 use tempfile::tempdir;
+
+/// A single process-wide empty env map shared across every test
+/// invocation. `OnceLock` avoids the per-call `Box::leak(Box::new(...))`
+/// that an earlier version of this helper used — the leak was benign
+/// because the test binary exits quickly, but accumulating one fresh
+/// allocation per test isn't necessary when every site wants the same
+/// value.
+fn empty_env() -> &'static HashMap<String, String> {
+    static M: OnceLock<HashMap<String, String>> = OnceLock::new();
+    M.get_or_init(HashMap::new)
+}
 
 fn write_manifest(dir: &Path, manifest: &serde_json::Value) {
     fs::write(dir.join("package.json"), serde_json::to_string(manifest).unwrap()).unwrap();
@@ -19,7 +30,6 @@ fn write_manifest(dir: &Path, manifest: &serde_json::Value) {
 /// want it to.
 fn opts<'a>(allow: bool, ignore_scripts: bool) -> PreparePackageOptions<'a> {
     static EMPTY_BIN_PATHS: &[std::path::PathBuf] = &[];
-    let extra_env: &'static HashMap<String, String> = Box::leak(Box::new(HashMap::new()));
     PreparePackageOptions {
         allow_build: Box::new(move |_name, _version| allow),
         ignore_scripts,
@@ -30,7 +40,7 @@ fn opts<'a>(allow: bool, ignore_scripts: bool) -> PreparePackageOptions<'a> {
         node_execpath: None,
         npm_execpath: None,
         extra_bin_paths: EMPTY_BIN_PATHS,
-        extra_env,
+        extra_env: empty_env(),
     }
 }
 

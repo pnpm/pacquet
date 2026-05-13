@@ -1963,11 +1963,8 @@ version = "0.0.1"
 dependencies = [
  "derive_more",
  "miette 7.6.0",
- "pacquet-config",
  "pacquet-diagnostics",
  "pacquet-executor",
- "pacquet-fs",
- "pacquet-lockfile",
  "pacquet-package-manifest",
  "pacquet-reporter",
  "pacquet-store-dir",
