@@ -523,9 +523,14 @@ mod known_failures {
 
     fn skipped_optional_deps() -> KnownResult<()> {
         Err(KnownFailure::new(
-            "Pacquet doesn't yet skip optional dependencies based on OS, \
-             arch, or engine constraints, so the hoist pass can't be tested \
-             for the broken-symlink-on-skipped-optional case upstream covers.",
+            "The hoist pass already honors `SkippedSnapshots` from \
+             #439's `compute_skipped_snapshots` (threaded through \
+             `HoistInputs.skipped`), but the end-to-end test needs \
+             an OS/arch-incompatible package in the registry mock to \
+             actually exercise the skip path. Upstream's fixture \
+             (`@pnpm.e2e/not-compatible-with-any-os`) isn't in \
+             pacquet's mocked registry yet — a fixture-add is the \
+             missing piece, not the hoist behavior.",
         ))
     }
 

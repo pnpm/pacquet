@@ -428,14 +428,31 @@ where
                     // for this issue; tracked as a workspace follow-up).
                     let direct_deps =
                         build_direct_deps_by_importer(importers, dependency_groups.iter().copied());
-                    // No skipped-snapshot tracking yet (pacquet does not
-                    // implement skipped optionals). Empty set is the
-                    // upstream default for the no-skip case.
-                    let skipped: HashSet<PackageKey> = HashSet::new();
+                    // Honor the same skip set the rest of the install
+                    // already respects. `SkippedSnapshots` is the
+                    // platform/engine-incompatible-optional filter
+                    // computed earlier in this function via
+                    // `compute_skipped_snapshots`. Skipping a
+                    // snapshot from the hoist pass means
+                    // (a) `<vs>/node_modules/<alias>` doesn't get
+                    // a symlink to a slot that was never extracted,
+                    // and (b) the alias slot isn't claimed in the
+                    // BFS — a non-skipped sibling at a deeper level
+                    // can still take the alias.
+                    //
+                    // `HoistInputs` takes `&HashSet<PackageKey>`;
+                    // build it once from the outer `SkippedSnapshots`
+                    // by cloning the small skip set (typically 0-100
+                    // entries). Changing `HoistInputs` to accept
+                    // `&SkippedSnapshots` directly would couple
+                    // `hoist.rs` to the `installability` module for
+                    // one `contains` call; the conversion is cheap
+                    // enough to keep the modules orthogonal.
+                    let hoist_skipped: HashSet<PackageKey> = skipped.iter().cloned().collect();
                     let result = get_hoisted_dependencies(&crate::HoistInputs {
                         graph: &graph,
                         direct_deps_by_importer: &direct_deps,
-                        skipped: &skipped,
+                        skipped: &hoist_skipped,
                         private_pattern,
                         public_pattern,
                     });

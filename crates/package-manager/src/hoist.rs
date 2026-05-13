@@ -121,14 +121,18 @@ pub type DirectDepsByImporter = HashMap<String, HashMap<String, PackageKey>>;
 /// dep-groups-included-in-install. Peer is filtered upfront because
 /// upstream doesn't include peer-only entries in the direct-deps map
 /// either (peers materialize through their host).
+///
 /// Accepts an iterator over `(importer_id, &ProjectSnapshot)` pairs
 /// rather than the lockfile's full `&HashMap` so the caller can
 /// restrict the input to the importer set actually being installed.
-/// Pacquet currently only installs the root importer (`"."`); the
-/// frozen-lockfile call site filters down to that one entry to avoid
-/// hoisting transitives of non-root workspace projects into the root
-/// `node_modules`. Workspace install (pnpm/pacquet#431) will widen
-/// the call site without touching this function's signature.
+/// Today the frozen-lockfile call site passes the full `importers`
+/// map — workspace install (pnpm/pacquet#431) landed in #443 and
+/// pacquet now installs every entry — so the iterator-shaped
+/// signature lets future selected-projects (`--filter`) installs
+/// pass a filtered iterator without touching this function. The
+/// `link:` workspace-sibling entries are skipped via
+/// [`pacquet_lockfile::ImporterDepVersion::as_regular`] inside the
+/// loop.
 pub fn build_direct_deps_by_importer<'a, I>(
     importers: I,
     dependency_groups: impl IntoIterator<Item = pacquet_package_manifest::DependencyGroup> + Clone,
