@@ -15,7 +15,7 @@
 use crate::StoreDir;
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_fs::{remove_symlink_dir, symlink_dir};
+use pacquet_fs::{read_symlink_dir, remove_symlink_dir, symlink_dir};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -123,8 +123,12 @@ pub fn register_project(
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
             // Either the same project re-registering (no-op) or an
             // unrelated path that hashed to the same slug (heal).
-            // Resolve and compare the existing link's target.
-            let existing_target = fs::read_link(&link_path).map_err(|error| {
+            // Resolve and compare the existing link's target. The
+            // cross-platform helper handles Windows junctions —
+            // `fs::read_link` alone would fail with `EINVAL` for
+            // every entry pacquet writes there (see
+            // [`rust-lang/rust#28528`](https://github.com/rust-lang/rust/issues/28528)).
+            let existing_target = read_symlink_dir(&link_path).map_err(|error| {
                 RegisterProjectError::InspectExisting {
                     project_dir: project_dir.to_path_buf(),
                     link_path: link_path.clone(),
@@ -281,23 +285,29 @@ pub fn get_registered_projects(
         // there's no upstream analogue to mirror — we err on the
         // side of strictness.
         let file_type = entry.file_type().map_err(|error| {
-            GetRegisteredProjectsError::EntryInaccessible {
-                link_path: link_path.clone(),
-                error,
-            }
+            GetRegisteredProjectsError::EntryInaccessible { link_path: link_path.clone(), error }
         })?;
         if !file_type.is_symlink() {
             continue;
         }
 
-        let target = match fs::read_link(&link_path) {
+        // Use the cross-platform symlink reader. On Windows
+        // pacquet's writer creates junctions; `fs::read_link` alone
+        // would EINVAL on every live entry (see
+        // [`rust-lang/rust#28528`](https://github.com/rust-lang/rust/issues/28528)),
+        // and the EINVAL silent-skip below would then drop every
+        // registered project on that platform.
+        let target = match read_symlink_dir(&link_path) {
             Ok(target) => target,
             // Upstream silently skips both ENOENT and EINVAL (the
-            // "file is not a symlink" errno on Linux). EINVAL doesn't
-            // have a portable `ErrorKind` variant in stable Rust, so
-            // we match raw `errno` via `raw_os_error` when present
-            // and fall through to the generic "inaccessible" error
-            // otherwise.
+            // "file is not a symlink" errno on Linux). Now that the
+            // helper handles junctions, an EINVAL here means the
+            // entry is neither a symlink nor a junction (some other
+            // reparse-point shape, or a race) — still benign to
+            // skip. EINVAL doesn't have a portable `ErrorKind`
+            // variant in stable Rust, so we match raw `errno` via
+            // `raw_os_error` when present and fall through to the
+            // generic "inaccessible" error otherwise.
             Err(error) if is_enoent_or_einval(&error) => continue,
             Err(error) => {
                 return Err(GetRegisteredProjectsError::EntryInaccessible { link_path, error });
