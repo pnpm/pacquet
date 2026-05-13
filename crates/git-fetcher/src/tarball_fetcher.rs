@@ -29,7 +29,7 @@
 
 use crate::{
     cas_io::{import_into_cas, materialize_into},
-    error::{GitFetcherError, PreparePackageError},
+    error::GitFetcherError,
     fetcher::GitFetchOutput,
     packlist::packlist,
     prepare_package::{PreparePackageOptions, PreparedPackage, prepare_package},
@@ -111,11 +111,18 @@ impl<'a> GitHostedTarballFetcher<'a> {
             extra_bin_paths: &[],
             extra_env: &empty_env,
         };
+        // Upstream stamps `err.message = "Failed to prepare git-hosted
+        // package fetched from <url>: <orig>"` at
+        // [`gitHostedTarballFetcher.ts:49-52`](https://github.com/pnpm/pnpm/blob/94240bc046/fetching/tarball-fetcher/src/gitHostedTarballFetcher.ts#L49-L52).
+        // Pacquet preserves the underlying error through the miette
+        // source chain instead — the install dispatcher's log line
+        // already includes `package_id`, so the chain renders as
+        // "prepare failed for `<pkg>` → `ERR_PNPM_PREPARE_PACKAGE` →
+        // underlying lifecycle error". A dedicated context variant is
+        // a follow-up if the rendered chain proves unclear.
         let PreparedPackage { pkg_dir, should_be_built } =
-            match prepare_package::<R>(&prepare_opts, temp_location, self.path) {
-                Ok(p) => p,
-                Err(err) => return Err(wrap_prepare_error(self.package_id, err)),
-            };
+            prepare_package::<R>(&prepare_opts, temp_location, self.path)
+                .map_err(GitFetcherError::Prepare)?;
 
         // Upstream's `globalWarn` at gitHostedTarballFetcher.ts:39
         // when scripts were ignored on a package that needs building.
@@ -142,19 +149,6 @@ impl<'a> GitHostedTarballFetcher<'a> {
         let cas_paths = import_into_cas(self.store_dir, &pkg_dir, &files)?;
         Ok(GitFetchOutput { cas_paths, built: should_be_built })
     }
-}
-
-/// Wrap a `PreparePackageError` with the same "Failed to prepare git-
-/// hosted package" prefix upstream stamps at
-/// [`gitHostedTarballFetcher.ts:49-52`](https://github.com/pnpm/pnpm/blob/94240bc046/fetching/tarball-fetcher/src/gitHostedTarballFetcher.ts#L49-L52).
-///
-/// We preserve the underlying error through the miette source chain
-/// instead of mutating the message (no JS-style `err.message = ...`).
-/// The install dispatcher's log line already prefixes events with
-/// `package_id`, so the source chain reads as "prepare failed for
-/// `<pkg>` → `ERR_PNPM_PREPARE_PACKAGE` → underlying lifecycle error".
-fn wrap_prepare_error(_package_id: &str, err: PreparePackageError) -> GitFetcherError {
-    GitFetcherError::Prepare(err)
 }
 
 #[cfg(test)]

@@ -76,8 +76,14 @@ pub enum InstallPackageBySnapshotError {
     #[diagnostic(code(pacquet_package_manager::unsupported_resolution))]
     UnsupportedResolution { package_key: String, resolution_kind: &'static str },
 
-    /// Failure from the git fetcher for a `type: git` resolution
-    /// (clone / checkout / preparePackage / CAS import).
+    /// Failure from either git fetcher: the git-CLI path for
+    /// `type: git` resolutions (clone / checkout / preparePackage /
+    /// CAS import) or the git-hosted-tarball post-pass for
+    /// `TarballResolution { gitHosted: true }` (materialize /
+    /// preparePackage / packlist / re-import). Both share the same
+    /// `GitFetcherError` taxonomy because they share `prepare_package`,
+    /// `packlist`, and the CAS-import helpers; the variant covers
+    /// every fetcher path that exits through `pacquet-git-fetcher`.
     #[diagnostic(transparent)]
     GitFetch(#[error(source)] GitFetcherError),
 }

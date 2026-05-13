@@ -189,6 +189,25 @@ fn deserialize_tarball_resolution_with_path() {
 }
 
 #[test]
+fn serialize_tarball_resolution_with_path() {
+    let resolution = LockfileResolution::Tarball(TarballResolution {
+        tarball: "https://codeload.github.com/foo/bar/tar.gz/abc1234".to_string(),
+        integrity: None,
+        git_hosted: Some(true),
+        path: Some("packages/sub".to_string()),
+    });
+    let received = serialize_yaml::to_string(&resolution).unwrap();
+    let received = received.trim();
+    eprintln!("RECEIVED:\n{received}");
+    let expected = text_block! {
+        "tarball: https://codeload.github.com/foo/bar/tar.gz/abc1234"
+        "gitHosted: true"
+        "path: packages/sub"
+    };
+    assert_eq!(received, expected);
+}
+
+#[test]
 fn serialize_tarball_resolution_with_git_hosted() {
     let resolution = LockfileResolution::Tarball(TarballResolution {
         tarball: "https://codeload.github.com/foo/bar/tar.gz/abc1234".to_string(),

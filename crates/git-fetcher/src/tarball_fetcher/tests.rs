@@ -158,6 +158,70 @@ async fn rejects_build_when_not_allowed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn path_field_packs_only_subdirectory() {
+    // Git-hosted tarballs from monorepos pin a `path` to point at the
+    // sub-package they actually publish. The fetcher must run
+    // `preparePackage` + `packlist` inside that sub-dir so the
+    // resulting `cas_paths` only contain that package's files.
+    let store_root = tempdir().unwrap();
+    let store_dir = StoreDir::from(store_root.path().to_path_buf());
+
+    let cas_paths = write_to_cas(
+        &store_dir,
+        &[
+            // Monorepo root manifest — not the published package.
+            ("package.json", br#"{"name":"monorepo","version":"0.0.0","private":true}"#, false),
+            // The sub-package we're packing.
+            (
+                "packages/sub/package.json",
+                br#"{"name":"sub","version":"1.0.0","main":"index.js"}"#,
+                false,
+            ),
+            ("packages/sub/index.js", b"module.exports = 1;\n", false),
+            ("packages/sub/README.md", b"# sub\n", false),
+            // A sibling package that must NOT end up in the result.
+            ("packages/other/package.json", br#"{"name":"other","version":"1.0.0"}"#, false),
+            ("packages/other/index.js", b"// other\n", false),
+        ],
+    );
+
+    let received = GitHostedTarballFetcher {
+        cas_paths,
+        path: Some("packages/sub"),
+        allow_build: deny_all_builds(),
+        ignore_scripts: false,
+        unsafe_perm: true,
+        user_agent: None,
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        script_shell: None,
+        node_execpath: None,
+        npm_execpath: None,
+        store_dir: &store_dir,
+        package_id: "sub@1.0.0",
+        requester: "/test",
+    }
+    .run::<SilentReporter>()
+    .await
+    .unwrap();
+
+    let keys: Vec<&str> = received.cas_paths.keys().map(String::as_str).collect();
+    // The fetcher packlists relative to `pkg_dir` (which is
+    // `<tmp>/packages/sub`), so the returned keys are *also* relative
+    // to that sub-dir — never carrying the `packages/sub/` prefix.
+    assert!(keys.contains(&"package.json"), "sub-dir manifest must be included");
+    assert!(keys.contains(&"index.js"), "sub-dir main must be included");
+    assert!(keys.contains(&"README.md"), "always-included file must be included");
+    assert!(
+        !keys.iter().any(|k| k.contains("other")),
+        "sibling-package files must not appear in {keys:?}",
+    );
+    assert!(
+        !keys.iter().any(|k| k.contains("packages/")),
+        "keys are relative to the sub-dir, not the monorepo root: {keys:?}",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn materialized_temp_dir_does_not_corrupt_cas() {
     // Regression: when the prepare phase modifies a working-tree
     // file, the CAS entry it was sourced from must remain unchanged.
