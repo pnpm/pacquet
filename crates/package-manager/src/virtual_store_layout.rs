@@ -389,8 +389,12 @@ mod tests {
         );
         let mut snapshots = HashMap::new();
         snapshots.insert(key.clone(), SnapshotEntry::default());
-        let layout =
-            VirtualStoreLayout::new(&config, Some("linux-x64-node22"), Some(&snapshots), Some(&packages));
+        let layout = VirtualStoreLayout::new(
+            &config,
+            Some("linux-x64-node22"),
+            Some(&snapshots),
+            Some(&packages),
+        );
         let slot = layout.slot_dir(&key);
         let _ = slot
             .strip_prefix("/tmp/store/links/@/foo/1.0.0/")
