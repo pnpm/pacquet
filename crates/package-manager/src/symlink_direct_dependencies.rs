@@ -1,4 +1,4 @@
-use crate::{SkippedSnapshots, link_direct_dep_bins, symlink_package};
+use crate::{SkippedSnapshots, SymlinkPackageError, link_direct_dep_bins, symlink_package};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_cmd_shim::LinkBinsError;
@@ -34,8 +34,9 @@ use std::{
 ///   <https://github.com/pnpm/pnpm/blob/94240bc046/installing/linking/direct-dep-linker/src/linkDirectDeps.ts#L131>.
 ///
 /// The virtual store dir (`config.virtual_store_dir`) stays singular —
-/// it lives at `workspace_root/node_modules/.pnpm`. Only the per-project
-/// `node_modules/` and its symlinks fan out.
+/// it lives at `<workspace_root>/node_modules/.pacquet` (pnpm uses
+/// `.pnpm`; pacquet's directory name is fixed by `default_virtual_store_dir`).
+/// Only the per-project `node_modules/` and its symlinks fan out.
 #[must_use]
 pub struct SymlinkDirectDependencies<'a, DependencyGroupList>
 where
@@ -64,6 +65,40 @@ where
 pub enum SymlinkDirectDependenciesError {
     #[diagnostic(transparent)]
     LinkBins(#[error(source)] LinkBinsError),
+
+    /// A lockfile importer key that would escape the workspace root.
+    /// Pnpm's lockfile spec uses POSIX relative paths for importer
+    /// keys (e.g. `packages/web`); a key that is absolute, contains
+    /// `..` traversal, or carries a Windows drive prefix is treated
+    /// as a malformed lockfile so we don't end up creating
+    /// `node_modules` outside the workspace. Upstream pnpm does not
+    /// guard this explicitly, but the importer keys it writes are
+    /// always relative POSIX paths under the workspace root — so
+    /// this check is parity-preserving on conforming input.
+    #[display("Refusing to install importer with unsafe path key {importer_id:?}")]
+    #[diagnostic(
+        code(pacquet_package_manager::unsafe_importer_path),
+        help(
+            "Importer keys in pnpm-lock.yaml must be POSIX paths relative to the workspace root (e.g. `packages/web`). Absolute paths, drive prefixes, and `..` components are rejected."
+        )
+    )]
+    UnsafeImporterPath {
+        #[error(not(source))]
+        importer_id: String,
+    },
+
+    /// Surfaces a per-package symlink failure (e.g. permission denied,
+    /// disk full, an existing non-symlink file). Replaces the prior
+    /// `expect("symlink pkg")` which panicked inside a rayon task and
+    /// took the whole install down.
+    #[display("Failed to symlink {name:?} for importer {importer_id:?}: {source}")]
+    #[diagnostic(code(pacquet_package_manager::symlink_failed))]
+    SymlinkPackage {
+        importer_id: String,
+        name: String,
+        #[error(source)]
+        source: SymlinkPackageError,
+    },
 }
 
 impl<'a, DependencyGroupList> SymlinkDirectDependencies<'a, DependencyGroupList>
@@ -94,12 +129,20 @@ where
         keys.sort_unstable();
 
         for importer_id in keys {
+            // Reject importer keys that would escape the workspace
+            // root. A malformed (or hostile) lockfile could otherwise
+            // make `Path::join` create `node_modules` outside the
+            // workspace — `Path::join` discards the base when the
+            // RHS is absolute, and `..` components are otherwise
+            // permitted.
+            validate_importer_id(importer_id)?;
             // Safe: we just iterated `importers.keys()`.
             let project_snapshot = &importers[importer_id];
             let project_dir = importer_root_dir(workspace_root, importer_id);
             let modules_dir = project_dir.join("node_modules");
 
             link_one_importer::<R>(
+                importer_id,
                 config,
                 project_snapshot,
                 &project_dir,
@@ -111,6 +154,52 @@ where
 
         Ok(())
     }
+}
+
+/// Reject importer keys that would resolve outside the workspace root.
+///
+/// Pnpm's lockfile spec writes importer keys as POSIX paths relative
+/// to the workspace root (`.` for the root, `packages/web` for a
+/// subproject). Anything else — an absolute POSIX path, a Windows
+/// drive prefix, a `..` segment — is either malformed or hostile, so
+/// surface it as a typed error rather than silently letting
+/// `Path::join` produce an off-workspace path.
+fn validate_importer_id(importer_id: &str) -> Result<(), SymlinkDirectDependenciesError> {
+    let unsafe_path = || SymlinkDirectDependenciesError::UnsafeImporterPath {
+        importer_id: importer_id.to_string(),
+    };
+
+    if importer_id == "." || importer_id.is_empty() {
+        return Ok(());
+    }
+
+    // Absolute POSIX path. Pnpm writes relative paths; an absolute
+    // value would cause `Path::join` to discard `workspace_root`.
+    if importer_id.starts_with('/') {
+        return Err(unsafe_path());
+    }
+    // Windows drive prefix (e.g. `C:` or `C:/foo`). Same blast radius
+    // as the absolute POSIX case on Windows hosts.
+    let bytes = importer_id.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        return Err(unsafe_path());
+    }
+    // Backslash separator. Pnpm writes POSIX `/`; a backslash key
+    // would be either a Windows-native path or pnpm-incompatible
+    // garbage.
+    if importer_id.contains('\\') {
+        return Err(unsafe_path());
+    }
+    // Any `..` segment. Mirrors `path::Component::ParentDir` rejection
+    // without paying for full component iteration since importer keys
+    // are tiny.
+    for segment in importer_id.split('/') {
+        if segment == ".." {
+            return Err(unsafe_path());
+        }
+    }
+
+    Ok(())
 }
 
 /// Resolve `importer_id` (a lockfile key) against the workspace root.
@@ -131,6 +220,7 @@ fn importer_root_dir(workspace_root: &Path, importer_id: &str) -> PathBuf {
 }
 
 fn link_one_importer<R: Reporter>(
+    importer_id: &str,
     config: &Config,
     project_snapshot: &ProjectSnapshot,
     project_dir: &Path,
@@ -205,89 +295,105 @@ fn link_one_importer<R: Reporter>(
     // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/linking/direct-dep-linker/src/linkDirectDeps.ts#L131>.
     let prefix = project_dir.to_string_lossy().into_owned();
 
-    entries.par_iter().for_each(|(name, spec, group)| {
-        let name_str = name.to_string();
-        let target_path: PathBuf = match &spec.version {
-            ImporterDepVersion::Regular(ver_peer) => {
-                // TODO: the code below is not optimal
-                let virtual_store_name =
-                    PkgNameVerPeer::new(PkgName::clone(name), ver_peer.clone())
-                        .to_virtual_store_name();
-                config
-                    .virtual_store_dir
-                    .join(virtual_store_name)
-                    .join("node_modules")
-                    .join(&name_str)
-            }
-            ImporterDepVersion::Link(target) => {
-                // `link:<path>` values are relative to the
-                // importer's `rootDir` (or absolute). Resolve them
-                // here so the on-disk symlink points at the right
-                // sibling project. Pnpm does the same conversion in
-                // `lockfileToDepGraph` —
-                // <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/types/src/index.ts>
-                // — but pacquet's lockfile snapshot already carries
-                // the raw `link:` payload, so the resolution lives
-                // at the install layer.
-                let candidate = Path::new(target);
-                if candidate.is_absolute() {
-                    candidate.to_path_buf()
-                } else {
-                    project_dir.join(candidate)
+    // `try_for_each` short-circuits on the first error and returns it
+    // to the caller, replacing the prior `expect("symlink pkg")` that
+    // panicked the rayon worker on any FS failure. The full result
+    // collection forces every task to settle before we surface a
+    // single error.
+    entries.par_iter().try_for_each(
+        |(name, spec, group)| -> Result<(), SymlinkDirectDependenciesError> {
+            let name_str = name.to_string();
+            let target_path: PathBuf = match &spec.version {
+                ImporterDepVersion::Regular(ver_peer) => {
+                    // TODO: the code below is not optimal
+                    let virtual_store_name =
+                        PkgNameVerPeer::new(PkgName::clone(name), ver_peer.clone())
+                            .to_virtual_store_name();
+                    config
+                        .virtual_store_dir
+                        .join(virtual_store_name)
+                        .join("node_modules")
+                        .join(&name_str)
                 }
-            }
-        };
+                ImporterDepVersion::Link(target) => {
+                    // `link:<path>` values are relative to the
+                    // importer's `rootDir` (or absolute). Resolve them
+                    // here so the on-disk symlink points at the right
+                    // sibling project. Pnpm does the same conversion in
+                    // `lockfileToDepGraph` —
+                    // <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/types/src/index.ts>
+                    // — but pacquet's lockfile snapshot already carries
+                    // the raw `link:` payload, so the resolution lives
+                    // at the install layer.
+                    let candidate = Path::new(target);
+                    if candidate.is_absolute() {
+                        candidate.to_path_buf()
+                    } else {
+                        project_dir.join(candidate)
+                    }
+                }
+            };
 
-        symlink_package(&target_path, &modules_dir.join(&name_str)).expect("symlink pkg"); // TODO: properly propagate this error
+            symlink_package(&target_path, &modules_dir.join(&name_str)).map_err(|source| {
+                SymlinkDirectDependenciesError::SymlinkPackage {
+                    importer_id: importer_id.to_string(),
+                    name: name_str.clone(),
+                    source,
+                }
+            })?;
 
-        // `pnpm:root added` mirrors pnpm's emit at
-        // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/linking/direct-dep-linker/src/linkDirectDeps.ts#L131>:
-        // one event per direct dependency once the symlink has
-        // been created. pacquet's frozen-lockfile snapshot doesn't
-        // preserve npm-alias keys at this layer, so `realName`
-        // mirrors `name`; the optional `id` / `latest` /
-        // `linkedFrom` fields are out of pacquet's reach today
-        // and skip from the wire shape rather than serializing as
-        // JSON `null`.
-        let dependency_type = match group {
-            DependencyGroup::Prod => DependencyType::Prod,
-            DependencyGroup::Dev => DependencyType::Dev,
-            DependencyGroup::Optional => DependencyType::Optional,
-            // Filtered upfront. See the comment on the `entries`
-            // builder above.
-            DependencyGroup::Peer => unreachable!("peers are filtered out before this point"),
-        };
-        // For a `link:` dep, upstream's `version` field is the
-        // resolved `link:<path>` payload (re-prepended on the
-        // wire) so reporters can render the link target. Pacquet
-        // mirrors that here; for `Regular` deps we keep the
-        // semver-only formatting upstream uses on the wire.
-        let version = match &spec.version {
-            ImporterDepVersion::Regular(ver) => Some(ver.version().to_string()),
-            ImporterDepVersion::Link(target) => Some(format!("link:{target}")),
-        };
-        // Pacquet's lockfile snapshot doesn't track the
-        // npm-alias key separately from the resolved package
-        // name at this layer, so `name` and `real_name` carry
-        // the same value. Clone the already-built string
-        // instead of formatting `name` a second time.
-        let real_name = name_str.clone();
-        R::emit(&LogEvent::Root(RootLog {
-            level: LogLevel::Debug,
-            message: RootMessage::Added {
-                prefix: prefix.clone(),
-                added: AddedRoot {
-                    name: name_str,
-                    real_name,
-                    version,
-                    dependency_type: Some(dependency_type),
-                    id: None,
-                    latest: None,
-                    linked_from: None,
+            // `pnpm:root added` mirrors pnpm's emit at
+            // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/linking/direct-dep-linker/src/linkDirectDeps.ts#L131>:
+            // one event per direct dependency once the symlink has
+            // been created. pacquet's frozen-lockfile snapshot doesn't
+            // preserve npm-alias keys at this layer, so `realName`
+            // mirrors `name`; the optional `id` / `latest` /
+            // `linkedFrom` fields are out of pacquet's reach today
+            // and skip from the wire shape rather than serializing as
+            // JSON `null`.
+            let dependency_type = match group {
+                DependencyGroup::Prod => DependencyType::Prod,
+                DependencyGroup::Dev => DependencyType::Dev,
+                DependencyGroup::Optional => DependencyType::Optional,
+                // Filtered upfront. See the comment on the `entries`
+                // builder above.
+                DependencyGroup::Peer => {
+                    unreachable!("peers are filtered out before this point")
+                }
+            };
+            // For a `link:` dep, upstream's `version` field is the
+            // resolved `link:<path>` payload (re-prepended on the
+            // wire) so reporters can render the link target. Pacquet
+            // mirrors that here; for `Regular` deps we keep the
+            // semver-only formatting upstream uses on the wire.
+            let version = match &spec.version {
+                ImporterDepVersion::Regular(ver) => Some(ver.version().to_string()),
+                ImporterDepVersion::Link(target) => Some(format!("link:{target}")),
+            };
+            // Pacquet's lockfile snapshot doesn't track the
+            // npm-alias key separately from the resolved package
+            // name at this layer, so `name` and `real_name` carry
+            // the same value. Clone the already-built string
+            // instead of formatting `name` a second time.
+            let real_name = name_str.clone();
+            R::emit(&LogEvent::Root(RootLog {
+                level: LogLevel::Debug,
+                message: RootMessage::Added {
+                    prefix: prefix.clone(),
+                    added: AddedRoot {
+                        name: name_str,
+                        real_name,
+                        version,
+                        dependency_type: Some(dependency_type),
+                        id: None,
+                        latest: None,
+                        linked_from: None,
+                    },
                 },
-            },
-        }));
-    });
+            }));
+            Ok(())
+        },
+    )?;
 
     // After the symlinks exist, walk them to discover each
     // direct dep's `package.json` and link declared bins into

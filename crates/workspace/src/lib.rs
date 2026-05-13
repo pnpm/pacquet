@@ -7,12 +7,15 @@
 //! and
 //! [`workspace/project-manifest-reader`](https://github.com/pnpm/pnpm/blob/94240bc046/workspace/project-manifest-reader/src/index.ts).
 //!
-//! Three responsibilities, kept in separate modules so the upstream
-//! split stays visible:
+//! Three responsibilities, kept in separate private modules so the
+//! upstream split stays visible while keeping the public surface flat:
 //!
-//! - [`root_finder`] — locate the workspace dir (`pnpm-workspace.yaml`).
-//! - [`manifest`]    — parse `packages:` (plus the catalog skeletons).
-//! - [`projects`]    — glob-expand `packages:` into [`Project`]s.
+//! - `root_finder` — locate the workspace dir (`pnpm-workspace.yaml`).
+//!   Public entry point: [`find_workspace_dir`].
+//! - `manifest`    — parse `packages:` (plus catalog skeletons).
+//!   Public entry point: [`read_workspace_manifest`].
+//! - `projects`    — glob-expand `packages:` into [`Project`]s.
+//!   Public entry point: [`find_workspace_projects`].
 
 mod manifest;
 mod project_manifest;

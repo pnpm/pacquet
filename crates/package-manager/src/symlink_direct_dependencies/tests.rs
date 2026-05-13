@@ -1,4 +1,4 @@
-use super::SymlinkDirectDependencies;
+use super::{SymlinkDirectDependencies, SymlinkDirectDependenciesError};
 use crate::SkippedSnapshots;
 use pacquet_config::Config;
 use pacquet_lockfile::{Lockfile, ProjectSnapshot, ResolvedDependencyMap, ResolvedDependencySpec};
@@ -7,7 +7,7 @@ use pacquet_reporter::{
     AddedRoot, DependencyType, LogEvent, Reporter, RootLog, RootMessage, SilentReporter,
 };
 use pacquet_testing_utils::fs::is_symlink_or_junction;
-use std::{collections::HashMap, fs, sync::Mutex};
+use std::{collections::HashMap, fs, path::PathBuf, sync::Mutex};
 use tempfile::tempdir;
 
 /// `pnpm:root added` fires once per direct dependency, after the
@@ -340,8 +340,7 @@ fn empty_importers_is_a_no_op() {
     }
     .run::<SilentReporter>();
 
-    dbg!(&result);
-    assert!(result.is_ok(), "empty importers must not error");
+    assert!(result.is_ok(), "empty importers must not error: {result:?}");
     drop(dir);
 }
 
@@ -434,4 +433,53 @@ fn per_importer_prefix_in_pnpm_root_events() {
     assert_eq!(by_prefix.get(beta_prefix.as_str()).unwrap().name, "react");
 
     drop(dir);
+}
+
+/// A malformed (or hostile) lockfile importer key that would resolve
+/// outside the workspace root must error rather than silently
+/// creating `node_modules` somewhere unrelated. `Path::join` discards
+/// the workspace root when the right-hand side is absolute, and
+/// allows `..` traversal otherwise, so the install layer enforces a
+/// stricter shape.
+#[test]
+fn unsafe_importer_keys_error_before_filesystem_writes() {
+    // Each case is an importer key that must produce
+    // `UnsafeImporterPath` without touching the filesystem.
+    let cases: &[&str] = &[
+        "/abs/path",          // absolute POSIX
+        "..",                 // single parent
+        "../sibling",         // traversal
+        "packages/../escape", // mid-string traversal
+        "C:/win",             // Windows drive prefix
+        "packages\\web",      // backslash separator
+    ];
+
+    for &importer_id in cases {
+        let dir = tempdir().unwrap();
+        let workspace_root: PathBuf = dir.path().into();
+        let mut config = Config::new();
+        config.store_dir = dir.path().join("pacquet-store").into();
+        config.modules_dir = workspace_root.join("node_modules");
+        config.virtual_store_dir = workspace_root.join("node_modules/.pacquet");
+        let config = config.leak();
+
+        let mut importers = HashMap::new();
+        importers.insert(importer_id.to_string(), ProjectSnapshot::default());
+
+        let result = SymlinkDirectDependencies {
+            config,
+            importers: &importers,
+            dependency_groups: [DependencyGroup::Prod],
+            workspace_root: &workspace_root,
+        }
+        .run::<SilentReporter>();
+
+        match result {
+            Err(SymlinkDirectDependenciesError::UnsafeImporterPath { importer_id: id }) => {
+                assert_eq!(id, importer_id, "expected the rejected key in the diagnostic");
+            }
+            other => panic!("expected UnsafeImporterPath for {importer_id:?}, got {other:?}"),
+        }
+        drop(dir);
+    }
 }

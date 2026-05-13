@@ -151,8 +151,13 @@ where
         let workspace_root = pacquet_workspace::find_workspace_dir(manifest_dir)
             .map_err(InstallError::FindWorkspaceDir)?
             .unwrap_or_else(|| manifest_dir.to_path_buf());
-        let prefix =
-            workspace_root.to_str().expect("workspace root path is valid UTF-8").to_owned();
+        // Use `to_string_lossy` rather than `to_str().expect(...)` so a
+        // valid filesystem path with non-UTF-8 bytes (possible on Unix)
+        // doesn't panic the installer. `prefix` is used only for
+        // reporter envelopes, so a lossy conversion is acceptable —
+        // the rest of the install path uses the same pattern for
+        // paths threaded into log events.
+        let prefix = workspace_root.to_string_lossy().into_owned();
 
         // `pnpm:package-manifest initial` carries the on-disk
         // `package.json` body. Mirrors pnpm's per-project emit at

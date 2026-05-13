@@ -97,9 +97,17 @@ pub fn find_workspace_dir(cwd: &Path) -> Result<Option<PathBuf>, FindWorkspaceDi
 /// lowercase spelling — Node's process env is case-sensitive on
 /// POSIX but `NPM_CONFIG_*` is conventionally accepted in either
 /// case. The two-step lookup preserves that contract.
+///
+/// An empty value is treated as unset (matches upstream's truthy
+/// `if (workspaceDir)` check in
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/workspace/root-finder/src/index.ts>).
+/// Without this, an exported-but-empty env var would short-circuit
+/// the upward walk and force the install into an invalid empty
+/// workspace dir.
 pub fn find_workspace_dir_from_env() -> Option<PathBuf> {
     env::var_os(WORKSPACE_DIR_ENV_VAR)
         .or_else(|| env::var_os(WORKSPACE_DIR_ENV_VAR.to_lowercase()))
+        .filter(|value| !value.is_empty())
         .map(PathBuf::from)
 }
 

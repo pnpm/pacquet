@@ -32,10 +32,11 @@ pub enum ReadProjectManifestError {
 #[derive(Debug, Display, Error, Diagnostic)]
 #[non_exhaustive]
 pub enum ReadProjectManifestOnlyError {
-    #[display(
-        "No package.json (or package.yaml, or package.json5) was found in {:?}",
-        project_dir.display()
-    )]
+    // Upstream's variant of this message lists `package.yaml` and
+    // `package.json5` alongside `package.json`. Pacquet only probes
+    // `package.json` today, so the diagnostic mentions just that one —
+    // bring back the alternatives when the readers do.
+    #[display("No package.json was found in {:?}", project_dir.display())]
     #[diagnostic(code(pacquet_workspace::no_importer_manifest_found))]
     NoImporterManifestFound { project_dir: PathBuf },
 

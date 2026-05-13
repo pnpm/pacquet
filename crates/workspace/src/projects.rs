@@ -33,9 +33,10 @@
 use crate::project_manifest::{ReadProjectManifestError, read_exact_project_manifest};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_package_manifest::PackageManifest;
+use pacquet_package_manifest::{PackageManifest, PackageManifestError};
 use std::{
     collections::BTreeSet,
+    io::ErrorKind,
     path::{Path, PathBuf},
 };
 use wax::{
@@ -185,15 +186,22 @@ pub fn find_workspace_projects_no_check(
     for manifest_path in sorted {
         let manifest = match read_exact_project_manifest(&manifest_path) {
             Ok(m) => m,
-            Err(ReadProjectManifestError::Read(_)) => {
-                // Upstream swallows ENOENT mid-walk (a file vanished
-                // between listing and reading). Treat any read error
-                // the same here as a parity hedge — the lockfile is
-                // still the source of truth for which importers must
-                // be linked, so a "skip this candidate" recovery is
-                // safer than aborting the install on a stale glob hit.
+            // Upstream swallows ENOENT mid-walk (a file vanished
+            // between listing and reading) at
+            // <https://github.com/pnpm/pnpm/blob/94240bc046/workspace/projects-reader/src/findPackages.ts>.
+            // Mirror that exact-and-only carve-out: parse errors,
+            // permission failures, and "is a directory" must still
+            // propagate so a malformed `package.json` surfaces as a
+            // diagnostic instead of being silently dropped from the
+            // workspace.
+            Err(ReadProjectManifestError::Read(PackageManifestError::Io(err)))
+                if err.kind() == ErrorKind::NotFound =>
+            {
                 continue;
             }
+            Err(ReadProjectManifestError::Read(PackageManifestError::NoImporterManifestFound(
+                _,
+            ))) => continue,
             Err(err) => return Err(FindWorkspaceProjectsError::ReadManifest(err)),
         };
         let root_dir = manifest_path.parent().unwrap_or(workspace_root).to_path_buf();

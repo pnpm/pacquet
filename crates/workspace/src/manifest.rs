@@ -3,13 +3,14 @@
 //! Port of upstream's
 //! [`readWorkspaceManifest`](https://github.com/pnpm/pnpm/blob/94240bc046/workspace/workspace-manifest-reader/src/index.ts).
 //!
-//! Pacquet already has [`pacquet_config::WorkspaceSettings`] parsing
+//! Pacquet already has `pacquet_config::WorkspaceSettings` parsing
 //! the file for *settings* (`storeDir`, `registry`, …). That stays the
 //! authoritative settings parser; this module is concerned only with
 //! the workspace-shape fields (`packages:`, catalogs) that drive
 //! project enumeration. Splitting them mirrors upstream's package
 //! split: `workspace-manifest-reader` returns the typed shape;
-//! settings live elsewhere.
+//! settings live elsewhere. (Not a rustdoc link — `pacquet-config`
+//! is not a dependency of this crate.)
 //!
 //! The validation rules mirror upstream's
 //! [`validateWorkspaceManifest`](https://github.com/pnpm/pnpm/blob/94240bc046/workspace/workspace-manifest-reader/src/index.ts):
@@ -36,7 +37,7 @@ pub const WORKSPACE_MANIFEST_FILENAME: &str = "pnpm-workspace.yaml";
 /// Subset of `pnpm-workspace.yaml` consumed by project enumeration.
 ///
 /// The settings half (`storeDir`, `registry`, lifecycle policies, …)
-/// is read separately by [`pacquet_config::WorkspaceSettings`].
+/// is read separately by `pacquet_config::WorkspaceSettings`.
 /// Splitting along the upstream package boundary keeps each reader
 /// focused on the shape its callers actually need and avoids a
 /// monolithic struct that has to grow with every new pnpm setting.
@@ -56,15 +57,18 @@ pub struct WorkspaceManifest {
     pub packages: Vec<String>,
 }
 
-/// Raised when `pnpm-workspace.yaml` parses as YAML but fails one of
-/// upstream's shape checks. Same error code as upstream's
-/// `InvalidWorkspaceManifestError`.
+/// Raised when `pnpm-workspace.yaml` parses as YAML but fails an
+/// upstream-mirrored shape check that serde itself can't enforce.
+/// Same error code as upstream's `InvalidWorkspaceManifestError`.
+///
+/// Note: upstream's "packages field is not an array" branch is
+/// covered by [`ReadWorkspaceManifestError::ParseYaml`] in pacquet —
+/// `serde_saphyr` rejects a non-array shape before this layer runs.
+/// Only the empty-string-entry check needs a dedicated variant.
 #[derive(Debug, Display, Error, Diagnostic)]
 #[diagnostic(code(pacquet_workspace::invalid_workspace_configuration))]
 #[non_exhaustive]
 pub enum InvalidWorkspaceManifestError {
-    #[display("packages field is not an array")]
-    PackagesNotArray,
     #[display("Missing or empty package")]
     EmptyPackageEntry,
 }
