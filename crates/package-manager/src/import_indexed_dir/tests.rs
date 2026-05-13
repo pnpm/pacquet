@@ -1,4 +1,4 @@
-use super::{ImportIndexedDirError, import_indexed_dir};
+use super::{ImportIndexedDirError, ImportIndexedDirOpts, import_indexed_dir};
 use pacquet_config::PackageImportMethod;
 use pacquet_reporter::SilentReporter;
 use pretty_assertions::assert_eq;
@@ -23,9 +23,18 @@ fn cas_map(entries: &[(&str, PathBuf)]) -> HashMap<String, PathBuf> {
     entries.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect()
 }
 
-/// Smoke test: with no existing target, this behaves like
-/// `create_cas_files` — mkdir parents, link the files. Verifies the
-/// "fresh install" branch.
+/// Force re-imports both with and without `keep_modules_dir` go down
+/// the same stage-and-swap path. Bundle them here so the call sites
+/// stay terse.
+const FORCE_KEEP: ImportIndexedDirOpts =
+    ImportIndexedDirOpts { force: true, keep_modules_dir: true };
+const FORCE_ONLY: ImportIndexedDirOpts =
+    ImportIndexedDirOpts { force: true, keep_modules_dir: false };
+
+/// Smoke test: with no existing target and default opts (matching the
+/// isolated linker's call shape), populate the directory like
+/// upstream `tryImportIndexedDir`. The opts don't matter here because
+/// the fresh-target branch is shared.
 #[test]
 fn fresh_target_links_files() {
     let tmp = tempdir().unwrap();
@@ -41,6 +50,7 @@ fn fresh_target_links_files() {
         PackageImportMethod::Copy,
         &target,
         &cas,
+        ImportIndexedDirOpts::default(),
     )
     .expect("fresh import should succeed");
 
@@ -48,14 +58,47 @@ fn fresh_target_links_files() {
     assert_eq!(fs::read(target.join("lib/index.js")).unwrap(), b"beta");
 }
 
-/// The defining test for Slice 1: a re-install must replace every file
-/// in the package directory but leave a pre-existing `node_modules/`
+/// Default opts (isolated linker) must short-circuit when the target
+/// already exists. This is the load-bearing invariant for the virtual
+/// store: each slot is populated exactly once and never re-imported.
+/// A regression here would cause the isolated linker to do redundant
+/// work and possibly clobber working state.
+#[test]
+fn existing_target_short_circuits_under_default_opts() {
+    let tmp = tempdir().unwrap();
+    let src_root = tmp.path().join("cas");
+    fs::create_dir_all(&src_root).unwrap();
+    let new_pkg_json = write_source(&src_root, "new.json", b"new");
+    let cas = cas_map(&[("package.json", new_pkg_json)]);
+
+    let target = tmp.path().join("pkg");
+    fs::create_dir_all(&target).unwrap();
+    fs::write(target.join("package.json"), b"old").unwrap();
+    fs::write(target.join("extra.txt"), b"keep me").unwrap();
+
+    import_indexed_dir::<SilentReporter>(
+        &AtomicU8::new(0),
+        PackageImportMethod::Copy,
+        &target,
+        &cas,
+        ImportIndexedDirOpts::default(),
+    )
+    .expect("default opts on existing target should be a no-op");
+
+    // Nothing was touched.
+    assert_eq!(fs::read(target.join("package.json")).unwrap(), b"old");
+    assert_eq!(fs::read(target.join("extra.txt")).unwrap(), b"keep me");
+}
+
+/// The defining test for the hoisted-linker call shape: a re-install
+/// with `force` + `keep_modules_dir` must replace every file in the
+/// package directory but leave a pre-existing `node_modules/`
 /// subdirectory (and everything inside it) untouched. Models the
 /// hoisted-linker pattern of "rimraf orphans, then re-import each
 /// package over the top, where some packages have already had their
 /// nested deps installed by a sibling pass".
 #[test]
-fn existing_target_replaces_files_and_preserves_node_modules() {
+fn force_keep_replaces_files_and_preserves_node_modules() {
     let tmp = tempdir().unwrap();
     let src_root = tmp.path().join("cas");
     fs::create_dir_all(&src_root).unwrap();
@@ -77,6 +120,7 @@ fn existing_target_replaces_files_and_preserves_node_modules() {
         PackageImportMethod::Copy,
         &target,
         &cas,
+        FORCE_KEEP,
     )
     .expect("overwrite should succeed");
 
@@ -89,12 +133,47 @@ fn existing_target_replaces_files_and_preserves_node_modules() {
     assert_eq!(fs::read(target.join("node_modules/.placeholder")).unwrap(), b"keep me");
 }
 
-/// If the package directory exists but has no `node_modules/`, the
-/// re-install still wipes the stale files. Variant of the previous
-/// test that exercises the "preserve" branch when there's nothing to
-/// preserve.
+/// With `force` but not `keep_modules_dir`, an existing
+/// `node_modules/` is removed along with everything else. This isn't
+/// a call shape any current pacquet linker uses, but the parameter
+/// space requires it: `force=true, keep_modules_dir=false` is a valid
+/// `ImportIndexedDirOpts` and matches pnpm's `importIndexedDir(...,
+/// { force: true })` without the `keepModulesDir` flag.
 #[test]
-fn existing_target_without_node_modules_replaces_cleanly() {
+fn force_without_keep_clobbers_node_modules() {
+    let tmp = tempdir().unwrap();
+    let src_root = tmp.path().join("cas");
+    fs::create_dir_all(&src_root).unwrap();
+    let pkg_json = write_source(&src_root, "package.json", b"v2");
+    let cas = cas_map(&[("package.json", pkg_json)]);
+
+    let target = tmp.path().join("pkg");
+    fs::create_dir_all(target.join("node_modules/inner")).unwrap();
+    fs::write(target.join("node_modules/inner/dep.js"), b"// old dep").unwrap();
+    fs::write(target.join("package.json"), b"v1").unwrap();
+
+    import_indexed_dir::<SilentReporter>(
+        &AtomicU8::new(0),
+        PackageImportMethod::Copy,
+        &target,
+        &cas,
+        FORCE_ONLY,
+    )
+    .expect("force overwrite should succeed");
+
+    assert_eq!(fs::read(target.join("package.json")).unwrap(), b"v2");
+    assert!(
+        !target.join("node_modules").exists(),
+        "without keep_modules_dir, node_modules/ must be removed too",
+    );
+}
+
+/// If the package directory exists but has no `node_modules/`, the
+/// force re-install still wipes the stale files. Variant of the
+/// previous test that exercises the "preserve" branch when there's
+/// nothing to preserve.
+#[test]
+fn force_keep_without_node_modules_replaces_cleanly() {
     let tmp = tempdir().unwrap();
     let src_root = tmp.path().join("cas");
     fs::create_dir_all(&src_root).unwrap();
@@ -111,6 +190,7 @@ fn existing_target_without_node_modules_replaces_cleanly() {
         PackageImportMethod::Copy,
         &target,
         &cas,
+        FORCE_KEEP,
     )
     .expect("overwrite should succeed");
 
@@ -120,10 +200,11 @@ fn existing_target_without_node_modules_replaces_cleanly() {
 }
 
 /// A regular file occupying the target path is replaced with the
-/// freshly-imported directory. The hoisted-linker call site shouldn't
-/// hit this in practice, but bailing out would wedge the install.
+/// freshly-imported directory under `force`. The hoisted-linker call
+/// site shouldn't hit this in practice, but bailing out would wedge
+/// the install.
 #[test]
-fn target_that_is_a_regular_file_gets_replaced() {
+fn force_replaces_regular_file_target() {
     let tmp = tempdir().unwrap();
     let src_root = tmp.path().join("cas");
     fs::create_dir_all(&src_root).unwrap();
@@ -138,6 +219,7 @@ fn target_that_is_a_regular_file_gets_replaced() {
         PackageImportMethod::Copy,
         &target,
         &cas,
+        FORCE_KEEP,
     )
     .expect("regular-file target should be replaced");
 
@@ -145,12 +227,12 @@ fn target_that_is_a_regular_file_gets_replaced() {
     assert_eq!(fs::read(target.join("package.json")).unwrap(), b"contents");
 }
 
-/// A symlink occupying the target path is unlinked (not followed) and
-/// replaced with the imported package. The pointee — if it exists —
-/// must not be touched.
+/// A symlink occupying the target path is unlinked (not followed)
+/// under `force` and replaced with the imported package. The
+/// pointee — if it exists — must not be touched.
 #[test]
 #[cfg(unix)]
-fn target_that_is_a_symlink_gets_replaced_without_following() {
+fn force_replaces_symlink_target_without_following() {
     let tmp = tempdir().unwrap();
     let src_root = tmp.path().join("cas");
     fs::create_dir_all(&src_root).unwrap();
@@ -170,6 +252,7 @@ fn target_that_is_a_symlink_gets_replaced_without_following() {
         PackageImportMethod::Copy,
         &target,
         &cas,
+        FORCE_KEEP,
     )
     .expect("symlink target should be replaced");
 
@@ -181,8 +264,9 @@ fn target_that_is_a_symlink_gets_replaced_without_following() {
 }
 
 /// Deeply-nested files in the indexed map land in the right places on
-/// a fresh install. Sanity-checks that the parent-dir pre-pass inside
-/// `create_cas_files` is reached through the new entry point.
+/// a fresh install. Sanity-checks that the parent-dir pre-pass is
+/// reached on the fresh-target branch (shared between default and
+/// force opts).
 #[test]
 fn fresh_target_creates_nested_directories() {
     let tmp = tempdir().unwrap();
@@ -198,6 +282,7 @@ fn fresh_target_creates_nested_directories() {
         PackageImportMethod::Copy,
         &target,
         &cas,
+        ImportIndexedDirOpts::default(),
     )
     .expect("nested fresh import should succeed");
 
@@ -229,6 +314,7 @@ fn node_modules_collision_in_file_map_errors() {
         PackageImportMethod::Copy,
         &target,
         &cas,
+        FORCE_KEEP,
     )
     .expect_err("collision should surface");
     assert!(matches!(err, ImportIndexedDirError::NodeModulesCollision { .. }), "got: {err:?}");
@@ -239,10 +325,10 @@ fn node_modules_collision_in_file_map_errors() {
     assert_eq!(fs::read(target.join("node_modules/existing/keep.js")).unwrap(), b"survivor");
 }
 
-/// On Unix, when `Hardlink` is available we want re-imports to share
-/// inodes with the freshly-staged source so re-installs benefit from
-/// the same store-sharing as fresh installs. Doubles as proof that
-/// the staging-rename path doesn't silently downgrade to copy.
+/// On Unix, when `Hardlink` is available we want force re-imports to
+/// share inodes with the freshly-staged source so re-installs benefit
+/// from the same store-sharing as fresh installs. Doubles as proof
+/// that the staging-rename path doesn't silently downgrade to copy.
 #[test]
 #[cfg(unix)]
 fn hardlink_method_survives_staging_swap() {
@@ -263,6 +349,7 @@ fn hardlink_method_survives_staging_swap() {
         PackageImportMethod::Hardlink,
         &target,
         &cas,
+        FORCE_KEEP,
     )
     .expect("hardlink import should succeed on same-FS tempdir");
 
@@ -312,6 +399,7 @@ fn remove_dir_all_failure_restores_preserved_node_modules() {
         PackageImportMethod::Copy,
         &target,
         &cas,
+        FORCE_KEEP,
     )
     .expect_err("RemoveExisting should fire");
 
@@ -376,6 +464,7 @@ fn node_modules_inspect_permission_denied_surfaces() {
         PackageImportMethod::Copy,
         &target,
         &cas,
+        FORCE_KEEP,
     )
     .expect_err("InspectTarget should fire");
 
@@ -396,10 +485,10 @@ fn node_modules_inspect_permission_denied_surfaces() {
 
 /// Two staging paths produced back-to-back in the same process must
 /// differ — otherwise concurrent rayon workers would collide on the
-/// rename target. Uses the function indirectly via two fresh-target
-/// installs in parallel.
+/// rename target. Uses the function indirectly via two force re-installs
+/// in parallel.
 #[test]
-fn concurrent_imports_into_different_targets_do_not_collide() {
+fn concurrent_force_imports_into_different_targets_do_not_collide() {
     let tmp = tempdir().unwrap();
     let src_root = tmp.path().join("cas");
     fs::create_dir_all(&src_root).unwrap();
@@ -423,6 +512,7 @@ fn concurrent_imports_into_different_targets_do_not_collide() {
                 PackageImportMethod::Copy,
                 &target_a,
                 &cas_a,
+                FORCE_KEEP,
             )
             .expect("a should succeed");
         });
@@ -432,6 +522,7 @@ fn concurrent_imports_into_different_targets_do_not_collide() {
                 PackageImportMethod::Copy,
                 &target_b,
                 &cas_b,
+                FORCE_KEEP,
             )
             .expect("b should succeed");
         });

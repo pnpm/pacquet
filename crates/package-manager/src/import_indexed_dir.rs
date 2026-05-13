@@ -1,21 +1,52 @@
-use crate::{CreateCasFilesError, create_cas_files};
+use crate::{LinkFileError, link_file};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_config::PackageImportMethod;
 use pacquet_reporter::Reporter;
+use rayon::prelude::*;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU8, AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
+/// Options for [`import_indexed_dir`].
+///
+/// Mirrors pnpm v11's `ImportOptions` at
+/// `store/controller-types/src/index.ts` for the fields pacquet
+/// consumes today. The defaults match the isolated linker's call
+/// shape (no force, no nested-modules preservation); the hoisted
+/// linker passes both flags set to `true`.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ImportIndexedDirOpts {
+    /// When `true`, re-import even when `dir_path` already exists,
+    /// overwriting the existing contents. Without `force`, an
+    /// existing directory short-circuits this function (matches
+    /// pnpm's pre-existence check in `importIndexedPackage`).
+    pub force: bool,
+    /// When `true` (only meaningful with `force`), preserve
+    /// `dir_path/node_modules/` across the re-import so nested
+    /// dependencies survive the rebuild. Required by the hoisted
+    /// linker, whose orphan-removal and insert passes are
+    /// interleaved across the package tree — a nested `node_modules/`
+    /// installed by a sibling pass must not be clobbered when the
+    /// parent package is re-imported.
+    pub keep_modules_dir: bool,
+}
+
 /// Error type for [`import_indexed_dir`].
 #[derive(Debug, Display, Error, Diagnostic)]
 pub enum ImportIndexedDirError {
+    #[display("cannot create directory at {dirname:?}: {error}")]
+    CreateDir {
+        dirname: PathBuf,
+        #[error(source)]
+        error: io::Error,
+    },
     #[diagnostic(transparent)]
-    CreateCasFiles(#[error(source)] CreateCasFilesError),
+    LinkFile(#[error(source)] LinkFileError),
     #[display("failed to inspect existing target {path:?}: {error}")]
     InspectTarget {
         path: PathBuf,
@@ -56,46 +87,41 @@ pub enum ImportIndexedDirError {
     },
 }
 
-/// Materialize an indexed package as real files inside `dir_path`,
-/// overwriting any pre-existing contents while preserving the package's
-/// `node_modules/` subdirectory.
+/// Materialize an indexed package's files into `dir_path`, the way
+/// pnpm v11's `importIndexedDir` does at
+/// `fs/indexed-pkg-importer/src/importIndexedDir.ts`. The same function
+/// services both node-linkers; behavior at the destination is
+/// controlled by [`ImportIndexedDirOpts`]:
 ///
-/// Mirrors pnpm v11's `importIndexedDir(..., { keepModulesDir: true })`
-/// at `fs/indexed-pkg-importer/src/importIndexedDir.ts` — the fixed
-/// option set used by the hoisted-linker's `linkHoistedModules` call
-/// site, which always passes `force: true` and `keepModulesDir: true`
-/// (`installing/deps-restorer/src/linkHoistedModules.ts`).
+/// * **Default opts (isolated linker).** If `dir_path` already exists,
+///   short-circuit; otherwise mkdir parents and link each file in
+///   parallel via [`link_file()`]. Matches pnpm's `importIndexedPackage`
+///   when called without `force`.
+/// * **`opts.force` (hoisted linker).** Re-import even when `dir_path`
+///   exists. The new contents are staged in a sibling directory so the
+///   final rename stays on one filesystem, the old directory is
+///   removed, and the staging directory is renamed into place. A
+///   regular file or symlink occupying `dir_path` is unlinked first.
+/// * **`opts.force` + `opts.keep_modules_dir` (hoisted linker).**
+///   Before the swap, `dir_path/node_modules/` is moved into the
+///   staging directory so nested deps survive the rebuild. On any
+///   failure after the move, the staged copy is restored to
+///   `dir_path/node_modules/` before the staging directory is
+///   cleaned up — staging never holds the user's only copy of nested
+///   deps. Required by the hoisted linker's interleaved orphan-removal
+///   and insert passes.
 ///
-/// Behavior:
-///
-/// * If `dir_path` does not yet exist, this is equivalent to
-///   [`create_cas_files()`] — make parent dirs, then link files in
-///   parallel.
-/// * If `dir_path` exists as a directory, the new contents are staged
-///   in a sibling directory (so the rename stays on one filesystem),
-///   any existing `dir_path/node_modules/` is moved into the staging
-///   directory to preserve nested deps, the old directory is removed,
-///   and the staging directory is renamed into place. On any failure
-///   after the `node_modules/` move, the staged copy is restored to
-///   `dir_path/node_modules/` before the staging directory is cleaned
-///   up — staging never holds the user's only copy of nested deps.
-/// * If `dir_path` exists as a regular file or a symlink, the dirent
-///   is removed first and then the fresh-target path is taken. The
-///   hoisted-linker won't produce that state in practice, but
-///   refusing to clobber it would leave the install wedged.
-///
-/// Files in the package's `cas_paths` are materialized by
-/// [`link_file()`] using `import_method`'s preference order
+/// Files in `cas_paths` are materialized by [`link_file()`] using
+/// `import_method`'s preference order
 /// (hardlink → reflink → copy, etc.), and the per-method
-/// `pnpm:package-import-method` log is emitted via `logged_methods` the
-/// same way [`create_cas_files()`] does.
-///
-/// [`link_file()`]: crate::link_file()
+/// `pnpm:package-import-method` log is emitted via `logged_methods`
+/// the first time each tier is used in this install.
 pub fn import_indexed_dir<R: Reporter>(
     logged_methods: &AtomicU8,
     import_method: PackageImportMethod,
     dir_path: &Path,
     cas_paths: &HashMap<String, PathBuf>,
+    opts: ImportIndexedDirOpts,
 ) -> Result<(), ImportIndexedDirError> {
     let existing_kind = match fs::symlink_metadata(dir_path) {
         Ok(meta) => Some(meta.file_type()),
@@ -108,23 +134,83 @@ pub fn import_indexed_dir<R: Reporter>(
         }
     };
 
-    match existing_kind {
-        None => create_cas_files::<R>(logged_methods, import_method, dir_path, cas_paths)
-            .map_err(ImportIndexedDirError::CreateCasFiles),
-        Some(file_type) if !file_type.is_dir() => {
-            // A regular file or a symlink occupies the target. Remove
-            // the dirent and take the fresh-target path. Use
-            // `remove_file` (not `remove_dir`) so symlinks-to-directory
-            // are unlinked rather than recursed into.
+    match (existing_kind, opts.force) {
+        // Fresh target — populate it. Both linkers take this path on
+        // first install.
+        (None, _) => populate_dir::<R>(logged_methods, import_method, dir_path, cas_paths),
+        // Existing target with force=false — pnpm's pre-existence
+        // short-circuit. The isolated linker relies on this: each
+        // virtual-store slot is populated exactly once.
+        (Some(_), false) => Ok(()),
+        // Existing non-directory dirent with force=true. The hoisted
+        // linker call shape won't produce this in practice, but
+        // refusing to clobber a stale symlink would wedge the install.
+        // `remove_file` (not `remove_dir`) so symlinks-to-directory
+        // are unlinked rather than recursed into.
+        (Some(file_type), true) if !file_type.is_dir() => {
             fs::remove_file(dir_path).map_err(|error| ImportIndexedDirError::ClearNonDirEntry {
                 path: dir_path.to_path_buf(),
                 error,
             })?;
-            create_cas_files::<R>(logged_methods, import_method, dir_path, cas_paths)
-                .map_err(ImportIndexedDirError::CreateCasFiles)
+            populate_dir::<R>(logged_methods, import_method, dir_path, cas_paths)
         }
-        Some(_) => stage_and_swap::<R>(logged_methods, import_method, dir_path, cas_paths),
+        // Existing directory with force=true — stage and swap.
+        (Some(_), true) => stage_and_swap::<R>(
+            logged_methods,
+            import_method,
+            dir_path,
+            cas_paths,
+            opts.keep_modules_dir,
+        ),
     }
+}
+
+/// Fresh-target path: make the parent dir set, then run the parallel
+/// `link_file` over `cas_paths`. Mirrors pnpm v11's
+/// `tryImportIndexedDir`: collect the unique relative parent dirs,
+/// sort shortest-first, mkdir each sequentially, then dispatch the
+/// file imports in parallel. Sorting by length means the recursive
+/// mkdir for a deeper dir always finds its ancestor already on disk,
+/// so each call costs one `mkdirat` instead of walking up.
+fn populate_dir<R: Reporter>(
+    logged_methods: &AtomicU8,
+    import_method: PackageImportMethod,
+    dir_path: &Path,
+    cas_paths: &HashMap<String, PathBuf>,
+) -> Result<(), ImportIndexedDirError> {
+    let mut rel_dirs: HashSet<&str> = HashSet::new();
+    for entry in cas_paths.keys() {
+        if let Some(parent) = Path::new(entry).parent()
+            && let Some(rel) = parent.to_str()
+            && !rel.is_empty()
+        {
+            rel_dirs.insert(rel);
+        }
+    }
+
+    // The package root itself: pnpm's `importIndexedDir` mkdirs
+    // `newDir` before calling `tryImportIndexedDir`, so do that here
+    // too. Files at the package root (e.g. `package.json`) need this
+    // even when `rel_dirs` is empty.
+    fs::create_dir_all(dir_path).map_err(|error| ImportIndexedDirError::CreateDir {
+        dirname: dir_path.to_path_buf(),
+        error,
+    })?;
+
+    let mut ordered: Vec<&str> = rel_dirs.into_iter().collect();
+    ordered.sort_by_key(|s| s.len());
+    for rel in ordered {
+        let abs = dir_path.join(rel);
+        fs::create_dir_all(&abs)
+            .map_err(|error| ImportIndexedDirError::CreateDir { dirname: abs, error })?;
+    }
+
+    cas_paths
+        .par_iter()
+        .try_for_each(|(cleaned_entry, store_path)| {
+            link_file::<R>(logged_methods, import_method, store_path, &dir_path.join(cleaned_entry))
+        })
+        .map_err(ImportIndexedDirError::LinkFile)
 }
 
 fn stage_and_swap<R: Reporter>(
@@ -132,6 +218,7 @@ fn stage_and_swap<R: Reporter>(
     import_method: PackageImportMethod,
     dir_path: &Path,
     cas_paths: &HashMap<String, PathBuf>,
+    keep_modules_dir: bool,
 ) -> Result<(), ImportIndexedDirError> {
     let stage = pick_stage_path(dir_path);
     let target_modules = dir_path.join("node_modules");
@@ -140,9 +227,9 @@ fn stage_and_swap<R: Reporter>(
     // 1. Populate the staging directory with the new contents. On
     //    failure, the staging directory is the only thing on disk we
     //    own — a blanket rimraf is safe.
-    if let Err(error) = create_cas_files::<R>(logged_methods, import_method, &stage, cas_paths) {
+    if let Err(error) = populate_dir::<R>(logged_methods, import_method, &stage, cas_paths) {
         let _ = fs::remove_dir_all(&stage);
-        return Err(ImportIndexedDirError::CreateCasFiles(error));
+        return Err(error);
     }
 
     // 2. Inspect the existing `node_modules/` so nested deps survive
@@ -150,13 +237,17 @@ fn stage_and_swap<R: Reporter>(
     //    other transient I/O failures must surface, otherwise the
     //    user's nested deps get silently clobbered when the directory
     //    is removed in step 4.
-    let nm_kind = match fs::symlink_metadata(&target_modules) {
-        Ok(meta) => Some(meta.file_type()),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => {
-            let _ = fs::remove_dir_all(&stage);
-            return Err(ImportIndexedDirError::InspectTarget { path: target_modules, error });
+    let nm_kind = if keep_modules_dir {
+        match fs::symlink_metadata(&target_modules) {
+            Ok(meta) => Some(meta.file_type()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => {
+                let _ = fs::remove_dir_all(&stage);
+                return Err(ImportIndexedDirError::InspectTarget { path: target_modules, error });
+            }
         }
+    } else {
+        None
     };
 
     // 3. Preserve `node_modules/` if it's a real directory. Track the

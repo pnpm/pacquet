@@ -1,4 +1,7 @@
-use crate::{CreateCasFilesError, SymlinkPackageError, create_cas_files, create_symlink_layout};
+use crate::{
+    ImportIndexedDirError, ImportIndexedDirOpts, SymlinkPackageError, create_symlink_layout,
+    import_indexed_dir,
+};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_config::PackageImportMethod;
@@ -56,7 +59,7 @@ pub enum CreateVirtualDirError {
     },
 
     #[diagnostic(transparent)]
-    CreateCasFiles(#[error(source)] CreateCasFilesError),
+    ImportIndexedDir(#[error(source)] ImportIndexedDirError),
 
     #[diagnostic(transparent)]
     SymlinkPackage(#[error(source)] SymlinkPackageError),
@@ -88,16 +91,22 @@ impl<'a> CreateVirtualDirBySnapshot<'a> {
         let save_path = virtual_node_modules_dir.join(package_key.name.to_string());
 
         // `rayon::join` runs both closures in parallel on rayon's pool,
-        // returning only once both finish. `create_cas_files` is itself a
-        // rayon par_iter over CAS entries; `create_symlink_layout` is a
-        // small serial loop over dep refs. Overlapping them saves the
+        // returning only once both finish. `import_indexed_dir` is itself
+        // a rayon par_iter over CAS entries; `create_symlink_layout` is
+        // a small serial loop over dep refs. Overlapping them saves the
         // symlink time from the per-snapshot critical path without any
         // cross-thread data marshaling — both closures borrow from the
         // current stack frame.
         let (cas_result, symlink_result) = rayon::join(
             || {
-                create_cas_files::<R>(logged_methods, import_method, &save_path, cas_paths)
-                    .map_err(CreateVirtualDirError::CreateCasFiles)
+                import_indexed_dir::<R>(
+                    logged_methods,
+                    import_method,
+                    &save_path,
+                    cas_paths,
+                    ImportIndexedDirOpts::default(),
+                )
+                .map_err(CreateVirtualDirError::ImportIndexedDir)
             },
             || match snapshot.dependencies.as_ref() {
                 Some(dependencies) => create_symlink_layout(
