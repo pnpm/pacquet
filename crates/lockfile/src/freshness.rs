@@ -33,7 +33,7 @@ pub enum StalenessReason {
     /// so we can't even start the comparison. Mirrors upstream's
     /// "no importer" reason at
     /// <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/verification/src/satisfiesPackageManifest.ts#L20>.
-    #[display("the lockfile has no `importers.{importer_id:?}` entry")]
+    #[display(r#"the lockfile has no `importers["{importer_id}"]` entry"#)]
     NoImporter { importer_id: String },
 
     /// The flat union of `dependencies ∪ devDependencies ∪
@@ -86,8 +86,13 @@ pub struct SpecDiff {
 
 impl std::fmt::Display for SpecDiff {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Singular/plural matters here: the diff is rendered into
+        // `ERR_PNPM_OUTDATED_LOCKFILE` CI output, which users see
+        // and may quote in issues. "1 dependencies were added" reads
+        // wrong; pin the wording per count.
         if !self.added.is_empty() {
-            write!(f, "\n* {} dependencies were added: ", self.added.len())?;
+            let (dep, verb) = noun_verb_for(self.added.len());
+            write!(f, "\n* {} {dep} {verb} added: ", self.added.len())?;
             let mut first = true;
             for (key, value) in &self.added {
                 if !first {
@@ -98,7 +103,8 @@ impl std::fmt::Display for SpecDiff {
             }
         }
         if !self.removed.is_empty() {
-            write!(f, "\n* {} dependencies were removed: ", self.removed.len())?;
+            let (dep, verb) = noun_verb_for(self.removed.len());
+            write!(f, "\n* {} {dep} {verb} removed: ", self.removed.len())?;
             let mut first = true;
             for (key, value) in &self.removed {
                 if !first {
@@ -109,12 +115,26 @@ impl std::fmt::Display for SpecDiff {
             }
         }
         if !self.modified.is_empty() {
-            write!(f, "\n* {} dependencies are mismatched:", self.modified.len())?;
+            let (dep, verb) = match self.modified.len() {
+                1 => ("dependency", "is"),
+                _ => ("dependencies", "are"),
+            };
+            write!(f, "\n* {} {dep} {verb} mismatched:", self.modified.len())?;
             for (key, (left, right)) in &self.modified {
                 write!(f, "\n  - {key} (lockfile: {left}, manifest: {right})")?;
             }
         }
         Ok(())
+    }
+}
+
+/// Singular/plural noun + past-tense verb for the `added` and
+/// `removed` buckets in [`SpecDiff::Display`]. Pulled out so the
+/// arms stay readable.
+fn noun_verb_for(n: usize) -> (&'static str, &'static str) {
+    match n {
+        1 => ("dependency", "was"),
+        _ => ("dependencies", "were"),
     }
 }
 
@@ -173,37 +193,92 @@ pub fn satisfies_package_manifest(
         return Err(StalenessReason::SpecifiersDiffer(diff));
     }
 
-    // Phase 2: per-field specifier match. The flat-record diff
-    // already catches added/removed/modified specifiers regardless
-    // of which bucket they came from, but it doesn't catch a dep
-    // that moved buckets without changing its specifier (e.g.
-    // `react` moved from `dependencies` to `devDependencies` —
-    // same `^17.0.0`, but the install graph would be different).
-    // This loop catches that.
+    // Phase 2: `publishDirectory` parity. Upstream compares
+    // `importer.publishDirectory` to `pkg.publishConfig?.directory`
+    // verbatim; pacquet's `ProjectSnapshot.publish_directory` is
+    // `Option<String>` and the manifest exposes the field via the
+    // raw `value()`. Two `None`s match; anything else mismatched
+    // fails the check.
+    let manifest_publish_dir = manifest
+        .value()
+        .get("publishConfig")
+        .and_then(|p| p.get("directory"))
+        .and_then(|d| d.as_str())
+        .map(str::to_owned);
+    if importer.publish_directory != manifest_publish_dir {
+        return Err(StalenessReason::PublishDirectoryMismatch {
+            lockfile: importer.publish_directory.clone(),
+            manifest: manifest_publish_dir,
+        });
+    }
+
+    // Phase 3: `dependenciesMeta` parity. JSON-equality of the two
+    // maps (or both absent). Upstream uses Ramda's `equals` with
+    // `?? {}` on both sides, so an absent map and an empty map are
+    // equivalent.
+    let manifest_meta = manifest.value().get("dependenciesMeta");
+    let importer_meta = importer.dependencies_meta.as_ref();
+    if !dependencies_meta_equal(importer_meta, manifest_meta) {
+        return Err(StalenessReason::DependenciesMetaMismatch {
+            lockfile: importer_meta.map_or_else(|| "{}".to_string(), |v| v.to_string()),
+            manifest: manifest_meta.map_or_else(|| "{}".to_string(), |v| v.to_string()),
+        });
+    }
+
+    // Phase 4: per-field name-set + specifier match. The flat-record
+    // diff catches added/removed/modified specifiers across the
+    // *union*, but doesn't catch the case where a dep keeps its
+    // specifier but moves between fields (e.g. `react` moved from
+    // `dependencies` to `devDependencies`) — the union stays the
+    // same in both. Run the per-field comparison unconditionally
+    // here to catch that and the same-cardinality cross-field-swap
+    // case (lockfile prod={a}, dev={b} vs manifest prod={b}, dev={a}).
     for field in [DependencyGroup::Prod, DependencyGroup::Dev, DependencyGroup::Optional] {
         let field_name = <&'static str>::from(field);
         let manifest_field: BTreeMap<&str, &str> = manifest.dependencies([field]).collect();
         let importer_field = importer.get_map_by_group(field);
-        let importer_count = importer_field.map_or(0, |m| m.len());
 
-        if manifest_field.len() != importer_count {
-            // The flat-record diff should have already caught this,
-            // so reaching here means a same-specifier move between
-            // buckets. Surface a per-dep mismatch for the first
-            // diverging entry to give the user a concrete pointer.
-            for (name, manifest_spec) in &manifest_field {
-                let importer_spec = importer_field
-                    .and_then(|m| {
-                        let parsed_name = crate::PkgName::parse(*name).ok()?;
-                        m.get(&parsed_name).map(|s| s.specifier.as_str())
-                    })
-                    .unwrap_or("(absent)");
-                if importer_spec != *manifest_spec {
+        // Every manifest entry must have a matching importer entry
+        // in the *same* field with the same specifier.
+        for (name, manifest_spec) in &manifest_field {
+            let parsed = crate::PkgName::parse(*name).ok();
+            let importer_spec = parsed
+                .as_ref()
+                .and_then(|n| importer_field.and_then(|m| m.get(n)))
+                .map(|s| s.specifier.as_str());
+            match importer_spec {
+                Some(spec) if spec == *manifest_spec => continue,
+                Some(spec) => {
                     return Err(StalenessReason::DepSpecifierMismatch {
                         field: field_name,
                         name: (*name).to_string(),
-                        lockfile: importer_spec.to_string(),
+                        lockfile: spec.to_string(),
                         manifest: (*manifest_spec).to_string(),
+                    });
+                }
+                None => {
+                    return Err(StalenessReason::DepSpecifierMismatch {
+                        field: field_name,
+                        name: (*name).to_string(),
+                        lockfile: "(absent)".to_string(),
+                        manifest: (*manifest_spec).to_string(),
+                    });
+                }
+            }
+        }
+
+        // Every importer entry in this field must also exist in the
+        // manifest's same field. Catches the inverse of the loop
+        // above (lockfile lists a dep here that the manifest moved
+        // to a different field).
+        if let Some(importer_map) = importer_field {
+            for (name, spec) in importer_map {
+                if !manifest_field.contains_key(name.to_string().as_str()) {
+                    return Err(StalenessReason::DepSpecifierMismatch {
+                        field: field_name,
+                        name: name.to_string(),
+                        lockfile: spec.specifier.clone(),
+                        manifest: "(absent)".to_string(),
                     });
                 }
             }
@@ -211,6 +286,30 @@ pub fn satisfies_package_manifest(
     }
 
     Ok(())
+}
+
+/// Two `dependenciesMeta` maps are equal when both are absent / empty
+/// or both render to the same JSON. Matches upstream's `equals(pkg
+/// .dependenciesMeta ?? {}, importer.dependenciesMeta ?? {})` at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/verification/src/satisfiesPackageManifest.ts#L56-L58>.
+fn dependencies_meta_equal(
+    importer: Option<&serde_json::Value>,
+    manifest: Option<&serde_json::Value>,
+) -> bool {
+    fn is_empty_object(value: Option<&serde_json::Value>) -> bool {
+        match value {
+            None => true,
+            Some(serde_json::Value::Object(map)) => map.is_empty(),
+            Some(serde_json::Value::Null) => true,
+            _ => false,
+        }
+    }
+    match (importer, manifest) {
+        (None, None) => true,
+        (a, b) if is_empty_object(a) && is_empty_object(b) => true,
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
 }
 
 /// Build the manifest's `devDependencies ∪ dependencies ∪

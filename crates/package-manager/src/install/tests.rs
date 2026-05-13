@@ -780,6 +780,7 @@ async fn warm_reinstall_skips_snapshot_when_current_lockfile_matches() {
     // check (#447) rejects any drift between the on-disk manifest and
     // the lockfile importer entry.
     manifest.add_dependency("placeholder", "1.0.0", DependencyGroup::Prod).unwrap();
+    manifest.save().unwrap();
 
     let mut config = Config::new();
     config.store_dir = store_dir.into();
@@ -852,6 +853,7 @@ async fn warm_reinstall_emits_broken_modules_when_dir_is_missing() {
     // check (#447) rejects any drift between the on-disk manifest and
     // the lockfile importer entry.
     manifest.add_dependency("placeholder", "1.0.0", DependencyGroup::Prod).unwrap();
+    manifest.save().unwrap();
 
     let mut config = Config::new();
     config.store_dir = store_dir.into();
@@ -943,6 +945,7 @@ async fn context_log_reflects_current_lockfile_after_first_install() {
     // check (#447) rejects any drift between the on-disk manifest and
     // the lockfile importer entry.
     manifest.add_dependency("placeholder", "1.0.0", DependencyGroup::Prod).unwrap();
+    manifest.save().unwrap();
 
     let mut config = Config::new();
     config.store_dir = store_dir.into();
@@ -1078,6 +1081,7 @@ async fn warm_reinstall_reports_added_zero_and_emits_no_imported_events() {
     // check (#447) rejects any drift between the on-disk manifest and
     // the lockfile importer entry.
     manifest.add_dependency("placeholder", "1.0.0", DependencyGroup::Prod).unwrap();
+    manifest.save().unwrap();
 
     let mut config = Config::new();
     config.store_dir = store_dir.into();

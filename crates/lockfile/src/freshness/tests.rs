@@ -242,11 +242,150 @@ fn dep_moves_between_fields_returns_dep_specifier_mismatch() {
 fn spec_diff_display_lists_added_removed_modified() {
     let mut diff = super::SpecDiff::default();
     diff.added.insert("lodash".to_string(), "^4.0.0".to_string());
+    diff.added.insert("ramda".to_string(), "^0.30.0".to_string());
     diff.removed.insert("underscore".to_string(), "^1.0.0".to_string());
     diff.modified.insert("react".to_string(), ("^17.0.2".to_string(), "^18.0.0".to_string()));
     let rendered = diff.to_string();
-    assert!(rendered.contains("1 dependencies were added: lodash@^4.0.0"));
-    assert!(rendered.contains("1 dependencies were removed: underscore@^1.0.0"));
-    assert!(rendered.contains("1 dependencies are mismatched:"));
+    // Plural noun + plural verb for n>1.
+    assert!(rendered.contains("2 dependencies were added: "));
+    // Singular noun + singular verb for n==1 — the Copilot review
+    // catch ("1 dependencies were added" was grammatically wrong).
+    assert!(rendered.contains("1 dependency was removed: underscore@^1.0.0"));
+    assert!(rendered.contains("1 dependency is mismatched:"));
     assert!(rendered.contains("react (lockfile: ^17.0.2, manifest: ^18.0.0)"));
+}
+
+/// Two deps swapped between fields with same cardinality on each
+/// side: lockfile has `react` under `dependencies` + `typescript`
+/// under `devDependencies`, manifest swaps them. The flat-union diff
+/// over `(deps ∪ devDeps ∪ optDeps)` matches because the union is
+/// identical, so the per-field check is the only thing that can
+/// catch this. Pre-fix the per-field loop only ran when field
+/// cardinalities differed; this test guards against that regression.
+#[test]
+fn cross_field_swap_with_same_cardinalities_caught_by_per_field_check() {
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies:"
+        "      react:"
+        "        specifier: ^17.0.2"
+        "        version: 17.0.2"
+        "    devDependencies:"
+        "      typescript:"
+        "        specifier: ^5.0.0"
+        "        version: 5.1.6"
+    })
+    .expect("parse fixture lockfile");
+    let importer = lockfile.root_project().expect("root importer present");
+    // Same names + specifiers as the lockfile, but `react` and
+    // `typescript` swap fields.
+    let (_dir, manifest) = manifest_from_json(
+        r#"{
+        "name": "x",
+        "version": "1.0.0",
+        "dependencies": { "typescript": "^5.0.0" },
+        "devDependencies": { "react": "^17.0.2" }
+    }"#,
+    );
+    let err = satisfies_package_manifest(importer, &manifest, ".").expect_err("should be stale");
+    assert!(
+        matches!(err, StalenessReason::DepSpecifierMismatch { .. }),
+        "expected DepSpecifierMismatch for cross-field swap, got {err:?}",
+    );
+}
+
+/// `publishDirectory` on the lockfile differing from
+/// `publishConfig.directory` on the manifest fails the check.
+/// Mirrors upstream's `publishDirectory` mismatch.
+#[test]
+fn publish_directory_mismatch_returns_publish_directory_mismatch() {
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    publishDirectory: ./dist"
+        "    dependencies:"
+        "      react:"
+        "        specifier: ^17.0.2"
+        "        version: 17.0.2"
+    })
+    .expect("parse fixture lockfile");
+    let importer = lockfile.root_project().expect("root importer present");
+    let (_dir, manifest) = manifest_from_json(
+        r#"{
+        "name": "x",
+        "version": "1.0.0",
+        "publishConfig": { "directory": "./build" },
+        "dependencies": { "react": "^17.0.2" }
+    }"#,
+    );
+    let err = satisfies_package_manifest(importer, &manifest, ".").expect_err("should be stale");
+    assert!(
+        matches!(err, StalenessReason::PublishDirectoryMismatch { .. }),
+        "expected PublishDirectoryMismatch, got {err:?}",
+    );
+}
+
+/// `dependenciesMeta` mismatch (different `injected` flag) fails
+/// the check. Two `None`s and `None`-vs-empty-object are both
+/// considered equal — that's a separate happy-path case.
+#[test]
+fn dependencies_meta_mismatch_returns_dependencies_meta_mismatch() {
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies:"
+        "      foo:"
+        "        specifier: ^1.0.0"
+        "        version: 1.0.0"
+        "    dependenciesMeta:"
+        "      foo:"
+        "        injected: true"
+    })
+    .expect("parse fixture lockfile");
+    let importer = lockfile.root_project().expect("root importer present");
+    let (_dir, manifest) = manifest_from_json(
+        r#"{
+        "name": "x",
+        "version": "1.0.0",
+        "dependencies": { "foo": "^1.0.0" }
+    }"#,
+    );
+    let err = satisfies_package_manifest(importer, &manifest, ".").expect_err("should be stale");
+    assert!(
+        matches!(err, StalenessReason::DependenciesMetaMismatch { .. }),
+        "expected DependenciesMetaMismatch, got {err:?}",
+    );
+}
+
+/// `NoImporter` message renders with `importers["."]`-style
+/// formatting, not `importers."."` (the previous `{:?}` debug-
+/// format output). Caught in Copilot review on #450 — debug-format
+/// quoting reads poorly for short keys like `.`.
+#[test]
+fn no_importer_message_uses_bracket_quoted_id() {
+    let reason = StalenessReason::NoImporter { importer_id: ".".to_string() };
+    let rendered = reason.to_string();
+    assert!(rendered.contains(r#"importers["."]"#), "expected bracket-quoted id, got {rendered:?}");
+    assert!(
+        !rendered.contains(r#"importers.".""#),
+        "must not use Rust debug-format quoting, got {rendered:?}",
+    );
+}
+
+/// Pinpoint singular-vs-plural wording per bucket so the n==1 case
+/// doesn't silently regress.
+#[test]
+fn spec_diff_display_uses_singular_for_count_of_one() {
+    let mut diff = super::SpecDiff::default();
+    diff.added.insert("foo".to_string(), "^1.0.0".to_string());
+    let rendered = diff.to_string();
+    assert!(
+        rendered.contains("1 dependency was added: "),
+        "expected singular wording for count of 1, got: {rendered:?}",
+    );
+    assert!(!rendered.contains("dependencies were added"));
 }

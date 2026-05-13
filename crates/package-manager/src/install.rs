@@ -89,7 +89,7 @@ pub enum InstallError {
     #[diagnostic(
         code(pacquet_package_manager::outdated_lockfile),
         help(
-            "Note that in CI environments this setting is true by default. If you still need to run install in such cases, use \"pacquet install --no-frozen-lockfile\" once that flag lands, or regenerate the lockfile with `pnpm install --lockfile-only`."
+            "Regenerate the lockfile with `pnpm install --lockfile-only` so that pnpm-lock.yaml reflects the current package.json, then re-run `pacquet install --frozen-lockfile`."
         )
     )]
     OutdatedLockfile { reason: StalenessReason },
@@ -99,7 +99,7 @@ pub enum InstallError {
     /// from `NoLockfile` (file missing) — here the file exists but
     /// doesn't describe the project being installed.
     #[display(
-        "Cannot install with \"frozen-lockfile\" because pnpm-lock.yaml has no `importers.{importer_id:?}` entry. Regenerate the lockfile with `pnpm install --lockfile-only`."
+        r#"Cannot install with "frozen-lockfile" because pnpm-lock.yaml has no `importers["{importer_id}"]` entry. Regenerate the lockfile with `pnpm install --lockfile-only`."#
     )]
     #[diagnostic(code(pacquet_package_manager::no_importer))]
     NoImporter { importer_id: String },
