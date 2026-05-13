@@ -91,6 +91,7 @@ where
             skip_runtimes: config.skip_runtimes,
             resolved_packages,
             supported_architectures,
+            node_linker: config.node_linker,
         }
         .run::<R>()
         .await

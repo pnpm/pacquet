@@ -60,6 +60,16 @@ where
     /// override merge happens in the caller and lands here as a
     /// fully-resolved value.
     pub supported_architectures: Option<pacquet_package_is_installable::SupportedArchitectures>,
+    /// `nodeLinker` value to honor for *this* invocation. The CLI
+    /// layer applies any `--node-linker` override here; absent a
+    /// flag, this equals `config.node_linker`. Threaded as a
+    /// separate field for the same reason
+    /// [`Self::supported_architectures`] is: `state.config` is a
+    /// shared `&'static Config`, so the CLI override merge happens
+    /// in the caller and lands here as a fully-resolved value.
+    /// Used today for the `.modules.yaml.nodeLinker` write and
+    /// (in Slice 6) for the install-pipeline branch.
+    pub node_linker: pacquet_config::NodeLinker,
 }
 
 /// Error type of [`Install`].
@@ -149,6 +159,7 @@ where
             frozen_lockfile,
             skip_runtimes,
             supported_architectures,
+            node_linker,
         } = self;
 
         // Collect once so the same set drives both the install dispatch
@@ -430,7 +441,13 @@ where
         // tool) can detect a layout change and prune accordingly.
         write_modules_manifest::<RealApi>(
             &config.modules_dir,
-            build_modules_manifest(config, included, hoisted_dependencies, &frozen_skipped),
+            build_modules_manifest(
+                config,
+                node_linker,
+                included,
+                hoisted_dependencies,
+                &frozen_skipped,
+            ),
         )
         .map_err(InstallError::WriteModules)?;
 
@@ -518,6 +535,7 @@ fn map_node_linker(linker: &NodeLinker) -> ModulesNodeLinker {
 /// [`write_modules_manifest`]: pacquet_modules_yaml::write_modules_manifest
 fn build_modules_manifest(
     config: &Config,
+    node_linker: NodeLinker,
     included: IncludedDependencies,
     hoisted_dependencies: HoistedDependencies,
     skipped: &crate::SkippedSnapshots,
@@ -527,7 +545,7 @@ fn build_modules_manifest(
         hoisted_dependencies,
         included,
         layout_version: Some(LayoutVersion),
-        node_linker: Some(map_node_linker(&config.node_linker)),
+        node_linker: Some(map_node_linker(&node_linker)),
         // `${name}@${version}` per upstream. `CARGO_PKG_VERSION`
         // resolves at compile time to this crate's package version.
         package_manager: concat!("pacquet@", env!("CARGO_PKG_VERSION")).to_string(),

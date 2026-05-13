@@ -1,10 +1,34 @@
 use crate::State;
 use crate::cli_args::supported_architectures::SupportedArchitecturesArgs;
-use clap::Args;
+use clap::{Args, ValueEnum};
 use miette::Context;
+use pacquet_config::NodeLinker;
 use pacquet_package_manager::Install;
 use pacquet_package_manifest::DependencyGroup;
 use pacquet_reporter::Reporter;
+
+/// `--node-linker` value parser. CLI mirror of
+/// [`pacquet_config::NodeLinker`] so the config crate stays free
+/// of `clap` as a dependency. Converted to the canonical enum at
+/// the CLI/Install boundary via [`Self::into_config`].
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[clap(rename_all = "kebab-case")]
+pub enum NodeLinkerArg {
+    Isolated,
+    Hoisted,
+    Pnp,
+}
+
+impl NodeLinkerArg {
+    #[inline]
+    fn into_config(self) -> NodeLinker {
+        match self {
+            NodeLinkerArg::Isolated => NodeLinker::Isolated,
+            NodeLinkerArg::Hoisted => NodeLinker::Hoisted,
+            NodeLinkerArg::Pnp => NodeLinker::Pnp,
+        }
+    }
+}
 
 #[derive(Debug, Args)]
 pub struct InstallDependencyOptions {
@@ -64,6 +88,16 @@ pub struct InstallArgs {
     /// normally. Mirrors pnpm's `--no-runtime` flag.
     #[clap(long = "no-runtime")]
     pub no_runtime: bool,
+
+    /// Override `nodeLinker` from `pnpm-workspace.yaml` /
+    /// `.npmrc`. Mirrors upstream pnpm's `--node-linker` flag.
+    /// `None` (flag not passed) leaves the config's value
+    /// untouched; otherwise the CLI value wins for this invocation
+    /// and is what gets written to `.modules.yaml.nodeLinker`.
+    /// `isolated` is the default, `hoisted` selects the flat
+    /// `node_modules/` layout, `pnp` selects Plug'n'Play.
+    #[clap(long = "node-linker", value_enum)]
+    pub node_linker: Option<NodeLinkerArg>,
 }
 
 impl InstallArgs {
@@ -75,6 +109,7 @@ impl InstallArgs {
             supported_architectures,
             frozen_lockfile,
             no_runtime,
+            node_linker,
         } = self;
 
         // Merge CLI overrides with the yaml-derived value before
@@ -91,6 +126,11 @@ impl InstallArgs {
         // to override yaml's `true` back to `false` from the CLI,
         // matching pnpm's stance on the same flag.
         let skip_runtimes = config.skip_runtimes || no_runtime;
+
+        // `--node-linker` flag (if passed) overrides the
+        // yaml/npmrc value for this invocation. Mirrors pnpm's
+        // override-on-explicit-flag semantics.
+        let node_linker = node_linker.map(NodeLinkerArg::into_config).unwrap_or(config.node_linker);
         Install {
             tarball_mem_cache,
             http_client,
@@ -102,6 +142,7 @@ impl InstallArgs {
             skip_runtimes,
             resolved_packages,
             supported_architectures,
+            node_linker,
         }
         .run::<R>()
         .await
