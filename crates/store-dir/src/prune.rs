@@ -300,22 +300,25 @@ fn remove_unreachable_packages(
     for scope in &scopes {
         let scope_path = links_dir.join(scope);
         let pkg_names = list_subdirs(&scope_path)?;
-        let mut removed_pkgs = 0;
+        let mut emptied_pkgs = 0;
         for pkg_name in &pkg_names {
             let pkg_dir = scope_path.join(pkg_name);
             let pkg_rel = Path::new(scope).join(pkg_name);
-            let (removed_here, all_versions_removed) =
+            let (removed_here, all_versions_emptied) =
                 remove_unreachable_versions(&pkg_dir, &pkg_rel, reachable)?;
             count += removed_here;
-            if all_versions_removed {
-                // Every version under this pkg was removed — drop the
-                // empty `<name>/` parent.
-                remove_dir_if_present(&pkg_dir)?;
-                removed_pkgs += 1;
+            if all_versions_emptied {
+                // Every version under this pkg was emptied — try to
+                // drop the now-empty `<name>/` parent. Race-safe
+                // remove: a concurrent install that just materialised
+                // a fresh version dir here keeps its work.
+                if remove_empty_dir(&pkg_dir)? {
+                    emptied_pkgs += 1;
+                }
             }
         }
-        if removed_pkgs == pkg_names.len() && !pkg_names.is_empty() {
-            remove_dir_if_present(&scope_path)?;
+        if emptied_pkgs == pkg_names.len() && !pkg_names.is_empty() {
+            remove_empty_dir(&scope_path)?;
         }
     }
     Ok(count)
@@ -328,7 +331,7 @@ fn remove_unreachable_versions(
 ) -> Result<(usize, bool), PruneError> {
     let versions = list_subdirs(pkg_dir)?;
     let mut count = 0usize;
-    let mut removed_versions = 0;
+    let mut emptied_versions = 0;
     for version in &versions {
         let version_dir = pkg_dir.join(version);
         let hashes = list_subdirs(&version_dir)?;
@@ -337,17 +340,23 @@ fn remove_unreachable_versions(
             let slot_rel = pkg_rel.join(version).join(hash);
             if !reachable.contains(&slot_rel) {
                 let slot_dir = version_dir.join(hash);
-                remove_dir_if_present(&slot_dir)?;
+                // The slot subtree is unreferenced — recursive
+                // remove of its files is correct.
+                remove_slot_dir(&slot_dir)?;
                 removed_hashes += 1;
                 count += 1;
             }
         }
         if removed_hashes == hashes.len() && !hashes.is_empty() {
-            remove_dir_if_present(&version_dir)?;
-            removed_versions += 1;
+            // Try to drop the `<version>/` parent only if it's
+            // genuinely empty after the slot removals. A concurrent
+            // install that just landed a new hash dir here survives.
+            if remove_empty_dir(&version_dir)? {
+                emptied_versions += 1;
+            }
         }
     }
-    Ok((count, removed_versions == versions.len() && !versions.is_empty()))
+    Ok((count, emptied_versions == versions.len() && !versions.is_empty()))
 }
 
 /// Mirrors upstream's
@@ -375,10 +384,45 @@ fn list_subdirs(dir: &Path) -> Result<Vec<std::ffi::OsString>, PruneError> {
     Ok(out)
 }
 
-fn remove_dir_if_present(path: &Path) -> Result<(), PruneError> {
+/// Recursively remove an unreferenced slot directory and everything
+/// under it (`<store>/links/<scope>/<name>/<version>/<hash>/`). Used
+/// for the actual sweep target — that subtree is known unreachable
+/// at this point, so a recursive remove is safe.
+fn remove_slot_dir(path: &Path) -> Result<(), PruneError> {
     match fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(PruneError::RemoveSlot { path: path.to_path_buf(), error }),
+    }
+}
+
+/// Race-safe parent-cleanup: try to remove `path` as an empty
+/// directory and report whether it actually disappeared. Returns
+/// `Ok(true)` when the directory was empty and is now gone,
+/// `Ok(false)` when it survived because something raced into it
+/// (`DirectoryNotEmpty`) or was already missing (`NotFound`), and
+/// propagates any other I/O error.
+///
+/// Pacquet deliberately diverges from upstream here. Upstream uses
+/// [`rimraf`](https://github.com/pnpm/pnpm/blob/94240bc046/store/controller/src/storeController/pruneGlobalVirtualStore.ts#L210-L223)
+/// on the empty `<version>/`, `<name>/`, and `<scope>/` parents — a
+/// concurrent install that materialises a fresh slot in the window
+/// between `list_subdirs` and the parent cleanup would have its
+/// just-written tree wiped by upstream's recursive remove. Switching
+/// to `fs::remove_dir` keeps pacquet race-safe (the new slot stays;
+/// only the parent that's truly empty is removed) while producing
+/// the same on-disk result in the non-race case. Slot directories
+/// themselves still go through [`remove_slot_dir`] — those are
+/// known-unreferenced by the time prune reaches them, so recursive
+/// removal is correct.
+fn remove_empty_dir(path: &Path) -> Result<bool, PruneError> {
+    match fs::remove_dir(path) {
+        Ok(()) => Ok(true),
+        Err(error)
+            if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::DirectoryNotEmpty) =>
+        {
+            Ok(false)
+        }
         Err(error) => Err(PruneError::RemoveSlot { path: path.to_path_buf(), error }),
     }
 }
