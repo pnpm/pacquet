@@ -16,7 +16,7 @@ use miette::Diagnostic;
 use pacquet_lockfile::{Lockfile, PkgName, PkgNameVerPeer, ProjectSnapshot, SnapshotEntry};
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     rc::Rc,
 };
 
@@ -498,19 +498,143 @@ fn percent_encode_path(s: &str) -> String {
     out
 }
 
-/// Stub for the `@yarnpkg/nm` hoist algorithm. Walks the input tree
-/// and returns it in `HoisterResult` shape unchanged — no actual
-/// hoisting happens. The real algorithm replaces this body.
+/// Pacquet's port of the `@yarnpkg/nm` hoist algorithm. Walks the
+/// input tree, deep-copies it into a `HoisterResult` shape, then
+/// pulls eligible descendants up to the root via single-pass BFS
+/// with parent-wins conflict resolution. Models the common case
+/// of pnpm's `nodeLinker: hoisted` install — every transitive
+/// dependency that doesn't collide with an already-hoisted name
+/// surfaces at the root, just like a flat `node_modules`.
+///
+/// What this models today:
+///
+/// * Free hoist: a transitive dep with no name collision at the
+///   root surfaces at the root.
+/// * Identity dedup: a dep reachable through multiple parents
+///   (same `Rc` thanks to the wrapper's `nodes` cache) collapses
+///   to one node at root.
+/// * Parent-wins on version conflict: when two distinct deps
+///   share an alias but resolve to different snapshot keys, the
+///   first one BFS reaches takes the root slot and the other
+///   stays under its parent.
+///
+/// What this does *not* model yet (each gated on later work
+/// because they require additional graph structure and tests):
+///
+/// * Peer-dependency constraints (`peer_names`) — packages that
+///   refuse to hoist past parents declaring them as peers.
+/// * Multi-round convergence — re-walking the tree to discover
+///   newly-hoistable deps after the first pass. The BFS does
+///   handle deep chains (`root → a → b → c` flattens in one
+///   pass), so the cases requiring true multi-round are limited
+///   to peer interactions.
+/// * `hoistingLimits` / `externalDependencies` knobs.
+/// * `dependencyKind` distinctions for workspaces and external
+///   soft links.
+///
+/// Matches the structural intent of upstream `hoistTo` at
+/// [hoist.ts:329][upstream] for the subset above.
+///
+/// [upstream]: https://github.com/yarnpkg/berry/blob/4287909fa6a0a1ec976a55776bff606864b31990/packages/yarnpkg-nm/sources/hoist.ts#L329
 fn nm_hoist(tree: &HoisterTree, _opts: &HoistOpts) -> HoisterResult {
     let mut memo: HashMap<*const HoisterTree, Rc<HoisterResult>> = HashMap::new();
-    // The root is fresh (no caller holds another Rc to it yet), so
-    // cloning the outer struct is cheap and only duplicates the
-    // top-level fields — the subtree children remain shared via the
-    // cloned RcByPtr values. Returning an owned `HoisterResult`
-    // (rather than `Rc<HoisterResult>`) keeps the wrapper's
-    // post-hoist `external_dependencies` filter from mutating the
-    // shared graph.
-    (*convert(tree, &mut memo)).clone()
+    let root = convert(tree, &mut memo);
+    hoist_into_root(&root);
+    // Returning an owned `HoisterResult` (rather than
+    // `Rc<HoisterResult>`) keeps the wrapper's post-hoist
+    // `external_dependencies` filter from mutating the shared graph.
+    // Cloning the outer struct duplicates only the top-level fields —
+    // the subtree children remain shared via the cloned `RcByPtr`
+    // values, so deep deps stay deduplicated.
+    (*root).clone()
+}
+
+/// Outcome of the per-child hoist decision at the root.
+enum AbsorbDecision {
+    /// Root's name slot is free; the child should be moved up to
+    /// the root.
+    Free,
+    /// Root already holds *this exact `Rc`* (the same node was
+    /// reachable through another parent path and got hoisted
+    /// earlier). The duplicate reference in the current parent
+    /// just needs to be removed.
+    SameNode,
+    /// Root's name slot is taken by a different `Rc` — a version
+    /// conflict. The child stays under its current parent.
+    Conflict,
+}
+
+/// Walk the result tree breadth-first and hoist every eligible
+/// descendant of `root` onto `root` itself. Single-pass: each node
+/// is visited once, and a descendant's children become hoist
+/// candidates as soon as the descendant itself is queued.
+fn hoist_into_root(root: &Rc<HoisterResult>) {
+    let root_ptr = Rc::as_ptr(root);
+    let mut visited: HashSet<*const HoisterResult> = HashSet::new();
+    let mut queue: VecDeque<Rc<HoisterResult>> = VecDeque::new();
+    queue.push_back(Rc::clone(root));
+
+    while let Some(node) = queue.pop_front() {
+        let node_ptr = Rc::as_ptr(&node);
+        if !visited.insert(node_ptr) {
+            continue;
+        }
+
+        // Snapshot the current children so we can mutate
+        // `node.dependencies` mid-iteration without invalidating the
+        // borrow. `RcByPtr::clone` just bumps refcounts.
+        let children: Vec<RcByPtr<HoisterResult>> =
+            node.dependencies.borrow().iter().cloned().collect();
+
+        let is_root_parent = Rc::ptr_eq(&node, root);
+
+        for child in children {
+            let child_ptr = Rc::as_ptr(&child.0);
+            if child_ptr == root_ptr {
+                // Back-edge to root via a cycle. Nothing to hoist.
+                continue;
+            }
+
+            // Decide what to do with this child by inspecting root's
+            // current direct deps. Read in its own scope so the
+            // borrow drops before any subsequent mutation.
+            let decision = {
+                let root_deps = root.dependencies.borrow();
+                match root_deps.iter().find(|d| d.0.name == child.0.name) {
+                    None => AbsorbDecision::Free,
+                    Some(existing) if Rc::ptr_eq(&existing.0, &child.0) => AbsorbDecision::SameNode,
+                    Some(_) => AbsorbDecision::Conflict,
+                }
+            };
+
+            if !is_root_parent {
+                match decision {
+                    AbsorbDecision::Free => {
+                        node.dependencies.borrow_mut().shift_remove(&child);
+                        root.dependencies.borrow_mut().insert(child.clone());
+                    }
+                    AbsorbDecision::SameNode => {
+                        // The shared `Rc` is already at root; just
+                        // strip the duplicate reference at this
+                        // parent so the deeper copy disappears.
+                        node.dependencies.borrow_mut().shift_remove(&child);
+                    }
+                    AbsorbDecision::Conflict => {
+                        // Stays at the current parent. The version
+                        // already at root wins the slot.
+                    }
+                }
+            }
+
+            // Queue the child so its own descendants get a chance.
+            // This is what lets deep chains (`root → a → b → c`)
+            // flatten in a single BFS pass: by the time `b` is
+            // dequeued it's already a direct child of root, so
+            // `c` is evaluated against root's slot, not against
+            // `a`'s slot.
+            queue.push_back(Rc::clone(&child.0));
+        }
+    }
 }
 
 fn convert(
