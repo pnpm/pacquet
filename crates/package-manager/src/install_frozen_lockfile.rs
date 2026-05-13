@@ -16,7 +16,11 @@ use pacquet_patching::{
 };
 use pacquet_reporter::{IgnoredScriptsLog, LogEvent, LogLevel, Reporter, Stage, StageLog};
 use pacquet_store_dir::StoreIndexWriter;
-use std::{collections::HashMap, path::Path, sync::atomic::AtomicU8};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::atomic::AtomicU8,
+};
 
 /// This subroutine installs dependencies from a frozen lockfile.
 ///
@@ -49,7 +53,13 @@ where
     /// Install-scoped dedupe state for `pnpm:package-import-method`.
     /// See `link_file::log_method_once`.
     pub logged_methods: &'a AtomicU8,
-    /// Install root, threaded into reporter `requester` fields.
+    /// Install root — the directory containing `pnpm-lock.yaml`.
+    /// For a real workspace, this is the workspace root (the dir
+    /// containing `pnpm-workspace.yaml`); for a single-project
+    /// install, it's the project dir. Threaded into reporter
+    /// `prefix` fields for install-wide events (`pnpm:stage`,
+    /// `pnpm:summary`, `pnpm:lifecycle`) — per-importer events
+    /// like `pnpm:root` use the importer's own `rootDir` instead.
     pub requester: &'a str,
 }
 
@@ -251,11 +261,12 @@ where
             .flatten(),
         };
 
+        let workspace_root: PathBuf = PathBuf::from(requester);
         SymlinkDirectDependencies {
             config,
             importers,
             dependency_groups,
-            requester,
+            workspace_root: &workspace_root,
             skipped: &skipped,
         }
         .run::<R>()

@@ -34,6 +34,7 @@ pacquet-store-dir              = { path = "crates/store-dir" }
 pacquet-reporter               = { path = "crates/reporter" }
 pacquet-patching               = { path = "crates/patching" }
 pacquet-real-hoist             = { path = "crates/real-hoist" }
+pacquet-workspace              = { path = "crates/workspace" }
 
 # Tasks
 pacquet-registry-mock = { path = "tasks/registry-mock" }
@@ -88,6 +89,7 @@ tracing            = { version = "0.1.44" }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tokio              = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 walkdir            = { version = "2.5.0" }
+wax                = { version = "0.7.0" }
 which              = { version = "8.0.2" }
 zune-inflate       = { version = "0.2.54" }
 

@@ -250,7 +250,10 @@ fn root_importers(deps: &[(&str, &str)]) -> HashMap<String, ProjectSnapshot> {
     let map: ResolvedDependencyMap = deps
         .iter()
         .map(|(n, v)| {
-            (name(n), ResolvedDependencySpec { specifier: (*v).to_string(), version: ver(v) })
+            (
+                name(n),
+                ResolvedDependencySpec { specifier: (*v).to_string(), version: ver(v).into() },
+            )
         })
         .collect();
     HashMap::from([(

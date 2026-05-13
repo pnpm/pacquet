@@ -1,4 +1,4 @@
-use super::{SymlinkDirectDependencies, SymlinkDirectDependenciesError};
+use super::SymlinkDirectDependencies;
 use crate::SkippedSnapshots;
 use pacquet_config::Config;
 use pacquet_lockfile::{Lockfile, ProjectSnapshot, ResolvedDependencyMap, ResolvedDependencySpec};
@@ -60,7 +60,7 @@ fn emits_pnpm_root_added_per_direct_dependency() {
         "fastify".parse().expect("parse fastify pkg name"),
         ResolvedDependencySpec {
             specifier: "^4.0.0".to_string(),
-            version: "4.0.0".parse().expect("parse fastify version"),
+            version: "4.0.0".parse::<pacquet_lockfile::PkgVerPeer>().unwrap().into(),
         },
     );
     let mut dev = ResolvedDependencyMap::new();
@@ -68,7 +68,7 @@ fn emits_pnpm_root_added_per_direct_dependency() {
         "@pnpm.e2e/dev-dep".parse().expect("parse dev pkg name"),
         ResolvedDependencySpec {
             specifier: "^1.2.3".to_string(),
-            version: "1.2.3".parse().expect("parse dev version"),
+            version: "1.2.3".parse::<pacquet_lockfile::PkgVerPeer>().unwrap().into(),
         },
     );
 
@@ -80,12 +80,11 @@ fn emits_pnpm_root_added_per_direct_dependency() {
     let mut importers = HashMap::new();
     importers.insert(Lockfile::ROOT_IMPORTER_KEY.to_string(), project_snapshot);
 
-    let requester = "/proj";
     SymlinkDirectDependencies {
         config,
         importers: &importers,
         dependency_groups: [DependencyGroup::Prod, DependencyGroup::Dev],
-        requester,
+        workspace_root: &project_root,
         skipped: &SkippedSnapshots::default(),
     }
     .run::<RecordingReporter>()
@@ -102,11 +101,12 @@ fn emits_pnpm_root_added_per_direct_dependency() {
     assert!(is_symlink_or_junction(&dev_dep_link).unwrap());
 
     let captured = EVENTS.lock().unwrap();
+    let expected_prefix = project_root.to_string_lossy().into_owned();
     let added: Vec<&AddedRoot> = captured
         .iter()
         .filter_map(|e| match e {
             LogEvent::Root(RootLog { message: RootMessage::Added { added, prefix }, .. }) => {
-                assert_eq!(prefix, requester);
+                assert_eq!(prefix, &expected_prefix);
                 Some(added)
             }
             _ => None,
@@ -174,7 +174,7 @@ fn duplicate_dep_across_groups_collapses_to_one_entry() {
         "fastify".parse().expect("parse fastify pkg name"),
         ResolvedDependencySpec {
             specifier: "^4.0.0".to_string(),
-            version: "4.0.0".parse().expect("parse fastify version"),
+            version: "4.0.0".parse::<pacquet_lockfile::PkgVerPeer>().unwrap().into(),
         },
     );
     let mut optional = ResolvedDependencyMap::new();
@@ -182,7 +182,7 @@ fn duplicate_dep_across_groups_collapses_to_one_entry() {
         "fastify".parse().expect("parse fastify pkg name"),
         ResolvedDependencySpec {
             specifier: "^4.0.0".to_string(),
-            version: "4.0.0".parse().expect("parse fastify version"),
+            version: "4.0.0".parse::<pacquet_lockfile::PkgVerPeer>().unwrap().into(),
         },
     );
 
@@ -199,7 +199,7 @@ fn duplicate_dep_across_groups_collapses_to_one_entry() {
         importers: &importers,
         // Prod first → first-wins gives `dependencyType: prod`.
         dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
-        requester: "/proj",
+        workspace_root: &project_root,
         skipped: &SkippedSnapshots::default(),
     }
     .run::<RecordingReporter>()
@@ -222,16 +222,112 @@ fn duplicate_dep_across_groups_collapses_to_one_entry() {
     drop(dir);
 }
 
-/// Missing root importer in the lockfile is the only error the
-/// subroutine produces. Pin it so a future refactor that elides
-/// the lookup doesn't silently turn into a no-op install.
+/// A `workspace:*` dep in a sub-importer surfaces as `version:
+/// link:<path>` in the lockfile. The symlink-direct-deps stage must
+/// resolve that relative to the importer's `rootDir` and point the
+/// `node_modules/<name>` symlink at the dependee project, NOT into
+/// the virtual store. Mirrors upstream's
+/// [`lockfileToDepGraph`](https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/types/src/index.ts)
+/// branch for `link:` dependencies.
 #[test]
-fn missing_root_importer_surfaces_as_error() {
+fn cross_importer_link_dep_symlinks_to_sibling_rootdir() {
+    static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+    EVENTS.lock().unwrap().clear();
+
+    struct RecordingReporter;
+    impl Reporter for RecordingReporter {
+        fn emit(event: &LogEvent) {
+            EVENTS.lock().unwrap().push(event.clone());
+        }
+    }
+
     let dir = tempdir().unwrap();
+    let workspace_root = dir.path().to_path_buf();
+
     let mut config = Config::new();
     config.store_dir = dir.path().join("pacquet-store").into();
-    config.modules_dir = dir.path().join("project/node_modules");
-    config.virtual_store_dir = dir.path().join("project/node_modules/.pacquet");
+    config.modules_dir = workspace_root.join("node_modules");
+    config.virtual_store_dir = workspace_root.join("node_modules/.pacquet");
+    let config = config.leak();
+
+    // Materialize the dependee project so the symlink target exists
+    // before we create it. (Platform-uniform — same reasoning as the
+    // single-importer test above.)
+    let shared_dir = workspace_root.join("packages/shared");
+    fs::create_dir_all(&shared_dir).unwrap();
+    fs::write(shared_dir.join("package.json"), r#"{"name": "shared", "version": "1.0.0"}"#)
+        .unwrap();
+
+    let mut deps = ResolvedDependencyMap::new();
+    deps.insert(
+        "shared".parse().unwrap(),
+        ResolvedDependencySpec {
+            specifier: "workspace:*".to_string(),
+            version: "link:../shared".parse().unwrap(),
+        },
+    );
+
+    let mut importers = HashMap::new();
+    importers.insert(
+        "packages/web".to_string(),
+        ProjectSnapshot { dependencies: Some(deps), ..ProjectSnapshot::default() },
+    );
+
+    SymlinkDirectDependencies {
+        config,
+        importers: &importers,
+        dependency_groups: [DependencyGroup::Prod],
+        workspace_root: &workspace_root,
+    }
+    .run::<RecordingReporter>()
+    .expect("symlink should succeed");
+
+    // The symlink lives under the importer's `node_modules/` and
+    // points at the sibling's `rootDir`, NOT into the virtual store.
+    let symlink_path = workspace_root.join("packages/web/node_modules/shared");
+    assert!(
+        is_symlink_or_junction(&symlink_path).unwrap(),
+        "expected a symlink at {symlink_path:?}",
+    );
+
+    // Confirm the reporter saw a `pnpm:root added` with the
+    // resolved `link:` payload as `version` and the importer's
+    // own `rootDir` as `prefix`.
+    let captured = EVENTS.lock().unwrap();
+    let added: Vec<(&str, &AddedRoot)> = captured
+        .iter()
+        .filter_map(|e| match e {
+            LogEvent::Root(RootLog { message: RootMessage::Added { added, prefix }, .. }) => {
+                Some((prefix.as_str(), added))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(added.len(), 1);
+    let (prefix, added) = added[0];
+    let expected_prefix = workspace_root.join("packages/web").to_string_lossy().into_owned();
+    assert_eq!(prefix, expected_prefix.as_str());
+    assert_eq!(added.name, "shared");
+    assert_eq!(added.version.as_deref(), Some("link:../shared"));
+
+    drop(dir);
+}
+
+/// An empty `importers` map is a valid (if degenerate) lockfile —
+/// nothing to link, no events emitted, no error. After per-importer
+/// iteration landed for #431, the old "missing root importer is a
+/// hard error" contract is gone: each importer is now installed
+/// independently, and a lockfile with zero importers simply produces
+/// zero pnpm:root events. Pin this so the iteration loop never
+/// regresses into requiring a root.
+#[test]
+fn empty_importers_is_a_no_op() {
+    let dir = tempdir().unwrap();
+    let project_root = dir.path().join("project");
+    let mut config = Config::new();
+    config.store_dir = dir.path().join("pacquet-store").into();
+    config.modules_dir = project_root.join("node_modules");
+    config.virtual_store_dir = project_root.join("node_modules/.pacquet");
     let config = config.leak();
 
     let importers = HashMap::new();
@@ -239,12 +335,103 @@ fn missing_root_importer_surfaces_as_error() {
         config,
         importers: &importers,
         dependency_groups: [DependencyGroup::Prod],
-        requester: "/proj",
+        workspace_root: &project_root,
         skipped: &SkippedSnapshots::default(),
     }
     .run::<SilentReporter>();
 
     dbg!(&result);
-    assert!(matches!(result, Err(SymlinkDirectDependenciesError::MissingRootImporter { .. })));
+    assert!(result.is_ok(), "empty importers must not error");
+    drop(dir);
+}
+
+/// Two importers under one workspace root each produce their own
+/// `pnpm:root added` event with the importer's `rootDir` as the
+/// event prefix. Mirrors upstream's per-project emit at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/installing/linking/direct-dep-linker/src/linkDirectDeps.ts#L131>.
+#[test]
+fn per_importer_prefix_in_pnpm_root_events() {
+    static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+    EVENTS.lock().unwrap().clear();
+
+    struct RecordingReporter;
+    impl Reporter for RecordingReporter {
+        fn emit(event: &LogEvent) {
+            EVENTS.lock().unwrap().push(event.clone());
+        }
+    }
+
+    let dir = tempdir().unwrap();
+    let workspace_root = dir.path().to_path_buf();
+    let virtual_store_dir = workspace_root.join("node_modules/.pacquet");
+
+    let mut config = Config::new();
+    config.store_dir = dir.path().join("pacquet-store").into();
+    config.modules_dir = workspace_root.join("node_modules");
+    config.virtual_store_dir = virtual_store_dir.clone();
+    let config = config.leak();
+
+    // Materialize the virtual-store targets each importer's symlink
+    // points at — same precondition the single-importer test sets up.
+    for store_name in ["fastify@4.0.0", "react@18.0.0"] {
+        let real_name = store_name.split('@').next().unwrap();
+        let target = virtual_store_dir.join(store_name).join("node_modules").join(real_name);
+        fs::create_dir_all(&target).unwrap();
+    }
+
+    let mut alpha_deps = ResolvedDependencyMap::new();
+    alpha_deps.insert(
+        "fastify".parse().unwrap(),
+        ResolvedDependencySpec {
+            specifier: "^4.0.0".to_string(),
+            version: "4.0.0".parse::<pacquet_lockfile::PkgVerPeer>().unwrap().into(),
+        },
+    );
+    let mut beta_deps = ResolvedDependencyMap::new();
+    beta_deps.insert(
+        "react".parse().unwrap(),
+        ResolvedDependencySpec {
+            specifier: "^18.0.0".to_string(),
+            version: "18.0.0".parse::<pacquet_lockfile::PkgVerPeer>().unwrap().into(),
+        },
+    );
+
+    let mut importers = HashMap::new();
+    importers.insert(
+        "packages/alpha".to_string(),
+        ProjectSnapshot { dependencies: Some(alpha_deps), ..ProjectSnapshot::default() },
+    );
+    importers.insert(
+        "packages/beta".to_string(),
+        ProjectSnapshot { dependencies: Some(beta_deps), ..ProjectSnapshot::default() },
+    );
+
+    SymlinkDirectDependencies {
+        config,
+        importers: &importers,
+        dependency_groups: [DependencyGroup::Prod],
+        workspace_root: &workspace_root,
+    }
+    .run::<RecordingReporter>()
+    .unwrap();
+
+    let captured = EVENTS.lock().unwrap();
+    let added: Vec<(&str, &AddedRoot)> = captured
+        .iter()
+        .filter_map(|e| match e {
+            LogEvent::Root(RootLog { message: RootMessage::Added { added, prefix }, .. }) => {
+                Some((prefix.as_str(), added))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(added.len(), 2, "one event per importer's direct dep");
+
+    let alpha_prefix = workspace_root.join("packages/alpha").to_string_lossy().into_owned();
+    let beta_prefix = workspace_root.join("packages/beta").to_string_lossy().into_owned();
+    let by_prefix: HashMap<&str, &AddedRoot> = added.iter().copied().collect();
+    assert_eq!(by_prefix.get(alpha_prefix.as_str()).unwrap().name, "fastify");
+    assert_eq!(by_prefix.get(beta_prefix.as_str()).unwrap().name, "react");
+
     drop(dir);
 }
