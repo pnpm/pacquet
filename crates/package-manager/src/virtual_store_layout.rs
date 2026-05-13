@@ -20,6 +20,7 @@
 //! [`PkgNameVerPeer::to_virtual_store_name`]: pacquet_lockfile::PkgNameVerPeer::to_virtual_store_name
 //! [`pacquet_graph_hasher::format_global_virtual_store_path`]: pacquet_graph_hasher::format_global_virtual_store_path
 
+use crate::AllowBuildPolicy;
 use pacquet_config::Config;
 use pacquet_graph_hasher::{
     DepsGraphNode, DepsStateCache, calc_graph_node_hash, format_global_virtual_store_path,
@@ -28,7 +29,7 @@ use pacquet_lockfile::{
     LockfileResolution, PackageKey, PackageMetadata, PkgName, SnapshotDepRef, SnapshotEntry,
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
@@ -109,11 +110,25 @@ impl VirtualStoreLayout {
     /// already has by the time the install dispatches to a frozen-
     /// lockfile flow — see
     /// [`crate::InstallFrozenLockfile::run`].
+    ///
+    /// `allow_build_policy` drives engine-agnostic gating. When
+    /// `Some`, the constructor walks `snapshots` once to collect
+    /// every key whose `(name, version)` passes
+    /// [`AllowBuildPolicy::check`] returning `Some(true)`, then
+    /// passes that set as `built_dep_paths` to
+    /// [`calc_graph_node_hash`]. Pure-JS subgraphs hash with
+    /// `engine = null` so their GVS directories survive Node.js
+    /// upgrades. When `None`, every snapshot keeps the engine in
+    /// its hash payload — matches upstream's
+    /// [`builtDepPaths === undefined`](https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-hasher/src/index.ts#L140-L142)
+    /// branch and the existing pacquet behaviour from
+    /// pnpm/pacquet#449.
     pub fn new(
         config: &Config,
         engine: Option<&str>,
         snapshots: Option<&HashMap<PackageKey, SnapshotEntry>>,
         packages: Option<&HashMap<PackageKey, PackageMetadata>>,
+        allow_build_policy: Option<&AllowBuildPolicy>,
     ) -> Self {
         // Pacquet keeps `virtual_store_dir` and `global_virtual_store_dir`
         // as two separate fields (see
@@ -134,10 +149,40 @@ impl VirtualStoreLayout {
             return VirtualStoreLayout { package_store_dir, gvs_suffixes: Some(HashMap::new()) };
         };
         let graph = lockfile_to_dep_graph(snapshots, packages);
+        // Build the engine-agnostic gating set once per install,
+        // mirroring upstream's
+        // [`computeBuiltDepPaths`](https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-hasher/src/index.ts#L208-L219).
+        // `None` here disables gating so every snapshot still hashes
+        // with its engine string — the pre-pnpm/pacquet#459 behaviour.
+        let built_dep_paths: Option<HashSet<PackageKey>> = allow_build_policy.map(|policy| {
+            snapshots
+                .keys()
+                .filter(|k| {
+                    let metadata_key = k.without_peer();
+                    let name = metadata_key.name.to_string();
+                    let version = metadata_key.suffix.version().to_string();
+                    policy.check(&name, &version) == Some(true)
+                })
+                .cloned()
+                .collect()
+        });
         let mut cache: DepsStateCache<PackageKey> = HashMap::new();
+        // Install-scoped memoization for the `transitivelyRequiresBuild`
+        // walk; shared across every snapshot's hash computation so
+        // diamond-shaped subgraphs only get visited once. Untouched
+        // when `built_dep_paths` is `None`. Mirrors upstream's
+        // [`buildRequiredCache`](https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-hasher/src/index.ts#L113-L114).
+        let mut build_required_cache: HashMap<PackageKey, bool> = HashMap::new();
         let mut gvs_suffixes: HashMap<PackageKey, String> = HashMap::with_capacity(snapshots.len());
         for snapshot_key in snapshots.keys() {
-            let hex_digest = calc_graph_node_hash(&graph, &mut cache, snapshot_key, engine);
+            let hex_digest = calc_graph_node_hash(
+                &graph,
+                &mut cache,
+                snapshot_key,
+                engine,
+                built_dep_paths.as_ref(),
+                &mut build_required_cache,
+            );
             let metadata_key = snapshot_key.without_peer();
             let name = metadata_key.name.to_string();
             let version = metadata_key.suffix.version().to_string();
@@ -294,7 +339,7 @@ mod tests {
             PathBuf::from("/tmp/proj/node_modules/.pnpm"),
             PathBuf::from("/tmp/store/links"),
         );
-        let layout = VirtualStoreLayout::new(&config, Some("ignored"), None, None);
+        let layout = VirtualStoreLayout::new(&config, Some("ignored"), None, None, None);
         let key: PackageKey = "@scope/foo@1.2.3".parse().unwrap();
         assert_eq!(
             layout.slot_dir(&key),
@@ -342,6 +387,7 @@ mod tests {
             Some("darwin-arm64-node20"),
             Some(&snapshots),
             Some(&packages),
+            None,
         );
         let slot = layout.slot_dir(&key);
         // Shape: `/tmp/store/links/@scope/foo/1.2.3/<64-hex>`.
@@ -394,10 +440,128 @@ mod tests {
             Some("linux-x64-node22"),
             Some(&snapshots),
             Some(&packages),
+            None,
         );
         let slot = layout.slot_dir(&key);
         let _ = slot
             .strip_prefix("/tmp/store/links/@/foo/1.0.0/")
             .expect("unscoped GVS slots live under <root>/@/<name>/<version>/<hash>");
+    }
+
+    /// End-to-end gating check: a pure-JS snapshot's GVS slot is
+    /// engine-agnostic when an empty `AllowBuildPolicy` is supplied
+    /// (matches upstream's
+    /// [`enableGlobalVirtualStore: true` → `allowBuilds ??= {}`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/index.ts#L342-L344)
+    /// shape). Two installs that differ only in the `engine` string
+    /// produce the *same* slot directory.
+    #[test]
+    fn slot_dir_engine_agnostic_with_empty_allow_build_policy() {
+        let config = make_config(
+            true,
+            PathBuf::from("/tmp/proj/node_modules/.pnpm"),
+            PathBuf::from("/tmp/store/links"),
+        );
+        let key: PackageKey = "left-pad@1.0.0".parse().unwrap();
+        let mut packages = HashMap::new();
+        packages.insert(
+            key.clone(),
+            PackageMetadata {
+                resolution: LockfileResolution::Registry(RegistryResolution {
+                    integrity: "sha512-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+                        .parse()
+                        .expect("parse integrity"),
+                }),
+                engines: None,
+                cpu: None,
+                os: None,
+                libc: None,
+                deprecated: None,
+                has_bin: None,
+                prepare: None,
+                bundled_dependencies: None,
+                peer_dependencies: None,
+                peer_dependencies_meta: None,
+            },
+        );
+        let mut snapshots = HashMap::new();
+        snapshots.insert(key.clone(), SnapshotEntry::default());
+        let policy = crate::AllowBuildPolicy::default();
+        let darwin = VirtualStoreLayout::new(
+            &config,
+            Some("darwin-arm64-node20"),
+            Some(&snapshots),
+            Some(&packages),
+            Some(&policy),
+        )
+        .slot_dir(&key);
+        let linux = VirtualStoreLayout::new(
+            &config,
+            Some("linux-x64-node22"),
+            Some(&snapshots),
+            Some(&packages),
+            Some(&policy),
+        )
+        .slot_dir(&key);
+        assert_eq!(
+            darwin, linux,
+            "pure-JS snapshot must share one GVS slot across engines when gating is active",
+        );
+    }
+
+    /// Symmetric to [`slot_dir_engine_agnostic_with_empty_allow_build_policy`]:
+    /// when the snapshot is in `allow_builds`, the engine *is* part
+    /// of the slot path. Two installs that differ in `engine` end up
+    /// in different directories.
+    #[test]
+    fn slot_dir_engine_specific_when_snapshot_is_built() {
+        let config = make_config(
+            true,
+            PathBuf::from("/tmp/proj/node_modules/.pnpm"),
+            PathBuf::from("/tmp/store/links"),
+        );
+        let key: PackageKey = "native-pkg@1.0.0".parse().unwrap();
+        let mut packages = HashMap::new();
+        packages.insert(
+            key.clone(),
+            PackageMetadata {
+                resolution: LockfileResolution::Registry(RegistryResolution {
+                    integrity: "sha512-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+                        .parse()
+                        .expect("parse integrity"),
+                }),
+                engines: None,
+                cpu: None,
+                os: None,
+                libc: None,
+                deprecated: None,
+                has_bin: None,
+                prepare: None,
+                bundled_dependencies: None,
+                peer_dependencies: None,
+                peer_dependencies_meta: None,
+            },
+        );
+        let mut snapshots = HashMap::new();
+        snapshots.insert(key.clone(), SnapshotEntry::default());
+        let allowed: std::collections::HashSet<String> =
+            ["native-pkg".to_string()].into_iter().collect();
+        let policy = crate::AllowBuildPolicy::new(allowed, std::collections::HashSet::new(), false);
+        let darwin = VirtualStoreLayout::new(
+            &config,
+            Some("darwin-arm64-node20"),
+            Some(&snapshots),
+            Some(&packages),
+            Some(&policy),
+        )
+        .slot_dir(&key);
+        let linux = VirtualStoreLayout::new(
+            &config,
+            Some("linux-x64-node22"),
+            Some(&snapshots),
+            Some(&packages),
+            Some(&policy),
+        )
+        .slot_dir(&key);
+        assert_ne!(darwin, linux, "builder snapshot must partition GVS slot by engine string");
     }
 }
