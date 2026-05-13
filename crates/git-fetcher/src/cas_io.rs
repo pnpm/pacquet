@@ -80,7 +80,12 @@ pub(crate) fn materialize_into(
     target_dir: &Path,
 ) -> Result<(), GitFetcherError> {
     for (rel, cas_path) in cas_paths {
-        let target = join_checked(target_dir, &rel.replace('/', std::path::MAIN_SEPARATOR_STR))?;
+        // `rel` uses forward slashes regardless of host platform.
+        // `Path::components()` (called inside `join_checked`)
+        // recognises both `/` and `\` as separators on Windows, so we
+        // can hand `rel` over directly and avoid a per-file `String`
+        // allocation.
+        let target = join_checked(target_dir, rel)?;
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(GitFetcherError::Io)?;
         }
@@ -115,7 +120,9 @@ pub(crate) fn import_into_cas(
 ) -> Result<HashMap<String, PathBuf>, GitFetcherError> {
     let mut out = HashMap::with_capacity(files.len());
     for rel in files {
-        let source = join_checked(pkg_dir, &rel.replace('/', std::path::MAIN_SEPARATOR_STR))?;
+        // See the matching note in `materialize_into`: `join_checked`
+        // accepts forward-slash relative paths verbatim on every host.
+        let source = join_checked(pkg_dir, rel)?;
         let bytes = fs::read(&source).map_err(GitFetcherError::Io)?;
         let executable = is_file_executable(&source);
         let (cas_path, _hash) =
