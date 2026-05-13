@@ -55,6 +55,7 @@ async fn should_install_dependencies() {
         frozen_lockfile: false,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -109,6 +110,7 @@ async fn should_error_when_frozen_lockfile_is_requested_but_none_exists() {
         frozen_lockfile: true,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -146,6 +148,7 @@ async fn should_error_when_writable_lockfile_mode_is_used() {
         frozen_lockfile: false,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -212,6 +215,7 @@ async fn frozen_lockfile_flag_overrides_config_lockfile_false() {
         frozen_lockfile: true,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -271,6 +275,7 @@ async fn npm_alias_dependency_installs_under_alias_key() {
         frozen_lockfile: false,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -347,6 +352,7 @@ async fn unversioned_npm_alias_defaults_to_latest() {
         frozen_lockfile: false,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -408,6 +414,7 @@ async fn frozen_lockfile_flag_with_no_lockfile_errors() {
         frozen_lockfile: true,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -489,6 +496,7 @@ async fn install_emits_pnpm_event_sequence() {
         frozen_lockfile: true,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<RecordingReporter>()
@@ -627,6 +635,7 @@ async fn install_writes_modules_yaml() {
         frozen_lockfile: true,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -721,6 +730,7 @@ async fn install_optional_failing_postinstall_dep_via_registry_mock_succeeds() {
         frozen_lockfile: false,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -837,6 +847,7 @@ async fn warm_reinstall_skips_snapshot_when_current_lockfile_matches() {
         frozen_lockfile: true,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -928,6 +939,7 @@ async fn warm_reinstall_emits_broken_modules_when_dir_is_missing() {
         frozen_lockfile: true,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<RecordingReporter>()
@@ -1027,6 +1039,7 @@ async fn context_log_reflects_current_lockfile_after_first_install() {
         frozen_lockfile: true,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<RecordingReporter>()
@@ -1070,6 +1083,7 @@ async fn context_log_reflects_current_lockfile_after_first_install() {
         frozen_lockfile: true,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<RecordingReporter>()
@@ -1155,6 +1169,7 @@ async fn warm_reinstall_reports_added_zero_and_emits_no_imported_events() {
         frozen_lockfile: true,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<RecordingReporter>()
@@ -1243,6 +1258,7 @@ async fn frozen_lockfile_errors_when_manifest_drifts_from_lockfile() {
         skip_runtimes: false,
         resolved_packages: &Default::default(),
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
     }
     .run::<SilentReporter>()
     .await;
@@ -1294,6 +1310,7 @@ async fn frozen_lockfile_errors_when_lockfile_has_no_root_importer() {
         skip_runtimes: false,
         resolved_packages: &Default::default(),
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
     }
     .run::<SilentReporter>()
     .await;
@@ -1375,6 +1392,7 @@ async fn frozen_lockfile_under_gvs_registers_project_and_runs_clean() {
         skip_runtimes: false,
         resolved_packages: &Default::default(),
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
     }
     .run::<SilentReporter>()
     .await
@@ -1446,6 +1464,7 @@ async fn frozen_lockfile_with_gvs_off_skips_project_registry() {
         skip_runtimes: false,
         resolved_packages: &Default::default(),
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
     }
     .run::<SilentReporter>()
     .await
@@ -1523,6 +1542,7 @@ async fn frozen_lockfile_under_gvs_registers_each_workspace_importer() {
         skip_runtimes: false,
         resolved_packages: &Default::default(),
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
     }
     .run::<SilentReporter>()
     .await
@@ -1591,7 +1611,13 @@ fn build_modules_manifest_serializes_skipped_set() {
         dev_dependencies: false,
         optional_dependencies: true,
     };
-    let manifest = super::build_modules_manifest(config, included, Default::default(), &skipped);
+    let manifest = super::build_modules_manifest(
+        config,
+        pacquet_config::NodeLinker::default(),
+        included,
+        Default::default(),
+        &skipped,
+    );
 
     // Compare as sets — `build_modules_manifest` does not sort.
     // Sort-on-write happens later inside `write_modules_manifest`,
@@ -1622,6 +1648,7 @@ fn build_modules_manifest_skipped_is_empty_on_empty_set() {
 
     let manifest = super::build_modules_manifest(
         config,
+        pacquet_config::NodeLinker::default(),
         IncludedDependencies::default(),
         Default::default(),
         &SkippedSnapshots::new(),
@@ -1700,6 +1727,7 @@ async fn frozen_install_preserves_seeded_skipped_across_reinstall() {
         frozen_lockfile: true,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -1810,6 +1838,7 @@ async fn frozen_install_silently_swallows_unreachable_optional_tarball() {
         frozen_lockfile: true,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -1903,6 +1932,7 @@ async fn frozen_install_propagates_non_optional_fetch_failure() {
         frozen_lockfile: true,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -2002,6 +2032,7 @@ async fn frozen_install_no_optional_drops_optional_only_snapshots() {
         frozen_lockfile: true,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -2086,6 +2117,7 @@ async fn frozen_install_optional_included_surfaces_missing_metadata() {
         frozen_lockfile: true,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -2173,6 +2205,7 @@ async fn frozen_install_no_optional_keeps_shared_non_optional_snapshot() {
         frozen_lockfile: true,
         skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
