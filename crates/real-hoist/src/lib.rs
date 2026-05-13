@@ -581,7 +581,7 @@ fn percent_encode_path(s: &str) -> String {
 ///   to one node at root.
 /// * Parent-wins on version conflict: when two distinct deps
 ///   share an alias but resolve to different snapshot keys, the
-///   first one BFS reaches takes the root slot and the other
+///   first one the DFS reaches takes the root slot and the other
 ///   stays under its parent.
 /// * Peer-shadow refusal: a candidate whose `peer_names` would
 ///   resolve against an ancestor's dep with a different ident
@@ -589,15 +589,16 @@ fn percent_encode_path(s: &str) -> String {
 ///   [`would_shadow_peer`] for the ancestor-path walk and how
 ///   pacquet's DAG-preserving model differs from upstream's
 ///   per-path tree clone in rare cross-path mismatch cases.
+/// * Multi-round convergence: when a round refuses a hoist
+///   because of a peer mismatch and a subsequent move shifts the
+///   blocking ident out of the ancestor chain (or into a
+///   compatible root slot), the next round reconsiders the
+///   refused candidate. The outer loop in [`hoist_into_root`]
+///   iterates until a round makes no moves. Bounded by O(N)
+///   rounds since each move is one-way (parent → root).
 ///
 /// What this does *not* model yet:
 ///
-/// * Multi-round convergence — re-walking the tree to discover
-///   newly-hoistable deps after the first pass. The BFS handles
-///   deep chains (`root → a → b → c` flattens in one pass), so
-///   the cases requiring true multi-round are limited to
-///   peer-interactions where one hoist decision unblocks
-///   another. Today the algorithm refuses those conservatively.
 /// * `hoistingLimits` / `externalDependencies` runtime
 ///   enforcement (the wrapper still refuses non-empty
 ///   `hoisting_limits`).
@@ -649,23 +650,30 @@ enum AbsorbDecision {
 }
 
 /// Walk the result tree and hoist every eligible descendant of
-/// `root` onto `root` itself.
+/// `root` onto `root` itself, iterating until the graph reaches a
+/// fixed point.
 ///
 /// Maintains a side `HashMap<name, RcByPtr>` mirror of root's
 /// direct deps so the per-edge "is this name taken at root?" check
 /// stays O(1). Without the index a graph with `N` packages all
 /// hoisting freely would do O(N²) `IndexSet` scans.
 ///
-/// Implemented as a recursive depth-first walk (see
-/// [`hoist_subtree`]) so the `ancestor_path` passed into each
-/// recursion reflects the current result-graph position of the
-/// parent. A previous BFS form computed the path at queue time
-/// and used it at dequeue time, which went stale whenever a node
-/// was hoisted to root between those two moments — the peer-
-/// shadow check then walked ex-ancestors and over-refused hoists.
-/// In the DFS form, when we recurse into a freshly-hoisted child,
-/// we pass `[root]` as the path; when we recurse into a child
-/// that stayed nested, we pass the parent's path plus the parent.
+/// Each round is a recursive depth-first walk (see
+/// [`hoist_subtree`]) whose `ancestor_path` reflects the current
+/// result-graph position of each node — a freshly-hoisted child
+/// recurses with `[root]`, a child that stayed nested recurses
+/// with `parent_path + [parent]`. The outer loop re-runs the DFS
+/// whenever a round made at least one move, because that move can
+/// unlock further hoists: a previously-blocking peer ident may
+/// have shifted out of the ancestor chain (a sibling's dep moved
+/// to root), or a previously-empty root slot may now carry a
+/// compatible ident.
+///
+/// Termination is bounded by O(N) rounds since each move is
+/// one-way (parent → root) and the graph has finite size.
+/// Mirrors upstream `hoistTo`'s
+/// `do { hoistGraph(); } while (anotherRoundNeeded)` shape, just
+/// with the DFS-by-round simplification described above.
 ///
 /// For a DAG where the same node is reachable through multiple
 /// paths, only the first-arrived path is consulted; upstream's
@@ -675,26 +683,35 @@ enum AbsorbDecision {
 /// rare cross-path mismatch cases. The cost is layouts that are
 /// sometimes more nested than pnpm's, never less.
 fn hoist_into_root(root: &Rc<HoisterResult>) {
-    let mut visited: HashSet<*const HoisterResult> = HashSet::new();
     let mut root_index: HashMap<String, RcByPtr<HoisterResult>> =
         root.dependencies.borrow().iter().map(|d| (d.0.name.clone(), d.clone())).collect();
-    hoist_subtree(root, &[], root, &mut root_index, &mut visited);
+    loop {
+        let mut visited: HashSet<*const HoisterResult> = HashSet::new();
+        let changed = hoist_subtree(root, &[], root, &mut root_index, &mut visited);
+        if !changed {
+            break;
+        }
+    }
 }
 
 /// Depth-first hoist driver. `ancestor_path` is the path from
 /// `root` down to (but *excluding*) `node`, so for the root
 /// itself it is empty and for a child of root it is `[root]`.
+/// Returns whether this subtree moved at least one node in the
+/// current round — the outer multi-round loop uses that to
+/// decide whether another round can unlock further hoists.
 fn hoist_subtree(
     node: &Rc<HoisterResult>,
     ancestor_path: &[Rc<HoisterResult>],
     root: &Rc<HoisterResult>,
     root_index: &mut HashMap<String, RcByPtr<HoisterResult>>,
     visited: &mut HashSet<*const HoisterResult>,
-) {
+) -> bool {
     let root_ptr = Rc::as_ptr(root);
     if !visited.insert(Rc::as_ptr(node)) {
-        return;
+        return false;
     }
+    let mut changed_in_subtree = false;
 
     // Snapshot the current children so we can mutate
     // `node.dependencies` mid-iteration without invalidating the
@@ -750,6 +767,7 @@ fn hoist_subtree(
                     node.dependencies.borrow_mut().shift_remove(&child);
                     root.dependencies.borrow_mut().insert(child.clone());
                     root_index.insert(child.0.name.clone(), child.clone());
+                    changed_in_subtree = true;
                     // Child is now a direct dep of root; its
                     // ancestor path collapses to `[root]`.
                     vec![Rc::clone(root)]
@@ -760,6 +778,7 @@ fn hoist_subtree(
                     // the deeper copy disappears. Child's actual
                     // ancestor path is `[root]`.
                     node.dependencies.borrow_mut().shift_remove(&child);
+                    changed_in_subtree = true;
                     vec![Rc::clone(root)]
                 }
                 AbsorbDecision::Conflict | AbsorbDecision::PeerShadow => {
@@ -767,14 +786,19 @@ fn hoist_subtree(
                     // already at root wins the slot, or
                     // hoisting would shadow a peer dependency.
                     // Child's ancestor path is the path through
-                    // `node`.
+                    // `node`. A later round may revisit this
+                    // candidate with a different peer / conflict
+                    // context.
                     path_for_children.clone()
                 }
             }
         };
 
-        hoist_subtree(&child.0, &child_recursion_path, root, root_index, visited);
+        let child_changed =
+            hoist_subtree(&child.0, &child_recursion_path, root, root_index, visited);
+        changed_in_subtree |= child_changed;
     }
+    changed_in_subtree
 }
 
 /// Return `true` when hoisting `candidate` onto the root would

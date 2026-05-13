@@ -655,6 +655,80 @@ fn peer_constrained_node_hoists_when_ancestor_and_root_agree() {
     );
 }
 
+/// Multi-round convergence: a peer-constrained candidate that
+/// gets refused in round 1 because a sibling provides the peer
+/// with no matching root slot. Once round 1 hoists the sibling
+/// out, round 2 reconsiders the candidate against the new state
+/// and lets it through.
+///
+/// Setup: `root → app → {widget (peer: x), x@1}`. Root has no
+/// `x` of its own. Iteration order over `app`'s children is
+/// alphabetical, so `widget` is visited *before* `x` in round 1:
+///
+/// - Round 1: `widget`'s peer check sees `app.x@1` and root with
+///   no `x` → mismatch → `PeerShadow`, leave at `app`. Then `x`
+///   gets evaluated: free at root → hoist. End of round 1:
+///   `root.deps = {app, x@1}`, `app.deps = {widget}`.
+/// - Round 2: walk again. `widget`'s peer check now sees `app`
+///   without `x` (it moved out in round 1) and root with `x@1`.
+///   No ancestor disagrees with root's slot → no shadow →
+///   `Free` → hoist. End of round 2: `root.deps = {app, x@1,
+///   widget}`, `app.deps = {}`.
+/// - Round 3: no moves, loop terminates.
+///
+/// The previous single-pass DFS would have left `widget` nested
+/// forever; multi-round converges to the correct flat layout.
+#[test]
+fn multi_round_unlocks_peer_friendly_hoist_after_blocker_moves() {
+    let mut importers = HashMap::new();
+    let mut root_deps = ResolvedDependencyMap::new();
+    root_deps.insert(pkg_name("app"), resolved_dep("1.0.0"));
+    importers.insert(
+        Lockfile::ROOT_IMPORTER_KEY.to_string(),
+        ProjectSnapshot { dependencies: Some(root_deps), ..ProjectSnapshot::default() },
+    );
+
+    // app@1 depends on widget@1 and x@1. widget@1 declares x as a
+    // peer (via the `packages:` map). Root carries no x of its
+    // own, so the only x in scope before hoisting is the one
+    // under app — exactly the multi-round trigger.
+    let mut snapshots = HashMap::new();
+    let mut app_deps = HashMap::new();
+    app_deps.insert(pkg_name("widget"), SnapshotDepRef::Plain(ver_peer("1.0.0")));
+    app_deps.insert(pkg_name("x"), SnapshotDepRef::Plain(ver_peer("1.0.0")));
+    snapshots.insert(
+        dep_key("app", "1.0.0"),
+        SnapshotEntry { dependencies: Some(app_deps), ..SnapshotEntry::default() },
+    );
+    snapshots.insert(dep_key("widget", "1.0.0"), SnapshotEntry::default());
+    snapshots.insert(dep_key("x", "1.0.0"), SnapshotEntry::default());
+
+    let mut packages = HashMap::new();
+    packages.insert(dep_key("widget", "1.0.0").without_peer(), pkg_metadata_with_peer("x"));
+
+    let lockfile = Lockfile {
+        lockfile_version: lockfile_version(),
+        settings: None,
+        overrides: None,
+        importers,
+        packages: Some(packages),
+        snapshots: Some(snapshots),
+    };
+
+    let result = hoist(&lockfile, &HoistOpts::default()).expect("multi-round should converge");
+    let root_children = result.dependencies.borrow();
+    let mut names: Vec<&str> = root_children.iter().map(|d| d.0.name.as_str()).collect();
+    names.sort();
+    // All three at root after multi-round convergence.
+    assert_eq!(
+        names,
+        ["app", "widget", "x"],
+        "widget hoists in round 2 after x clears app in round 1: {result:#?}",
+    );
+    let app = root_children.iter().find(|d| d.0.name == "app").unwrap().0.clone();
+    assert!(app.dependencies.borrow().is_empty(), "app stripped after multi-round: {app:#?}");
+}
+
 /// Non-empty `hoisting_limits` surfaces `UnsupportedHoistingLimits`.
 /// The algorithm doesn't honor limits today, so flattening past
 /// them would silently violate the borders the caller asked to
