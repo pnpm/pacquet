@@ -2124,6 +2124,9 @@ dependencies = [
 name = "pacquet-network"
 version = "0.0.1"
 dependencies = [
+ "derive_more",
+ "miette 7.6.0",
+ "mockito",
  "pipe-trait",
  "pretty_assertions",
  "reqwest",
