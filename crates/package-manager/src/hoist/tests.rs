@@ -325,8 +325,14 @@ fn skipped_snapshot_is_excluded() {
         "skipped snapshot must not appear in hoistedDependencies",
     );
     // ...but the symlink-by-node-id map DOES carry the entry —
-    // upstream records it before the skipped check, so the symlink
-    // pass attempts and fails gracefully on the missing node.
+    // upstream records it before the skipped check (see
+    // [`hoistGraph`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/linking/hoist/src/index.ts#L207-L267)),
+    // and pacquet preserves that ordering for parity. The symlink
+    // pass [`super::symlink_hoisted_dependencies`] then bails on the
+    // missing graph node via `let Some(node) = graph.get(node_id)
+    // else { continue }`, so no symlink is attempted for the
+    // skipped snapshot — the entry just rides along in the map for
+    // any consumer that wants to inspect what was considered.
     assert!(result.hoisted_dependencies_by_node_id.contains_key(&key("opt", "1.0.0")));
 }
 

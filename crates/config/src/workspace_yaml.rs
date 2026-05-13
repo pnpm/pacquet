@@ -304,6 +304,22 @@ impl WorkspaceSettings {
             config.public_hoist_pattern = inner;
         }
 
+        // `hoist: false` nullifies `hoist_pattern` so the install-time
+        // `is_some() || is_some()` guard short-circuits private hoisting
+        // regardless of any explicit `hoist_pattern` the user (or
+        // pacquet's defaults) supplied. Mirrors upstream's
+        // [`projectConfig.ts`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/projectConfig.ts#L72-L75)
+        // — `result.hoist === false ⇒ hoistPattern: undefined`.
+        // `publicHoistPattern` intentionally NOT nullified here:
+        // upstream doesn't either; public hoisting is governed by
+        // its own pattern + the legacy `shamefullyHoist` flag.
+        // Applied AFTER `hoist_pattern` assignment so a yaml that sets
+        // both `hoist: false` and `hoistPattern: ["..."]` still
+        // disables — `hoist: false` wins, matching upstream.
+        if !config.hoist {
+            config.hoist_pattern = None;
+        }
+
         if let Some(v) = self.modules_dir {
             config.modules_dir = resolve(base_dir, &v);
         }

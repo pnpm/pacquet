@@ -145,7 +145,7 @@ where
                 // separate `hoistedWorkspacePackages` shape, which is
                 // out of scope for this issue per #431).
                 let Some(ver) = spec.version.as_regular() else { continue };
-                let key = PkgNameVerPeer::new(PkgName::clone(name), ver.clone());
+                let key = PkgNameVerPeer::new(name.clone(), ver.clone());
                 // First-wins per alias: same precedence as
                 // `SymlinkDirectDependencies` (Prod beats Dev beats
                 // Optional with the CLI's group order).

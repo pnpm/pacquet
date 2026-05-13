@@ -554,3 +554,36 @@ fn hoist_patterns_tri_state_round_trip() {
     assert_eq!(config.hoist_pattern, Some(vec!["foo*".to_string()]));
     assert_eq!(config.public_hoist_pattern, Some(vec![]));
 }
+
+/// `hoist: false` in `pnpm-workspace.yaml` nullifies
+/// `Config.hoist_pattern` even when the user supplied an explicit
+/// `hoistPattern` (or when the default `Some(["*"])` is in place).
+/// Mirrors upstream's
+/// [`projectConfig.ts:72-75`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/projectConfig.ts#L72-L75)
+/// `result.hoist === false ⇒ hoistPattern: undefined`. The install-
+/// time `is_some() || is_some()` guard then short-circuits private
+/// hoisting; `public_hoist_pattern` is intentionally untouched
+/// (upstream doesn't nullify it either).
+#[test]
+fn hoist_false_disables_private_hoist_pattern() {
+    // `hoist: false` alone — the default `hoist_pattern` should drop.
+    let yaml = "hoist: false\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    let mut config = Config::default();
+    let original_public = config.public_hoist_pattern.clone();
+    settings.apply_to(&mut config, Path::new("/anywhere"));
+    assert_eq!(config.hoist, false);
+    assert_eq!(config.hoist_pattern, None, "hoist:false must drop hoist_pattern");
+    assert_eq!(
+        config.public_hoist_pattern, original_public,
+        "hoist:false must NOT touch public_hoist_pattern",
+    );
+
+    // `hoist: false` wins over an explicit `hoistPattern` — yaml
+    // sets a pattern, but `hoist: false` then nullifies it.
+    let yaml = "hoist: false\nhoistPattern:\n  - 'foo*'\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    let mut config = Config::default();
+    settings.apply_to(&mut config, Path::new("/anywhere"));
+    assert_eq!(config.hoist_pattern, None, "hoist:false must override an explicit hoistPattern");
+}
