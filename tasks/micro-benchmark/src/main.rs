@@ -51,6 +51,7 @@ fn bench_tarball(c: &mut Criterion, server: &mut ServerGuard, fixtures_folder: &
                 prefetched_cas_paths: None,
                 retry_opts: RetryOpts::default(),
                 auth_headers: &AuthHeaders::default(),
+                ignore_file_pattern: None,
             }
             .run_without_mem_cache::<pacquet_reporter::SilentReporter>()
             .await

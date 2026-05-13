@@ -1,7 +1,7 @@
 use super::{
     DownloadTarballToStore, HttpStatusError, MemCache, NetworkError, PrefetchedCasPaths, RetryOpts,
     TarballError, VerifyChecksumError, allocate_tarball_buffer, extract_tarball_entries,
-    fetch_and_extract_with_retry, is_transient_error, prefetch_cas_paths,
+    extract_zip_entries, fetch_and_extract_with_retry, is_transient_error, prefetch_cas_paths,
 };
 use pacquet_network::{AuthHeaders, ThrottledClient};
 use pacquet_reporter::SilentReporter;
@@ -176,6 +176,7 @@ async fn packages_under_orgs_should_work() {
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
+        ignore_file_pattern: None,
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -224,6 +225,7 @@ async fn should_throw_error_on_checksum_mismatch() {
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
+        ignore_file_pattern: None,
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -299,6 +301,7 @@ async fn reuses_cached_cas_paths_when_index_entry_is_live() {
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
+        ignore_file_pattern: None,
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -358,6 +361,7 @@ async fn reuses_prefetched_cas_paths_when_provided() {
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
+        ignore_file_pattern: None,
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -585,6 +589,7 @@ async fn falls_through_when_cafs_file_missing() {
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
+        ignore_file_pattern: None,
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -644,6 +649,7 @@ async fn falls_through_when_digest_is_malformed() {
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
+        ignore_file_pattern: None,
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -706,6 +712,7 @@ async fn falls_through_when_cafs_path_is_a_directory() {
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
+        ignore_file_pattern: None,
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -778,6 +785,7 @@ async fn falls_through_when_cafs_path_is_a_symlink() {
         verified_files_cache: SharedVerifiedFilesCache::default(),
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
+        ignore_file_pattern: None,
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -816,7 +824,7 @@ fn extract_propagates_malformed_tar_instead_of_panicking() {
     let bogus: Vec<u8> = vec![0xFF; 1024];
     let mut archive = Archive::new(Cursor::new(bogus));
 
-    let err = extract_tarball_entries(&mut archive, store_path)
+    let err = extract_tarball_entries(&mut archive, store_path, None)
         .expect_err("malformed tar must surface a TarballError, not panic");
 
     assert!(
@@ -867,7 +875,7 @@ fn extract_rejects_parent_dir_component_in_entry_path() {
     }
 
     let mut archive = Archive::new(Cursor::new(tar_bytes));
-    let err = extract_tarball_entries(&mut archive, store_path)
+    let err = extract_tarball_entries(&mut archive, store_path, None)
         .expect_err("parent-dir component must be rejected, not normalized");
 
     match err {
@@ -876,6 +884,64 @@ fn extract_rejects_parent_dir_component_in_entry_path() {
         }
         other => panic!("expected ReadTarballEntries(InvalidData), got: {other:?}"),
     }
+
+    drop(tempdir);
+}
+
+/// The tarball extractor's `ignore_file_pattern` plumbing must drop
+/// the matched entries from *both* `cas_paths` and
+/// `pkg_files_idx.files`. The Slice D dispatcher will rely on this
+/// for runtime archive filtering (Node's bundled `npm` / `corepack`,
+/// per upstream's `NODE_EXTRAS_IGNORE_PATTERN`); without coverage
+/// here, a regression that, e.g., applied the filter to `cas_paths`
+/// but forgot the `pkg_files_idx` row would slip past the existing
+/// `None`-path tests.
+#[test]
+fn extract_tarball_applies_ignore_filter_dropping_entries_from_both_maps() {
+    let (tempdir, store_path) = tempdir_with_leaked_path();
+
+    let mut tar_bytes = Vec::new();
+    {
+        let mut builder = tar::Builder::new(&mut tar_bytes);
+        for (path, body) in [
+            ("package/bin/tool", &b"binary"[..]),
+            ("package/lib/node_modules/npm/package.json", &b"{}"[..]),
+            ("package/README.md", &b"readme"[..]),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(body.len() as u64);
+            header.set_mode(0o644);
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_cksum();
+            builder.append_data(&mut header, path, body).expect("append entry");
+        }
+        builder.finish().expect("finalize tar");
+    }
+    let mut archive = Archive::new(Cursor::new(tar_bytes));
+
+    fn drop_npm(path: &str) -> bool {
+        path.starts_with("lib/node_modules/npm/")
+    }
+
+    let (cas_paths, pkg_files_idx) =
+        extract_tarball_entries(&mut archive, store_path, Some(&drop_npm))
+            .expect("tarball extraction with ignore filter");
+
+    dbg!(&cas_paths);
+    assert!(cas_paths.contains_key("bin/tool"));
+    assert!(cas_paths.contains_key("README.md"));
+    assert!(
+        !cas_paths.contains_key("lib/node_modules/npm/package.json"),
+        "ignore filter should drop bundled npm from cas_paths",
+    );
+
+    dbg!(&pkg_files_idx.files);
+    assert!(pkg_files_idx.files.contains_key("bin/tool"));
+    assert!(pkg_files_idx.files.contains_key("README.md"));
+    assert!(
+        !pkg_files_idx.files.contains_key("lib/node_modules/npm/package.json"),
+        "ignore filter should drop bundled npm from pkg_files_idx.files",
+    );
 
     drop(tempdir);
 }
@@ -996,6 +1062,7 @@ async fn retries_then_succeeds_on_transient_5xx() {
         store_path,
         fast_retry_opts(),
         &AuthHeaders::default(),
+        None,
     )
     .await
     .expect("transient 503 should be followed by a successful retry");
@@ -1043,6 +1110,7 @@ async fn retries_integrity_mismatch_until_exhausted() {
         store_path,
         fast_retry_opts(),
         &AuthHeaders::default(),
+        None,
     )
     .await
     .expect_err("integrity mismatch should exhaust the retry budget");
@@ -1074,6 +1142,7 @@ async fn fails_fast_on_404() {
         store_path,
         fast_retry_opts(),
         &AuthHeaders::default(),
+        None,
     )
     .await
     .expect_err("404 must fail-fast without retry");
@@ -1114,6 +1183,7 @@ async fn retries_other_4xx_codes() {
         store_path,
         fast_retry_opts(),
         &AuthHeaders::default(),
+        None,
     )
     .await
     .expect_err("non-401/403/404 4xx should exhaust the retry budget");
@@ -1148,6 +1218,7 @@ async fn retry_exhaustion_returns_last_error() {
         store_path,
         fast_retry_opts(),
         &AuthHeaders::default(),
+        None,
     )
     .await
     .expect_err("permanent 500s should exhaust the retry budget");
@@ -1271,6 +1342,7 @@ fn run_with_mem_cache_does_not_deadlock_on_dashmap_shard_contention() {
                     verified_files_cache: SharedVerifiedFilesCache::default(),
                     retry_opts: RetryOpts { retries: 0, ..RetryOpts::default() },
                     auth_headers,
+                    ignore_file_pattern: None,
                 };
 
                 // Spawn each task and yield once before the next so the
@@ -1339,6 +1411,7 @@ async fn zero_retries_makes_a_single_attempt() {
         store_path,
         opts,
         &AuthHeaders::default(),
+        None,
     )
     .await
     .expect_err("retries=0 must surface the first failure");
@@ -1383,6 +1456,7 @@ async fn fetch_attaches_authorization_header_when_creds_match_tarball_url() {
         store_path,
         fast_retry_opts(),
         &auth_headers,
+        None,
     )
     .await
     .expect("server should accept the request once the bearer header is attached");
@@ -1436,6 +1510,7 @@ async fn retry_re_attaches_authorization_header_on_each_attempt() {
         store_path,
         fast_retry_opts(),
         &auth_headers,
+        None,
     )
     .await
     .expect("retry attempt should also carry the bearer header");
@@ -1512,6 +1587,7 @@ async fn mem_cache_hit_emits_found_in_store_for_second_requester() {
         prefetched_cas_paths: None,
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
+        ignore_file_pattern: None,
     }
     .run_with_mem_cache::<RecordingReporter>(&mem_cache)
     .await
@@ -1538,6 +1614,7 @@ async fn mem_cache_hit_emits_found_in_store_for_second_requester() {
         prefetched_cas_paths: None,
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
+        ignore_file_pattern: None,
     }
     .run_with_mem_cache::<RecordingReporter>(&mem_cache)
     .await
@@ -1626,6 +1703,7 @@ async fn run_with_mem_cache_recovers_from_owning_fetch_error() {
         prefetched_cas_paths: None,
         retry_opts: test_retry_opts(),
         auth_headers,
+        ignore_file_pattern: None,
     };
 
     // Drive both calls concurrently. Pre-fix: the first to hit the
@@ -1726,6 +1804,7 @@ async fn fetching_progress_and_fetched_events_fire_during_download() {
         store_path,
         fast_retry_opts(),
         &AuthHeaders::default(),
+        None,
     )
     .await
     .expect("transient 503 should be followed by a successful retry");
@@ -1815,6 +1894,7 @@ async fn started_fires_for_connection_level_failures() {
         store_path,
         RetryOpts { retries: 0, ..fast_retry_opts() },
         &AuthHeaders::default(),
+        None,
     )
     .await
     .expect_err("connect-refused must surface as a TarballError");
@@ -1904,6 +1984,7 @@ async fn found_in_store_event_fires_on_cache_hit() {
         prefetched_cas_paths: None,
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
+        ignore_file_pattern: None,
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -1940,6 +2021,7 @@ async fn found_in_store_event_fires_on_cache_hit() {
         prefetched_cas_paths: None,
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
+        ignore_file_pattern: None,
     }
     .run_without_mem_cache::<RecordingReporter>()
     .await
@@ -2017,6 +2099,7 @@ async fn request_retry_event_fires_per_retried_attempt() {
         store_path,
         fast_retry_opts(),
         &AuthHeaders::default(),
+        None,
     )
     .await
     .expect("transient 503 should be followed by a successful retry");
@@ -2058,4 +2141,236 @@ async fn request_retry_event_fires_per_retried_attempt() {
     );
 
     drop(store_dir_keep);
+}
+
+/// Build a zip archive in memory with the given `(name, body)`
+/// entries. Entries are stored uncompressed (`Stored`) so the test
+/// doesn't depend on the deflate backend the production reader
+/// uses; the zip reader handles both transparently. The high byte
+/// of `unix_mode` is the entry type per stat(2) — `0o100000` for a
+/// regular file — and the low bytes are the permission bits.
+fn build_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::Write;
+    let mut buf = Vec::new();
+    {
+        let mut writer = zip::ZipWriter::new(Cursor::new(&mut buf));
+        let opts: zip::write::FileOptions<()> = zip::write::FileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored)
+            .unix_permissions(0o100644);
+        for (name, body) in entries {
+            writer.start_file(*name, opts).expect("start zip entry");
+            writer.write_all(body).expect("write zip entry body");
+        }
+        writer.finish().expect("finalize zip archive");
+    }
+    buf
+}
+
+/// Happy path: a zip with two file entries under a top-level
+/// `node-vX.Y.Z-darwin-arm64/` directory is extracted with the
+/// prefix stripped from each `cas_paths` key. Mirrors upstream's
+/// `basenamePrefix` strip — the install dispatcher will later
+/// resolve `bin/node` against `cas_paths` and that lookup must
+/// hit the stripped form, not the prefixed form.
+#[test]
+fn extract_zip_strips_prefix_from_entry_paths() {
+    let (tempdir, store_path) = tempdir_with_leaked_path();
+    let bytes = build_zip(&[
+        ("node-v22.0.0-darwin-arm64/bin/node", b"binary contents"),
+        ("node-v22.0.0-darwin-arm64/LICENSE", b"license text"),
+    ]);
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).expect("open zip");
+
+    let (cas_paths, pkg_files_idx) = extract_zip_entries(
+        &mut archive,
+        "https://example.test/node.zip",
+        store_path,
+        Some("node-v22.0.0-darwin-arm64"),
+        None,
+    )
+    .expect("happy-path zip extraction");
+
+    dbg!(&cas_paths);
+    assert!(cas_paths.contains_key("bin/node"), "prefix should be stripped");
+    assert!(cas_paths.contains_key("LICENSE"), "prefix should be stripped");
+    assert!(
+        !cas_paths.keys().any(|k| k.starts_with("node-v22")),
+        "no entry should retain the prefix",
+    );
+    assert_eq!(pkg_files_idx.files.len(), 2);
+
+    drop(tempdir);
+}
+
+/// The ignore filter must see the *post-strip* path, the same one
+/// upstream's regex sees. A filter that drops `LICENSE` must hit
+/// after the `node-v22.0.0-darwin-arm64/` prefix has been removed —
+/// otherwise the Node-runtime filter (which targets
+/// `^lib/node_modules/(npm|corepack)`) would never match.
+#[test]
+fn extract_zip_applies_ignore_filter_on_stripped_path() {
+    let (tempdir, store_path) = tempdir_with_leaked_path();
+    let bytes = build_zip(&[
+        ("node-v22.0.0-darwin-arm64/bin/node", b"binary"),
+        ("node-v22.0.0-darwin-arm64/lib/node_modules/npm/package.json", b"{}"),
+        ("node-v22.0.0-darwin-arm64/LICENSE", b"license"),
+    ]);
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).expect("open zip");
+
+    // Filter mirroring the upstream `NODE_EXTRAS_IGNORE_PATTERN`
+    // shape — strips bundled npm / corepack — but compiled by hand
+    // so the test doesn't pull a regex engine into pacquet-tarball.
+    fn node_extras_filter(path: &str) -> bool {
+        path.starts_with("lib/node_modules/npm/") || path.starts_with("lib/node_modules/corepack/")
+    }
+
+    let (cas_paths, _) = extract_zip_entries(
+        &mut archive,
+        "https://example.test/node.zip",
+        store_path,
+        Some("node-v22.0.0-darwin-arm64"),
+        Some(&node_extras_filter),
+    )
+    .expect("zip extraction with ignore filter");
+
+    dbg!(&cas_paths);
+    assert!(cas_paths.contains_key("bin/node"));
+    assert!(cas_paths.contains_key("LICENSE"));
+    assert!(
+        !cas_paths.contains_key("lib/node_modules/npm/package.json"),
+        "ignore filter should drop bundled npm",
+    );
+
+    drop(tempdir);
+}
+
+/// A zip whose entry path contains `..` (or any other escaping
+/// component) must be rejected with [`TarballError::PathTraversal`].
+/// Mirrors upstream's `validatePathSecurity` rejection — even if a
+/// later layer would have re-anchored the write, refusing the
+/// archive outright is the cheapest defense against a malicious
+/// publisher.
+#[test]
+fn extract_zip_rejects_parent_dir_component() {
+    let (tempdir, store_path) = tempdir_with_leaked_path();
+    let bytes = build_zip(&[("../evil.txt", b"evil")]);
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).expect("open zip");
+
+    let err =
+        extract_zip_entries(&mut archive, "https://example.test/evil.zip", store_path, None, None)
+            .expect_err("escaping zip entry must be rejected, not normalized");
+
+    match err {
+        TarballError::PathTraversal { url, entry_path, reason } => {
+            assert_eq!(url, "https://example.test/evil.zip");
+            assert!(entry_path.contains(".."), "raw entry path should be surfaced: {entry_path}");
+            assert!(!reason.is_empty());
+        }
+        other => panic!("expected PathTraversal, got: {other:?}"),
+    }
+
+    drop(tempdir);
+}
+
+/// Path-traversal validation must run *before* the `is_dir()`
+/// early-skip — otherwise an archive carrying a malicious directory
+/// entry like `../evil/` is silently dropped instead of surfacing
+/// [`TarballError::PathTraversal`]. Pacquet wouldn't write that
+/// directory either way (the CAS write path is gated on file
+/// entries), but rejecting outright keeps the "no unsafe entry
+/// accepted" contract intact for tooling that inspects the error
+/// code (Caught by CodeRabbit on #472).
+#[test]
+fn extract_zip_rejects_directory_entry_with_parent_component() {
+    let (tempdir, store_path) = tempdir_with_leaked_path();
+    // Build a zip with a single directory entry whose name contains
+    // `..`. `build_zip` only writes files, so go through `ZipWriter`
+    // directly here to call `add_directory`.
+    let bytes = {
+        let mut buf = Vec::new();
+        {
+            let mut writer = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let opts: zip::write::FileOptions<()> = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            writer.add_directory("../evil", opts).expect("add dir entry");
+            writer.finish().expect("finalize zip");
+        }
+        buf
+    };
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).expect("open zip");
+
+    let err = extract_zip_entries(
+        &mut archive,
+        "https://example.test/evil-dir.zip",
+        store_path,
+        None,
+        None,
+    )
+    .expect_err("escaping directory entry must be rejected, not silently skipped");
+
+    match err {
+        TarballError::PathTraversal { url, entry_path, reason } => {
+            assert_eq!(url, "https://example.test/evil-dir.zip");
+            assert!(entry_path.contains(".."), "raw entry path should be surfaced: {entry_path}");
+            assert!(!reason.is_empty());
+        }
+        other => panic!("expected PathTraversal, got: {other:?}"),
+    }
+
+    drop(tempdir);
+}
+
+/// `archive_prefix: None` keeps entry paths verbatim — same as
+/// upstream's `basename === ''` branch in `extractZipToTarget`.
+/// A zip without a top-level wrapper directory must round-trip
+/// each entry's path into `cas_paths` as-is.
+#[test]
+fn extract_zip_uses_entry_path_when_no_prefix() {
+    let (tempdir, store_path) = tempdir_with_leaked_path();
+    let bytes = build_zip(&[("bin/tool", b"x"), ("README.md", b"docs")]);
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).expect("open zip");
+
+    let (cas_paths, _) =
+        extract_zip_entries(&mut archive, "https://example.test/flat.zip", store_path, None, None)
+            .expect("flat zip extraction");
+
+    dbg!(&cas_paths);
+    assert!(cas_paths.contains_key("bin/tool"));
+    assert!(cas_paths.contains_key("README.md"));
+    assert_eq!(cas_paths.len(), 2);
+
+    drop(tempdir);
+}
+
+/// `enclosed_name()` collapses `.` segments before we build the
+/// canonical `cas_paths` key. A publisher tool that wrote
+/// `pkg/./foo.txt` and `pkg/foo.txt` into the same archive must
+/// land at one `foo.txt` entry after the prefix strip — same key
+/// the ignore filter sees, same key downstream consumers look up.
+/// Without the normalization the two would split into separate
+/// `./foo.txt` / `foo.txt` rows.
+#[test]
+fn extract_zip_normalizes_dot_segments_in_entry_paths() {
+    let (tempdir, store_path) = tempdir_with_leaked_path();
+    let bytes = build_zip(&[
+        ("node-v22.0.0-darwin-arm64/./bin/node", b"binary"),
+        ("node-v22.0.0-darwin-arm64/lib/./README", b"readme"),
+    ]);
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).expect("open zip");
+
+    let (cas_paths, _) = extract_zip_entries(
+        &mut archive,
+        "https://example.test/dotted.zip",
+        store_path,
+        Some("node-v22.0.0-darwin-arm64"),
+        None,
+    )
+    .expect("zip with `.` segments");
+
+    dbg!(&cas_paths);
+    assert!(cas_paths.contains_key("bin/node"), "`.` segment must be collapsed");
+    assert!(cas_paths.contains_key("lib/README"), "`.` segment must be collapsed");
+    assert!(!cas_paths.keys().any(|k| k.contains("/./")), "no entry should retain a `.` segment");
+
+    drop(tempdir);
 }
