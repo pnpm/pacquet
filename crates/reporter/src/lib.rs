@@ -565,7 +565,7 @@ pub struct IgnoredScriptsLog {
 /// pairing correct by hand. Tightening this into a closed-set
 /// builder API would constrain a future resolver port without
 /// adding much real safety, so it's left to convention until a
-/// site actually mis-pairs.
+/// site actually pairs the wrong shapes.
 ///
 /// `parents` is a TODO upstream too (see
 /// `during-install/src/index.ts:227`) and is omitted here.
