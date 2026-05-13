@@ -1291,9 +1291,10 @@ async fn frozen_lockfile_errors_when_lockfile_has_no_root_importer() {
 }
 
 /// GVS-on frozen-lockfile install. With
-/// `enable_global_virtual_store: true` (pacquet's default, matching
-/// upstream's
-/// [`config/reader/src/index.ts:392-394`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L392-L394)),
+/// `enable_global_virtual_store: true` (an explicit opt-in;
+/// pacquet's default is `false`, matching pnpm v11's effective
+/// default for non-`--global` installs — see
+/// [`pacquet_config::default_enable_global_virtual_store`]),
 /// `Install::run` registers the project at
 /// `<store_dir>/projects/<short-hash>` (mirroring upstream's
 /// [`registerProject`](https://github.com/pnpm/pnpm/blob/94240bc046/store/controller/src/storeController/projectRegistry.ts))
@@ -1323,8 +1324,8 @@ async fn frozen_lockfile_under_gvs_registers_project_and_runs_clean() {
     let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
 
     let mut config = Config::new();
-    // Pacquet's default is `true`; pin it explicitly so the test
-    // doesn't silently degrade if the default flips someday.
+    // Pin GVS on explicitly — pacquet's default is `false`, so this
+    // test would test the wrong path otherwise.
     config.enable_global_virtual_store = true;
     config.lockfile = false;
     config.store_dir = store_dir.clone().into();
