@@ -56,11 +56,9 @@ fn no_proxy_matcher_empty_entries_never_match() {
 fn no_proxy_matcher_multiple_entries() {
     let m = NoProxyMatcher::from(Some(&list(&["npmjs.org", "internal.example"])));
     eprintln!("matcher={m:?}");
-    for (host, expected) in [
-        ("registry.npmjs.org", true),
-        ("ci.internal.example", true),
-        ("public.example", false),
-    ] {
+    for (host, expected) in
+        [("registry.npmjs.org", true), ("ci.internal.example", true), ("public.example", false)]
+    {
         let got = m.matches_host(host);
         assert_eq!(got, expected, "host={host}: expected={expected}, got={got}");
     }

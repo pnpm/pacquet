@@ -353,12 +353,10 @@ fn parses_legacy_proxy_key_from_ini() {
 fn no_proxy_and_noproxy_aliases_last_wins() {
     // pnpm pipes both spellings into a single `noProxy` slot — the last
     // assignment in `.npmrc` order wins, same as upstream's single field.
-    let auth =
-        NpmrcAuth::from_ini::<NoEnv>("no-proxy=first.example\nnoproxy=second.example\n");
+    let auth = NpmrcAuth::from_ini::<NoEnv>("no-proxy=first.example\nnoproxy=second.example\n");
     assert_eq!(auth.no_proxy.as_deref(), Some("second.example"));
 
-    let auth =
-        NpmrcAuth::from_ini::<NoEnv>("noproxy=second.example\nno-proxy=first.example\n");
+    let auth = NpmrcAuth::from_ini::<NoEnv>("noproxy=second.example\nno-proxy=first.example\n");
     assert_eq!(auth.no_proxy.as_deref(), Some("first.example"));
 }
 

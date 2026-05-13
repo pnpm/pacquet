@@ -172,8 +172,7 @@ impl ThrottledClient {
         if let Some(url) = http {
             builder = builder.proxy(build_scheme_proxy(url, "http", Arc::clone(&no_proxy)));
         }
-        let client =
-            builder.build().expect("build reqwest client with default timeouts and proxy");
+        let client = builder.build().expect("build reqwest client with default timeouts and proxy");
         Ok(ThrottledClient::from_client(client))
     }
 
