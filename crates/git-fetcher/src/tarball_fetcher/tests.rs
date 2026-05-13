@@ -349,3 +349,88 @@ async fn writes_index_row_when_writer_provided() {
         "freshly imported entries have no integrity-check timestamp yet",
     );
 }
+
+/// Ports pnpm's `prevent directory traversal attack when path is
+/// present` at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/fetching/tarball-fetcher/test/fetch.ts#L610>.
+/// A `..`-laden `resolution.path` must be rejected by
+/// `prepare_package`'s `safe_join_path` with `INVALID_PATH` before
+/// any extraction happens.
+#[tokio::test(flavor = "multi_thread")]
+async fn tarball_path_traversal_attack_is_rejected() {
+    let store_root = tempdir().unwrap();
+    let store_dir = StoreDir::from(store_root.path().to_path_buf());
+
+    let cas_paths =
+        write_to_cas(&store_dir, &[("package.json", br#"{"name":"x","version":"1.0.0"}"#, false)]);
+
+    let err = GitHostedTarballFetcher {
+        cas_paths,
+        path: Some("../escape"),
+        allow_build: deny_all_builds(),
+        ignore_scripts: false,
+        unsafe_perm: true,
+        user_agent: None,
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        script_shell: None,
+        node_execpath: None,
+        npm_execpath: None,
+        store_dir: &store_dir,
+        package_id: "x@1.0.0",
+        requester: "/test",
+        store_index_writer: None,
+        files_index_file: "x@1.0.0\tbuilt",
+    }
+    .run::<SilentReporter>()
+    .await
+    .unwrap_err();
+
+    match err {
+        GitFetcherError::Prepare(PreparePackageError::InvalidPath { path }) => {
+            assert_eq!(path, "../escape");
+        }
+        other => panic!("expected Prepare::InvalidPath, got {other:?}"),
+    }
+}
+
+/// Ports pnpm's `fail when path is not exists` at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/fetching/tarball-fetcher/test/fetch.ts#L637>.
+/// A `path` pointing at a sub-directory the tarball doesn't contain
+/// must surface as `INVALID_PATH` — silently packing the root would
+/// produce a working install for the wrong package.
+#[tokio::test(flavor = "multi_thread")]
+async fn tarball_path_to_missing_subdir_is_rejected() {
+    let store_root = tempdir().unwrap();
+    let store_dir = StoreDir::from(store_root.path().to_path_buf());
+
+    let cas_paths =
+        write_to_cas(&store_dir, &[("package.json", br#"{"name":"x","version":"1.0.0"}"#, false)]);
+
+    let err = GitHostedTarballFetcher {
+        cas_paths,
+        path: Some("does/not/exist"),
+        allow_build: deny_all_builds(),
+        ignore_scripts: false,
+        unsafe_perm: true,
+        user_agent: None,
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        script_shell: None,
+        node_execpath: None,
+        npm_execpath: None,
+        store_dir: &store_dir,
+        package_id: "x@1.0.0",
+        requester: "/test",
+        store_index_writer: None,
+        files_index_file: "x@1.0.0\tbuilt",
+    }
+    .run::<SilentReporter>()
+    .await
+    .unwrap_err();
+
+    match err {
+        GitFetcherError::Prepare(PreparePackageError::InvalidPath { path }) => {
+            assert_eq!(path, "does/not/exist");
+        }
+        other => panic!("expected Prepare::InvalidPath, got {other:?}"),
+    }
+}
