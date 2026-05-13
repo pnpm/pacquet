@@ -303,3 +303,121 @@ fn bundle_dependency_missing_dir_is_silently_skipped() {
     let out = packlist(root, &manifest).unwrap();
     assert_eq!(out, vec!["package.json".to_string()]);
 }
+
+#[test]
+fn npmignore_in_parent_dir_does_not_leak_in() {
+    // Regression: `ignore::WalkBuilder::parents` defaults to `true`,
+    // which would let a `.gitignore` above `pkg_dir` exclude files
+    // inside it. The packlist must depend only on the package
+    // directory's own contents — we set `parents(false)` precisely
+    // to prevent this. Test: drop a `.gitignore` *above* the pkg dir
+    // saying to exclude `index.js`, then confirm the file still ships.
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join(".gitignore"), "index.js\n").unwrap();
+    let root = dir.path().join("pkg");
+    fs::create_dir_all(&root).unwrap();
+    touch(&root, "package.json");
+    touch(&root, "index.js");
+
+    let manifest = json!({ "name": "x", "version": "0.0.0" });
+    let out = packlist(&root, &manifest).unwrap();
+
+    assert!(
+        out.contains(&"index.js".to_string()),
+        "parent-directory .gitignore must NOT leak into the packlist: {out:?}",
+    );
+}
+
+#[test]
+fn bundle_dependencies_rejects_path_traversal() {
+    // Defense-in-depth regression: a malicious manifest with a `..`
+    // in bundleDependencies must not let the fetcher read files
+    // outside the package directory. Build a "valid" sibling dir
+    // outside the package's node_modules and prove its files don't
+    // end up in the result.
+    let dir = tempdir().unwrap();
+    let root = dir.path().join("pkg");
+    fs::create_dir_all(&root).unwrap();
+    touch(&root, "package.json");
+    // A sibling next to the package's would-be node_modules. If
+    // path traversal worked, this directory would be reachable via
+    // `node_modules/../escape`.
+    let escape = dir.path().join("escape");
+    fs::create_dir_all(&escape).unwrap();
+    fs::write(escape.join("secret.txt"), "DO NOT EXFIL\n").unwrap();
+
+    let manifest = json!({
+        "name": "x",
+        "version": "0.0.0",
+        "bundleDependencies": ["../escape"],
+    });
+    let out = packlist(&root, &manifest).unwrap();
+
+    assert!(
+        !out.iter().any(|p| p.contains("escape") || p.contains("secret")),
+        "bundle name traversal must not leak files outside pkg_dir: {out:?}",
+    );
+}
+
+#[test]
+fn always_excluded_dir_segments_only_match_vcs() {
+    // Regression for the over-eager segment walk that used to match
+    // anything in `ALWAYS_EXCLUDED_NAMES` at any depth — including
+    // file-typed entries (`.npmrc`, `package-lock.json`). A literal
+    // VCS dir segment still excludes everything under it.
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    touch(root, "package.json");
+    // A dir literally named `CVS` — VCS state, must be excluded at
+    // any depth.
+    touch(root, "lib/CVS/Root");
+    // A file whose *basename contains* `CVS` but isn't itself a VCS
+    // segment — must NOT be excluded.
+    touch(root, "lib/cvs-tools.txt");
+    // A `.git`-nested file — must be excluded by the VCS segment.
+    touch(root, "scripts/.git/HEAD");
+
+    let manifest = json!({ "name": "x", "version": "0.0.0" });
+    let mut out = packlist(root, &manifest).unwrap();
+    out.sort();
+
+    assert!(out.contains(&"lib/cvs-tools.txt".to_string()));
+    assert!(
+        !out.iter().any(|p| p.starts_with("lib/CVS/")),
+        "CVS/ subdirectory must be excluded at any depth: {out:?}",
+    );
+    assert!(
+        !out.iter().any(|p| p.contains("/.git/")),
+        ".git/ subdirectory must be excluded at any depth: {out:?}",
+    );
+}
+
+#[test]
+fn files_field_bare_basename_matches_at_depth() {
+    // npm-packlist treats `files: ["cli"]` as an unanchored gitignore
+    // pattern, so it matches both root-level `cli` and a nested
+    // `bin/cli`. The `Gitignore::matched` call already handles this
+    // because gitignore patterns without a leading slash are
+    // unanchored — drop the previously-present leaf fallback once
+    // this test pins the behavior.
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    touch(root, "package.json");
+    touch(root, "cli");
+    touch(root, "bin/cli");
+    touch(root, "lib/cli/index.js");
+
+    let manifest = json!({
+        "name": "x",
+        "version": "0.0.0",
+        "files": ["cli"],
+    });
+    let out = packlist(root, &manifest).unwrap();
+
+    assert!(out.contains(&"cli".to_string()), "root-level cli: {out:?}");
+    assert!(out.contains(&"bin/cli".to_string()), "nested cli matches at depth: {out:?}");
+    assert!(
+        out.contains(&"lib/cli/index.js".to_string()),
+        "files entry matching a directory also includes its contents: {out:?}",
+    );
+}

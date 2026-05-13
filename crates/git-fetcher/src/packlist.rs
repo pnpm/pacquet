@@ -55,20 +55,20 @@ use std::{
 const ALWAYS_INCLUDED_PREFIXES: &[&str] =
     &["readme", "license", "licence", "changes", "changelog", "history", "notice"];
 
-/// Always-excluded basenames. Same set as upstream: pacquet's CAS must
-/// never carry a dep's own lockfile or VCS state.
-const ALWAYS_EXCLUDED_NAMES: &[&str] = &[
-    ".git",
-    ".npmrc",
-    "npm-debug.log",
-    ".DS_Store",
-    "package-lock.json",
-    "yarn.lock",
-    "pnpm-lock.yaml",
-    ".svn",
-    "CVS",
-    ".hg",
-];
+/// Version-control directory names that exclude every file under
+/// them at any depth. Matches the upstream behavior of dropping VCS
+/// state from a published package regardless of where in the tree it
+/// happens to sit. Exact-segment match: a path with a literal segment
+/// named `.git` / `.svn` / `.hg` / `CVS` is filtered, but a regular
+/// file like `lib/foo.hg-stub` (basename `foo.hg-stub`, not `.hg`) is
+/// not.
+const ALWAYS_EXCLUDED_DIR_SEGMENTS: &[&str] = &[".git", ".svn", ".hg", "CVS"];
+
+/// Basenames always excluded regardless of where the file sits.
+/// Matches npm-packlist's per-file cruft set: lockfiles for sibling
+/// package managers, debug logs, OS junk, npm runtime config.
+const ALWAYS_EXCLUDED_BASENAMES: &[&str] =
+    &[".npmrc", "npm-debug.log", ".DS_Store", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"];
 
 /// Suffix-based always-excluded set, matching `npm-packlist`'s
 /// `*.orig` exclusion family.
@@ -111,6 +111,12 @@ pub fn packlist(pkg_dir: &Path, manifest: &Value) -> Result<Vec<String>, Packlis
         .git_exclude(false)
         .git_global(false)
         .require_git(false)
+        // Don't search parent directories of `pkg_dir` for ignore
+        // files: the packlist must depend only on the contents of the
+        // package directory itself. Otherwise a `.gitignore` in the
+        // workspace root above a git-hosted snapshot's working copy
+        // would leak into the published file set.
+        .parents(false)
         .add_custom_ignore_filename(".npmignore");
 
     for entry in builder.build() {
@@ -183,6 +189,20 @@ pub fn packlist(pkg_dir: &Path, manifest: &Value) -> Result<Vec<String>, Packlis
     // field names are accepted because some published packages use
     // one and some the other (npm-packlist tolerates both).
     for bundle_name in bundle_dep_names(manifest) {
+        // Defense-in-depth: a malicious manifest could carry
+        // `bundleDependencies: ["../../etc"]` (or an absolute path).
+        // Reject anything that's not a single safe segment before
+        // building the join path; let `is_safe_bundle_name` log the
+        // refusal so the gap is observable in install logs.
+        if !is_safe_bundle_name(&bundle_name) {
+            tracing::warn!(
+                target: "pacquet::git_fetcher::packlist",
+                bundle_name = %bundle_name,
+                pkg_dir = %pkg_dir.display(),
+                "rejecting bundleDependencies entry that is not a single path segment",
+            );
+            continue;
+        }
         let bundle_pkg_dir = pkg_dir.join("node_modules").join(&bundle_name);
         if !bundle_pkg_dir.is_dir() {
             tracing::debug!(
@@ -252,19 +272,19 @@ fn build_files_matcher(pkg_dir: &Path, entries: &[Value]) -> Option<Gitignore> {
 
 /// `true` when `rel` matches the `files`-field allowlist. The matcher
 /// was built with the `files` entries as gitignore-style include
-/// patterns; `Gitignore::matched(rel, false).is_ignore()` is `true`
-/// when one of those patterns matches, which is what we want for an
-/// include list.
+/// patterns. Two cases must succeed:
 ///
-/// gitignore-style patterns also match directories implicitly: a
-/// pattern like `dist` matches both `dist` and everything under it.
-/// Bare basenames like `cli` should also match at any depth; the
-/// fallback below splits the candidate to try the leaf name.
+/// - The path itself matches a pattern (`files: ["cli"]` includes a
+///   file named `cli` at any depth).
+/// - An ancestor directory matches (`files: ["cli"]` includes
+///   `lib/cli/index.js` because `cli` matches `lib/cli`).
+///
+/// `Gitignore::matched_path_or_any_parents` walks the path's ancestor
+/// chain and returns `Ignore` when any segment matches — exactly the
+/// behavior npm-packlist's `files`-field needs (a directory pattern
+/// includes its contents recursively).
 fn files_field_includes(matcher: &Gitignore, rel: &str) -> bool {
-    if matcher.matched(rel, false).is_ignore() {
-        return true;
-    }
-    rel.rsplit('/').next().is_some_and(|leaf| matcher.matched(leaf, false).is_ignore())
+    matcher.matched_path_or_any_parents(rel, false).is_ignore()
 }
 
 fn is_always_included_at_root(rel: &str) -> bool {
@@ -293,13 +313,51 @@ fn is_main_or_bin(rel: &str, main: Option<&str>, bins: &[&str]) -> bool {
 
 fn should_always_exclude(rel: &str) -> bool {
     let basename = rel.rsplit('/').next().unwrap_or(rel);
-    if ALWAYS_EXCLUDED_NAMES.contains(&basename) {
+    // Basename-cruft check: per-file entries (`.npmrc`, lockfiles,
+    // debug logs, OS junk) are excluded at any depth.
+    if ALWAYS_EXCLUDED_BASENAMES.contains(&basename) {
         return true;
     }
-    if rel.split('/').any(|seg| ALWAYS_EXCLUDED_NAMES.contains(&seg)) {
+    // VCS dir check: a path is excluded if any segment is literally
+    // `.git` / `.svn` / `.hg` / `CVS`. Exact-segment match (not
+    // prefix) so a regular file `lib/foo.hg-stub` isn't accidentally
+    // dropped just because its basename mentions `.hg`.
+    if rel.split('/').any(|seg| ALWAYS_EXCLUDED_DIR_SEGMENTS.contains(&seg)) {
         return true;
     }
     ALWAYS_EXCLUDED_SUFFIXES.iter().any(|s| basename.ends_with(s))
+}
+
+/// True when `name` is a safe `bundleDependencies` entry — the join
+/// `pkg_dir/node_modules/<name>` stays inside `pkg_dir/node_modules`.
+///
+/// Rejects parent-dir components, root, and drive prefixes. Accepts
+/// scoped names like `@scope/foo`: those legitimately carry a slash
+/// and resolve to `pkg_dir/node_modules/@scope/foo`, which is still
+/// inside the package tree. Same component-based discipline
+/// `cas_io::join_checked` uses for tarball entries.
+fn is_safe_bundle_name(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let path = std::path::Path::new(name);
+    if path.is_absolute() {
+        return false;
+    }
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(_) => {}
+            std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => {
+                return false;
+            }
+            // `.` components are stripped silently — `./foo` resolves
+            // the same as `foo` on every platform.
+            std::path::Component::CurDir => {}
+        }
+    }
+    true
 }
 
 /// Collect names from `bundleDependencies` (or the legacy
