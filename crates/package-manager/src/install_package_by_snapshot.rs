@@ -213,9 +213,13 @@ impl<'a> InstallPackageBySnapshot<'a> {
             }
             // Slice A of #437 wires the lockfile types; the install
             // dispatch for `Binary` / `Variations` lands in Slice D.
-            // Until then, surface the kind so a v11 lockfile with a
-            // runtime entry fails with a clear message rather than
-            // a non-exhaustive-match panic.
+            // Until then, surface the kind via the typed
+            // `UnsupportedResolution` error so a v11 lockfile with a
+            // runtime entry fails with a clear, structured message.
+            // (Without these arms, adding the new `LockfileResolution`
+            // variants would surface as a compile-time
+            // non-exhaustive-match error rather than building cleanly
+            // — these arms are what makes Slice A standalone.)
             LockfileResolution::Binary(_) => {
                 return Err(InstallPackageBySnapshotError::UnsupportedResolution {
                     package_key: package_key.to_string(),
