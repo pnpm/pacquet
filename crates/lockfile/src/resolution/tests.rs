@@ -1,7 +1,8 @@
 use super::{
     BinaryArchive, BinaryResolution, BinarySpec, DirectoryResolution, GitResolution,
-    LockfileResolution, PlatformAssetResolution, PlatformAssetTarget, RegistryResolution,
-    TarballResolution, VariationsResolution,
+    LockfileResolution, PlatformAssetResolution, PlatformAssetTarget, PlatformSelector,
+    RegistryResolution, TarballResolution, VariationsResolution, libc_matches,
+    select_platform_variant,
 };
 use crate::serialize_yaml;
 use pretty_assertions::assert_eq;
@@ -530,4 +531,153 @@ fn serialize_variations_resolution() {
         "    cpu: arm64"
     };
     assert_eq!(received, expected);
+}
+
+// -----------------------------------------------------------------------------
+// `select_platform_variant` / `libc_matches` — Slice B
+// -----------------------------------------------------------------------------
+
+fn binary_resolution(url: &str) -> LockfileResolution {
+    LockfileResolution::Binary(BinaryResolution {
+        url: url.to_string(),
+        integrity: integrity(
+            "sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==",
+        ),
+        bin: BinarySpec::Single("bin/node".to_string()),
+        archive: BinaryArchive::Tarball,
+        prefix: None,
+    })
+}
+
+fn target(os: &str, cpu: &str, libc: Option<&str>) -> PlatformAssetTarget {
+    PlatformAssetTarget { os: os.to_string(), cpu: cpu.to_string(), libc: libc.map(str::to_string) }
+}
+
+fn variant(url: &str, targets: Vec<PlatformAssetTarget>) -> PlatformAssetResolution {
+    PlatformAssetResolution { resolution: binary_resolution(url), targets }
+}
+
+fn selector(os: &str, cpu: &str, libc: Option<&str>) -> PlatformSelector {
+    PlatformSelector { os: os.to_string(), cpu: cpu.to_string(), libc: libc.map(str::to_string) }
+}
+
+/// The picker returns the first variant whose `targets[]` contains an
+/// `(os, cpu, libc)` triple matching the selector. Mirrors upstream's
+/// declaration-order semantics — `Array.prototype.find` in
+/// `selectPlatformVariant`.
+#[test]
+fn pick_first_matching_variant() {
+    let variants = vec![
+        variant("darwin-arm64", vec![target("darwin", "arm64", None)]),
+        variant("linux-x64", vec![target("linux", "x64", None)]),
+    ];
+    let picked = select_platform_variant(&variants, &selector("linux", "x64", Some("glibc")))
+        .expect("matching variant");
+    assert_eq!(
+        picked.resolution.integrity().map(ToString::to_string),
+        Some("sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==".to_string()),
+        "picked variant should be the linux-x64 one (url is opaque to integrity, but the structural fixture means both share the same hash)",
+    );
+    assert_eq!(picked.targets, vec![target("linux", "x64", None)]);
+}
+
+/// One variant can cover multiple host triples; the picker matches
+/// against any entry in the variant's `targets[]`. Real-world Node
+/// archives ship a single `darwin` tarball that covers both `x64`
+/// and `arm64` via separate target entries.
+#[test]
+fn pick_matches_any_target_in_a_variant() {
+    let variants = vec![variant(
+        "darwin-universal",
+        vec![target("darwin", "arm64", None), target("darwin", "x64", None)],
+    )];
+    let picked = select_platform_variant(&variants, &selector("darwin", "x64", None));
+    assert!(picked.is_some());
+}
+
+/// No variant matching the host triple → `None`. The install
+/// dispatcher will surface this as a typed "no variant matches host
+/// platform" error (Slice D).
+#[test]
+fn pick_returns_none_when_no_variant_matches() {
+    let variants = vec![variant("darwin-arm64", vec![target("darwin", "arm64", None)])];
+    assert!(select_platform_variant(&variants, &selector("linux", "x64", Some("glibc"))).is_none());
+}
+
+/// On a musl host, the glibc-default variant must NOT win silently.
+/// Upstream rejects a `None`-libc variant when the selector requests
+/// `musl`, requiring an exact `libc: "musl"` annotation to match.
+/// Without this, a musl host would attempt to run a glibc-linked
+/// binary.
+#[test]
+fn pick_rejects_default_variant_for_musl_host() {
+    let variants = vec![variant("linux-x64-glibc", vec![target("linux", "x64", None)])];
+    assert!(
+        select_platform_variant(&variants, &selector("linux", "x64", Some("musl"))).is_none(),
+        "musl host must not silently pick the glibc default variant",
+    );
+}
+
+/// When two variants both match the same `(os, cpu, libc)` triple,
+/// declaration order wins — mirroring upstream's `Array.prototype.find`
+/// in `selectPlatformVariant`. Pinning this guards against a future
+/// refactor that reorders the iteration (e.g., to a `BTreeMap` keyed
+/// by triple) since pnpm-written lockfiles can rely on the order
+/// (e.g., listing a preferred build before a fallback).
+#[test]
+fn pick_returns_first_when_multiple_variants_match() {
+    // Both variants list the same darwin-arm64 target. The first one
+    // is identified by its URL via the inner `BinaryResolution`.
+    let variants = vec![
+        variant("first-darwin-arm64", vec![target("darwin", "arm64", None)]),
+        variant("second-darwin-arm64", vec![target("darwin", "arm64", None)]),
+    ];
+    let picked = select_platform_variant(&variants, &selector("darwin", "arm64", None))
+        .expect("matching variant");
+    let LockfileResolution::Binary(inner) = &picked.resolution else {
+        panic!("expected Binary inner resolution");
+    };
+    assert_eq!(inner.url, "first-darwin-arm64", "declaration order must win");
+}
+
+/// A musl variant is picked only when the selector requests musl.
+#[test]
+fn pick_matches_musl_variant_for_musl_host() {
+    let variants = vec![
+        variant("linux-x64-glibc", vec![target("linux", "x64", None)]),
+        variant("linux-x64-musl", vec![target("linux", "x64", Some("musl"))]),
+    ];
+    let picked = select_platform_variant(&variants, &selector("linux", "x64", Some("musl")))
+        .expect("musl variant present");
+    assert_eq!(picked.targets, vec![target("linux", "x64", Some("musl"))]);
+}
+
+/// `libc_matches` truth table. Pinning each cell guards the
+/// upstream contract in
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/resolving/resolver-base/src/index.ts#L100-L107>:
+/// `None`-libc selector or `"glibc"` selector → variant libc must be
+/// `None`; any other selector value → exact match.
+#[test]
+fn libc_matches_truth_table() {
+    // Selector says "no libc constraint" (non-Linux host): only
+    // the default (unannotated) variant matches.
+    assert!(libc_matches(None, None));
+    assert!(!libc_matches(Some("musl"), None));
+    assert!(!libc_matches(Some("glibc"), None));
+
+    // Selector says "glibc" (Linux glibc host): same rule as None.
+    assert!(libc_matches(None, Some("glibc")));
+    assert!(!libc_matches(Some("musl"), Some("glibc")));
+
+    // Selector says "musl" (Linux musl host): require exact musl
+    // annotation; the default variant is rejected.
+    assert!(libc_matches(Some("musl"), Some("musl")));
+    assert!(!libc_matches(None, Some("musl")));
+
+    // Selector says an unknown libc (future-compat): require
+    // exact match. The default variant is rejected so a future
+    // libc value can't be silently aliased to glibc.
+    assert!(libc_matches(Some("uclibc"), Some("uclibc")));
+    assert!(!libc_matches(None, Some("uclibc")));
+    assert!(!libc_matches(Some("glibc"), Some("uclibc")));
 }
