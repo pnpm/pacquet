@@ -559,13 +559,16 @@ pub struct IgnoredScriptsLog {
 /// site constructs. The pairing is not type-enforced against
 /// `reason` (a `BuildFailure` reason with a
 /// `ResolutionFailure` package is constructible in Rust); emit
-/// sites live in `pacquet-package-manager`
-/// (`installability.rs`, `build_modules.rs`,
-/// `create_virtual_store.rs` for slice 4) and must keep the
-/// pairing correct by hand. Tightening this into a closed-set
-/// builder API would constrain a future resolver port without
-/// adding much real safety, so it's left to convention until a
-/// site actually pairs the wrong shapes.
+/// sites live in `pacquet-package-manager` (`installability.rs`
+/// for the installability skips, `build_modules.rs` for the
+/// build-failure path) and must keep the pairing correct by hand.
+/// `CreateVirtualStore`'s slice 4 fetch-failure path is silent on
+/// the reporter wire — it only swallows the error, no event is
+/// emitted from there — so it isn't a constructor site for this
+/// log. Tightening the pairing into a closed-set builder API
+/// would constrain a future resolver port without adding much
+/// real safety, so it's left to convention until a site actually
+/// pairs the wrong shapes.
 ///
 /// `parents` is a TODO upstream too (see
 /// `during-install/src/index.ts:227`) and is omitted here.
