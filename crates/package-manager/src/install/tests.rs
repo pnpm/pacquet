@@ -1355,6 +1355,7 @@ async fn frozen_lockfile_under_gvs_registers_project_and_runs_clean() {
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
         resolved_packages: &Default::default(),
+        supported_architectures: None,
     }
     .run::<SilentReporter>()
     .await
@@ -1424,6 +1425,7 @@ async fn frozen_lockfile_with_gvs_off_skips_project_registry() {
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
         resolved_packages: &Default::default(),
+        supported_architectures: None,
     }
     .run::<SilentReporter>()
     .await
@@ -1499,6 +1501,7 @@ async fn frozen_lockfile_under_gvs_registers_each_workspace_importer() {
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
         resolved_packages: &Default::default(),
+        supported_architectures: None,
     }
     .run::<SilentReporter>()
     .await
