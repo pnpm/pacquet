@@ -474,39 +474,52 @@ pub fn symlink_hoisted_dependencies(
         collections::HashSet,
         io::ErrorKind,
         path::{Path, PathBuf},
+        sync::Arc,
     };
 
-    // Phase 1: collect (target, dest) pairs and the set of
-    // scope-dir parents that need to exist before the symlink
-    // syscalls fire.
-    let mut pairs: Vec<(PathBuf, PathBuf)> = Vec::new();
+    // Phase 1: collect symlink work as `(Arc<dep_dir>, kind, alias)`
+    // tuples. Sharing `dep_dir` via `Arc` avoids cloning the PathBuf
+    // (and the `to_virtual_store_name()` String inside it, which the
+    // lockfile crate flags as "far from optimal") once per alias on a
+    // multi-alias node. Most nodes have a single hoisted alias, so the
+    // Arc overhead is marginal — but `to_virtual_store_name()` performs
+    // up to four `String::replace` allocations per call, so even
+    // building it just once per node is worth the indirection.
+    //
+    // The scope-dir set collected here is small (one entry per
+    // distinct `@scope/` aliased to the hoist target) and is created
+    // serially in phase 2 before parallel symlink syscalls fire.
+    let mut work: Vec<(Arc<PathBuf>, HoistKind, &String)> = Vec::new();
     let mut scope_dirs: HashSet<PathBuf> = HashSet::new();
     for (node_id, alias_map) in hoisted_by_node_id {
         let Some(node) = graph.get(node_id) else { continue };
-        let dep_dir = virtual_store_dir
-            .join(node_id.to_virtual_store_name())
-            .join("node_modules")
-            .join(name_to_dir(&node.name));
+        let dep_dir = Arc::new(
+            virtual_store_dir
+                .join(node_id.to_virtual_store_name())
+                .join("node_modules")
+                .join(name_to_dir(&node.name)),
+        );
         for (alias, kind) in alias_map {
             let target_dir_root: &Path = match kind {
                 HoistKind::Public => public_hoisted_modules_dir,
                 HoistKind::Private => private_hoisted_modules_dir,
             };
-            let dest = target_dir_root.join(alias);
             // Scoped alias (`@scope/name`) → dest parent is
             // `<root>/@scope`, which doesn't exist yet on a fresh
             // install. Unscoped alias → dest parent is `<root>`,
-            // which gets created unconditionally below.
-            if let Some(parent) = dest.parent()
-                && parent != target_dir_root
+            // which gets created unconditionally below. Compute the
+            // parent without materialising the full dest path (saves
+            // one PathBuf alloc when not scoped).
+            if alias.starts_with('@')
+                && let Some(slash) = alias.find('/')
             {
-                scope_dirs.insert(parent.to_path_buf());
+                scope_dirs.insert(target_dir_root.join(&alias[..slash]));
             }
-            pairs.push((dep_dir.clone(), dest));
+            work.push((Arc::clone(&dep_dir), *kind, alias));
         }
     }
 
-    if pairs.is_empty() {
+    if work.is_empty() {
         return Ok(());
     }
 
@@ -526,18 +539,27 @@ pub fn symlink_hoisted_dependencies(
 
     // Phase 3: fire symlink syscalls in parallel. `try_for_each`
     // short-circuits on first error, propagating it through
-    // rayon's collector.
-    pairs.par_iter().try_for_each(|(target, dest)| -> Result<(), crate::SymlinkPackageError> {
-        match pacquet_fs::symlink_dir(target, dest) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(()),
-            Err(error) => Err(crate::SymlinkPackageError::SymlinkDir {
-                symlink_target: target.clone(),
-                symlink_path: dest.clone(),
-                error,
-            }),
-        }
-    })
+    // rayon's collector. `dest` is constructed inside the parallel
+    // closure (one `PathBuf::join` allocation per task) so the
+    // sequential phase-1 walk doesn't pay for it.
+    work.par_iter().try_for_each(
+        |(dep_dir, kind, alias)| -> Result<(), crate::SymlinkPackageError> {
+            let target_dir_root: &Path = match kind {
+                HoistKind::Public => public_hoisted_modules_dir,
+                HoistKind::Private => private_hoisted_modules_dir,
+            };
+            let dest = target_dir_root.join(alias);
+            match pacquet_fs::symlink_dir(dep_dir.as_path(), &dest) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(()),
+                Err(error) => Err(crate::SymlinkPackageError::SymlinkDir {
+                    symlink_target: dep_dir.as_path().to_path_buf(),
+                    symlink_path: dest,
+                    error,
+                }),
+            }
+        },
+    )
 }
 
 /// Render a [`PkgName`] into its on-disk segment under `node_modules`.
