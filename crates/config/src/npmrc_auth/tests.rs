@@ -672,3 +672,118 @@ fn defaults_leave_tls_config_empty() {
     assert_eq!(config.tls.strict_ssl, None);
     assert!(config.tls.local_address.is_none(), "tls.local_address={:?}", config.tls.local_address);
 }
+
+// --- Per-registry TLS tests ---
+
+#[test]
+fn parses_scoped_inline_ca() {
+    let auth = NpmrcAuth::from_ini::<NoEnv>(
+        "//reg.example.com/:ca=-----BEGIN CERTIFICATE-----\\nMIIB-----END CERTIFICATE-----\n",
+    );
+    let entry = auth.tls_by_uri.get("//reg.example.com/").expect("entry present");
+    let ca = entry.ca.as_deref().expect("ca set");
+    assert!(ca.contains("\n"), "expected `\\n` → newline expansion: {ca:?}");
+    assert!(ca.contains("BEGIN CERTIFICATE"), "expected PEM header: {ca:?}");
+}
+
+#[test]
+fn parses_scoped_cafile_reads_from_disk() {
+    use std::io::Write;
+    let tmp = tempfile::NamedTempFile::new().expect("create tempfile");
+    tmp.as_file().write_all(TEST_CA_PEM.as_bytes()).expect("write");
+    let ini = format!("//reg.example.com/:cafile={}\n", tmp.path().display());
+    let auth = NpmrcAuth::from_ini::<NoEnv>(&ini);
+    let entry = auth.tls_by_uri.get("//reg.example.com/").expect("entry present");
+    let ca = entry.ca.as_deref().expect("ca set");
+    assert!(ca.contains("BEGIN CERTIFICATE"), "expected PEM contents from cafile: {ca:?}");
+}
+
+#[test]
+fn parses_scoped_cafile_missing_silently_dropped() {
+    let auth = NpmrcAuth::from_ini::<NoEnv>("//reg.example.com/:cafile=/nonexistent/path/ca.pem\n");
+    // Either the entry doesn't exist, or it exists with `ca = None`.
+    // `PerRegistryTls::from_map` filters all-`None` entries later;
+    // here the parse-time behavior is "no entry written".
+    assert!(
+        auth.tls_by_uri.get("//reg.example.com/").is_none_or(|e| e.ca.is_none()),
+        "missing cafile must not produce a non-None ca slot: {:?}",
+        auth.tls_by_uri,
+    );
+}
+
+#[test]
+fn parses_scoped_cert_and_key() {
+    let auth = NpmrcAuth::from_ini::<NoEnv>(
+        "//reg.example.com/:cert=cert-pem\n//reg.example.com/:key=key-pem\n",
+    );
+    let entry = auth.tls_by_uri.get("//reg.example.com/").expect("entry present");
+    assert_eq!(entry.cert.as_deref(), Some("cert-pem"));
+    assert_eq!(entry.key.as_deref(), Some("key-pem"));
+}
+
+#[test]
+fn parses_scoped_certfile_and_keyfile() {
+    use std::io::Write;
+    let tmp_cert = tempfile::NamedTempFile::new().expect("create cert tempfile");
+    let tmp_key = tempfile::NamedTempFile::new().expect("create key tempfile");
+    tmp_cert.as_file().write_all(b"CERT-CONTENTS").expect("write cert");
+    tmp_key.as_file().write_all(b"KEY-CONTENTS").expect("write key");
+    let ini = format!(
+        "//reg.example.com/:certfile={}\n//reg.example.com/:keyfile={}\n",
+        tmp_cert.path().display(),
+        tmp_key.path().display(),
+    );
+    let auth = NpmrcAuth::from_ini::<NoEnv>(&ini);
+    let entry = auth.tls_by_uri.get("//reg.example.com/").expect("entry present");
+    assert_eq!(entry.cert.as_deref(), Some("CERT-CONTENTS"));
+    assert_eq!(entry.key.as_deref(), Some("KEY-CONTENTS"));
+}
+
+#[test]
+fn scoped_inline_and_file_share_same_slot_last_wins() {
+    // pnpm writes `:cert` and `:certfile` to the same `tls.cert`
+    // slot. The last assignment in the .npmrc wins.
+    use std::io::Write;
+    let tmp = tempfile::NamedTempFile::new().expect("create tempfile");
+    tmp.as_file().write_all(b"FROM-FILE").expect("write");
+    let ini = format!(
+        "//reg.example.com/:cert=inline\n//reg.example.com/:certfile={}\n",
+        tmp.path().display(),
+    );
+    let auth = NpmrcAuth::from_ini::<NoEnv>(&ini);
+    let entry = auth.tls_by_uri.get("//reg.example.com/").expect("entry present");
+    assert_eq!(entry.cert.as_deref(), Some("FROM-FILE"));
+}
+
+#[test]
+fn scoped_n_escape_expansion_only_on_inline() {
+    // pnpm's `:ca=...` value goes through `.replace(/\\n/g, '\n')`.
+    // The `:cafile` variant reads from disk and doesn't apply the
+    // replacement (the file already has real newlines).
+    let auth = NpmrcAuth::from_ini::<NoEnv>("//reg.example.com/:ca=line1\\nline2\n");
+    let entry = auth.tls_by_uri.get("//reg.example.com/").expect("entry present");
+    assert_eq!(entry.ca.as_deref(), Some("line1\nline2"));
+}
+
+#[test]
+fn applies_tls_by_uri_to_config_drops_empty() {
+    let auth = NpmrcAuth::from_ini::<NoEnv>(
+        "//keep.example.com/:ca=ca-pem\n//drop.example.com/:registry=https://drop.example/\n",
+    );
+    // `//drop.example.com/:registry=` doesn't match any TLS suffix
+    // so no `RegistryTls` entry is ever created for that prefix.
+    let mut config = Config::new();
+    auth.apply_to::<NoEnv>(&mut config);
+    assert!(config.tls_by_uri.get("//keep.example.com/").is_some(), "non-empty entry kept");
+    assert!(config.tls_by_uri.get("//drop.example.com/").is_none(), "non-TLS key ignored");
+}
+
+#[test]
+fn scoped_tls_keys_dont_collide_with_top_level() {
+    // Top-level `ca=`, `cert=`, `key=`, `cafile=` arms run *before*
+    // the SSL-suffix matcher. A bare `ca=` line should land on
+    // `auth.ca`, not in `tls_by_uri` as registry=`""`.
+    let auth = NpmrcAuth::from_ini::<NoEnv>("ca=top-level\n");
+    assert_eq!(auth.ca, vec!["top-level".to_string()]);
+    assert!(auth.tls_by_uri.is_empty(), "top-level `ca=` must not pollute tls_by_uri");
+}

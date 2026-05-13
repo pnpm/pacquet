@@ -284,6 +284,16 @@ pub struct Config {
     /// `strictSsl ?? true` default.
     pub tls: pacquet_network::TlsConfig,
 
+    /// Per-registry TLS overrides — `//host[:port]/path/:ca`,
+    /// `:cafile`, `:cert`, `:certfile`, `:key`, `:keyfile` from
+    /// `.npmrc`. Lookup uses pnpm's 5-step nerf-darted fallback
+    /// chain (exact > nerf-dart > no-port > shorter path prefix >
+    /// recursive no-port retry). Per-registry fields override
+    /// [`Self::tls`] field-by-field at request time, matching
+    /// pnpm's [`{ ...opts, ...sslConfig }`](https://github.com/pnpm/pnpm/blob/94240bc046/network/fetch/src/dispatcher.ts#L143)
+    /// spread.
+    pub tls_by_uri: pacquet_network::PerRegistryTls,
+
     /// When true, any missing non-optional peer dependencies are automatically installed.
     #[default = true]
     pub auto_install_peers: bool,

@@ -62,8 +62,12 @@ impl State {
                 .map_err(InitStateError::Manifest)?,
             lockfile: call_load_lockfile(should_load, Lockfile::load_from_current_dir)
                 .map_err(InitStateError::Lockfile)?,
-            http_client: ThrottledClient::for_installs(&config.proxy, &config.tls)
-                .map_err(InitStateError::Network)?,
+            http_client: ThrottledClient::for_installs(
+                &config.proxy,
+                &config.tls,
+                &config.tls_by_uri,
+            )
+            .map_err(InitStateError::Network)?,
             tarball_mem_cache: MemCache::new(),
             resolved_packages: ResolvedPackages::new(),
         })

@@ -1376,7 +1376,15 @@ async fn fetch_and_extract_once<R: Reporter>(
     // through body streaming. Releasing earlier would let the next
     // batch of futures `connect()` while previous bodies are still
     // draining, breaking the bound on concurrent open sockets.
-    let client = http_client.acquire().await;
+    //
+    // `acquire_for_url` routes the request through the per-registry
+    // TLS-configured client when one is set for `package_url`'s
+    // nerf-darted prefix, falling back to the default client
+    // otherwise. Tarball hosts that differ from the metadata host
+    // still pick up the right per-registry client because the
+    // 5-step `pickSettingByUrl` lookup also matches on the tarball
+    // URL.
+    let client = http_client.acquire_for_url(package_url).await;
     let mut request = client.get(package_url);
     // Match pnpm's tarball download path
     // ([`remoteTarballFetcher.ts`](https://github.com/pnpm/pnpm/blob/601317e7a3/fetching/tarball-fetcher/src/remoteTarballFetcher.ts#L66-L70)):
@@ -1988,7 +1996,7 @@ async fn fetch_and_extract_zip_once<R: Reporter>(
     let network_error =
         |error| TarballError::FetchTarball(NetworkError { url: package_url.to_string(), error });
 
-    let client = http_client.acquire().await;
+    let client = http_client.acquire_for_url(package_url).await;
 
     let mut request = client.get(package_url);
     // Match the tarball download path: resolve the per-URL auth
