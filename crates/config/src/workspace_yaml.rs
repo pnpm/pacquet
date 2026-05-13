@@ -7,13 +7,38 @@ use miette::Diagnostic;
 use pacquet_package_is_installable::SupportedArchitectures;
 use pacquet_store_dir::StoreDir;
 use pipe_trait::Pipe;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::{
     collections::HashMap,
     fs,
     io::{self, ErrorKind},
     path::{Path, PathBuf},
 };
+
+/// `serde` helper for fields that need to distinguish "missing key"
+/// from "explicit null" in YAML / JSON. Used by `hoist_pattern` and
+/// `public_hoist_pattern` so an explicit `hoistPattern: null` in
+/// `pnpm-workspace.yaml` propagates as `Some(None)` (= "disable this
+/// side"), while a missing key falls through to the field's serde
+/// default (`None`, = "leave the config default in place").
+///
+/// Field shape: `Option<Option<Vec<String>>>`.
+/// - `None` — key not present in yaml. `apply_to` skips the field.
+/// - `Some(None)` — explicit `null`. `apply_to` overwrites
+///   `Config.<field>` with `None`, mirroring upstream's
+///   `hoistPattern != null` guard treating null as "feature disabled".
+/// - `Some(Some(vec))` — explicit list. `apply_to` overwrites
+///   `Config.<field>` with `Some(vec)`.
+///
+/// Stand-alone helper rather than reaching for `serde_with` (not in
+/// the workspace deps) — the body is one line.
+fn deserialize_double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
 
 /// Settings readable from `pnpm-workspace.yaml`.
 ///
@@ -46,8 +71,19 @@ use std::{
 #[serde(rename_all = "camelCase", default)]
 pub struct WorkspaceSettings {
     pub hoist: Option<bool>,
-    pub hoist_pattern: Option<Vec<String>>,
-    pub public_hoist_pattern: Option<Vec<String>>,
+
+    /// Tri-state `hoistPattern`. See [`deserialize_double_option`]
+    /// for the `None` / `Some(None)` / `Some(Some(_))` semantics —
+    /// pacquet must distinguish "key absent" (defaults stay) from
+    /// "explicit null" (hoist disabled) to mirror upstream's
+    /// `!= null` guard.
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub hoist_pattern: Option<Option<Vec<String>>>,
+
+    /// Tri-state `publicHoistPattern`. Same semantics as
+    /// [`Self::hoist_pattern`].
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub public_hoist_pattern: Option<Option<Vec<String>>>,
     pub shamefully_hoist: Option<bool>,
     pub store_dir: Option<String>,
     pub modules_dir: Option<String>,
@@ -243,20 +279,21 @@ impl WorkspaceSettings {
             git_shallow_hosts,
         }
 
-        // `hoist_pattern` and `public_hoist_pattern` are `Option<Vec<String>>`
-        // on both sides — yaml-side `Some(v)` becomes `config.* = Some(v)`,
-        // wrapping rather than replacing the inner `Vec`. The unwrapped
-        // case (`hoistPattern: null` in yaml) deserializes to `None` here
-        // and is currently treated as "leave the default in place"; an
-        // explicit-null path through yaml is not yet expressible (would
-        // need a tri-state wrapper). Matches the issue's
-        // `is_some() || is_some()` guard semantics — defaults are
-        // always `Some(_)` so the hoist pass runs by default.
-        if let Some(v) = self.hoist_pattern {
-            config.hoist_pattern = Some(v);
+        // `hoist_pattern` and `public_hoist_pattern` carry the
+        // tri-state described on [`deserialize_double_option`]:
+        // outer `None` means "key missing — leave config defaults in
+        // place"; outer `Some(inner)` means the user wrote something,
+        // and `inner` is what they wrote (`None` for explicit null,
+        // `Some(vec)` for a list). The inner value is assigned to
+        // `Config.<field>` directly so an explicit `hoistPattern: null`
+        // disables hoisting on that side via the install-time
+        // `is_some() || is_some()` guard, matching upstream's
+        // `!= null` semantics.
+        if let Some(inner) = self.hoist_pattern {
+            config.hoist_pattern = inner;
         }
-        if let Some(v) = self.public_hoist_pattern {
-            config.public_hoist_pattern = Some(v);
+        if let Some(inner) = self.public_hoist_pattern {
+            config.public_hoist_pattern = inner;
         }
 
         if let Some(v) = self.modules_dir {

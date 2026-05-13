@@ -513,3 +513,44 @@ supportedArchitectures:
     assert!(raw.cpu.is_none());
     assert!(raw.libc.is_none());
 }
+
+/// `hoistPattern` and `publicHoistPattern` are tri-state via
+/// [`super::deserialize_double_option`] — pacquet must distinguish
+/// "key missing" (defaults stay) from "explicit null" (hoist
+/// disabled) from "explicit list" (override). This test exercises
+/// all three for both sides plus the `apply_to` plumbing.
+#[test]
+fn hoist_patterns_tri_state_round_trip() {
+    // Case 1: keys absent → defaults preserved.
+    let yaml = "registry: https://example.test\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    assert_eq!(settings.hoist_pattern, None);
+    assert_eq!(settings.public_hoist_pattern, None);
+    let mut config = Config::default();
+    let defaults = (config.hoist_pattern.clone(), config.public_hoist_pattern.clone());
+    settings.apply_to(&mut config, Path::new("/anywhere"));
+    assert_eq!((config.hoist_pattern.clone(), config.public_hoist_pattern.clone()), defaults);
+
+    // Case 2: explicit null → `Config.* = None`. Verifies the
+    // upstream `!= null` semantics — null disables that side, and
+    // the install-time `is_some() || is_some()` guard short-circuits
+    // when both sides are None.
+    let yaml = "hoistPattern: null\npublicHoistPattern: null\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    assert_eq!(settings.hoist_pattern, Some(None));
+    assert_eq!(settings.public_hoist_pattern, Some(None));
+    let mut config = Config::default();
+    settings.apply_to(&mut config, Path::new("/anywhere"));
+    assert_eq!(config.hoist_pattern, None);
+    assert_eq!(config.public_hoist_pattern, None);
+
+    // Case 3: explicit list → wraps the inner Vec in `Some`.
+    let yaml = "hoistPattern:\n  - 'foo*'\npublicHoistPattern: []\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    assert_eq!(settings.hoist_pattern, Some(Some(vec!["foo*".to_string()])));
+    assert_eq!(settings.public_hoist_pattern, Some(Some(vec![])));
+    let mut config = Config::default();
+    settings.apply_to(&mut config, Path::new("/anywhere"));
+    assert_eq!(config.hoist_pattern, Some(vec!["foo*".to_string()]));
+    assert_eq!(config.public_hoist_pattern, Some(vec![]));
+}

@@ -4,7 +4,7 @@ use crate::{
     LinkVirtualStoreBinsError, SkippedSnapshots, SymlinkDirectDependencies,
     SymlinkDirectDependenciesError, SymlinkPackageError, VersionPolicyError, VirtualStoreLayout,
     any_installability_constraint, build_direct_deps_by_importer, build_hoist_graph,
-    compute_skipped_snapshots, get_hoisted_dependencies, link_hoisted_bins,
+    compute_skipped_snapshots, get_hoisted_dependencies, link_direct_dep_bins,
     symlink_hoisted_dependencies,
 };
 use derive_more::{Display, Error};
@@ -431,7 +431,27 @@ where
                         &public_dir,
                     )
                     .map_err(InstallFrozenLockfileError::HoistSymlink)?;
-                    link_hoisted_bins(&private_dir, &result.hoisted_aliases_with_bins)
+                    // Private-side bins → `<vs>/node_modules/.bin`.
+                    // Reuses the rayon-parallel `link_direct_dep_bins`
+                    // (same shape — read each location's
+                    // `package.json`, fan out to
+                    // `link_bins_of_packages`).
+                    link_direct_dep_bins(&private_dir, &result.hoisted_aliases_with_bins)
+                        .map_err(InstallFrozenLockfileError::HoistLinkBins)?;
+                    // Public-side bins → `<root>/node_modules/.bin`.
+                    // Upstream relies on the direct-deps bin pass
+                    // (which runs *after* hoist) picking up the
+                    // public-hoist symlinks. Pacquet's pipeline order
+                    // has `SymlinkDirectDependencies` running *before*
+                    // hoist, so the direct-deps bin pass has already
+                    // executed by the time public-hoist symlinks
+                    // exist. A second `link_direct_dep_bins` pass
+                    // here closes that gap. The function tolerates
+                    // already-linked shims (idempotent at the
+                    // `link_bins_of_packages` layer), so re-linking
+                    // direct-dep aliases that match a public-hoist
+                    // pattern is safe.
+                    link_direct_dep_bins(&public_dir, &result.publicly_hoisted_aliases_with_bins)
                         .map_err(InstallFrozenLockfileError::HoistLinkBins)?;
                     result.hoisted_dependencies
                 } else {

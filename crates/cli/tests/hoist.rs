@@ -355,13 +355,14 @@ fn public_hoist_bin_is_linked_via_root_bin_dir() {
         is_symlink_or_junction(&alias_link).unwrap(),
         "public hoist should link the alias under `<root>/node_modules/`",
     );
-    // The bin pass for direct deps has its own coverage in
-    // `crates/cli/tests/install.rs`. This test asserts that the
-    // hoisted alias is in place — which is what the existing direct-
-    // deps bin pass needs to also pick up its bin. Asserting the
-    // `.bin/hello-world-js-bin` shim itself is left to the
-    // direct-deps integration test family; layering both on a single
-    // hoist test would over-couple.
+    // And its bin lands in `<root>/node_modules/.bin/`. Pacquet's
+    // pipeline runs `SymlinkDirectDependencies` *before* the hoist
+    // pass, so the install path makes a second
+    // `link_direct_dep_bins` call against the public-hoisted aliases
+    // after the symlinks are in place. Verify that path actually
+    // produces the expected shim.
+    let bin_path = workspace.join("node_modules/.bin/hello-world-js-bin");
+    assert!(bin_path.exists(), "public hoist should link bin at {bin_path:?}");
 
     drop((root, mock_instance));
 }
