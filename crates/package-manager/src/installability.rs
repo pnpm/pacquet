@@ -43,6 +43,15 @@ impl SkippedSnapshots {
         Self { set: HashSet::new() }
     }
 
+    /// Construct a [`SkippedSnapshots`] from an existing set. Test
+    /// helper for callers that want to drive build-sequence /
+    /// virtual-store filtering against a known skip set without
+    /// running the full installability pass.
+    #[cfg(test)]
+    pub(crate) fn from_set(set: HashSet<PackageKey>) -> Self {
+        Self { set }
+    }
+
     pub fn contains(&self, key: &PackageKey) -> bool {
         self.set.contains(key)
     }
@@ -265,9 +274,38 @@ pub fn compute_skipped_snapshots<R: Reporter>(
 /// `CreateVirtualStore::run` and serializes ~100ms of node-binary
 /// startup with extraction it used to overlap with.
 pub fn any_installability_constraint(packages: &HashMap<PackageKey, PackageMetadata>) -> bool {
-    packages
-        .values()
-        .any(|m| m.engines.is_some() || m.cpu.is_some() || m.os.is_some() || m.libc.is_some())
+    packages.values().any(metadata_has_meaningful_constraint)
+}
+
+/// True if a single metadata row carries a constraint pacquet would
+/// actually evaluate. Distinguishes "field present" from "field present
+/// AND meaningful":
+///
+/// - `engines`: only `node` / `pnpm` keys matter. A package that
+///   declares `engines.npm = ">=8"` (and nothing else) has no
+///   constraint pacquet evaluates — pacquet isn't npm.
+/// - `cpu` / `os` / `libc`: a `["any"]` value short-circuits to
+///   "accept" inside `check_platform`'s `check_list`, and an empty
+///   list cannot exclude the host either. Treat both as no-constraint.
+fn metadata_has_meaningful_constraint(m: &PackageMetadata) -> bool {
+    let engines_meaningful =
+        m.engines.as_ref().is_some_and(|e| e.contains_key("node") || e.contains_key("pnpm"));
+    engines_meaningful
+        || platform_axis_meaningful(m.cpu.as_deref())
+        || platform_axis_meaningful(m.os.as_deref())
+        || platform_axis_meaningful(m.libc.as_deref())
+}
+
+/// One axis of `cpu` / `os` / `libc` carries no constraint when the
+/// list is absent, empty, or exactly the `["any"]` sentinel that
+/// `check_list` short-circuits as "accept everything".
+fn platform_axis_meaningful(axis: Option<&[String]>) -> bool {
+    match axis {
+        None => false,
+        Some(list) if list.is_empty() => false,
+        Some(list) if list.len() == 1 && list[0] == "any" => false,
+        Some(_) => true,
+    }
 }
 
 fn manifest_from_metadata(metadata: &PackageMetadata) -> PackageInstallabilityManifest {

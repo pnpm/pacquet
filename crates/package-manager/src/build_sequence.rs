@@ -1,3 +1,4 @@
+use crate::SkippedSnapshots;
 use crate::graph_sequencer::{GraphSequencerResult, graph_sequencer};
 use pacquet_lockfile::{PackageKey, ProjectSnapshot, SnapshotEntry};
 use pacquet_patching::ExtendedPatchInfo;
@@ -38,6 +39,7 @@ pub fn build_sequence(
     patches: Option<&HashMap<PackageKey, ExtendedPatchInfo>>,
     snapshots: &HashMap<PackageKey, SnapshotEntry>,
     importers: &HashMap<String, ProjectSnapshot>,
+    skipped: &SkippedSnapshots,
 ) -> Vec<Vec<PackageKey>> {
     let children = build_children_map(snapshots);
     let root_dep_paths = collect_root_dep_paths(importers, snapshots);
@@ -50,6 +52,7 @@ pub fn build_sequence(
         &children,
         requires_build,
         patches,
+        skipped,
         &mut nodes_to_build_set,
         &mut nodes_to_build,
         &mut walked,
@@ -170,7 +173,13 @@ fn collect_root_dep_paths(
 /// `https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/buildSequence.ts`.
 /// A node is a candidate when `requires_build` is set OR when an entry
 /// for the peer-stripped key is present in `patches` (mirrors
-/// upstream's `node.requiresBuild || node.patch != null`).
+/// upstream's `node.requiresBuild || node.patch != null`) — *unless*
+/// the node is in `skipped`, in which case its virtual-store slot
+/// was never created so neither the requires-build nor patch path
+/// can run. Mirrors pnpm's `lockfileToDepGraph` flow where skipped
+/// snapshots never enter the build graph at all (the patch lookup
+/// upstream walks `pkgGraph[depPath]?.patch` and `depGraph` itself
+/// excludes skipped nodes).
 ///
 /// Returns whether *any* of the entry nodes (or their subtrees) needs to build.
 fn get_subgraph_to_build(
@@ -178,6 +187,7 @@ fn get_subgraph_to_build(
     children: &HashMap<PackageKey, Vec<PackageKey>>,
     requires_build: &HashMap<PackageKey, bool>,
     patches: Option<&HashMap<PackageKey, ExtendedPatchInfo>>,
+    skipped: &SkippedSnapshots,
     nodes_to_build_set: &mut HashSet<PackageKey>,
     nodes_to_build: &mut Vec<PackageKey>,
     walked: &mut HashSet<PackageKey>,
@@ -198,10 +208,23 @@ fn get_subgraph_to_build(
             children,
             requires_build,
             patches,
+            skipped,
             nodes_to_build_set,
             nodes_to_build,
             walked,
         );
+
+        // A skipped snapshot never had its virtual-store slot
+        // created, so neither requires-build (no extracted manifest
+        // to inspect) nor a configured patch (nothing on disk to
+        // patch) can produce work. Gate before consulting
+        // `requires_build` / `patches` so a patched-but-skipped
+        // optional doesn't enter the queue and rely on the
+        // `pkg_dir.exists()` defensive return in
+        // `build_one_snapshot`.
+        if skipped.contains(dep_path) {
+            continue;
+        }
 
         let needs_build = requires_build.get(dep_path).copied().unwrap_or(false);
         let has_patch = patches.is_some_and(|p| p.contains_key(&dep_path.without_peer()));

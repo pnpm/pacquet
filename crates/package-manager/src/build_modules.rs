@@ -368,7 +368,7 @@ impl<'a> BuildModules<'a> {
         let deps_state_cache: Mutex<pacquet_graph_hasher::DepsStateCache<PackageKey>> =
             Mutex::new(pacquet_graph_hasher::DepsStateCache::new());
 
-        let chunks = build_sequence(&requires_build_map, patches, snapshots, importers);
+        let chunks = build_sequence(&requires_build_map, patches, snapshots, importers, skipped);
 
         // Collect peer-stripped keys so the final list is unique and
         // sorted lexicographically — matches `dedupePackageNamesFromIgnoredBuilds`.

@@ -1,8 +1,10 @@
 use super::build_sequence;
+use crate::SkippedSnapshots;
 use pacquet_lockfile::{
     PackageKey, PkgName, PkgVerPeer, ProjectSnapshot, ResolvedDependencyMap,
     ResolvedDependencySpec, SnapshotDepRef, SnapshotEntry,
 };
+use pacquet_patching::ExtendedPatchInfo;
 use pretty_assertions::assert_eq;
 use std::collections::HashMap;
 
@@ -61,7 +63,13 @@ fn root_importers(deps: &[(&str, &str)]) -> HashMap<String, ProjectSnapshot> {
 
 #[test]
 fn empty_inputs() {
-    let chunks = build_sequence(&HashMap::new(), None, &HashMap::new(), &HashMap::new());
+    let chunks = build_sequence(
+        &HashMap::new(),
+        None,
+        &HashMap::new(),
+        &HashMap::new(),
+        &SkippedSnapshots::default(),
+    );
     dbg!(&chunks);
     assert!(chunks.is_empty(), "empty inputs ⇒ no chunks: {chunks:?}");
 }
@@ -75,7 +83,8 @@ fn no_requires_build_yields_empty() {
     let requires_build = requires([(key("a", "1.0.0"), false), (key("b", "1.0.0"), false)]);
     let importers = root_importers(&[("a", "1.0.0")]);
 
-    let chunks = build_sequence(&requires_build, None, &snapshots, &importers);
+    let chunks =
+        build_sequence(&requires_build, None, &snapshots, &importers, &SkippedSnapshots::default());
     dbg!(&chunks);
     assert!(chunks.is_empty(), "no requires_build ⇒ no chunks: {chunks:?}");
 }
@@ -92,7 +101,8 @@ fn leaf_with_requires_build_runs_first() {
     let requires_build = requires([(key("a", "1.0.0"), false), (key("b", "1.0.0"), true)]);
     let importers = root_importers(&[("a", "1.0.0")]);
 
-    let chunks = build_sequence(&requires_build, None, &snapshots, &importers);
+    let chunks =
+        build_sequence(&requires_build, None, &snapshots, &importers, &SkippedSnapshots::default());
     assert_eq!(chunks, vec![vec![key("b", "1.0.0")], vec![key("a", "1.0.0")]]);
 }
 
@@ -111,7 +121,8 @@ fn deep_chain_orders_leaf_first() {
     ]);
     let importers = root_importers(&[("a", "1.0.0")]);
 
-    let chunks = build_sequence(&requires_build, None, &snapshots, &importers);
+    let chunks =
+        build_sequence(&requires_build, None, &snapshots, &importers, &SkippedSnapshots::default());
     assert_eq!(
         chunks,
         vec![vec![key("c", "1.0.0")], vec![key("b", "1.0.0")], vec![key("a", "1.0.0")]],
@@ -136,7 +147,8 @@ fn unrelated_subgraph_excluded() {
     ]);
     let importers = root_importers(&[("a", "1.0.0")]);
 
-    let chunks = build_sequence(&requires_build, None, &snapshots, &importers);
+    let chunks =
+        build_sequence(&requires_build, None, &snapshots, &importers, &SkippedSnapshots::default());
     let flat: Vec<_> = chunks.into_iter().flatten().collect();
     dbg!(&flat);
     assert!(flat.contains(&key("a", "1.0.0")), "ancestor of build leaf must appear: {flat:?}");
@@ -165,7 +177,8 @@ fn parallel_build_leaves_share_chunk() {
     ]);
     let importers = root_importers(&[("root", "1.0.0")]);
 
-    let chunks = build_sequence(&requires_build, None, &snapshots, &importers);
+    let chunks =
+        build_sequence(&requires_build, None, &snapshots, &importers, &SkippedSnapshots::default());
     assert_eq!(chunks.len(), 2);
     let mut leaves = chunks[0].clone();
     leaves.sort_by_key(|k| k.to_string());
@@ -202,6 +215,46 @@ fn non_builder_importer_with_shared_builder_child_is_trimmed() {
     ]);
     let importers = root_importers(&[("a", "1.0.0"), ("b", "1.0.0")]);
 
-    let chunks = build_sequence(&requires_build, None, &snapshots, &importers);
+    let chunks =
+        build_sequence(&requires_build, None, &snapshots, &importers, &SkippedSnapshots::default());
     assert_eq!(chunks, vec![vec![key("c", "1.0.0")], vec![key("a", "1.0.0")]]);
+}
+
+/// A snapshot marked in the skip set must NOT enter the build queue
+/// even if it carries a configured patch. Upstream's `lockfileToDepGraph`
+/// excludes skipped nodes from the depGraph entirely, so the patch
+/// lookup never finds them. Without this gate, `build_one_snapshot`'s
+/// `pkg_dir.exists()` defensive return would still suppress the
+/// actual build attempt — but the snapshot would have been queued
+/// and the graph walked through it. The gate makes the exclusion
+/// correct-by-construction.
+#[test]
+fn skipped_patched_snapshot_does_not_enter_build_queue() {
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
+    let a_key = key("a", "1.0.0");
+    let snapshots = HashMap::from([(a_key.clone(), snap(&[]))]);
+    let requires_build = requires([(a_key.clone(), false)]);
+    let importers = root_importers(&[("a", "1.0.0")]);
+
+    // `a@1.0.0` has a patch configured AND would normally trigger
+    // a build via `has_patch` alone (requires_build = false).
+    let patches = HashMap::from([(
+        a_key.clone(),
+        ExtendedPatchInfo {
+            hash: "fake-hash".to_string(),
+            patch_file_path: Some(PathBuf::from("/dev/null")),
+            key: "a@1.0.0".to_string(),
+        },
+    )]);
+
+    let skipped = SkippedSnapshots::from_set(HashSet::from([a_key.clone()]));
+
+    let chunks = build_sequence(&requires_build, Some(&patches), &snapshots, &importers, &skipped);
+
+    assert!(
+        chunks.is_empty(),
+        "skipped+patched snapshot must not be queued for build, got {chunks:?}",
+    );
 }

@@ -10,7 +10,9 @@ use pacquet_lockfile::{
 use pacquet_reporter::{LogEvent, Reporter, SkippedOptionalReason};
 use pretty_assertions::assert_eq;
 
-use crate::installability::{InstallabilityHost, compute_skipped_snapshots};
+use crate::installability::{
+    InstallabilityHost, any_installability_constraint, compute_skipped_snapshots,
+};
 
 // Thread-local recording so the cargo-default parallel test runner
 // can fan out without tests polluting each other's event stream.
@@ -237,6 +239,68 @@ fn no_constraints_skips_the_per_snapshot_pass() {
         events.iter().all(|e| !matches!(e, LogEvent::SkippedOptionalDependency(_))),
         "fast path must not fire skipped-optional events",
     );
+}
+
+/// `engines` block with no `node` / `pnpm` key (e.g. only `npm`)
+/// does NOT trigger the slow path. Pacquet doesn't evaluate the npm
+/// engine, so a package declaring `engines.npm` alone is no
+/// constraint as far as installability is concerned.
+#[test]
+fn engines_without_node_or_pnpm_does_not_count_as_constraint() {
+    let key = snapshot_key("npm-engine-only@1.0.0");
+    let mut packages = HashMap::new();
+    packages.insert(key, synthetic_metadata(Some(&[("npm", ">=8")]), None, None, None));
+    assert!(
+        !any_installability_constraint(&packages),
+        "engines.npm alone should not block the fast path",
+    );
+}
+
+/// `cpu` / `os` / `libc` set to the `["any"]` sentinel is a no-op
+/// in `check_platform`'s `check_list`, so it must not trigger the
+/// slow path either.
+#[test]
+fn platform_any_sentinel_does_not_count_as_constraint() {
+    let key = snapshot_key("any-platforms@1.0.0");
+    let mut packages = HashMap::new();
+    packages.insert(key, synthetic_metadata(None, Some(&["any"]), Some(&["any"]), Some(&["any"])));
+    assert!(
+        !any_installability_constraint(&packages),
+        "cpu/os/libc = [\"any\"] should not block the fast path",
+    );
+}
+
+/// Empty `cpu` / `os` / `libc` lists carry no exclusion either —
+/// they cannot reject any host value. Should not block the fast
+/// path.
+#[test]
+fn empty_platform_lists_do_not_count_as_constraint() {
+    let key = snapshot_key("empty-platforms@1.0.0");
+    let mut packages = HashMap::new();
+    packages.insert(key, synthetic_metadata(None, Some(&[]), Some(&[]), Some(&[])));
+    assert!(
+        !any_installability_constraint(&packages),
+        "empty platform lists should not block the fast path",
+    );
+}
+
+/// A meaningful `engines.node` triggers the slow path. Sanity check
+/// the predicate doesn't over-aggressively fast-path.
+#[test]
+fn meaningful_engines_node_triggers_slow_path() {
+    let key = snapshot_key("for-legacy-node@1.0.0");
+    let mut packages = HashMap::new();
+    packages.insert(key, synthetic_metadata(Some(&[("node", "0.10")]), None, None, None));
+    assert!(any_installability_constraint(&packages), "engines.node must trigger the slow path");
+}
+
+/// A meaningful non-`any` platform value triggers the slow path.
+#[test]
+fn meaningful_platform_value_triggers_slow_path() {
+    let key = snapshot_key("not-compatible-with-any-os@1.0.0");
+    let mut packages = HashMap::new();
+    packages.insert(key, synthetic_metadata(None, None, Some(&["this-os-does-not-exist"]), None));
+    assert!(any_installability_constraint(&packages), "non-any os must trigger the slow path");
 }
 
 /// Peer-resolved variants of the same metadata row (e.g.
