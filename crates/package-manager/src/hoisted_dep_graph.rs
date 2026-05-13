@@ -253,22 +253,21 @@ pub enum HoistedDepGraphError {
     /// A required (non-optional) package failed the
     /// installability check. Mirrors upstream's `throw` path
     /// where `engineStrict` + an engine mismatch surfaces as
-    /// `ERR_PNPM_UNSUPPORTED_ENGINE`; pacquet preserves the inner
-    /// `InstallabilityError` so callers see the same diagnostic
-    /// code (`UnsupportedEngineError` / `UnsupportedPlatformError` /
-    /// `InvalidNodeVersionError`) as upstream.
+    /// `ERR_PNPM_UNSUPPORTED_ENGINE`; the inner
+    /// `InstallabilityError` is propagated transparently so
+    /// callers see the same diagnostic code
+    /// (`ERR_PNPM_UNSUPPORTED_ENGINE` /
+    /// `ERR_PNPM_UNSUPPORTED_PLATFORM` /
+    /// `ERR_PNPM_INVALID_NODE_VERSION`) as upstream, and the
+    /// inner error already carries the package id for context.
     ///
     /// Optional packages on incompatible platforms do *not* take
     /// this path — they are added to `result.skipped` and
     /// silently skipped, matching upstream's
     /// `pnpm:skipped-optional-dependency` semantics.
-    #[display("Package {dep_path:?} cannot be installed on this host")]
-    #[diagnostic(code(ERR_PACQUET_HOISTED_GRAPH_UNINSTALLABLE))]
-    Installability {
-        dep_path: String,
-        #[error(source)]
-        source: Box<InstallabilityError>,
-    },
+    #[display("{_0}")]
+    #[diagnostic(transparent)]
+    Installability(#[error(source)] Box<InstallabilityError>),
 }
 
 /// Build a directory-keyed [`LockfileToDepGraphResult`] from a
@@ -482,10 +481,7 @@ fn walk_deps(
                     continue;
                 }
                 Err(source) => {
-                    return Err(HoistedDepGraphError::Installability {
-                        dep_path: reference,
-                        source,
-                    });
+                    return Err(HoistedDepGraphError::Installability(source));
                 }
             }
         }
@@ -745,7 +741,7 @@ mod tests {
 
     // --- Walker tests ----------------------------------------------------
 
-    use super::{HoistedDepGraphError, lockfile_to_hoisted_dep_graph};
+    use super::{HoistedDepGraphError, InstallabilityError, lockfile_to_hoisted_dep_graph};
     use pacquet_lockfile::{
         ComVer, Lockfile, LockfileSettings, LockfileVersion, PackageKey, PackageMetadata, PkgName,
         PkgNameVerPeer, PkgVerPeer, ProjectSnapshot, ResolvedDependencyMap, ResolvedDependencySpec,
@@ -1166,9 +1162,12 @@ mod tests {
         let err = lockfile_to_hoisted_dep_graph(&lockfile, &opts)
             .expect_err("engine_strict + engine mismatch should error");
         match err {
-            HoistedDepGraphError::Installability { dep_path, .. } => {
-                assert_eq!(dep_path, "a@1.0.0");
-            }
+            HoistedDepGraphError::Installability(inner) => match *inner {
+                InstallabilityError::Engine(engine_err) => {
+                    assert_eq!(engine_err.package_id, "a@1.0.0");
+                }
+                other => panic!("expected Engine variant, got {other:?}"),
+            },
             other => panic!("expected Installability error, got {other:?}"),
         }
     }
