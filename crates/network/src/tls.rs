@@ -48,8 +48,10 @@ pub struct TlsConfig {
     pub cert: Option<String>,
 
     /// PEM-encoded client private key. Paired with [`Self::cert`] when
-    /// both are set — reqwest's `Identity::from_pkcs8_pem` consumes
-    /// them as two separate buffers. Set from `.npmrc`'s `key` key.
+    /// both are set — concatenated and handed to reqwest's
+    /// `Identity::from_pem` (rustls single-buffer form). Accepts
+    /// PKCS#1, PKCS#8, and EC PEM keys (the same surface Node's
+    /// `tls` exposes to pnpm). Set from `.npmrc`'s `key` key.
     pub key: Option<String>,
 
     /// `strict-ssl` toggle. `None` = unset (defaults to `true` at
@@ -80,9 +82,9 @@ pub struct TlsConfig {
 /// `tls.connect` errors at request time
 /// ([`dispatcher.ts:184-200`](https://github.com/pnpm/pnpm/blob/94240bc046/network/fetch/src/dispatcher.ts#L184-L200)).
 /// Pacquet validates eagerly because reqwest's `Certificate::from_pem`
-/// / `Identity::from_pkcs8_pem` return errors up-front and pushing
-/// that to per-request time would silently degrade every install
-/// behind a broken `ca`. Diagnostic messages are plain prose; no code
+/// / `Identity::from_pem` return errors up-front and pushing that to
+/// per-request time would silently degrade every install behind a
+/// broken `ca`. Diagnostic messages are plain prose; no code
 /// attribute is emitted so reviewers can see at a glance that this is
 /// a pacquet-only diagnostic, not a pnpm error code.
 #[derive(Debug, derive_more::Display, derive_more::Error, miette::Diagnostic)]
@@ -93,12 +95,11 @@ pub enum TlsError {
     #[display("Invalid CA certificate (entry {index}): {reason}")]
     InvalidCa { index: usize, reason: String },
 
-    /// `Identity::from_pkcs8_pem` rejected the `cert` + `key`
-    /// PEM pair. The native-tls backend only accepts PKCS#8-encoded
-    /// keys (`-----BEGIN PRIVATE KEY-----`); legacy PKCS#1
-    /// (`-----BEGIN RSA PRIVATE KEY-----`) keys land here. See the
-    /// comment on `apply_tls` in `crates/network/src/lib.rs` for the
-    /// `openssl pkcs8` conversion path.
+    /// `Identity::from_pem` rejected the concatenated `cert` +
+    /// `key` PEM pair. Rustls accepts PKCS#1, PKCS#8, and EC keys —
+    /// landing here means the bytes aren't a valid PEM in any of
+    /// those formats (corrupt, base64-mangled, missing the
+    /// `-----BEGIN…-----` armor, etc.).
     #[display("Invalid client TLS cert/key: {reason}")]
     InvalidClientIdentity { reason: String },
 }
@@ -152,8 +153,10 @@ pub struct RegistryTls {
     pub ca: Option<String>,
     /// Per-registry client certificate PEM.
     pub cert: Option<String>,
-    /// Per-registry client private key PEM (PKCS#8 only — see the
-    /// note on `apply_tls` in `crates/network/src/lib.rs`).
+    /// Per-registry client private key PEM. Accepts PKCS#1, PKCS#8,
+    /// and EC keys (handed to reqwest's `Identity::from_pem` on the
+    /// rustls backend — see the comment on `apply_tls` in
+    /// `crates/network/src/lib.rs`).
     pub key: Option<String>,
 }
 

@@ -513,3 +513,39 @@ async fn acquire_for_url_falls_back_to_default_when_no_overrides() {
     let b_ptr: *const reqwest::Client = &*b;
     assert_eq!(a_ptr, b_ptr, "without overrides every URL should hit the default client");
 }
+
+// --- PKCS#1 / rustls regression tests ---
+
+/// PKCS#1 client cert + key fixture. Generated with:
+///
+/// ```text
+/// openssl genrsa -traditional -out crates/network/tests/fixtures/test-client-pkcs1.key 2048
+/// openssl req -new -x509 -key crates/network/tests/fixtures/test-client-pkcs1.key \
+///     -days 36500 -subj '/CN=pacquet-pkcs1-test' \
+///     -out crates/network/tests/fixtures/test-client-pkcs1.crt
+/// ```
+///
+/// The `-traditional` flag pins openssl to PKCS#1 (`-----BEGIN RSA
+/// PRIVATE KEY-----`) instead of the default PKCS#8 — which is the
+/// whole point of the regression test below. The cert and key are
+/// self-signed and committed so the test stays deterministic.
+const TEST_CLIENT_PKCS1_CERT: &str = include_str!("../tests/fixtures/test-client-pkcs1.crt");
+const TEST_CLIENT_PKCS1_KEY: &str = include_str!("../tests/fixtures/test-client-pkcs1.key");
+
+#[test]
+fn for_installs_with_pkcs1_client_key_builds() {
+    // The whole reason we switched reqwest's TLS backend from
+    // native-tls to rustls: native-tls's `Identity::from_pkcs8_pem`
+    // rejected `-----BEGIN RSA PRIVATE KEY-----`; rustls's
+    // `Identity::from_pem` accepts PKCS#1, PKCS#8, and EC keys.
+    // This test pins the new contract — if a future change reverts
+    // the backend or otherwise narrows the accepted key formats,
+    // this build will fail with a clear `InvalidClientIdentity`.
+    let tls = TlsConfig {
+        cert: Some(TEST_CLIENT_PKCS1_CERT.to_string()),
+        key: Some(TEST_CLIENT_PKCS1_KEY.to_string()),
+        ..TlsConfig::default()
+    };
+    ThrottledClient::for_installs(&ProxyConfig::default(), &tls, &PerRegistryTls::default())
+        .expect("PKCS#1 client key + cert builds with rustls backend");
+}
