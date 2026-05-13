@@ -301,9 +301,8 @@ fn metadata_has_meaningful_constraint(m: &PackageMetadata) -> bool {
 /// `check_list` short-circuits as "accept everything".
 fn platform_axis_meaningful(axis: Option<&[String]>) -> bool {
     match axis {
-        None => false,
-        Some(list) if list.is_empty() => false,
-        Some(list) if list.len() == 1 && list[0] == "any" => false,
+        None | Some([]) => false,
+        Some([only]) if only == "any" => false,
         Some(_) => true,
     }
 }

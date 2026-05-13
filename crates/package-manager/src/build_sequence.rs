@@ -47,12 +47,10 @@ pub fn build_sequence(
     let mut nodes_to_build_set: HashSet<PackageKey> = HashSet::new();
     let mut nodes_to_build: Vec<PackageKey> = Vec::new();
     let mut walked: HashSet<PackageKey> = HashSet::new();
+    let ctx = GetSubgraphCtx { children: &children, requires_build, patches, skipped };
     get_subgraph_to_build(
         &root_dep_paths,
-        &children,
-        requires_build,
-        patches,
-        skipped,
+        &ctx,
         &mut nodes_to_build_set,
         &mut nodes_to_build,
         &mut walked,
@@ -166,6 +164,17 @@ fn collect_root_dep_paths(
     roots
 }
 
+/// Per-walk invariant inputs to [`get_subgraph_to_build`]. Bundled
+/// into a struct so the recursive call doesn't have to thread eight
+/// arguments through every level — the three mutable accumulators
+/// stay as `&mut` params (one each because they're typed differently).
+struct GetSubgraphCtx<'a> {
+    children: &'a HashMap<PackageKey, Vec<PackageKey>>,
+    requires_build: &'a HashMap<PackageKey, bool>,
+    patches: Option<&'a HashMap<PackageKey, ExtendedPatchInfo>>,
+    skipped: &'a SkippedSnapshots,
+}
+
 /// Walk the dep graph from `entry_nodes`, filling `nodes_to_build` with
 /// packages whose subtree (including themselves) contains a build candidate.
 ///
@@ -184,17 +193,14 @@ fn collect_root_dep_paths(
 /// Returns whether *any* of the entry nodes (or their subtrees) needs to build.
 fn get_subgraph_to_build(
     entry_nodes: &[PackageKey],
-    children: &HashMap<PackageKey, Vec<PackageKey>>,
-    requires_build: &HashMap<PackageKey, bool>,
-    patches: Option<&HashMap<PackageKey, ExtendedPatchInfo>>,
-    skipped: &SkippedSnapshots,
+    ctx: &GetSubgraphCtx<'_>,
     nodes_to_build_set: &mut HashSet<PackageKey>,
     nodes_to_build: &mut Vec<PackageKey>,
     walked: &mut HashSet<PackageKey>,
 ) -> bool {
     let mut current_should_be_built = false;
     for dep_path in entry_nodes {
-        if !children.contains_key(dep_path) {
+        if !ctx.children.contains_key(dep_path) {
             continue; // already in node_modules / not part of this graph
         }
         if walked.contains(dep_path) {
@@ -202,17 +208,9 @@ fn get_subgraph_to_build(
         }
         walked.insert(dep_path.clone());
 
-        let child_paths = children.get(dep_path).cloned().unwrap_or_default();
-        let child_should_be_built = get_subgraph_to_build(
-            &child_paths,
-            children,
-            requires_build,
-            patches,
-            skipped,
-            nodes_to_build_set,
-            nodes_to_build,
-            walked,
-        );
+        let child_paths = ctx.children.get(dep_path).cloned().unwrap_or_default();
+        let child_should_be_built =
+            get_subgraph_to_build(&child_paths, ctx, nodes_to_build_set, nodes_to_build, walked);
 
         // A skipped snapshot never had its virtual-store slot
         // created, so neither requires-build (no extracted manifest
@@ -222,12 +220,12 @@ fn get_subgraph_to_build(
         // optional doesn't enter the queue and rely on the
         // `pkg_dir.exists()` defensive return in
         // `build_one_snapshot`.
-        if skipped.contains(dep_path) {
+        if ctx.skipped.contains(dep_path) {
             continue;
         }
 
-        let needs_build = requires_build.get(dep_path).copied().unwrap_or(false);
-        let has_patch = patches.is_some_and(|p| p.contains_key(&dep_path.without_peer()));
+        let needs_build = ctx.requires_build.get(dep_path).copied().unwrap_or(false);
+        let has_patch = ctx.patches.is_some_and(|p| p.contains_key(&dep_path.without_peer()));
 
         if child_should_be_built || needs_build || has_patch {
             if nodes_to_build_set.insert(dep_path.clone()) {
