@@ -2,13 +2,15 @@ mod auth;
 mod proxy;
 #[cfg(test)]
 mod tests;
+mod tls;
 
 pub use auth::{AuthHeaders, base64_encode, nerf_dart};
 pub use proxy::{NoProxySetting, ProxyConfig, ProxyError};
+pub use tls::{TlsConfig, TlsError};
 
 use proxy::{NoProxyMatcher, parse_proxy_url, strip_userinfo};
 use reqwest::{
-    Client, Proxy,
+    Certificate, Client, Identity, Proxy,
     header::{HeaderMap, HeaderValue, USER_AGENT},
 };
 use std::{num::NonZeroUsize, ops::Deref, sync::Arc, time::Duration};
@@ -140,27 +142,43 @@ impl ThrottledClient {
     /// directly, bypassing `mDNSResponder` and the EAI_NONAME flake
     /// entirely.
     pub fn new_for_installs() -> Self {
-        Self::for_installs(&ProxyConfig::default())
-            .expect("default ProxyConfig carries no URLs and cannot fail parsing")
+        Self::for_installs(&ProxyConfig::default(), &TlsConfig::default())
+            .expect("default ProxyConfig + TlsConfig carry no URLs/PEMs and cannot fail")
     }
 
-    /// Construct the install client with proxy configuration applied.
+    /// Construct the install client with proxy + TLS configuration
+    /// applied.
     ///
     /// Ports pnpm v11's
     /// [`getDispatcher`](https://github.com/pnpm/pnpm/blob/94240bc046/network/fetch/src/dispatcher.ts#L23-L31)
-    /// onto reqwest: HTTPS targets route through `https_proxy`, HTTP
-    /// targets through `http_proxy`, and the [`NoProxySetting`] in
-    /// [`ProxyConfig::no_proxy`] short-circuits both via a per-URL
-    /// custom-proxy closure. Basic-auth user/password halves embedded
-    /// in the proxy URL are percent-decoded before being forwarded as
-    /// the `Proxy-Authorization` header — matching upstream's
-    /// [decode at dispatcher.ts:180-182](https://github.com/pnpm/pnpm/blob/94240bc046/network/fetch/src/dispatcher.ts#L180-L182).
+    /// onto reqwest:
+    /// * **Proxy routing.** HTTPS targets route through `https_proxy`,
+    ///   HTTP targets through `http_proxy`, and [`ProxyConfig::no_proxy`]
+    ///   short-circuits both via a per-URL custom-proxy closure.
+    ///   Basic-auth user/password halves embedded in the proxy URL
+    ///   are percent-decoded before being forwarded as the
+    ///   `Proxy-Authorization` header — matching upstream's
+    ///   [decode at dispatcher.ts:180-182](https://github.com/pnpm/pnpm/blob/94240bc046/network/fetch/src/dispatcher.ts#L180-L182).
+    /// * **TLS.** Each PEM in [`TlsConfig::ca`] is added as a trusted
+    ///   root via `reqwest::Certificate::from_pem`. When both
+    ///   [`TlsConfig::cert`] and [`TlsConfig::key`] are set, they are
+    ///   passed to `Identity::from_pkcs8_pem` and installed as a
+    ///   client [`Identity`]. `strict_ssl` defaults to `true` and
+    ///   disables both chain-of-trust and hostname verification when
+    ///   `false` — same as Node's `rejectUnauthorized=false`
+    ///   short-circuit that pnpm forwards through undici
+    ///   ([`dispatcher.ts:191,197,241,295`](https://github.com/pnpm/pnpm/blob/94240bc046/network/fetch/src/dispatcher.ts#L191)).
+    /// * **`local_address`.** Pinned via
+    ///   `reqwest::ClientBuilder::local_address`.
     ///
     /// Returns [`ProxyError::InvalidProxy`] when either configured
     /// proxy URL fails to parse even after the auto-`http://` prefix
-    /// retry, matching upstream's build-time `ERR_PNPM_INVALID_PROXY`
-    /// from [dispatcher.ts:106-121](https://github.com/pnpm/pnpm/blob/94240bc046/network/fetch/src/dispatcher.ts#L106-L121).
-    pub fn for_installs(proxy: &ProxyConfig) -> Result<Self, ProxyError> {
+    /// retry (matching upstream's `ERR_PNPM_INVALID_PROXY`), or
+    /// [`TlsError`] when any CA or client identity PEM is malformed.
+    /// pnpm does not define `ERR_PNPM_INVALID_CA` / similar codes —
+    /// see [`TlsError`] for why pacquet still surfaces the failure
+    /// eagerly rather than at request time.
+    pub fn for_installs(proxy: &ProxyConfig, tls: &TlsConfig) -> Result<Self, ForInstallsError> {
         let https = proxy.https_proxy.as_deref().map(parse_proxy_url).transpose()?;
         let http = proxy.http_proxy.as_deref().map(parse_proxy_url).transpose()?;
         let no_proxy = Arc::new(NoProxyMatcher::from(proxy.no_proxy.as_ref()));
@@ -172,6 +190,7 @@ impl ThrottledClient {
         if let Some(url) = http {
             builder = builder.proxy(build_scheme_proxy(url, "http", Arc::clone(&no_proxy)));
         }
+        builder = apply_tls(builder, tls)?;
         let client = builder.build().expect("build reqwest client with default timeouts and proxy");
         Ok(ThrottledClient::from_client(client))
     }
@@ -202,6 +221,81 @@ fn default_client_builder() -> reqwest::ClientBuilder {
         .timeout(Duration::from_secs(300))
         .pool_idle_timeout(Duration::from_secs(4))
         .hickory_dns(true)
+}
+
+/// Apply [`TlsConfig`] onto a [`reqwest::ClientBuilder`]: register each
+/// CA, install the client identity, set `danger_accept_invalid_certs`
+/// when `strict_ssl: false`, and pin the outbound interface. Returns
+/// the modified builder unchanged when every field is `None` / empty —
+/// matching pnpm's "TLS-unset is default-TLS" semantics.
+///
+/// `strict_ssl` defaults to `true` here (`unwrap_or(true)`) rather than
+/// in the config layer because that's where pnpm applies the same
+/// default — see the "Defaults" section of [`TlsConfig`]. Failures from
+/// PEM parsing surface as [`TlsError::InvalidCa`] /
+/// [`TlsError::InvalidClientIdentity`] and bubble through
+/// [`ForInstallsError`].
+fn apply_tls(
+    mut builder: reqwest::ClientBuilder,
+    tls: &TlsConfig,
+) -> Result<reqwest::ClientBuilder, TlsError> {
+    for (index, pem) in tls.ca.iter().enumerate() {
+        let cert = Certificate::from_pem(pem.as_bytes())
+            .map_err(|source| TlsError::InvalidCa { index, reason: source.to_string() })?;
+        builder = builder.add_root_certificate(cert);
+    }
+    if let (Some(cert), Some(key)) = (tls.cert.as_deref(), tls.key.as_deref()) {
+        // reqwest's `Identity::from_pkcs8_pem` (gated on the
+        // `native-tls` feature pacquet builds with) takes cert and
+        // key as two separate PEM buffers — same shape pnpm hands to
+        // undici. The key must be in PKCS#8 PEM format
+        // (`-----BEGIN PRIVATE KEY-----`). Legacy PKCS#1 keys
+        // (`-----BEGIN RSA PRIVATE KEY-----`) and the
+        // `from_pkcs12_der` path are not supported by this constructor
+        // and would surface as `InvalidClientIdentity` here. pnpm /
+        // Node `tls` accept both formats; the native-tls backend
+        // doesn't. If a user reports a PKCS#1 key being rejected,
+        // either convert with `openssl pkcs8 -topk8 -nocrypt` or
+        // upgrade pacquet's reqwest TLS backend.
+        let identity = Identity::from_pkcs8_pem(cert.as_bytes(), key.as_bytes())
+            .map_err(|source| TlsError::InvalidClientIdentity { reason: source.to_string() })?;
+        builder = builder.identity(identity);
+    }
+    // pnpm's `strict-ssl` default is `true`, applied at every
+    // dispatcher emit site rather than at parse time.
+    if !tls.strict_ssl.unwrap_or(true) {
+        builder = builder.danger_accept_invalid_certs(true);
+    }
+    if let Some(addr) = tls.local_address {
+        builder = builder.local_address(addr);
+    }
+    Ok(builder)
+}
+
+/// Error surface of [`ThrottledClient::for_installs`]. Wraps either a
+/// proxy URL failure or a TLS material failure — the caller gets one
+/// error type to handle regardless of which side of `for_installs`
+/// rejected the input.
+#[derive(Debug, derive_more::Display, derive_more::Error, miette::Diagnostic)]
+#[non_exhaustive]
+pub enum ForInstallsError {
+    #[diagnostic(transparent)]
+    Proxy(#[error(source)] ProxyError),
+
+    #[diagnostic(transparent)]
+    Tls(#[error(source)] TlsError),
+}
+
+impl From<ProxyError> for ForInstallsError {
+    fn from(value: ProxyError) -> Self {
+        ForInstallsError::Proxy(value)
+    }
+}
+
+impl From<TlsError> for ForInstallsError {
+    fn from(value: TlsError) -> Self {
+        ForInstallsError::Tls(value)
+    }
 }
 
 /// Build a [`Proxy`] that routes only requests whose target scheme matches

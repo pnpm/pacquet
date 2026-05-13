@@ -15,7 +15,8 @@
 //! absolute-form URI and a decoded `Proxy-Authorization` header.
 
 use super::{
-    NoProxyMatcher, NoProxySetting, ProxyConfig, ProxyError, ThrottledClient, parse_proxy_url,
+    ForInstallsError, NoProxyMatcher, NoProxySetting, ProxyConfig, ProxyError, ThrottledClient,
+    TlsConfig, parse_proxy_url,
 };
 use crate::proxy::{percent_decode_str, strip_userinfo};
 use reqwest::Url;
@@ -156,7 +157,8 @@ fn strip_userinfo_returns_none_when_absent() {
 fn for_installs_with_empty_proxy_config_builds() {
     // The legacy `new_for_installs` is now a wrapper around this — assert
     // the default `ProxyConfig` round-trips without error.
-    ThrottledClient::for_installs(&ProxyConfig::default()).expect("empty proxy is valid");
+    ThrottledClient::for_installs(&ProxyConfig::default(), &TlsConfig::default())
+        .expect("empty proxy is valid");
 }
 
 #[test]
@@ -166,17 +168,17 @@ fn for_installs_with_valid_proxy_url_builds() {
         http_proxy: Some("http://proxy.example:8080".into()),
         no_proxy: None,
     };
-    ThrottledClient::for_installs(&proxy).expect("valid proxy URLs build");
+    ThrottledClient::for_installs(&proxy, &TlsConfig::default()).expect("valid proxy URLs build");
 }
 
 #[test]
 fn for_installs_with_invalid_proxy_url_errors() {
     let proxy =
         ProxyConfig { https_proxy: Some("://nonsense".into()), http_proxy: None, no_proxy: None };
-    let err = ThrottledClient::for_installs(&proxy).expect_err("must error");
+    let err = ThrottledClient::for_installs(&proxy, &TlsConfig::default()).expect_err("must error");
     eprintln!("err={err:?}");
-    let is_invalid = matches!(err, ProxyError::InvalidProxy { .. });
-    assert!(is_invalid, "err={err:?}: expected ProxyError::InvalidProxy");
+    let is_invalid = matches!(err, ForInstallsError::Proxy(ProxyError::InvalidProxy { .. }));
+    assert!(is_invalid, "err={err:?}: expected ForInstallsError::Proxy(InvalidProxy)");
 }
 
 #[test]
@@ -189,7 +191,7 @@ fn for_installs_with_socks_proxy_url_builds() {
         http_proxy: None,
         no_proxy: None,
     };
-    ThrottledClient::for_installs(&proxy).expect("socks proxy URL builds");
+    ThrottledClient::for_installs(&proxy, &TlsConfig::default()).expect("socks proxy URL builds");
 }
 
 #[test]
@@ -199,7 +201,8 @@ fn for_installs_no_proxy_bypass_does_not_block_build() {
         http_proxy: None,
         no_proxy: Some(NoProxySetting::Bypass),
     };
-    ThrottledClient::for_installs(&proxy).expect("bypass + proxy URL builds");
+    ThrottledClient::for_installs(&proxy, &TlsConfig::default())
+        .expect("bypass + proxy URL builds");
 }
 
 /// End-to-end check that `for_installs` actually routes HTTP traffic
@@ -231,7 +234,7 @@ async fn mockito_integration_http_proxy_forwards_request_with_basic_auth() {
     // the value the mock matches above.
     let with_auth = proxy_url.replacen("//", "//user%40name:p%40ss@", 1);
     let cfg = ProxyConfig { https_proxy: None, http_proxy: Some(with_auth), no_proxy: None };
-    let client = ThrottledClient::for_installs(&cfg).expect("valid proxy");
+    let client = ThrottledClient::for_installs(&cfg, &TlsConfig::default()).expect("valid proxy");
     let guard = client.acquire().await;
     let resp = guard.get("http://target.example/anything").send().await.expect("proxied request");
     assert_eq!(resp.status(), 200);
@@ -267,7 +270,7 @@ async fn mockito_integration_no_proxy_bypasses_proxy() {
         http_proxy: Some(proxy_server.url()),
         no_proxy: Some(NoProxySetting::Bypass),
     };
-    let client = ThrottledClient::for_installs(&cfg).expect("valid proxy");
+    let client = ThrottledClient::for_installs(&cfg, &TlsConfig::default()).expect("valid proxy");
     let guard = client.acquire().await;
     let url = format!("{}{}", target_server.url(), target_path);
     let resp = guard.get(&url).send().await.expect("direct request");
@@ -275,4 +278,119 @@ async fn mockito_integration_no_proxy_bypasses_proxy() {
     assert_eq!(resp.text().await.expect("body"), "direct");
     proxy_mock.assert_async().await;
     target_mock.assert_async().await;
+}
+
+// --- TLS / local-address tests ---
+
+/// Minimal self-signed certificate used to assert `Certificate::from_pem`
+/// accepts well-formed PEM. Lives at
+/// `crates/network/tests/fixtures/test-ca.pem` rather than inline so
+/// the base64-encoded body stays out of the typos linter's word
+/// dictionary. Regenerate with:
+///
+/// ```text
+/// openssl req -x509 -newkey rsa:2048 -nodes -days 36500 \
+///     -subj '/CN=pacquet-test' -keyout /dev/null \
+///     -out crates/network/tests/fixtures/test-ca.pem
+/// ```
+///
+/// The private key is discarded — only the cert is committed so the
+/// workspace doesn't carry real key material. Each regeneration
+/// produces a different cert (fresh keypair, fresh serial); that's
+/// fine because nothing pins a specific issuer / fingerprint, the
+/// fixture only needs to be a valid X.509 PEM that
+/// `Certificate::from_pem` accepts.
+const TEST_CA_PEM: &str = include_str!("../tests/fixtures/test-ca.pem");
+
+#[test]
+fn for_installs_with_valid_ca_pem_builds() {
+    let tls = TlsConfig { ca: vec![TEST_CA_PEM.to_string()], ..TlsConfig::default() };
+    ThrottledClient::for_installs(&ProxyConfig::default(), &tls).expect("valid CA PEM builds");
+}
+
+#[test]
+fn for_installs_with_multiple_ca_pems_builds() {
+    // Same cert twice — exercises the `for` loop over `tls.ca`.
+    let tls = TlsConfig {
+        ca: vec![TEST_CA_PEM.to_string(), TEST_CA_PEM.to_string()],
+        ..TlsConfig::default()
+    };
+    ThrottledClient::for_installs(&ProxyConfig::default(), &tls).expect("multiple CA PEMs build");
+}
+
+#[test]
+fn for_installs_with_invalid_ca_pem_errors_with_index() {
+    // First entry valid, second malformed — the index in the error
+    // must point at the broken one so users with a multi-cert
+    // `cafile` can find which entry failed.
+    let tls = TlsConfig {
+        ca: vec![TEST_CA_PEM.to_string(), "not a pem certificate".to_string()],
+        ..TlsConfig::default()
+    };
+    let err = ThrottledClient::for_installs(&ProxyConfig::default(), &tls)
+        .expect_err("invalid CA must error");
+    eprintln!("err={err:?}");
+    match err {
+        ForInstallsError::Tls(super::TlsError::InvalidCa { index, .. }) => assert_eq!(index, 1),
+        other => panic!("expected Tls(InvalidCa {{ index: 1 }}), got {other:?}"),
+    }
+}
+
+#[test]
+fn for_installs_strict_ssl_false_relaxes_verification() {
+    // `danger_accept_invalid_certs(true)` is a builder-level toggle —
+    // we can't observe it directly without a self-signed-cert HTTPS
+    // server, and mockito speaks plain HTTP only. Asserting the
+    // client builds is the best we can do here; a live-traffic
+    // integration test would need a TLS-capable mock server (e.g.
+    // `wiremock` with rustls) and is left as a future enhancement.
+    let tls = TlsConfig { strict_ssl: Some(false), ..TlsConfig::default() };
+    ThrottledClient::for_installs(&ProxyConfig::default(), &tls).expect("strict-ssl=false builds");
+}
+
+#[test]
+fn for_installs_strict_ssl_default_is_true() {
+    // No explicit `strict_ssl` — `apply_tls` should leave the
+    // builder's default cert verification untouched (which is the
+    // same as strict_ssl=true). Asserting the client builds is the
+    // best we can do without a server; the absence of
+    // `danger_accept_invalid_certs(true)` is the contract.
+    let tls = TlsConfig { strict_ssl: None, ..TlsConfig::default() };
+    ThrottledClient::for_installs(&ProxyConfig::default(), &tls).expect("strict-ssl unset builds");
+}
+
+#[test]
+fn for_installs_local_address_pinned() {
+    use std::net::Ipv4Addr;
+    let tls = TlsConfig { local_address: Some(Ipv4Addr::LOCALHOST.into()), ..TlsConfig::default() };
+    ThrottledClient::for_installs(&ProxyConfig::default(), &tls)
+        .expect("local_address pinning builds");
+}
+
+#[test]
+fn for_installs_with_malformed_client_identity_errors() {
+    // PKCS#8 PEM parser rejects garbage — surfaces as
+    // `InvalidClientIdentity`.
+    let tls = TlsConfig {
+        cert: Some("not a real cert".to_string()),
+        key: Some("not a real key".to_string()),
+        ..TlsConfig::default()
+    };
+    let err = ThrottledClient::for_installs(&ProxyConfig::default(), &tls)
+        .expect_err("malformed cert/key must error");
+    eprintln!("err={err:?}");
+    let is_invalid =
+        matches!(err, ForInstallsError::Tls(super::TlsError::InvalidClientIdentity { .. }));
+    assert!(is_invalid, "err={err:?}: expected Tls(InvalidClientIdentity)");
+}
+
+#[test]
+fn for_installs_with_cert_but_no_key_skips_identity() {
+    // Both must be set for the identity wiring to fire — a `cert`
+    // without `key` is silently ignored (pnpm's undici plumbing has
+    // the same "both or neither" expectation). The client must still
+    // build cleanly.
+    let tls = TlsConfig { cert: Some(TEST_CA_PEM.to_string()), key: None, ..TlsConfig::default() };
+    ThrottledClient::for_installs(&ProxyConfig::default(), &tls)
+        .expect("cert without key builds (identity skipped)");
 }

@@ -471,3 +471,204 @@ fn cascade_env_var_lowercase_lookup() {
     auth.apply_to::<LowercaseEnv>(&mut config);
     assert_eq!(config.proxy.https_proxy.as_deref(), Some("http://lower.example:8080"));
 }
+
+// --- TLS + local-address tests ---
+
+/// Same self-signed cert as `crates/network/src/tests.rs`; loaded from
+/// the shared fixture under `crates/network/tests/fixtures/test-ca.pem`
+/// so the base64 body stays out of the typos linter's dictionary.
+const TEST_CA_PEM: &str = include_str!("../../../network/tests/fixtures/test-ca.pem");
+
+#[test]
+fn parses_inline_ca_from_ini() {
+    let ini = format!("ca={}\n", TEST_CA_PEM.replace('\n', " "));
+    // INI doesn't allow real newlines in values, but for round-trip
+    // through this test we still parse `value` as a single line. The
+    // important assertion is that the value lands on `auth.ca`.
+    let auth = NpmrcAuth::from_ini::<NoEnv>(&ini);
+    assert_eq!(auth.ca.len(), 1, "auth.ca={:?}", auth.ca);
+}
+
+#[test]
+fn parses_cafile_path_from_ini() {
+    let auth = NpmrcAuth::from_ini::<NoEnv>("cafile=/etc/pacquet/ca.pem\n");
+    assert_eq!(auth.cafile.as_deref(), Some("/etc/pacquet/ca.pem"));
+}
+
+#[test]
+fn parses_cert_and_key_from_ini() {
+    let ini = "cert=cert-pem\nkey=key-pem\n";
+    let auth = NpmrcAuth::from_ini::<NoEnv>(ini);
+    assert_eq!(auth.cert.as_deref(), Some("cert-pem"));
+    assert_eq!(auth.key.as_deref(), Some("key-pem"));
+}
+
+#[test]
+fn parses_strict_ssl_true_and_false() {
+    assert_eq!(NpmrcAuth::from_ini::<NoEnv>("strict-ssl=true\n").strict_ssl, Some(true));
+    assert_eq!(NpmrcAuth::from_ini::<NoEnv>("strict-ssl=false\n").strict_ssl, Some(false));
+}
+
+#[test]
+fn strict_ssl_invalid_value_silently_drops() {
+    // pnpm/nopt drops non-boolean values. Pacquet does the same so
+    // the per-emit-site `?? true` default kicks in.
+    let auth = NpmrcAuth::from_ini::<NoEnv>("strict-ssl=maybe\n");
+    assert_eq!(auth.strict_ssl, None);
+}
+
+#[test]
+fn strict_ssl_invalid_value_resets_prior_value() {
+    // A later invalid `strict-ssl=` line resets the slot to `None`
+    // so the build-site `unwrap_or(true)` default kicks in. If the
+    // parser silently kept the earlier `false`, a typo on a later
+    // line would leave TLS verification disabled — silently — until
+    // the user noticed.
+    let auth = NpmrcAuth::from_ini::<NoEnv>("strict-ssl=false\nstrict-ssl=oops\n");
+    assert_eq!(auth.strict_ssl, None);
+}
+
+#[test]
+fn parses_local_address_from_ini() {
+    let auth = NpmrcAuth::from_ini::<NoEnv>("local-address=10.0.0.5\n");
+    assert_eq!(auth.local_address.as_deref(), Some("10.0.0.5"));
+}
+
+#[test]
+fn applies_inline_ca_to_config() {
+    let auth = NpmrcAuth { ca: vec![TEST_CA_PEM.to_string()], ..NpmrcAuth::default() };
+    let mut config = Config::new();
+    auth.apply_to::<NoEnv>(&mut config);
+    assert_eq!(config.tls.ca.len(), 1);
+    let first = &config.tls.ca[0];
+    assert!(first.contains("BEGIN CERTIFICATE"), "inline CA missing header: {first:?}");
+}
+
+#[test]
+fn applies_strict_ssl_and_cert_key_to_config() {
+    let auth = NpmrcAuth {
+        strict_ssl: Some(false),
+        cert: Some("cert-pem".to_string()),
+        key: Some("key-pem".to_string()),
+        ..NpmrcAuth::default()
+    };
+    let mut config = Config::new();
+    auth.apply_to::<NoEnv>(&mut config);
+    assert_eq!(config.tls.strict_ssl, Some(false));
+    assert_eq!(config.tls.cert.as_deref(), Some("cert-pem"));
+    assert_eq!(config.tls.key.as_deref(), Some("key-pem"));
+}
+
+#[test]
+fn applies_local_address_parsed_as_ipaddr() {
+    use std::net::Ipv4Addr;
+    let auth =
+        NpmrcAuth { local_address: Some("192.168.1.42".to_string()), ..NpmrcAuth::default() };
+    let mut config = Config::new();
+    auth.apply_to::<NoEnv>(&mut config);
+    assert_eq!(config.tls.local_address, Some(Ipv4Addr::new(192, 168, 1, 42).into()));
+}
+
+#[test]
+fn invalid_local_address_silently_dropped() {
+    // pnpm hands the value verbatim to undici and lets Node error at
+    // connect time; pacquet validates early but errors silently per
+    // the same parity policy as a missing `cafile`.
+    let auth = NpmrcAuth { local_address: Some("not-an-ip".to_string()), ..NpmrcAuth::default() };
+    let mut config = Config::new();
+    auth.apply_to::<NoEnv>(&mut config);
+    assert_eq!(config.tls.local_address, None);
+}
+
+#[test]
+fn cafile_reads_and_splits_into_per_cert_pems() {
+    use std::io::Write;
+    let tmp = tempfile::NamedTempFile::new().expect("create tempfile");
+    // Two certs concatenated — same as a real-world multi-CA bundle.
+    let bundle = format!("{TEST_CA_PEM}\n{TEST_CA_PEM}\n");
+    tmp.as_file().write_all(bundle.as_bytes()).expect("write bundle");
+    let auth = NpmrcAuth {
+        cafile: Some(tmp.path().to_string_lossy().into_owned()),
+        ..NpmrcAuth::default()
+    };
+    let mut config = Config::new();
+    auth.apply_to::<NoEnv>(&mut config);
+    assert_eq!(config.tls.ca.len(), 2, "expected 2 split certs, got {:?}", config.tls.ca);
+    for (i, pem) in config.tls.ca.iter().enumerate() {
+        assert!(pem.contains("BEGIN CERTIFICATE"), "cafile split {i} missing header: {pem:?}");
+        assert!(
+            pem.ends_with("-----END CERTIFICATE-----"),
+            "cafile split {i} missing trailing delimiter: {pem:?}",
+        );
+    }
+}
+
+#[test]
+fn cafile_trailing_garbage_is_preserved_for_downstream_parser() {
+    // Mirrors pnpm's `loadCAFile`: a non-empty chunk after the final
+    // `-----END CERTIFICATE-----` gets the delimiter re-appended
+    // (producing a malformed PEM) so downstream
+    // `Certificate::from_pem` surfaces the parse error. Silently
+    // dropping the trailing chunk would mask a truncated cert
+    // bundle and leave the user wondering why their CA list is
+    // shorter than expected.
+    use std::io::Write;
+    let tmp = tempfile::NamedTempFile::new().expect("create tempfile");
+    let bundle = format!("{TEST_CA_PEM}\ngarbage-not-a-cert");
+    tmp.as_file().write_all(bundle.as_bytes()).expect("write bundle");
+    let auth = NpmrcAuth {
+        cafile: Some(tmp.path().to_string_lossy().into_owned()),
+        ..NpmrcAuth::default()
+    };
+    let mut config = Config::new();
+    auth.apply_to::<NoEnv>(&mut config);
+    assert_eq!(config.tls.ca.len(), 2, "tls.ca={:?}", config.tls.ca);
+    assert!(
+        config.tls.ca[1].starts_with("garbage-not-a-cert"),
+        "trailing garbage entry was not preserved: {:?}",
+        config.tls.ca[1],
+    );
+    assert!(
+        config.tls.ca[1].ends_with("-----END CERTIFICATE-----"),
+        "delimiter was not re-appended to garbage entry: {:?}",
+        config.tls.ca[1],
+    );
+}
+
+#[test]
+fn cafile_not_found_is_silently_treated_as_unset() {
+    let auth = NpmrcAuth {
+        cafile: Some("/nonexistent/path/to/ca.pem".to_string()),
+        ..NpmrcAuth::default()
+    };
+    let mut config = Config::new();
+    auth.apply_to::<NoEnv>(&mut config);
+    assert!(config.tls.ca.is_empty(), "missing cafile must not produce CAs");
+}
+
+#[test]
+fn inline_ca_and_cafile_concatenate() {
+    use std::io::Write;
+    let tmp = tempfile::NamedTempFile::new().expect("create tempfile");
+    tmp.as_file().write_all(TEST_CA_PEM.as_bytes()).expect("write");
+    let auth = NpmrcAuth {
+        ca: vec![TEST_CA_PEM.to_string()],
+        cafile: Some(tmp.path().to_string_lossy().into_owned()),
+        ..NpmrcAuth::default()
+    };
+    let mut config = Config::new();
+    auth.apply_to::<NoEnv>(&mut config);
+    // Inline first, cafile second — same ordering pnpm produces.
+    assert_eq!(config.tls.ca.len(), 2, "tls.ca={:?}", config.tls.ca);
+}
+
+#[test]
+fn defaults_leave_tls_config_empty() {
+    let mut config = Config::new();
+    NpmrcAuth::default().apply_to::<NoEnv>(&mut config);
+    assert!(config.tls.ca.is_empty(), "tls.ca={:?}", config.tls.ca);
+    assert!(config.tls.cert.is_none(), "tls.cert={:?}", config.tls.cert);
+    assert!(config.tls.key.is_none(), "tls.key={:?}", config.tls.key);
+    assert_eq!(config.tls.strict_ssl, None);
+    assert!(config.tls.local_address.is_none(), "tls.local_address={:?}", config.tls.local_address);
+}

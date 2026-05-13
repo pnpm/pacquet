@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use pacquet_network::{AuthHeaders, NoProxySetting, base64_encode};
@@ -17,14 +18,21 @@ use crate::{Config, api::EnvVar, env_replace::env_replace};
 ///   `no-proxy` / `noproxy` aliases). The env-var fallback cascade
 ///   (`HTTPS_PROXY`, `HTTP_PROXY`, `PROXY`, `NO_PROXY` + lowercase)
 ///   fires from [`NpmrcAuth::apply_proxy_cascade`].
+/// * TLS + `local-address` keys (`ca`, `cafile`, `cert`, `key`,
+///   `strict-ssl`, `local-address`). `cafile` reads from disk and
+///   feeds the same slot as inline `ca`; an unreadable `cafile` is
+///   silently treated as unset (matching pnpm's
+///   [`loadCAFile`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/loadNpmrcFiles.ts#L238-L265)).
+///   Applied via [`NpmrcAuth::apply_tls_and_local_address`].
 ///
 /// Values pass through `${VAR}` substitution before being stored,
 /// matching pnpm's `loadNpmrcFiles.ts` flow. Substitution failures are
 /// recorded as warnings and the offending value is left verbatim, again
 /// matching pnpm.
 ///
-/// Other `.npmrc` knobs (TLS, proxy, scoped `@scope:registry`, etc.)
-/// remain unparsed for now. See the upstream
+/// Other `.npmrc` knobs (scoped `@scope:registry`, per-registry TLS
+/// like `//host:cafile=`, etc.) remain unparsed for now. See the
+/// upstream
 /// [`isIniConfigKey`](https://github.com/pnpm/pnpm/blob/601317e7a3/config/reader/src/localConfig.ts#L160-L161)
 /// list. They will land here as the matching feature work picks them
 /// up.
@@ -58,6 +66,32 @@ pub(crate) struct NpmrcAuth {
     /// [single `noProxy` slot](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L598-L600)
     /// fed by either alias).
     pub no_proxy: Option<String>,
+    /// Inline `ca=…` PEM from .npmrc. Each successive `ca=` line
+    /// appends to the same `Vec` (matching upstream's
+    /// `[null, String, Array]` nopt shape, where the array form
+    /// arrives as repeated keys in INI). Combined with `cafile`'s
+    /// split output by [`NpmrcAuth::apply_tls_and_local_address`].
+    pub ca: Vec<String>,
+    /// `cafile=<path>` from .npmrc. Read at apply time, split on
+    /// `-----END CERTIFICATE-----` to produce one PEM per cert
+    /// (mirroring pnpm's
+    /// [`loadCAFile`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/loadNpmrcFiles.ts#L249-L255)).
+    /// `cafile`-not-found is silently treated as unset.
+    pub cafile: Option<String>,
+    /// `cert=…` client certificate PEM from .npmrc.
+    pub cert: Option<String>,
+    /// `key=…` client private key PEM from .npmrc.
+    pub key: Option<String>,
+    /// `strict-ssl=…` toggle from .npmrc. `None` = unset (defaults to
+    /// strict at apply site, matching pnpm's per-emit-site default at
+    /// [`dispatcher.ts:191,197,241,295`](https://github.com/pnpm/pnpm/blob/94240bc046/network/fetch/src/dispatcher.ts#L191)).
+    pub strict_ssl: Option<bool>,
+    /// `local-address=…` outbound interface from .npmrc. Stored as a
+    /// raw string here; [`NpmrcAuth::apply_tls_and_local_address`]
+    /// parses it as [`std::net::IpAddr`]. An invalid address is
+    /// silently dropped (mirrors pnpm, which hands the value verbatim
+    /// to undici and lets Node error at connect time).
+    pub local_address: Option<String>,
 }
 
 /// Raw (unparsed) credential fields for a given registry URI, mirroring
@@ -148,6 +182,40 @@ impl NpmrcAuth {
                     auth.no_proxy = Some(value);
                     continue;
                 }
+                "ca" => {
+                    // Repeated `ca=` lines accumulate — matches
+                    // upstream's `[null, String, Array]` nopt type
+                    // where multiple values arrive as an array.
+                    auth.ca.push(value);
+                    continue;
+                }
+                "cafile" => {
+                    auth.cafile = Some(value);
+                    continue;
+                }
+                "cert" => {
+                    auth.cert = Some(value);
+                    continue;
+                }
+                "key" => {
+                    auth.key = Some(value);
+                    continue;
+                }
+                "strict-ssl" => {
+                    // pnpm/nopt parses `true` / `false` case-sensitively.
+                    // Anything else resets the slot to `None` so the
+                    // build-site `unwrap_or(true)` default kicks in —
+                    // matters when the same `.npmrc` has multiple
+                    // `strict-ssl=` lines and a later invalid token
+                    // would otherwise leave an earlier `false`
+                    // silently active.
+                    auth.strict_ssl = parse_bool(&value);
+                    continue;
+                }
+                "local-address" => {
+                    auth.local_address = Some(value);
+                    continue;
+                }
                 _ => {}
             }
 
@@ -160,6 +228,41 @@ impl NpmrcAuth {
             apply_creds_field(&mut auth.default_creds, key.as_str(), value);
         }
         auth
+    }
+
+    /// Resolve the TLS + `local-address` slots on `config.tls`.
+    ///
+    /// The transformations:
+    /// - Inline `ca=` PEMs are kept verbatim.
+    /// - `cafile=<path>` is read from disk and split on
+    ///   `-----END CERTIFICATE-----` (mirroring pnpm's
+    ///   [`loadCAFile`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/loadNpmrcFiles.ts#L249-L265)).
+    ///   Inline `ca` entries appear in the final list before the
+    ///   `cafile` ones — same ordering as a `ca=` line followed by a
+    ///   `cafile=` line. Unreadable `cafile` is silently dropped
+    ///   (matches upstream's `catch {}` swallow).
+    /// - `local-address` is parsed as [`std::net::IpAddr`]. An invalid
+    ///   value is silently dropped (mirrors pnpm — Node errors at
+    ///   connect time rather than load time).
+    ///
+    /// `strict_ssl`, `cert`, `key` are pass-through (no transformation).
+    ///
+    /// `cafile` reads relative paths against the process cwd, matching
+    /// pnpm's `path.resolve(cafile)` in
+    /// [`loadCAFile`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/loadNpmrcFiles.ts#L241-L243).
+    pub fn apply_tls_and_local_address(&mut self, config: &mut Config) {
+        // Inline CA first, then file-loaded CA, so a user that
+        // duplicates a cert across both ends up with it added twice
+        // — same ordering pnpm produces.
+        let mut ca = std::mem::take(&mut self.ca);
+        if let Some(path) = self.cafile.take() {
+            ca.extend(load_cafile(Path::new(&path)));
+        }
+        config.tls.ca = ca;
+        config.tls.cert = self.cert.take();
+        config.tls.key = self.key.take();
+        config.tls.strict_ssl = self.strict_ssl.take();
+        config.tls.local_address = self.local_address.take().and_then(|raw| raw.parse().ok());
     }
 
     /// Resolve the `(https_proxy, http_proxy, no_proxy)` triple on
@@ -261,8 +364,68 @@ impl NpmrcAuth {
     pub fn apply_to<Api: EnvVar>(mut self, config: &mut Config) {
         self.apply_registry_and_warn(config);
         self.apply_proxy_cascade::<Api>(config);
+        self.apply_tls_and_local_address(config);
         self.build_auth_headers(config);
     }
+}
+
+/// Parse a `strict-ssl=…` value. pnpm/nopt accepts only the literal
+/// `true` and `false` tokens; anything else is dropped silently so the
+/// dispatcher's per-emit `strictSsl ?? true` default kicks in.
+fn parse_bool(value: &str) -> Option<bool> {
+    match value.trim() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+/// Read a `cafile` path and split the contents on
+/// `-----END CERTIFICATE-----` to produce one PEM per certificate.
+/// Mirrors pnpm's
+/// [`loadCAFile`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/loadNpmrcFiles.ts#L238-L265):
+/// re-append the delimiter to each split, trim, drop empties, and
+/// silently treat any read error as an empty list.
+///
+/// **Relative-path resolution caveat.** Pnpm's `loadCAFile` passes
+/// `cafile` straight to `fs.readFileSync` without `path.resolve` —
+/// relative paths therefore resolve against Node's `process.cwd()`,
+/// *not* against the directory the `.npmrc` was read from. Pnpm
+/// doesn't `process.chdir(opts.dir)` on `--dir`, so a project
+/// `.npmrc` containing `cafile=certs/ca.pem` invoked as
+/// `pnpm --dir /project install` from `/home/user` reads
+/// `/home/user/certs/ca.pem` and silently drops the CA list when it
+/// isn't found. Pacquet matches that exact behavior (cardinal rule:
+/// match pnpm even when the upstream behavior is surprising). Users
+/// who hit this should either use an absolute path in `cafile=`,
+/// `cd` into the project directory before running pacquet, or set
+/// the `ca=` inline form which doesn't read from disk.
+fn load_cafile(path: &Path) -> Vec<String> {
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let delimiter = "-----END CERTIFICATE-----";
+    // Byte-for-byte parity with pnpm's
+    // [`loadCAFile`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/loadNpmrcFiles.ts#L251-L254):
+    // `contents.split(delim).filter(ca => ca.trim().length > 0).map(ca => `${ca.trimStart()}${delim}`)`.
+    //
+    // Key contract points:
+    // - `split` (not `split_inclusive`) — pnpm drops the delimiter
+    //   from each chunk and re-appends it on the map side.
+    // - Filter on `chunk.trim().is_empty()` — drops the trailing
+    //   empty chunk produced when the file ends with a delimiter,
+    //   but *keeps* a trailing non-empty (malformed) chunk so
+    //   downstream `Certificate::from_pem` surfaces the parse error
+    //   instead of pacquet silently dropping the entry.
+    // - `trim_start()` (not full `trim`) — pnpm preserves any
+    //   trailing whitespace inside the chunk before the appended
+    //   delimiter. Doesn't matter to a PEM parser but matters for
+    //   "is the output byte-equivalent to pnpm's" tests.
+    contents
+        .split(delimiter)
+        .filter(|chunk| !chunk.trim().is_empty())
+        .map(|chunk| format!("{}{}", chunk.trim_start(), delimiter))
+        .collect()
 }
 
 /// Parse the raw `no-proxy` value into [`NoProxySetting`].

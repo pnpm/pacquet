@@ -2,7 +2,7 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_config::Config;
 use pacquet_lockfile::{LoadLockfileError, Lockfile};
-use pacquet_network::{ProxyError, ThrottledClient};
+use pacquet_network::{ForInstallsError, ThrottledClient};
 use pacquet_package_manager::ResolvedPackages;
 use pacquet_package_manifest::{PackageManifest, PackageManifestError};
 use pacquet_tarball::MemCache;
@@ -37,7 +37,7 @@ pub enum InitStateError {
     Lockfile(#[error(source)] LoadLockfileError),
 
     #[diagnostic(transparent)]
-    Proxy(#[error(source)] ProxyError),
+    Network(#[error(source)] ForInstallsError),
 }
 
 impl State {
@@ -62,8 +62,8 @@ impl State {
                 .map_err(InitStateError::Manifest)?,
             lockfile: call_load_lockfile(should_load, Lockfile::load_from_current_dir)
                 .map_err(InitStateError::Lockfile)?,
-            http_client: ThrottledClient::for_installs(&config.proxy)
-                .map_err(InitStateError::Proxy)?,
+            http_client: ThrottledClient::for_installs(&config.proxy, &config.tls)
+                .map_err(InitStateError::Network)?,
             tarball_mem_cache: MemCache::new(),
             resolved_packages: ResolvedPackages::new(),
         })

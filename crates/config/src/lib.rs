@@ -277,6 +277,15 @@ pub struct Config {
     /// Default is empty (`None` for every field) — i.e. no proxy.
     pub proxy: pacquet_network::ProxyConfig,
 
+    /// Resolved TLS + `local-address` configuration — `ca`, `cafile`,
+    /// `cert`, `key`, `strict-ssl`, `local-address` from `.npmrc`. The
+    /// type lives in `pacquet-network` for the same reason as
+    /// [`Self::proxy`]. `strict_ssl: None` here means "unset"; the
+    /// `true` default is applied at client-build time by
+    /// `ThrottledClient::for_installs`, mirroring pnpm's per-emit-site
+    /// `strictSsl ?? true` default.
+    pub tls: pacquet_network::TlsConfig,
+
     /// When true, any missing non-optional peer dependencies are automatically installed.
     #[default = true]
     pub auto_install_peers: bool,
@@ -607,14 +616,17 @@ impl Config {
     ///    (cwd, falling back to home), then
     /// 3. the nearest `pnpm-workspace.yaml` walking up from cwd.
     ///
-    /// Pacquet currently applies `registry`, npm-auth credentials, and
-    /// the proxy keys (`https-proxy`, `http-proxy`, `proxy`,
-    /// `no-proxy` / `noproxy`) from `.npmrc`. Other `.npmrc` entries —
-    /// pnpm's TLS / scoped-registry keys, plus project-structural
+    /// Pacquet currently applies `registry`, npm-auth credentials, the
+    /// proxy keys (`https-proxy`, `http-proxy`, `proxy`, `no-proxy` /
+    /// `noproxy`), and the TLS + local-address keys (`ca`, `cafile`,
+    /// `cert`, `key`, `strict-ssl`, `local-address`) from `.npmrc`.
+    /// Other `.npmrc` entries — pnpm's scoped-registry keys and
+    /// per-registry TLS overrides (`//host:cafile=`, `//host:ca=`,
+    /// `//host:cert=`, `//host:key=`), plus project-structural
     /// settings like `storeDir`, `lockfile` and `hoist-pattern` — are
     /// silently ignored here. The first group is tracked for future
-    /// TLS work; the second must come from `pnpm-workspace.yaml` or
-    /// CLI flags, matching pnpm 11.
+    /// per-registry-TLS work; the second must come from
+    /// `pnpm-workspace.yaml` or CLI flags, matching pnpm 11.
     ///
     /// The yaml wins over `.npmrc` on any key it sets.
     ///
@@ -675,6 +687,14 @@ impl Config {
         // is a normalization step on the resolved config, not a
         // function of `.npmrc` presence.
         npmrc_auth.apply_proxy_cascade::<Api>(&mut config);
+        // TLS + local-address are sourced from `.npmrc` only — pnpm
+        // does not honor env vars (`NODE_EXTRA_CA_CERTS`,
+        // `NODE_TLS_REJECT_UNAUTHORIZED`, etc.) for these keys
+        // (Node's runtime does, but pnpm's reader does not). When
+        // there is no `.npmrc`, `npmrc_auth` is the default value and
+        // this is a no-op write of `TlsConfig::default()` onto the
+        // already-default `config.tls`.
+        npmrc_auth.apply_tls_and_local_address(&mut config);
 
         // Layer pnpm-workspace.yaml overrides on top. A missing file is
         // silent. Read or parse failures propagate to the caller.
