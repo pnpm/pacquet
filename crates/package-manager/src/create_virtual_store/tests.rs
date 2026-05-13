@@ -1,6 +1,9 @@
-use super::{emit_warm_snapshot_progress, integrity_equal, snapshot_deps_equal};
+use super::{
+    emit_warm_snapshot_progress, integrity_equal, snapshot_cache_key, snapshot_deps_equal,
+};
 use pacquet_lockfile::{
-    LockfileResolution, PackageMetadata, PkgName, RegistryResolution, SnapshotDepRef, SnapshotEntry,
+    GitResolution, LockfileResolution, PackageKey, PackageMetadata, PkgName, PkgVerPeer,
+    RegistryResolution, SnapshotDepRef, SnapshotEntry, TarballResolution,
 };
 use pacquet_reporter::{LogEvent, ProgressMessage, Reporter};
 use std::{collections::HashMap, sync::Mutex};
@@ -165,4 +168,88 @@ fn integrity_equal_treats_one_sided_missing_as_unequal() {
     );
     assert!(!integrity_equal(None, Some(&with_integrity)));
     assert!(!integrity_equal(Some(&with_integrity), None));
+}
+
+fn ver(s: &str) -> PkgVerPeer {
+    s.parse().expect("parse PkgVerPeer")
+}
+
+fn key(n: &str, v: &str) -> PackageKey {
+    PackageKey::new(name(n), ver(v))
+}
+
+fn git_metadata() -> PackageMetadata {
+    PackageMetadata {
+        resolution: LockfileResolution::Git(GitResolution {
+            repo: "https://github.com/ksxnodemodules/ts-pipe-compose.git".to_string(),
+            commit: "e63c09e460269b0c535e4c34debf69bb91d57b22".to_string(),
+            path: None,
+        }),
+        engines: None,
+        cpu: None,
+        os: None,
+        libc: None,
+        deprecated: None,
+        has_bin: None,
+        prepare: None,
+        bundled_dependencies: None,
+        peer_dependencies: None,
+        peer_dependencies_meta: None,
+    }
+}
+
+fn git_hosted_tarball_metadata() -> PackageMetadata {
+    PackageMetadata {
+        resolution: LockfileResolution::Tarball(TarballResolution {
+            tarball: "https://codeload.github.com/foo/bar/tar.gz/abc1234".to_string(),
+            integrity: None,
+            git_hosted: Some(true),
+            path: None,
+        }),
+        engines: None,
+        cpu: None,
+        os: None,
+        libc: None,
+        deprecated: None,
+        has_bin: None,
+        prepare: None,
+        bundled_dependencies: None,
+        peer_dependencies: None,
+        peer_dependencies_meta: None,
+    }
+}
+
+/// `Git` resolutions go through the warm batch under a
+/// `gitHostedStoreIndexKey`-shaped key (`pkg_id\tbuilt|not-built`),
+/// not under the integrity-based key. This is the read-side mirror
+/// of what both fetchers write at install time — a drift between
+/// the two would silently degrade every git-hosted re-install to
+/// the cold path.
+#[test]
+fn snapshot_cache_key_for_git_resolution_uses_git_hosted_key() {
+    let pkg = key("ts-pipe-compose", "0.2.1");
+    let packages = HashMap::from([(pkg.clone(), git_metadata())]);
+
+    let received = snapshot_cache_key(&pkg, &packages).expect("snapshot_cache_key must not error");
+    assert_eq!(
+        received,
+        Some(format!("{pkg}\tbuilt")),
+        "git resolutions must route through gitHostedStoreIndexKey",
+    );
+}
+
+/// `Tarball { gitHosted: true }` mirrors the bare-`Git` arm — same
+/// key shape, so the warm prefetch picks up both fetchers' rows
+/// the same way.
+#[test]
+fn snapshot_cache_key_for_git_hosted_tarball_uses_git_hosted_key() {
+    let pkg = key("foo", "1.0.0");
+    let packages = HashMap::from([(pkg.clone(), git_hosted_tarball_metadata())]);
+
+    let received = snapshot_cache_key(&pkg, &packages).expect("snapshot_cache_key must not error");
+    assert_eq!(
+        received,
+        Some(format!("{pkg}\tbuilt")),
+        "git-hosted tarball resolutions must route through gitHostedStoreIndexKey",
+    );
 }

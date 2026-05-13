@@ -325,4 +325,27 @@ async fn writes_index_row_when_writer_provided() {
     let keys: Vec<&str> = row.files.keys().map(String::as_str).collect();
     assert!(keys.contains(&"package.json"), "package.json missing from row.files: {keys:?}");
     assert!(keys.contains(&"index.js"), "index.js missing from row.files: {keys:?}");
+
+    // Per-file metadata must round-trip cleanly — the warm prefetch
+    // reconstructs the CAS file path from `digest` + `mode`, and the
+    // verify pass compares `size` against the on-disk file. If any
+    // of these drift, a follow-up install would miss the cache and
+    // silently fall through to the cold path.
+    let pj = row.files.get("package.json").expect("package.json entry");
+    assert!(!pj.digest.is_empty(), "digest must be populated");
+    assert!(
+        pj.digest.bytes().all(|b| b.is_ascii_hexdigit()),
+        "digest must be hex: {:?}",
+        pj.digest,
+    );
+    // The exec bit is captured via the POSIX mode. `package.json` is
+    // a regular file, so on POSIX the mode lands as `0o644`; on
+    // Windows pacquet writes a fixed `0o644` (matching
+    // `add_files_from_dir`).
+    assert_eq!(pj.mode & 0o777, 0o644, "package.json must be a non-executable regular-mode file");
+    assert_eq!(pj.size as usize, br#"{"name":"x","version":"1.0.0","main":"index.js"}"#.len());
+    assert_eq!(
+        pj.checked_at, None,
+        "freshly imported entries have no integrity-check timestamp yet",
+    );
 }
