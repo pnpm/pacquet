@@ -23,7 +23,7 @@ fn dep_key(name: &str, version: &str) -> PkgNameVerPeer {
 }
 
 fn resolved_dep(version: &str) -> ResolvedDependencySpec {
-    ResolvedDependencySpec { specifier: version.to_string(), version: ver_peer(version) }
+    ResolvedDependencySpec { specifier: version.to_string(), version: ver_peer(version).into() }
 }
 
 fn empty_lockfile() -> Lockfile {

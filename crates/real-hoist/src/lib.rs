@@ -338,7 +338,16 @@ fn collect_importer_deps(
         // registry name. Transitive npm-aliases (modelled via
         // `SnapshotDepRef::Alias`) are handled in
         // `collect_snapshot_deps`.
-        let dep_key = PkgNameVerPeer::new(alias.clone(), spec.version.clone());
+        //
+        // `link:` deps (cross-importer `workspace:*` resolutions, see
+        // [`ImporterDepVersion::Link`]) don't live in the virtual
+        // store — they're directory symlinks materialised by
+        // [`pacquet_package_manager::SymlinkDirectDependencies`] —
+        // so they have no snapshot to hoist and we skip them here.
+        let Some(ver_peer) = spec.version.as_regular() else {
+            continue;
+        };
+        let dep_key = PkgNameVerPeer::new(alias.clone(), ver_peer.clone());
         let node = build_dep_node(alias, &dep_key, lockfile, opts, nodes)?;
         out.insert(RcByPtr(node));
     }
