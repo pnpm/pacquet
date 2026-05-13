@@ -20,6 +20,7 @@ mod store_init;
 mod symlink_direct_dependencies;
 mod symlink_package;
 mod version_policy;
+mod virtual_store_layout;
 
 pub use add::*;
 pub use build_modules::*;
@@ -41,3 +42,4 @@ pub use link_file::*;
 pub use symlink_direct_dependencies::*;
 pub use symlink_package::*;
 pub use version_policy::*;
+pub use virtual_store_layout::*;

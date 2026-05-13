@@ -111,6 +111,34 @@ impl StoreDir {
         self.v11().join("tmp")
     }
 
+    /// Path to the shared global-virtual-store directory inside the
+    /// store. Matches pnpm's [`extendInstallOptions.ts:343-355`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/extendInstallOptions.ts#L343-L355):
+    /// when `enableGlobalVirtualStore` is on and the user hasn't
+    /// pinned `virtualStoreDir`, packages live under `<store>/links`.
+    /// Note: this directory sits next to (not inside) `<store>/v11/`,
+    /// matching upstream's layout — sharing the `<store>/links` path
+    /// across pnpm and pacquet is the whole point.
+    pub fn links(&self) -> PathBuf {
+        self.root.join("links")
+    }
+
+    /// Path to the per-store projects registry — a flat directory of
+    /// symlinks (`<store>/projects/<short-hash>` → project dir) the
+    /// global-virtual-store prune sweep walks when deciding which
+    /// `<store>/links/...` slots are still referenced. Mirrors
+    /// pnpm's [`getProjectsRegistryDir`](https://github.com/pnpm/pnpm/blob/94240bc046/store/controller/src/storeController/projectRegistry.ts).
+    pub fn projects(&self) -> PathBuf {
+        self.root.join("projects")
+    }
+
+    /// Borrow the raw store-root path. Most code should prefer the
+    /// purpose-built helpers (`v11`, `tmp`, `links`, `projects`); this
+    /// is for the few callers that need to compute a sibling path the
+    /// helpers don't cover.
+    pub fn root(&self) -> &std::path::Path {
+        &self.root
+    }
+
     /// On a fresh store, eagerly create `<store>/v11/files/` plus every
     /// `files/XX/` shard (00..ff) and seed the shard cache with the
     /// bytes we just created, so CAFS writes never pay a

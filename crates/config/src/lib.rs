@@ -16,10 +16,10 @@ pub use crate::defaults::{
     available_parallelism, default_unsafe_perm, is_unsafe_perm_posix, resolve_child_concurrency,
 };
 use crate::defaults::{
-    default_child_concurrency, default_fetch_retries, default_fetch_retry_factor,
-    default_fetch_retry_maxtimeout, default_fetch_retry_mintimeout, default_hoist_pattern,
-    default_modules_cache_max_age, default_modules_dir, default_public_hoist_pattern,
-    default_registry, default_store_dir, default_virtual_store_dir,
+    default_child_concurrency, default_enable_global_virtual_store, default_fetch_retries,
+    default_fetch_retry_factor, default_fetch_retry_maxtimeout, default_fetch_retry_mintimeout,
+    default_hoist_pattern, default_modules_cache_max_age, default_modules_dir,
+    default_public_hoist_pattern, default_registry, default_store_dir, default_virtual_store_dir,
 };
 pub use workspace_yaml::{
     LoadWorkspaceYamlError, WORKSPACE_MANIFEST_FILENAME, WorkspaceSettings, workspace_root_or,
@@ -172,8 +172,47 @@ pub struct Config {
 
     /// The directory with links to the store. All direct and indirect dependencies of the
     /// project are linked into this directory.
+    ///
+    /// When [`enable_global_virtual_store`] is `true` and the user has not
+    /// explicitly set this field, [`Config::current`] re-points it at
+    /// `<store_dir>/links` to mirror upstream's
+    /// [`extendInstallOptions.ts:343-355`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/extendInstallOptions.ts#L343-L355).
+    ///
+    /// [`enable_global_virtual_store`]: Self::enable_global_virtual_store
     #[default(_code = "default_virtual_store_dir()")]
     pub virtual_store_dir: PathBuf,
+
+    /// When `true`, the virtual store is shared across every project on
+    /// the machine: packages live under `<store_dir>/links/...` and each
+    /// project registers itself at `<store_dir>/projects/<short-hash>`.
+    /// When `false`, each project keeps its own virtual store at
+    /// `<project>/node_modules/.pnpm`. Default `true`, mirroring upstream's
+    /// [`config/reader/src/index.ts:392-394`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L392-L394).
+    ///
+    /// CI auto-detect ([`config/reader/src/index.ts:543-548`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L543-L548))
+    /// is intentionally not ported here yet — it requires a CI-detection
+    /// helper pacquet doesn't have. Tracked as a follow-up of
+    /// pnpm/pacquet#432.
+    #[default(_code = "default_enable_global_virtual_store()")]
+    pub enable_global_virtual_store: bool,
+
+    /// The shared global-virtual-store directory. When
+    /// [`enable_global_virtual_store`] is `true` this is the same path as
+    /// [`virtual_store_dir`]; when `false`, it is still computed as
+    /// `<store_dir>/links` (matching upstream's unconditional assignment
+    /// at [`extendInstallOptions.ts:354-355`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/extendInstallOptions.ts#L354-L355))
+    /// even though no install path consults it in that mode today.
+    ///
+    /// Populated by [`Config::current`] after yaml has been applied; the
+    /// `SmartDefault` value is overwritten there with the path derived
+    /// from the resolved `store_dir` / `virtual_store_dir`. The default
+    /// here is only meaningful when `Config::new()` is used in isolation
+    /// (mostly tests).
+    ///
+    /// [`enable_global_virtual_store`]: Self::enable_global_virtual_store
+    /// [`virtual_store_dir`]: Self::virtual_store_dir
+    #[default(_code = "default_virtual_store_dir()")]
+    pub global_virtual_store_dir: PathBuf,
 
     /// Controls the way packages are imported from the store (if you want to disable symlinks
     /// inside node_modules, then you need to change the node-linker setting, not this one).
@@ -431,6 +470,35 @@ impl Config {
     ///
     /// IO-heavy; call once per install rather than at every site
     /// that needs the resolved record.
+    /// Apply the global-virtual-store derivation rules from upstream's
+    /// [`extendInstallOptions.ts:343-355`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/extendInstallOptions.ts#L343-L355).
+    ///
+    /// - When `enable_global_virtual_store` is `true` and the user did
+    ///   not explicitly set `virtual_store_dir`, point it at
+    ///   `<store_dir>/links`. Pacquet has no `allow_builds ??= {}`
+    ///   sibling because the `allow_builds` map already defaults to
+    ///   empty (the pnpm initialization upstream guards is itself only
+    ///   reachable when `allowBuilds == null`, which doesn't have a
+    ///   Rust analogue).
+    /// - Always set `global_virtual_store_dir` to the resolved
+    ///   `virtual_store_dir` when GVS is on, or to `<store_dir>/links`
+    ///   when GVS is off — matching the unconditional assignment at
+    ///   the bottom of upstream's block.
+    ///
+    /// `virtual_store_dir_explicit` carries the "did the user set it"
+    /// signal `SmartDefault` cannot express on its own — yaml's
+    /// [`WorkspaceSettings::virtual_store_dir`] is the source today.
+    pub fn apply_global_virtual_store_derivation(&mut self, virtual_store_dir_explicit: bool) {
+        if self.enable_global_virtual_store && !virtual_store_dir_explicit {
+            self.virtual_store_dir = self.store_dir.links();
+        }
+        self.global_virtual_store_dir = if self.enable_global_virtual_store {
+            self.virtual_store_dir.clone()
+        } else {
+            self.store_dir.links()
+        };
+    }
+
     pub fn resolved_patched_dependencies(
         &self,
     ) -> Result<Option<PatchGroupRecord>, ResolvePatchedDependenciesError> {
@@ -501,6 +569,18 @@ impl Config {
 
         // Layer pnpm-workspace.yaml overrides on top. A missing file is
         // silent. Read or parse failures propagate to the caller.
+        //
+        // The GVS-derived paths (`virtual_store_dir = <store_dir>/links`
+        // when GVS is on and unset, plus `global_virtual_store_dir`)
+        // are intentionally NOT applied here. The derivation lives on
+        // [`Self::apply_global_virtual_store_derivation`] for the
+        // install layer to invoke once it's wired to actually
+        // consume the new fields. Pulling the mutation into
+        // [`Self::current`] before that wiring lands would silently
+        // redirect every existing pacquet install to `<store_dir>/links`,
+        // diverging from today's behaviour without any of the
+        // GVS-aware path computation downstream. Tracked as part of
+        // pnpm/pacquet#432 (Section B).
         if let Some(start) = cwd
             && let Some((path, settings)) = WorkspaceSettings::find_and_load(&start)?
         {
@@ -720,6 +800,68 @@ mod tests {
         )
         .expect("workspace yaml absent => no error");
         assert!(!config.symlink);
+    }
+
+    /// `enableGlobalVirtualStore` defaults to `true`. The derivation
+    /// fires when [`Config::apply_global_virtual_store_derivation`] is
+    /// invoked and the user has not pinned `virtual_store_dir`. Mirrors
+    /// upstream's
+    /// [`extendInstallOptions.ts:343-355`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/extendInstallOptions.ts#L343-L355).
+    #[test]
+    pub fn gvs_default_re_points_virtual_store_at_store_links() {
+        let tmp = tempdir().unwrap();
+        let mut config =
+            Config::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
+                .expect("workspace yaml absent => no error");
+        assert!(config.enable_global_virtual_store, "GVS defaults to true");
+        config.apply_global_virtual_store_derivation(/* explicit */ false);
+        assert_eq!(config.virtual_store_dir, config.store_dir.links());
+        assert_eq!(config.global_virtual_store_dir, config.store_dir.links());
+    }
+
+    /// When `enableGlobalVirtualStore: false`, the derivation leaves
+    /// `virtual_store_dir` at its `<cwd>/node_modules/.pnpm` default but
+    /// still populates `global_virtual_store_dir` at `<storeDir>/links`,
+    /// matching upstream's unconditional assignment.
+    #[test]
+    pub fn gvs_disabled_keeps_project_local_virtual_store() {
+        let tmp = tempdir().unwrap();
+        fs::write(tmp.path().join("pnpm-workspace.yaml"), "enableGlobalVirtualStore: false\n")
+            .expect("write to pnpm-workspace.yaml");
+        let mut config =
+            Config::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
+                .expect("yaml is valid");
+        assert!(!config.enable_global_virtual_store);
+        config.apply_global_virtual_store_derivation(/* explicit */ false);
+        // The path-valued default has been re-anchored to `tmp` by
+        // `Config::current` (see the cwd fixup block).
+        assert_eq!(config.virtual_store_dir, tmp.path().join("node_modules/.pnpm"));
+        assert_eq!(config.global_virtual_store_dir, config.store_dir.links());
+    }
+
+    /// User-pinned `virtualStoreDir` survives the derivation when GVS
+    /// is on, and `globalVirtualStoreDir` mirrors the user's path.
+    /// Matches upstream's `if (virtualStoreDir == null)` guard — `true`
+    /// is passed for `explicit` to mark the field as user-pinned.
+    #[test]
+    pub fn gvs_user_pinned_virtual_store_overrides_default() {
+        let tmp = tempdir().unwrap();
+        let user_path = tmp.path().join("custom-links");
+        fs::write(
+            tmp.path().join("pnpm-workspace.yaml"),
+            format!("virtualStoreDir: {}\n", user_path.display()),
+        )
+        .expect("write to pnpm-workspace.yaml");
+        let mut config =
+            Config::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
+                .expect("yaml is valid");
+        assert!(config.enable_global_virtual_store);
+        assert_eq!(config.virtual_store_dir, user_path);
+        config.apply_global_virtual_store_derivation(/* explicit */ true);
+        // Still the user's path — the derivation must not overwrite an
+        // explicitly-set value.
+        assert_eq!(config.virtual_store_dir, user_path);
+        assert_eq!(config.global_virtual_store_dir, user_path);
     }
 
     /// Pnpm's

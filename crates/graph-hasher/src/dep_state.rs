@@ -88,7 +88,14 @@ where
 /// when a node would re-enter via its own ancestor, the child's
 /// contribution becomes `""` (matching upstream's "node not in
 /// graph" guard at line 55, which returns the empty string).
-fn calc_dep_graph_hash<K>(
+///
+/// Exposed at `pub(crate)` so the global-virtual-store path hasher
+/// (`crate::global_virtual_store_path`) can share the same recursion
+/// and cache. Keeping it `pub(crate)` rather than `pub` mirrors the
+/// upstream module layout, where `calcDepGraphHash` is private to
+/// `deps/graph-hasher/src/index.ts` and both `calcDepState` and
+/// `calcGraphNodeHash` are file-internal callers.
+pub(crate) fn calc_dep_graph_hash<K>(
     graph: &HashMap<K, DepsGraphNode<K>>,
     cache: &mut DepsStateCache<K>,
     parents: &mut HashSet<String>,

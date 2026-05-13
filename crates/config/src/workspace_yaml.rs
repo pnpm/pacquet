@@ -53,6 +53,14 @@ pub struct WorkspaceSettings {
     pub node_linker: Option<NodeLinker>,
     pub symlink: Option<bool>,
     pub virtual_store_dir: Option<String>,
+    /// `enableGlobalVirtualStore` from `pnpm-workspace.yaml`. Default
+    /// applied in [`Config`] is `true`, matching pnpm v11. See
+    /// [`Config::enable_global_virtual_store`].
+    pub enable_global_virtual_store: Option<bool>,
+    /// `globalVirtualStoreDir` from `pnpm-workspace.yaml`. Resolved
+    /// against the workspace dir like the other path-valued fields.
+    /// When set, overrides the derived `<store_dir>/links` path.
+    pub global_virtual_store_dir: Option<String>,
     pub package_import_method: Option<PackageImportMethod>,
     pub modules_cache_max_age: Option<u64>,
     pub lockfile: Option<bool>,
@@ -212,6 +220,7 @@ impl WorkspaceSettings {
             side_effects_cache, side_effects_cache_readonly,
             fetch_retries, fetch_retry_factor,
             fetch_retry_mintimeout, fetch_retry_maxtimeout,
+            enable_global_virtual_store,
         }
 
         if let Some(v) = self.modules_dir {
@@ -219,6 +228,9 @@ impl WorkspaceSettings {
         }
         if let Some(v) = self.virtual_store_dir {
             config.virtual_store_dir = resolve(base_dir, &v);
+        }
+        if let Some(v) = self.global_virtual_store_dir {
+            config.global_virtual_store_dir = resolve(base_dir, &v);
         }
         if let Some(v) = self.store_dir {
             config.store_dir = StoreDir::from(resolve(base_dir, &v));

@@ -1,0 +1,346 @@
+//! Per-install computed layout of the virtual store.
+//!
+//! Stage 1 of pnpm/pacquet#432 introduces a path split: when the global
+//! virtual store is enabled, packages live at
+//! `<store_dir>/links/<scope>/<name>/<version>/<hash>/node_modules/<name>`,
+//! not at the project-local
+//! `<project>/node_modules/.pnpm/<flat-name>/node_modules/<name>`. The
+//! shape of `<flat-name>` versus `<scope>/<name>/<version>/<hash>` is
+//! also different — flat name uses [`PkgNameVerPeer::to_virtual_store_name`]
+//! while the GVS layout uses
+//! [`pacquet_graph_hasher::format_global_virtual_store_path`] over a
+//! `calc_graph_node_hash`-computed digest.
+//!
+//! [`VirtualStoreLayout`] hides that difference behind one
+//! [`slot_dir`] lookup so the install pipeline doesn't have to branch
+//! on `Config::enable_global_virtual_store` at every site that
+//! computes a per-snapshot path.
+//!
+//! [`slot_dir`]: VirtualStoreLayout::slot_dir
+//! [`PkgNameVerPeer::to_virtual_store_name`]: pacquet_lockfile::PkgNameVerPeer::to_virtual_store_name
+//! [`pacquet_graph_hasher::format_global_virtual_store_path`]: pacquet_graph_hasher::format_global_virtual_store_path
+
+use pacquet_config::Config;
+use pacquet_graph_hasher::{
+    DepsGraphNode, DepsStateCache, calc_graph_node_hash, format_global_virtual_store_path,
+};
+use pacquet_lockfile::{
+    LockfileResolution, PackageKey, PackageMetadata, PkgName, SnapshotDepRef, SnapshotEntry,
+};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
+
+/// Precomputed mapping from each snapshot key to the directory where
+/// its files live on disk. Built once per install in
+/// [`InstallFrozenLockfile::run`](crate::InstallFrozenLockfile::run);
+/// passed by reference to every helper that needs to know where a
+/// particular snapshot is materialised.
+///
+/// [`Self::slot_dir`] is the only call site every consumer has to
+/// touch — it returns an absolute directory whose `node_modules/<name>`
+/// subdirectory holds the unpacked package.
+pub struct VirtualStoreLayout {
+    /// Root containing every per-snapshot subdirectory. Equal to
+    /// `Config::virtual_store_dir` in both GVS-on and GVS-off modes
+    /// (the field is derived to point at `<store_dir>/links` when
+    /// GVS is on; see [`Config::apply_global_virtual_store_derivation`]).
+    /// Stored separately from a `&Config` so callers don't have to
+    /// thread the full config through the helpers that only need a
+    /// path lookup.
+    package_store_dir: PathBuf,
+
+    /// `Some` only when the global virtual store is enabled. For each
+    /// snapshot, holds the precomputed
+    /// `[<scope>/]<name>/<version>/<hash>` suffix that goes after
+    /// `package_store_dir`. `None` when GVS is off — callers fall back
+    /// to [`PkgNameVerPeer::to_virtual_store_name`] computed on demand
+    /// from the snapshot key.
+    ///
+    /// [`PkgNameVerPeer::to_virtual_store_name`]: pacquet_lockfile::PkgNameVerPeer::to_virtual_store_name
+    gvs_suffixes: Option<HashMap<PackageKey, String>>,
+}
+
+impl VirtualStoreLayout {
+    /// Build the layout for one install. Reads
+    /// [`Config::enable_global_virtual_store`] to decide whether to
+    /// precompute GVS slot names, then iterates the lockfile's
+    /// `snapshots` (the per-peer-context entries) and computes each
+    /// snapshot's [`format_global_virtual_store_path`]-shaped suffix
+    /// via [`calc_graph_node_hash`].
+    ///
+    /// Returns a layout that's safe to pass by reference across rayon
+    /// workers: every field is `Send + Sync` once constructed (the
+    /// internal `HashMap<PackageKey, String>` doesn't mutate after
+    /// `new`).
+    ///
+    /// `engine` is the `ENGINE_NAME`-style string that
+    /// [`pacquet_graph_hasher::engine_name`] produces; threaded in
+    /// instead of recomputed inside so the value matches whatever the
+    /// rest of the install (notably the side-effects cache key) uses.
+    ///
+    /// `snapshots` / `packages` are the lockfile fields the caller
+    /// already has by the time the install dispatches to a frozen-
+    /// lockfile flow — see
+    /// [`crate::InstallFrozenLockfile::run`].
+    pub fn new(
+        config: &Config,
+        engine: &str,
+        snapshots: Option<&HashMap<PackageKey, SnapshotEntry>>,
+        packages: Option<&HashMap<PackageKey, PackageMetadata>>,
+    ) -> Self {
+        let package_store_dir = config.virtual_store_dir.clone();
+        if !config.enable_global_virtual_store {
+            return VirtualStoreLayout { package_store_dir, gvs_suffixes: None };
+        }
+        let Some(snapshots) = snapshots else {
+            return VirtualStoreLayout { package_store_dir, gvs_suffixes: Some(HashMap::new()) };
+        };
+        let graph = lockfile_to_dep_graph(snapshots, packages);
+        let mut cache: DepsStateCache<PackageKey> = HashMap::new();
+        let mut gvs_suffixes: HashMap<PackageKey, String> = HashMap::with_capacity(snapshots.len());
+        for snapshot_key in snapshots.keys() {
+            let hex_digest = calc_graph_node_hash(&graph, &mut cache, snapshot_key, Some(engine));
+            let metadata_key = snapshot_key.without_peer();
+            let name = metadata_key.name.to_string();
+            let version = metadata_key.suffix.version().to_string();
+            let suffix = format_global_virtual_store_path(&name, &version, &hex_digest);
+            gvs_suffixes.insert(snapshot_key.clone(), suffix);
+        }
+        VirtualStoreLayout { package_store_dir, gvs_suffixes: Some(gvs_suffixes) }
+    }
+
+    /// Root of the layout — the directory that contains every per-
+    /// snapshot subdirectory. Exposed so callers that need to pass a
+    /// path to existing helpers (e.g. the
+    /// [`pacquet_modules_yaml::Modules`] writer, which still records
+    /// the legacy [`Config::virtual_store_dir`] string) have one
+    /// source of truth.
+    pub fn package_store_dir(&self) -> &Path {
+        &self.package_store_dir
+    }
+
+    /// Whether this install is running in global-virtual-store mode.
+    /// Mirrors `config.enable_global_virtual_store` — captured here so
+    /// callers can ask the layout itself instead of having to keep a
+    /// separate `&Config` reference for the boolean.
+    pub fn enable_global_virtual_store(&self) -> bool {
+        self.gvs_suffixes.is_some()
+    }
+
+    /// Absolute directory that holds `node_modules/<name>` for one
+    /// snapshot. Falls back to
+    /// [`PkgNameVerPeer::to_virtual_store_name`](pacquet_lockfile::PkgNameVerPeer::to_virtual_store_name)
+    /// when GVS is off, or when GVS is on but the key isn't in the
+    /// precomputed map (which would indicate a bug — every snapshot
+    /// the install touches must have been visited in
+    /// [`Self::new`]; the fallback is defensive rather than expected
+    /// to fire).
+    pub fn slot_dir(&self, key: &PackageKey) -> PathBuf {
+        let suffix = match &self.gvs_suffixes {
+            Some(map) => map.get(key).cloned().unwrap_or_else(|| key.to_virtual_store_name()),
+            None => key.to_virtual_store_name(),
+        };
+        self.package_store_dir.join(suffix)
+    }
+}
+
+/// Build the dependency graph from the lockfile's `snapshots` /
+/// `packages` sections. Mirrors upstream's
+/// [`lockfileToDepGraph`](https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-hasher/src/index.ts#L162-L181)
+/// — every entry in `snapshots` becomes a node whose `full_pkg_id` is
+/// `<pkg_id_with_patch_hash>:<integrity>` (for tarball / registry
+/// resolutions) and whose `children` are the alias→snapshot-key edges
+/// pulled from the snapshot's combined `dependencies` +
+/// `optionalDependencies`.
+///
+/// Packages whose metadata is missing or whose resolution has no
+/// `integrity` (directory / git) are emitted with the bare
+/// `pkg_id_with_patch_hash` as their `full_pkg_id`. The frozen-
+/// lockfile install path rejects those resolutions before reaching the
+/// linker, so a stub `full_pkg_id` here is safe — the GVS hash for an
+/// install that contains one of those snapshots is irrelevant because
+/// the install will error out before consulting it.
+fn lockfile_to_dep_graph(
+    snapshots: &HashMap<PackageKey, SnapshotEntry>,
+    packages: Option<&HashMap<PackageKey, PackageMetadata>>,
+) -> HashMap<PackageKey, DepsGraphNode<PackageKey>> {
+    snapshots
+        .iter()
+        .map(|(snapshot_key, snapshot)| {
+            let children = collect_children(snapshot);
+            let metadata_key = snapshot_key.without_peer();
+            let pkg_id_with_patch_hash = metadata_key.to_string();
+            let resolution = packages.and_then(|m| m.get(&metadata_key)).map(|m| &m.resolution);
+            let full_pkg_id = create_full_pkg_id(&pkg_id_with_patch_hash, resolution);
+            (snapshot_key.clone(), DepsGraphNode { full_pkg_id, children })
+        })
+        .collect()
+}
+
+/// Combine a snapshot's `dependencies` and `optionalDependencies` into
+/// the graph's alias→key edges. Mirrors
+/// [`lockfileDepsToGraphChildren`](https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-hasher/src/index.ts#L237-L246)
+/// composed with upstream's `{...deps, ...optionalDeps}` spread at the
+/// caller.
+fn collect_children(snapshot: &SnapshotEntry) -> HashMap<String, PackageKey> {
+    let mut children = HashMap::new();
+    if let Some(deps) = &snapshot.dependencies {
+        merge_into_children(&mut children, deps);
+    }
+    if let Some(deps) = &snapshot.optional_dependencies {
+        merge_into_children(&mut children, deps);
+    }
+    children
+}
+
+fn merge_into_children(
+    children: &mut HashMap<String, PackageKey>,
+    deps: &HashMap<PkgName, SnapshotDepRef>,
+) {
+    for (alias, dep_ref) in deps {
+        let resolved = dep_ref.resolve(alias);
+        children.insert(alias.to_string(), resolved);
+    }
+}
+
+/// Mirrors upstream's
+/// [`createFullPkgId`](https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-hasher/src/index.ts#L248-L274).
+/// `variations` (cross-platform variant) resolutions don't exist in
+/// pacquet's lockfile model yet — when they're added, this helper
+/// will need the `selectPlatformVariant` branch upstream uses to pick
+/// the right integrity.
+fn create_full_pkg_id(
+    pkg_id_with_patch_hash: &str,
+    resolution: Option<&LockfileResolution>,
+) -> String {
+    match resolution.and_then(LockfileResolution::integrity) {
+        Some(integrity) => format!("{pkg_id_with_patch_hash}:{integrity}"),
+        // Directory / git / missing-metadata fall through to the bare
+        // id. The install path rejects these resolutions before the
+        // hash is consulted (see
+        // [`crate::InstallPackageBySnapshotError::UnsupportedResolution`]),
+        // so the value never actually drives a slot path on disk.
+        None => pkg_id_with_patch_hash.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::VirtualStoreLayout;
+    use pacquet_config::Config;
+    use pacquet_lockfile::{
+        LockfileResolution, PackageKey, PackageMetadata, RegistryResolution, SnapshotEntry,
+    };
+    use pretty_assertions::assert_eq;
+    use std::{collections::HashMap, path::PathBuf};
+
+    fn make_config(gvs: bool, virtual_store_dir: PathBuf) -> Config {
+        let mut config = Config::new();
+        config.enable_global_virtual_store = gvs;
+        config.virtual_store_dir = virtual_store_dir;
+        config
+    }
+
+    /// With GVS off, the layout reproduces today's flat-name layout
+    /// (`<virtual_store_dir>/<flat-name>`) — proving the helper is a
+    /// drop-in for the legacy path.
+    #[test]
+    fn slot_dir_uses_flat_name_when_gvs_off() {
+        let config = make_config(false, PathBuf::from("/tmp/proj/node_modules/.pnpm"));
+        let layout = VirtualStoreLayout::new(&config, "ignored", None, None);
+        let key: PackageKey = "@scope/foo@1.2.3".parse().unwrap();
+        assert_eq!(
+            layout.slot_dir(&key),
+            PathBuf::from("/tmp/proj/node_modules/.pnpm/@scope+foo@1.2.3"),
+        );
+    }
+
+    /// With GVS on and a single snapshot, the layout produces the
+    /// `<root>/<scope>/<name>/<version>/<hash>` shape upstream's tests
+    /// assert against. The hash is opaque; we only check the prefix
+    /// and depth.
+    #[test]
+    fn slot_dir_uses_gvs_layout_when_gvs_on() {
+        let config = make_config(true, PathBuf::from("/tmp/store/links"));
+        let key: PackageKey = "@scope/foo@1.2.3".parse().unwrap();
+        let mut packages = HashMap::new();
+        packages.insert(
+            key.clone(),
+            PackageMetadata {
+                resolution: LockfileResolution::Registry(RegistryResolution {
+                    integrity: "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                        .parse()
+                        .expect("parse integrity"),
+                }),
+                engines: None,
+                cpu: None,
+                os: None,
+                libc: None,
+                deprecated: None,
+                has_bin: None,
+                prepare: None,
+                bundled_dependencies: None,
+                peer_dependencies: None,
+                peer_dependencies_meta: None,
+            },
+        );
+        let mut snapshots = HashMap::new();
+        snapshots.insert(key.clone(), SnapshotEntry::default());
+        let layout = VirtualStoreLayout::new(
+            &config,
+            "darwin-arm64-node20",
+            Some(&snapshots),
+            Some(&packages),
+        );
+        let slot = layout.slot_dir(&key);
+        // Shape: `/tmp/store/links/@scope/foo/1.2.3/<64-hex>`.
+        let stripped = slot
+            .strip_prefix("/tmp/store/links/@scope/foo/1.2.3/")
+            .expect("slot dir must live under <root>/<scope>/<name>/<version>/ when GVS is on");
+        assert_eq!(
+            stripped.to_string_lossy().len(),
+            64,
+            "trailing hash component must be a full sha256 hex digest",
+        );
+    }
+
+    /// Unscoped packages get an `@/` prefix so every entry in the
+    /// shared store sits at the same `<scope>/<name>/<version>/<hash>`
+    /// depth — easier `readdir`-driven traversal.
+    #[test]
+    fn slot_dir_prefixes_unscoped_with_at_slash_under_gvs() {
+        let config = make_config(true, PathBuf::from("/tmp/store/links"));
+        let key: PackageKey = "foo@1.0.0".parse().unwrap();
+        let mut packages = HashMap::new();
+        packages.insert(
+            key.clone(),
+            PackageMetadata {
+                resolution: LockfileResolution::Registry(RegistryResolution {
+                    integrity: "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                        .parse()
+                        .expect("parse integrity"),
+                }),
+                engines: None,
+                cpu: None,
+                os: None,
+                libc: None,
+                deprecated: None,
+                has_bin: None,
+                prepare: None,
+                bundled_dependencies: None,
+                peer_dependencies: None,
+                peer_dependencies_meta: None,
+            },
+        );
+        let mut snapshots = HashMap::new();
+        snapshots.insert(key.clone(), SnapshotEntry::default());
+        let layout =
+            VirtualStoreLayout::new(&config, "linux-x64-node22", Some(&snapshots), Some(&packages));
+        let slot = layout.slot_dir(&key);
+        let _ = slot
+            .strip_prefix("/tmp/store/links/@/foo/1.0.0/")
+            .expect("unscoped GVS slots live under <root>/@/<name>/<version>/<hash>");
+    }
+}
