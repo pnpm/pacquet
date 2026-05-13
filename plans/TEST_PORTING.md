@@ -580,15 +580,15 @@ Fetcher/resolver/store tests:
 - [x] `TypeScript repo: fetching/git-fetcher/test/index.ts:69` `fetch a package from Git sub folder` — `fetcher_packs_subfolder_when_path_set`.
 - [x] `TypeScript repo: fetching/git-fetcher/test/index.ts:87` `prevent directory traversal attack when using Git sub folder` — `prepare_package::tests::safe_join_path_rejects_escapes` + `cas_io::tests::materialize_into_rejects_traversal`.
 - [x] `TypeScript repo: fetching/git-fetcher/test/index.ts:108` `prevent directory traversal attack when using Git sub folder #2` — same coverage as above (`join_checked` rejects every non-`Normal` component variant).
-- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:129` `fetch a package from Git that has a prepare script` — needs a real package manager on the test host to actually run the script. Defer until a `skip-if-no-npm` test helper exists.
+- [x] `TypeScript repo: fetching/git-fetcher/test/index.ts:129` `fetch a package from Git that has a prepare script` — `fetcher::tests::fetcher_runs_prepare_script_when_allowed`. Uses the new `skip_if_no_npm` helper so hosts without npm silently skip.
 - [x] `TypeScript repo: fetching/git-fetcher/test/index.ts:150` `fetch a package without a package.json` — `fetcher_handles_repo_without_package_json`.
 - [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:169` `fetch a big repository` — perf benchmark, not a correctness test; skip from the porting plan.
 - [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:183` `still able to shallow fetch for allowed hosts` — requires a PATH-shimmed `git` to spy on argv. `should_use_shallow_matches_known_host` covers the predicate; the end-to-end `fetch --depth 1` assertion is deferred.
-- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:212` `fail when preparing a git-hosted package` — needs a real failing prepare script (and thus a real package manager). Deferred alongside `index.ts:129`.
+- [x] `TypeScript repo: fetching/git-fetcher/test/index.ts:212` `fail when preparing a git-hosted package` — `fetcher::tests::fetcher_surfaces_prepare_failure`. `node -e "process.exit(1)"` as the prepare script; expects `GitFetcherError::Prepare(PreparePackageError::LifecycleFailed)` carrying `ERR_PNPM_PREPARE_PACKAGE`.
 - [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:230` `fail when preparing a git-hosted package with a partial commit` — Stage 2 (resolver concern).
 - [x] `TypeScript repo: fetching/git-fetcher/test/index.ts:247` `do not build the package when scripts are ignored` — `fetcher_skips_build_when_ignore_scripts`.
 - [x] `TypeScript repo: fetching/git-fetcher/test/index.ts:263` `block git package with prepare script` — `fetcher_blocks_build_when_not_allowed`.
-- [ ] `TypeScript repo: fetching/git-fetcher/test/index.ts:280` `allow git package with prepare script` — needs a real package manager. Deferred.
+- [x] `TypeScript repo: fetching/git-fetcher/test/index.ts:280` `allow git package with prepare script` — `fetcher::tests::fetcher_runs_prepare_when_allow_build_returns_true`. Mirror of the existing block-test (`index.ts:263`) with a per-(name, version) `allow_build` closure returning true; asserts the prepare script's marker file lands in `cas_paths`.
 - [x] `TypeScript repo: fetching/git-fetcher/test/index.ts:304` `fetch only the included files` — `tarball_fetcher::tests::filters_files_outside_files_field` (same packlist code path).
 - [ ] `TypeScript repo: fetching/tarball-fetcher/test/fetch.ts:455` `fetch a big repository` — perf benchmark, not a correctness test; skip.
 - [ ] `TypeScript repo: fetching/tarball-fetcher/test/fetch.ts:472` `fail when preparing a git-hosted package` — needs a real failing prepare script. Deferred.
