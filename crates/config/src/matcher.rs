@@ -61,6 +61,20 @@ impl Matcher {
     pub fn matches(&self, input: &str) -> bool {
         self.0.matches(input).is_some()
     }
+
+    /// `true` iff this matcher is statically guaranteed to never
+    /// match any input — i.e. compiled from an empty pattern list.
+    /// Lets callers short-circuit before they walk a graph and call
+    /// [`Self::matches`] for every alias. Mirrors upstream's
+    /// `case 0: return () => -1` fast path.
+    ///
+    /// A matcher built from non-empty patterns returns `false` here
+    /// even when no realistic input would match (e.g. `["nonexistent-prefix-*"]`)
+    /// — the fast path is a static check on the pattern list, not a
+    /// runtime analysis of the compiled regex shape.
+    pub fn is_empty(&self) -> bool {
+        matches!(self.0.0, MatcherImpl::Never)
+    }
 }
 
 /// Matcher returning the *index* of the include that matched. Empty
@@ -411,5 +425,19 @@ mod tests {
         assert!(!m.matches("acb"));
         // Last segment must be the suffix — `c` not at end fails.
         assert!(!m.matches("axbcx"));
+    }
+
+    /// `is_empty` is the static fast-path check callers use to skip
+    /// graph walks. Only `MatcherImpl::Never` (built from an empty
+    /// pattern list) reports `true`; non-empty pattern lists report
+    /// `false` even if no realistic input would match — the check
+    /// is on the pattern list, not on regex shape.
+    #[test]
+    fn is_empty_only_for_empty_pattern_list() {
+        assert!(create_matcher(&[]).is_empty());
+        assert!(!create_matcher(&pats(["*"])).is_empty());
+        assert!(!create_matcher(&pats(["foo"])).is_empty());
+        assert!(!create_matcher(&pats(["!nothing"])).is_empty());
+        assert!(!create_matcher(&pats(["foo", "bar"])).is_empty());
     }
 }

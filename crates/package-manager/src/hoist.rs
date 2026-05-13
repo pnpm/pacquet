@@ -17,7 +17,6 @@
 //! hoisted modules dirs — the hoist pass itself only computes the
 //! alias-list inputs that pass needs.
 
-use crate::symlink_package;
 use pacquet_config::matcher::Matcher;
 use pacquet_lockfile::{
     PackageKey, PackageMetadata, PkgName, PkgNameVerPeer, ProjectSnapshot, SnapshotEntry,
@@ -410,13 +409,29 @@ struct BfsEntry {
 /// where `<target_dir>` is `<public_hoisted_modules_dir>` for public-kind
 /// or `<private_hoisted_modules_dir>` for private-kind.
 ///
-/// Existing symlinks are left in place (`symlink_package` returns Ok
-/// on `EEXIST`) — upstream's `symlinkDir({ overwrite: false })` plus
-/// the post-error introspection that decides whether to overwrite.
-/// Pacquet's foundation pass keeps the simpler "first writer wins"
-/// behavior and matches upstream's most common path; the
-/// "overwrite a virtual-store-resident link" branch is rare in
-/// practice and can land as a follow-up.
+/// Existing symlinks are left in place — `EEXIST` from the underlying
+/// [`pacquet_fs::symlink_dir`] is swallowed, mirroring upstream's
+/// `symlinkDir({ overwrite: false })`. The "overwrite a
+/// virtual-store-resident link" branch upstream additionally does
+/// (via `resolveLinkTarget` + `isSubdir`) is intentionally not
+/// ported — see the `external_symlink_introspection` known_failure
+/// reason.
+///
+/// Two-phase to amortize directory creation:
+///
+/// 1. Walk the input once to collect every `(target, dest)` symlink
+///    pair plus the set of scope-dir parents (`<root>/@scope`)
+///    needed by scoped aliases.
+/// 2. `create_dir_all` the two hoisted-modules roots and each
+///    distinct scope dir — once per dir, not per symlink. The
+///    previous version called `create_dir_all` inside
+///    [`crate::symlink_package()`] on every symlink, so a 1k-alias install
+///    paid 1k redundant stats on the same handful of parents.
+/// 3. `par_iter` the pair list and issue `symlinkat()` syscalls in
+///    parallel via rayon. Each pair is now a single syscall — no
+///    parent-dir prep — so the only contention is the kernel's
+///    inode lock on the parent directory, which is dominated by
+///    the syscall latency itself on macOS APFS / Linux ext4.
 pub fn symlink_hoisted_dependencies(
     hoisted_by_node_id: &HashMap<PackageKey, HashMap<String, HoistKind>>,
     graph: &HashMap<PackageKey, HoistGraphNode>,
@@ -424,6 +439,18 @@ pub fn symlink_hoisted_dependencies(
     private_hoisted_modules_dir: &std::path::Path,
     public_hoisted_modules_dir: &std::path::Path,
 ) -> Result<(), crate::SymlinkPackageError> {
+    use rayon::prelude::*;
+    use std::{
+        collections::HashSet,
+        io::ErrorKind,
+        path::{Path, PathBuf},
+    };
+
+    // Phase 1: collect (target, dest) pairs and the set of
+    // scope-dir parents that need to exist before the symlink
+    // syscalls fire.
+    let mut pairs: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut scope_dirs: HashSet<PathBuf> = HashSet::new();
     for (node_id, alias_map) in hoisted_by_node_id {
         let Some(node) = graph.get(node_id) else { continue };
         let dep_dir = virtual_store_dir
@@ -431,15 +458,56 @@ pub fn symlink_hoisted_dependencies(
             .join("node_modules")
             .join(name_to_dir(&node.name));
         for (alias, kind) in alias_map {
-            let target_dir = match kind {
+            let target_dir_root: &Path = match kind {
                 HoistKind::Public => public_hoisted_modules_dir,
                 HoistKind::Private => private_hoisted_modules_dir,
             };
-            let dest = target_dir.join(alias);
-            symlink_package(&dep_dir, &dest)?;
+            let dest = target_dir_root.join(alias);
+            // Scoped alias (`@scope/name`) → dest parent is
+            // `<root>/@scope`, which doesn't exist yet on a fresh
+            // install. Unscoped alias → dest parent is `<root>`,
+            // which gets created unconditionally below.
+            if let Some(parent) = dest.parent()
+                && parent != target_dir_root
+            {
+                scope_dirs.insert(parent.to_path_buf());
+            }
+            pairs.push((dep_dir.clone(), dest));
         }
     }
-    Ok(())
+
+    if pairs.is_empty() {
+        return Ok(());
+    }
+
+    // Phase 2: pre-create dirs serially (cheap, dedupe'd, and each
+    // is a no-op for already-existing dirs).
+    let mkdir = |path: &Path| -> Result<(), crate::SymlinkPackageError> {
+        std::fs::create_dir_all(path).map_err(|error| crate::SymlinkPackageError::CreateParentDir {
+            dir: path.to_path_buf(),
+            error,
+        })
+    };
+    mkdir(private_hoisted_modules_dir)?;
+    mkdir(public_hoisted_modules_dir)?;
+    for scope in &scope_dirs {
+        mkdir(scope)?;
+    }
+
+    // Phase 3: fire symlink syscalls in parallel. `try_for_each`
+    // short-circuits on first error, propagating it through
+    // rayon's collector.
+    pairs.par_iter().try_for_each(|(target, dest)| -> Result<(), crate::SymlinkPackageError> {
+        match pacquet_fs::symlink_dir(target, dest) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(()),
+            Err(error) => Err(crate::SymlinkPackageError::SymlinkDir {
+                symlink_target: target.clone(),
+                symlink_path: dest.clone(),
+                error,
+            }),
+        }
+    })
 }
 
 /// Render a [`PkgName`] into its on-disk segment under `node_modules`.
