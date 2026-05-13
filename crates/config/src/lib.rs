@@ -594,10 +594,52 @@ impl Config {
         // diverging from today's behaviour without any of the
         // GVS-aware path computation downstream. Tracked as part of
         // pnpm/pacquet#432 (Section B).
-        if let Some(start) = cwd
-            && let Some((path, settings)) = WorkspaceSettings::find_and_load(&start)?
-        {
-            let base_dir = path.parent().unwrap_or(&start).to_path_buf();
+        // Resolve the workspace dir: `NPM_CONFIG_WORKSPACE_DIR`
+        // override first (mirroring upstream's `findWorkspaceDir` and
+        // [`pacquet_workspace::find_workspace_dir`]; both must agree on
+        // where the workspace lives, otherwise the per-importer
+        // `SymlinkDirectDependencies` writes and the virtual store
+        // would end up in different directories). Fall back to the
+        // upward walk for `pnpm-workspace.yaml` when the env var is
+        // unset or empty.
+        //
+        // The env var is read here rather than via
+        // [`pacquet_workspace`] to avoid adding a cross-crate
+        // dependency just for the lookup — the contract is fixed by
+        // pnpm upstream, so the duplication is low-risk.
+        let env_workspace_dir = std::env::var_os("NPM_CONFIG_WORKSPACE_DIR")
+            .or_else(|| std::env::var_os("npm_config_workspace_dir"))
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from);
+        let workspace_yaml = if let Some(env_dir) = env_workspace_dir {
+            // Env-var path: load yaml directly from the env dir. A
+            // missing file is silent (matching upstream), but the
+            // re-anchor still fires because the user has explicitly
+            // told us where the workspace lives.
+            let yaml_path = env_dir.join(WORKSPACE_MANIFEST_FILENAME);
+            match fs::read_to_string(&yaml_path) {
+                Ok(text) => {
+                    let settings: WorkspaceSettings =
+                        serde_saphyr::from_str(&text).map_err(Box::new).map_err(|source| {
+                            LoadWorkspaceYamlError::ParseYaml { path: yaml_path, source }
+                        })?;
+                    Some((env_dir, Some(settings)))
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some((env_dir, None)),
+                Err(source) => {
+                    return Err(LoadWorkspaceYamlError::ReadFile { path: yaml_path, source });
+                }
+            }
+        } else if let Some(start) = &cwd {
+            WorkspaceSettings::find_and_load(start)?.map(|(path, settings)| {
+                let base_dir = path.parent().unwrap_or(start).to_path_buf();
+                (base_dir, Some(settings))
+            })
+        } else {
+            None
+        };
+
+        if let Some((base_dir, settings)) = workspace_yaml {
             // Re-anchor the path-valued defaults to the workspace root
             // before applying settings. Without this, a `pacquet install`
             // run from a workspace subdirectory leaves
@@ -614,7 +656,9 @@ impl Config {
             // still wins.
             config.modules_dir = base_dir.join("node_modules");
             config.virtual_store_dir = base_dir.join("node_modules/.pnpm");
-            settings.apply_to(&mut config, &base_dir);
+            if let Some(settings) = settings {
+                settings.apply_to(&mut config, &base_dir);
+            }
         }
 
         Ok(config)
@@ -949,10 +993,87 @@ mod tests {
     /// re-anchor block accidentally firing when no workspace exists.
     #[test]
     pub fn single_project_anchors_modules_at_cwd() {
+        // Even though this test doesn't `set_var`, hold the env
+        // guard so a *concurrent* `NPM_CONFIG_WORKSPACE_DIR` test
+        // can't make this one fall into the env-var override path.
+        let _guard = crate::test_env_guard::EnvGuard::snapshot([
+            "NPM_CONFIG_WORKSPACE_DIR",
+            "npm_config_workspace_dir",
+        ]);
+        // SAFETY: lock held by `_guard`.
+        unsafe {
+            env::remove_var("NPM_CONFIG_WORKSPACE_DIR");
+            env::remove_var("npm_config_workspace_dir");
+        }
         let tmp = tempdir().unwrap();
         let config =
             Config::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
                 .expect("config loads");
+        assert_eq!(config.modules_dir, tmp.path().join("node_modules"));
+        assert_eq!(config.virtual_store_dir, tmp.path().join("node_modules/.pnpm"));
+    }
+
+    /// `NPM_CONFIG_WORKSPACE_DIR` must steer `Config::current`'s
+    /// path-anchoring just like it steers
+    /// [`pacquet_workspace::find_workspace_dir`] — otherwise the
+    /// virtual store would land in the cwd while the per-importer
+    /// `SymlinkDirectDependencies` writes land under the env-var
+    /// path, producing two `node_modules` layouts for the same
+    /// install. Matches the consistency guarantee Copilot flagged
+    /// during PR #443 review.
+    #[test]
+    pub fn npm_config_workspace_dir_re_anchors_modules() {
+        let _guard = crate::test_env_guard::EnvGuard::snapshot([
+            "NPM_CONFIG_WORKSPACE_DIR",
+            "npm_config_workspace_dir",
+        ]);
+
+        let env_workspace = tempdir().unwrap();
+        let cwd_dir = tempdir().unwrap();
+        // SAFETY: lock held by `_guard`. Cleared on drop.
+        unsafe {
+            env::set_var("NPM_CONFIG_WORKSPACE_DIR", env_workspace.path());
+            env::remove_var("npm_config_workspace_dir");
+        }
+
+        let config = Config::current(
+            || cwd_dir.path().to_path_buf().pipe(Ok::<_, ()>),
+            || None,
+            Config::new,
+        )
+        .expect("config loads");
+        assert_eq!(
+            config.modules_dir,
+            env_workspace.path().join("node_modules"),
+            "modules_dir must follow NPM_CONFIG_WORKSPACE_DIR, not the cwd",
+        );
+        assert_eq!(
+            config.virtual_store_dir,
+            env_workspace.path().join("node_modules/.pnpm"),
+            "virtual_store_dir must follow NPM_CONFIG_WORKSPACE_DIR, not the cwd",
+        );
+    }
+
+    /// An empty `NPM_CONFIG_WORKSPACE_DIR` falls through to the
+    /// upward walk, matching pnpm's truthy `if (workspaceDir)` check.
+    /// Pairs with `pacquet_workspace`'s
+    /// `empty_env_var_is_treated_as_unset`.
+    #[test]
+    pub fn empty_npm_config_workspace_dir_falls_through() {
+        let _guard = crate::test_env_guard::EnvGuard::snapshot([
+            "NPM_CONFIG_WORKSPACE_DIR",
+            "npm_config_workspace_dir",
+        ]);
+        // SAFETY: lock held by `_guard`.
+        unsafe {
+            env::set_var("NPM_CONFIG_WORKSPACE_DIR", "");
+            env::remove_var("npm_config_workspace_dir");
+        }
+        let tmp = tempdir().unwrap();
+        let config =
+            Config::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
+                .expect("config loads");
+        // No yaml in tmp → no re-anchor → cwd-anchored defaults.
         assert_eq!(config.modules_dir, tmp.path().join("node_modules"));
         assert_eq!(config.virtual_store_dir, tmp.path().join("node_modules/.pnpm"));
     }
