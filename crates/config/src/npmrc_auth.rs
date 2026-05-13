@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use pacquet_network::{AuthHeaders, base64_encode, nerf_dart};
+use pacquet_network::{AuthHeaders, base64_encode};
 
 use crate::{Config, api::EnvVar, env_replace::env_replace};
 
@@ -151,10 +151,16 @@ impl NpmrcAuth {
                 auth_header_by_uri.insert(uri, header);
             }
         }
+        // Default-registry creds are passed through with an empty-string
+        // key, matching upstream's
+        // [`getAuthHeadersFromCreds`](https://github.com/pnpm/pnpm/blob/601317e7a3/network/auth-header/src/getAuthHeadersFromConfig.ts)
+        // where `configByUri['']` holds default creds and is re-keyed
+        // onto `defaultRegistry` by the constructor.
+        // [`AuthHeaders::from_creds_map`] does the nerf-darting.
         if !self.default_creds.is_empty()
             && let Some(header) = creds_to_header(&self.default_creds)
         {
-            auth_header_by_uri.insert(nerf_dart(&config.registry), header);
+            auth_header_by_uri.insert(String::new(), header);
         }
 
         config.auth_headers =

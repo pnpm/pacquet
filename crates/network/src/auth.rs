@@ -465,10 +465,10 @@ mod tests {
     /// names a path segment (`/scope`). Without the append,
     /// [`nerf_dart`] would drop the segment and miss the token; with
     /// it, the lookup walks `//reg.com/scope/`. Removing the append
-    /// branch makes this test fail.
-    /// [`registry_with_pathname_matches_metadata_and_tarballs`] alone
-    /// is not enough because its host-only assertion would pass via
-    /// [`ParsedUrl::parse`]'s no-path branch even without the append.
+    /// branch makes this test fail. Kept as a focused single-assertion
+    /// case for the slash-append branch even though
+    /// [`registry_with_pathname_matches_metadata_and_tarballs`]'s first
+    /// assertion (`https://npm.pkg.github.com/pnpm`) also exercises it.
     #[test]
     fn slash_append_branch_lets_path_segment_match() {
         let headers = build(&[("//reg.com/scope/", "Bearer scoped")]);

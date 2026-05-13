@@ -278,6 +278,7 @@ fn install_resolves_env_var_in_npmrc_registry() {
     let original = fs::read_to_string(&npmrc_path).expect("read .npmrc");
     let patched = original
         .replace(&format!("registry={mocked_registry_url}"), "registry=${PACQUET_TEST_REGISTRY}");
+    eprintln!("npmrc_path={npmrc_path:?}\noriginal_npmrc={original:?}\npatched_npmrc={patched:?}");
     assert_ne!(original, patched, ".npmrc layout drifted; update this test");
     fs::write(&npmrc_path, &patched).expect("rewrite .npmrc");
 
@@ -299,7 +300,9 @@ fn install_resolves_env_var_in_npmrc_registry() {
 
     eprintln!("Make sure the package was actually fetched from the resolved registry");
     let symlink_path = workspace.join("node_modules/@pnpm.e2e/hello-world-js-bin-parent");
-    assert!(is_symlink_or_junction(&symlink_path).unwrap());
+    let installed = is_symlink_or_junction(&symlink_path).unwrap();
+    eprintln!("symlink_path={symlink_path:?} installed={installed}");
+    assert!(installed, "expected installed symlink/junction at {symlink_path:?}");
 
     drop((root, mock_instance)); // cleanup
 }
