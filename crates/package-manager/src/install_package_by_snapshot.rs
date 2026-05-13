@@ -19,7 +19,8 @@ use pacquet_store_dir::{
     git_hosted_store_index_key,
 };
 use pacquet_tarball::{
-    DownloadTarballToStore, DownloadZipArchiveToStore, PrefetchedCasPaths, TarballError,
+    DownloadTarballToStore, DownloadZipArchiveToStore, IgnoreEntryFilter, PrefetchedCasPaths,
+    TarballError,
 };
 use pipe_trait::Pipe;
 use std::{
@@ -277,6 +278,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
                     prefetched_cas_paths,
                     &package_id,
                     requester,
+                    archive_filter_for(package_key),
                 )
                 .await?
             }
@@ -331,6 +333,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
                     prefetched_cas_paths,
                     &package_id,
                     requester,
+                    archive_filter_for(package_key),
                 )
                 .await?
             }
@@ -442,6 +445,93 @@ pub(crate) fn host_platform_selector() -> PlatformSelector {
     PlatformSelector { os: host_platform().to_string(), cpu: host_arch().to_string(), libc }
 }
 
+/// Hand-coded port of upstream's
+/// [`NODE_EXTRAS_IGNORE_PATTERN`](https://github.com/pnpm/pnpm/blob/94240bc046/engine/runtime/node-resolver/src/index.ts)
+/// regex (`^(?:(?:lib/)?node_modules/(?:npm|corepack)(?:/|$)|bin/(?:npm|npx|corepack)$|(?:npm|npx|corepack)(?:\.(?:cmd|ps1))?$)`).
+/// Used as the archive-entry filter when extracting a Node.js
+/// runtime archive: pnpm bundles `npm` + `corepack` in the tarball,
+/// but pacquet (and pnpm) install pnpm itself as the package
+/// manager, so the bundled tooling is dead weight and would also
+/// shadow the user's pnpm via `node_modules/.bin/`. Stripping these
+/// entries during the CAS write keeps the runtime artifact in the
+/// store free of the bundled tooling without a post-hoc cleanup.
+///
+/// Pacquet uses a hand-coded matcher rather than the upstream regex
+/// so [`pacquet_tarball`] doesn't have to pull in a regex engine.
+/// The three branches below mirror the regex alternation exactly;
+/// every path the regex matches is matched here, and nothing else.
+fn node_extras_filter(path: &str) -> bool {
+    // ^(?:(?:lib/)?node_modules/(?:npm|corepack)(?:/|$))
+    //
+    // Strip an optional leading `lib/` so the `lib/node_modules/...`
+    // and `node_modules/...` shapes converge into one check; the
+    // `node_modules/` prefix is mandatory after the optional `lib/`.
+    let after_lib = path.strip_prefix("lib/").unwrap_or(path);
+    if let Some(rest) = after_lib.strip_prefix("node_modules/") {
+        for name in ["npm", "corepack"] {
+            if rest == name || rest.starts_with(&format!("{name}/")) {
+                return true;
+            }
+        }
+    }
+    // ^bin/(?:npm|npx|corepack)$
+    //
+    // The `$` anchors the regex to an exact match — `bin/npm/foo`
+    // doesn't trip this arm (and the `node_modules` arm above
+    // wouldn't catch it either since it doesn't start with `bin/`).
+    if let Some(rest) = path.strip_prefix("bin/")
+        && matches!(rest, "npm" | "npx" | "corepack")
+    {
+        return true;
+    }
+    // ^(?:npm|npx|corepack)(?:\.(?:cmd|ps1))?$
+    //
+    // Top-level shim files; `.cmd` / `.ps1` cover Windows. Note
+    // these are *not* under `bin/` — they live at the runtime
+    // archive root after the `node-vX.Y.Z-<platform>-<arch>/`
+    // prefix strip.
+    for name in ["npm", "npx", "corepack"] {
+        if path == name {
+            return true;
+        }
+        for ext in [".cmd", ".ps1"] {
+            if path.len() == name.len() + ext.len() && path.starts_with(name) && path.ends_with(ext)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Build the per-fetch [`IgnoreEntryFilter`] for the package being
+/// installed. Returns `Some(NODE_EXTRAS_IGNORE_PATTERN)` for
+/// unscoped `node` (matching upstream's
+/// [`archiveFilters: { node: NODE_EXTRAS_IGNORE_PATTERN }`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/client/src/index.ts)
+/// keyed by `pkg.name`); everything else returns `None` and the
+/// full archive contents land in the CAS unfiltered.
+///
+/// The filter is cached in a [`std::sync::OnceLock`] so per-snapshot
+/// `Arc::clone`s share one trait object — `IgnoreEntryFilter` is
+/// a `dyn Fn`, so cheap to clone, and we don't want to allocate
+/// the Arc once per runtime install.
+fn archive_filter_for(package_key: &PackageKey) -> Option<Arc<IgnoreEntryFilter>> {
+    if package_key.name.scope.is_some() || package_key.name.bare != "node" {
+        return None;
+    }
+    static FILTER: std::sync::OnceLock<Arc<IgnoreEntryFilter>> = std::sync::OnceLock::new();
+    let filter = FILTER.get_or_init(|| {
+        // `fn(&str) -> bool` implements `Fn(&str) -> bool + Send +
+        // Sync`, so an `Arc<fn(...)>` unsizes to
+        // `Arc<dyn Fn(...) + Send + Sync>` (the trait-object type
+        // `IgnoreEntryFilter` aliases). The explicit type
+        // annotation drives the unsizing coercion.
+        let f: Arc<IgnoreEntryFilter> = Arc::new(node_extras_filter);
+        f
+    });
+    Some(Arc::clone(filter))
+}
+
 /// Fetch a [`BinaryResolution`] into the CAS, returning the
 /// per-file `{relative_path → cas_path}` map the snapshot's virtual
 /// directory needs. Dispatches on the archive type:
@@ -474,6 +564,7 @@ async fn fetch_binary_resolution_to_cas<R: Reporter>(
     prefetched_cas_paths: Option<&PrefetchedCasPaths>,
     package_id: &str,
     requester: &str,
+    ignore_file_pattern: Option<Arc<IgnoreEntryFilter>>,
 ) -> Result<HashMap<String, PathBuf>, InstallPackageBySnapshotError> {
     match binary.archive {
         BinaryArchive::Tarball => DownloadTarballToStore {
@@ -491,7 +582,7 @@ async fn fetch_binary_resolution_to_cas<R: Reporter>(
             prefetched_cas_paths,
             retry_opts: retry_opts_from_config(config),
             auth_headers: &config.auth_headers,
-            ignore_file_pattern: None,
+            ignore_file_pattern,
         }
         .run_without_mem_cache::<R>()
         .await
@@ -511,7 +602,7 @@ async fn fetch_binary_resolution_to_cas<R: Reporter>(
             retry_opts: retry_opts_from_config(config),
             auth_headers: &config.auth_headers,
             archive_prefix: binary.prefix.as_deref(),
-            ignore_file_pattern: None,
+            ignore_file_pattern,
         }
         .run_without_mem_cache::<R>()
         .await
