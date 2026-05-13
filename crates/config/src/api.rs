@@ -1,22 +1,14 @@
-//! Capability traits and the project-wide [`RealApi`] provider.
+//! Capability traits and the project-wide [`Host`] provider.
 //!
-//! Mirrors the dependency-injection pattern documented in
-//! [pnpm/pacquet#339](https://github.com/pnpm/pacquet/issues/339): one
-//! trait per capability, one provider gathering every capability impl
-//! used across the codebase, all methods static. Production callers
-//! turbofish the real provider explicitly
-//! (e.g. `Config::current::<RealApi>(...)`); tests substitute a
-//! per-test unit struct that implements only the bounds the function
-//! actually declares, with any per-test scenario data stored in a
-//! `static` inside the test fn.
-//!
-//! Today the provider only exposes [`EnvVar`]. As more side-effecting
-//! capabilities are introduced (filesystem, disk inspection, time,
-//! …) their `impl … for RealApi` blocks land here too, so callers
-//! never juggle multiple providers. Trait names keep their domain
-//! prefix (`Fs*`, `GetDisk*`, `Env*`, …) so a reader can identify
-//! which domain a generic bound belongs to without chasing
-//! definitions.
+//! Mirrors the dependency-injection pattern documented in the
+//! "Dependency injection for tests" section of `CODE_STYLE_GUIDE.md`:
+//! one trait per capability, one provider gathering every capability
+//! impl used across the codebase, all methods static. Production
+//! callers turbofish the real provider explicitly
+//! (e.g. `Config::current::<Host>(...)`); tests substitute a per-test
+//! unit struct that implements only the bounds the function actually
+//! declares, with any per-test scenario data stored in a `static`
+//! inside the test fn.
 
 /// Capability: read a process environment variable.
 ///
@@ -35,17 +27,17 @@ pub trait EnvVar {
 }
 
 /// Project-wide capability provider. Production code threads
-/// `RealApi` through generic call sites with an explicit turbofish:
+/// `Host` through generic call sites with an explicit turbofish:
 ///
 /// ```ignore
-/// let config = Config::current::<RealApi>(env::current_dir, home::home_dir, Default::default);
+/// let config = Config::current::<Host>(env::current_dir, home::home_dir, Default::default);
 /// ```
 ///
 /// Tests substitute their own zero-sized struct that implements only
 /// the trait bounds the function under test declares.
-pub struct RealApi;
+pub struct Host;
 
-impl EnvVar for RealApi {
+impl EnvVar for Host {
     fn var(name: &str) -> Option<String> {
         std::env::var(name).ok()
     }

@@ -587,6 +587,127 @@ The external file itself sits in a directory named after the parent, using the s
 
 Do not flatten the tests into a sibling file such as `src/foo_tests.rs`, and do not skip the intermediate directory when the parent currently has no other submodules. This mirrors the flat file pattern (`module.rs` rather than `module/mod.rs`) described under [Module Organization](#module-organization).
 
+### Dependency injection for tests
+
+Code that touches the outside world — filesystem, environment variables, network, time, process state — needs a seam tests can swap out. Pacquet's seams are *capability traits*: small static-method traits, one per primitive effect, all carried by a single zero-sized provider type. Production turbofishes the real provider; tests turbofish a unit struct declared inside the `#[test]` body.
+
+The current implementations live in [`crates/modules-yaml`](./crates/modules-yaml/src/lib.rs) (filesystem + clock), [`crates/cmd-shim`](./crates/cmd-shim/src/capabilities.rs) (filesystem, including exec-bit chmod), [`crates/config`](./crates/config/src/api.rs) (environment variables), and [`crates/reporter`](./crates/reporter/src/lib.rs) (`gethostname`). New side-effecting code added to the workspace should follow the same shape.
+
+#### Names
+
+- **Generic parameter: `Sys`.** The single type parameter that carries every capability bound a function consumes. Reads as "the system this function runs against." Never use a domain-specific name like `Fs` or `Env` for the generic — the generic spans every domain the function reaches into.
+- **Production provider: `Host`.** The zero-sized struct that implements every capability trait by delegating to the real OS / `std` call. Unqualified, never `RealHost` or `DefaultHost`; the convention is that production is unqualified and fakes carry the qualifier.
+- **Trait names: `<Domain><Action>`.** Filesystem traits carry an `Fs` prefix and mirror the matching `std::fs` name (`FsReadToString`, `FsCreateDirAll`, `FsWrite`). Other domains use the matching prefix (`Env*`, `GetDisk*`, `Http*`, …). A reader sees `Sys: FsCreateDirAll + EnvVar` and knows immediately which two domains the function reaches into.
+- **Fake names describe the behaviour, not the domain.** A fake whose `read_to_string` returns garbage yaml is `BadYamlContent`, not `BadYamlFs`. The `Fs` suffix would label the domain — but fakes are providers, and by the principles below providers stay domain-neutral.
+
+#### Principles
+
+1. **One trait per capability.** Each side-effecting operation gets its own trait. Functions bind only what they consume, and test fakes implement only what gets called. Avoid lumped traits such as `FsApi { read, mkdir, write, ... }` that force `unreachable!()` to fill the unused methods.
+
+2. **One generic parameter satisfying multiple bounds.** When a function needs several capabilities, compose them as `<Sys: FsReadToString + FsWrite + Clock>`. Resist the multi-parameter form `<F: FsReadToString, C: Clock>`. The generic is a capability provider, not a capability domain, so it should never be named after one domain.
+
+3. **Capability methods take no `&self`. Use `static`s for stateful fakes.** Capability methods are associated functions. Production implementations are unit structs (`struct Host;`). Fakes are unit structs declared inside the test function, alongside any per-test scenario data held in `static`s such as `static CALLS: Mutex<Vec<...>> = Mutex::new(Vec::new())` or `static SEQUENCE_INDEX: AtomicUsize = AtomicUsize::new(0)`.
+
+   Declare each interior-mutable `static` inside the body of the `#[test]` function that owns it. Never at module scope, and never inside a helper that several tests call. The test runner invokes each `#[test]` function exactly once per process, so a `static` declared inside a single test body is only ever touched from one test thread, which keeps the fake stateless from the trait's perspective and free of data races. An interior-mutable `static` shared across tests is no longer per-test: multiple test threads can hit it in parallel and race.
+
+   Immutable `static`s are exempt. Items such as `static FIXTURE_BYTES: &[u8] = b"...";` declared at module scope and shared across tests are fine — reads do not race.
+
+4. **Associated types instead of `&self` when a capability operates over a data type.** If a capability would otherwise force callers to pass an instance just to extract data, lift the data type to an associated type. The capability stays a static-method namespace, and the associated type lets one provider describe how to operate over a chosen data shape (see the disk-inspection sketch in principle 6's worked example).
+
+5. **Capability traits live on the implementor, not the data.** The capability provider `Host` implements the trait `FsReadToString`. The value type `Path` does not. This keeps the capability implementation swappable without changing call sites.
+
+6. **Provider names are domain-neutral; trait names are domain-scoped.** `Sys` (generic) and `Host` (production) carry every capability the workspace needs, regardless of how many domains they cover. Traits keep a domain prefix (`Fs*`, `Env*`, `GetDisk*`, …) so a reader can identify which domain a bound belongs to without chasing definitions.
+
+7. **Production callers turbofish the real implementation explicitly.** For example, `read_modules_manifest::<Host>(dir)`. Defaults on free-function type parameters are unstable on stable Rust, so an explicit turbofish is the price of zero-cost dependency injection.
+
+8. **Capabilities are primitives, not algorithms.** A capability trait names a leaf-level effect — typically a single `std` function or a single syscall. Its method signature and its name promise only what the underlying primitive promises. When a feature needs a stronger guarantee (atomic file replacement, transactional state machines, retried HTTP requests), implement it as a free function or higher-level type that *consumes* the primitive capabilities. Do not promote the algorithm into a capability trait of its own. The canonical failure mode is `FsWriteAtomic` backed by `std::fs::write`: the trait name lies to every caller, and the lie spreads through the public surface of the crate. The right shape is `FsWrite` (matching `std::fs::write`) plus a free function `atomic_write` once atomicity is actually needed.
+
+#### Worked example
+
+The filesystem and clock capabilities in [`crates/modules-yaml/src/lib.rs`](./crates/modules-yaml/src/lib.rs) are the canonical reference. The shape is:
+
+```rust
+pub trait FsReadToString { fn read_to_string(path: &Path) -> io::Result<String>; }
+pub trait FsCreateDirAll { fn create_dir_all(path: &Path) -> io::Result<()>; }
+pub trait FsWrite        { fn write(path: &Path, contents: &[u8]) -> io::Result<()>; }
+pub trait Clock          { fn now() -> SystemTime; }
+
+pub struct Host;
+impl FsReadToString for Host { /* delegates to std::fs::read_to_string */ }
+impl FsCreateDirAll for Host { /* delegates to std::fs::create_dir_all */ }
+impl FsWrite        for Host { /* delegates to std::fs::write           */ }
+impl Clock          for Host { /* delegates to SystemTime::now          */ }
+```
+
+Public APIs bind the minimal capabilities:
+
+```rust
+pub fn read_modules_manifest<Sys>(modules_dir: &Path) -> Result<Option<Modules>, ReadModulesError>
+where
+    Sys: FsReadToString + Clock,
+{ /* ... */ }
+
+pub fn write_modules_manifest<Sys>(modules_dir: &Path, manifest: Modules) -> Result<(), WriteModulesError>
+where
+    Sys: FsCreateDirAll + FsWrite,
+{ /* ... */ }
+```
+
+Test fakes implement only the bound the function under test consumes:
+
+```rust
+#[test]
+fn read_propagates_parse_error() {
+    struct BadYamlContent;
+    impl FsReadToString for BadYamlContent {
+        fn read_to_string(_: &Path) -> io::Result<String> {
+            Ok("{ this is not valid yaml or json".to_string())
+        }
+    }
+    impl Clock for BadYamlContent {
+        fn now() -> SystemTime {
+            unreachable!("clock must not be called when YAML parsing fails");
+        }
+    }
+
+    let err = read_modules_manifest::<BadYamlContent>(Path::new("/dev/null/unused"))
+        .expect_err("expected error");
+    assert!(matches!(err, ReadModulesError::ParseYaml { .. }));
+}
+```
+
+The fake declares only `FsReadToString` and `Clock` because those are the bounds on `read_modules_manifest`. No `FsWrite` or `FsCreateDirAll` impls are needed.
+
+#### Combining capabilities of different domains
+
+A function reaching into multiple domains binds them all under the single `Sys` generic. When several traits share an associated type, an equality bound locks them to the same data type so the function operates on a single slice without re-introducing a lumped super-trait:
+
+```rust
+fn warm_cache_for_local_disks<Sys>(
+    disks: &[<Sys as GetDiskKind>::Disk],
+    seed_url: &str,
+) -> Result<(), CacheError>
+where
+    Sys: GetDiskKind
+       + GetDiskName<Disk = <Sys as GetDiskKind>::Disk>
+       + GetMountPoint<Disk = <Sys as GetDiskKind>::Disk>
+       + HttpGet
+       + FsCreateDirAll
+       + FsWrite,
+{ /* ... */ }
+```
+
+Tests provide their own fake `Sys` that implements every capability the function needs, sets `type Disk = FakeDisk;`, and defines `FakeDisk` inside the test function. No `&self`, no per-test instance plumbing, no second generic parameter per domain.
+
+#### When dependency injection is not needed
+
+Some tests should not use dependency injection because a real fixture is simpler:
+
+- **Real filesystem fixtures.** If the input can be produced cheaply by writing files under `tests/fixtures/` or a `tempdir()`, use that. See [`crates/modules-yaml/tests/real_fs.rs`](./crates/modules-yaml/tests/real_fs.rs) for the canonical pattern.
+- **Pure logic.** Functions that take values and return values — `is_string_present`, `derive_hoisted_dependencies`, the bin-name validators — are tested with plain assertions on inputs and outputs.
+
+Dependency injection is for error paths that the real filesystem cannot reach portably (`PermissionDenied`, `ENOSPC`, mid-read truncation), for time-dependent branches (`prunedAt` defaulting), and for behaviour whose triggering conditions are awkward to set up on disk.
+
 ### Cloning `Arc` and `Rc`
 
 Prefer using `Arc::clone` or `Rc::clone` to vague `.clone()` or `Clone::clone`.

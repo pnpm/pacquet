@@ -2,7 +2,7 @@ use super::{Install, InstallError};
 use pacquet_config::Config;
 use pacquet_lockfile::Lockfile;
 use pacquet_modules_yaml::{
-    DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH, LayoutVersion, Modules, NodeLinker, RealApi,
+    DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH, Host, LayoutVersion, Modules, NodeLinker,
     read_modules_manifest, write_modules_manifest,
 };
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
@@ -635,7 +635,7 @@ async fn install_writes_modules_yaml() {
         package_manager,
         ..
     } = modules_dir
-        .pipe_as_ref(read_modules_manifest::<RealApi>)
+        .pipe_as_ref(read_modules_manifest::<Host>)
         .expect("read .modules.yaml")
         .expect("modules manifest exists");
 
@@ -1655,7 +1655,7 @@ async fn frozen_install_preserves_seeded_skipped_across_reinstall() {
         skipped: seeded_keys.iter().map(|s| (*s).to_string()).collect(),
         ..Default::default()
     };
-    write_modules_manifest::<RealApi>(&modules_dir, seed_modules).expect("seed .modules.yaml");
+    write_modules_manifest::<Host>(&modules_dir, seed_modules).expect("seed .modules.yaml");
 
     // Empty lockfile drives the constraint-free fast path. The
     // seed must survive verbatim.
@@ -1685,7 +1685,7 @@ async fn frozen_install_preserves_seeded_skipped_across_reinstall() {
     .expect("frozen-lockfile install should succeed");
 
     let written = modules_dir
-        .pipe_as_ref(read_modules_manifest::<RealApi>)
+        .pipe_as_ref(read_modules_manifest::<Host>)
         .expect("read .modules.yaml")
         .expect("modules manifest exists");
 

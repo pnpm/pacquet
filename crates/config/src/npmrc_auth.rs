@@ -78,7 +78,7 @@ impl NpmrcAuth {
     /// plus comments starting with `;` or `#`. We hand-parse rather than
     /// use a strongly-typed deserializer so unknown / malformed keys don't
     /// blow up parsing.
-    pub fn from_ini<Api: EnvVar>(text: &str) -> Self {
+    pub fn from_ini<Sys: EnvVar>(text: &str) -> Self {
         let mut auth = NpmrcAuth::default();
         for line in text.lines() {
             let line = line.trim();
@@ -93,14 +93,14 @@ impl NpmrcAuth {
 
             // Apply ${VAR} substitution to both the key and the value,
             // matching `readAndFilterNpmrc` in pnpm's `loadNpmrcFiles.ts`.
-            let key = match env_replace::<Api>(raw_key) {
+            let key = match env_replace::<Sys>(raw_key) {
                 Ok(value) => value,
                 Err(error) => {
                     auth.warnings.push(error.to_string());
                     raw_key.to_owned()
                 }
             };
-            let value = match env_replace::<Api>(raw_value) {
+            let value = match env_replace::<Sys>(raw_value) {
                 Ok(value) => value,
                 Err(error) => {
                     auth.warnings.push(error.to_string());

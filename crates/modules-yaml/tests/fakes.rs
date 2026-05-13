@@ -2,9 +2,8 @@
 //! and time-dependent branches that are awkward or impossible to provoke
 //! with the real filesystem. Each fake implements only the capability
 //! trait the function under test consumes, so a read fake never has to
-//! declare `write`. This is the interface-segregation refinement of the
-//! lumped `FsApi` pattern at
-//! <https://github.com/KSXGitHub/parallel-disk-usage/blob/2aa39917f9/src/app/hdd.rs#L25-L35>.
+//! declare `write`. See the "Dependency injection for tests" section
+//! of `CODE_STYLE_GUIDE.md` for the full set of principles.
 
 use chrono::{TimeZone, Utc};
 use pacquet_modules_yaml::{
