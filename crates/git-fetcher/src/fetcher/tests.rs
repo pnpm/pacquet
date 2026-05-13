@@ -598,12 +598,27 @@ async fn fetcher_surfaces_prepare_failure() {
     .await
     .unwrap_err();
 
-    match err {
+    // Variant match first so the failure message at the panic site
+    // is informative on a `Prepare(InvalidPath {...})` regression
+    // (where the diagnostic code is `INVALID_PATH`, not the one we
+    // want here).
+    match &err {
         GitFetcherError::Prepare(crate::error::PreparePackageError::LifecycleFailed { .. }) => {}
         other => {
             panic!("expected Prepare::LifecycleFailed (ERR_PNPM_PREPARE_PACKAGE), got {other:?}")
         }
     }
+    // Then assert the `#[diagnostic(code(...))]` text — a rename of
+    // the code on the enum variant (e.g. dropping the upstream
+    // `ERR_PNPM_PREPARE_PACKAGE` matcher in favor of a pacquet-only
+    // string) would silently regress error-code parity with pnpm
+    // without this check.
+    use miette::Diagnostic;
+    let code = err.code().map(|c| c.to_string()).unwrap_or_default();
+    assert_eq!(
+        code, "ERR_PNPM_PREPARE_PACKAGE",
+        "diagnostic code must match the upstream error contract",
+    );
 }
 
 /// Ports pnpm's `allow git package with prepare script` at
@@ -657,7 +672,10 @@ async fn fetcher_runs_prepare_when_allow_build_returns_true() {
     .await
     .unwrap();
 
-    assert!(received.built);
+    assert!(
+        received.built,
+        "allow_build returning true must report should_be_built=true (manifest declared prepare)",
+    );
     assert!(
         received.cas_paths.contains_key("BUILD_RAN.marker"),
         "allow_build returning true must let the prepare script run: keys = {:?}",
