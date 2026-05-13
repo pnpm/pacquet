@@ -1,12 +1,17 @@
 mod auth;
+mod proxy;
+#[cfg(test)]
+mod tests;
 
 pub use auth::{AuthHeaders, base64_encode, nerf_dart};
+pub use proxy::{NoProxySetting, ProxyConfig, ProxyError};
 
+use proxy::{NoProxyMatcher, parse_proxy_url, strip_userinfo};
 use reqwest::{
-    Client,
+    Client, Proxy,
     header::{HeaderMap, HeaderValue, USER_AGENT},
 };
-use std::{num::NonZeroUsize, ops::Deref, time::Duration};
+use std::{num::NonZeroUsize, ops::Deref, sync::Arc, time::Duration};
 use tokio::sync::{Semaphore, SemaphorePermit};
 
 /// Default `User-Agent` pacquet sends on every request made by the
@@ -135,19 +140,40 @@ impl ThrottledClient {
     /// directly, bypassing `mDNSResponder` and the EAI_NONAME flake
     /// entirely.
     pub fn new_for_installs() -> Self {
-        let mut default_headers = HeaderMap::with_capacity(1);
-        default_headers.insert(USER_AGENT, HeaderValue::from_static(DEFAULT_USER_AGENT));
+        Self::for_installs(&ProxyConfig::default())
+            .expect("default ProxyConfig carries no URLs and cannot fail parsing")
+    }
 
-        let client = Client::builder()
-            .http1_only()
-            .default_headers(default_headers)
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(300))
-            .pool_idle_timeout(Duration::from_secs(4))
-            .hickory_dns(true)
-            .build()
-            .expect("build reqwest client with default timeouts");
-        ThrottledClient::from_client(client)
+    /// Construct the install client with proxy configuration applied.
+    ///
+    /// Ports pnpm v11's
+    /// [`getDispatcher`](https://github.com/pnpm/pnpm/blob/94240bc046/network/fetch/src/dispatcher.ts#L23-L31)
+    /// onto reqwest: HTTPS targets route through `https_proxy`, HTTP
+    /// targets through `http_proxy`, and the [`NoProxySetting`] in
+    /// [`ProxyConfig::no_proxy`] short-circuits both via a per-URL
+    /// custom-proxy closure. Basic-auth user/password halves embedded
+    /// in the proxy URL are percent-decoded before being forwarded as
+    /// the `Proxy-Authorization` header — matching upstream's
+    /// [decode at dispatcher.ts:180-182](https://github.com/pnpm/pnpm/blob/94240bc046/network/fetch/src/dispatcher.ts#L180-L182).
+    ///
+    /// Returns [`ProxyError::InvalidProxy`] when either configured
+    /// proxy URL fails to parse even after the auto-`http://` prefix
+    /// retry, matching upstream's build-time `ERR_PNPM_INVALID_PROXY`
+    /// from [dispatcher.ts:106-121](https://github.com/pnpm/pnpm/blob/94240bc046/network/fetch/src/dispatcher.ts#L106-L121).
+    pub fn for_installs(proxy: &ProxyConfig) -> Result<Self, ProxyError> {
+        let https = proxy.https_proxy.as_deref().map(parse_proxy_url).transpose()?;
+        let http = proxy.http_proxy.as_deref().map(parse_proxy_url).transpose()?;
+        let no_proxy = Arc::new(NoProxyMatcher::from(proxy.no_proxy.as_ref()));
+
+        let mut builder = default_client_builder();
+        if let Some(url) = https {
+            builder = builder.proxy(build_scheme_proxy(url, "https", Arc::clone(&no_proxy)));
+        }
+        if let Some(url) = http {
+            builder = builder.proxy(build_scheme_proxy(url, "http", Arc::clone(&no_proxy)));
+        }
+        let client = builder.build().expect("build reqwest client with default timeouts and proxy");
+        Ok(ThrottledClient::from_client(client))
     }
 
     /// Construct a throttled client wrapping a pre-built [`Client`].
@@ -159,6 +185,48 @@ impl ThrottledClient {
         let semaphore = Semaphore::new(default_network_concurrency());
         ThrottledClient { semaphore, client }
     }
+}
+
+/// Shared builder with the install-time defaults
+/// ([`ThrottledClient::new_for_installs`] documents the why behind each
+/// setting). Both `new_for_installs` and [`ThrottledClient::for_installs`]
+/// route through this helper so a single source of truth governs
+/// timeouts, HTTP-version, resolver, and the default User-Agent header.
+fn default_client_builder() -> reqwest::ClientBuilder {
+    let mut default_headers = HeaderMap::with_capacity(1);
+    default_headers.insert(USER_AGENT, HeaderValue::from_static(DEFAULT_USER_AGENT));
+    Client::builder()
+        .http1_only()
+        .default_headers(default_headers)
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(300))
+        .pool_idle_timeout(Duration::from_secs(4))
+        .hickory_dns(true)
+}
+
+/// Build a [`Proxy`] that routes only requests whose target scheme matches
+/// `scheme` ("http" or "https") and whose host doesn't fall under the
+/// no-proxy bypass. Userinfo is stripped from the URL and re-attached
+/// via [`Proxy::basic_auth`] after percent-decoding so usernames /
+/// passwords with `%XX` escapes (e.g. `@` in a password) reach the
+/// upstream proxy decoded — matching pnpm's behavior at
+/// [`dispatcher.ts:180-182`](https://github.com/pnpm/pnpm/blob/94240bc046/network/fetch/src/dispatcher.ts#L180-L182).
+fn build_scheme_proxy(
+    url: reqwest::Url,
+    scheme: &'static str,
+    no_proxy: Arc<NoProxyMatcher>,
+) -> Proxy {
+    let (clean_url, auth) = strip_userinfo(url);
+    let mut proxy = Proxy::custom(move |target| {
+        if no_proxy.matches_url(target) {
+            return None;
+        }
+        (target.scheme() == scheme).then(|| clean_url.clone())
+    });
+    if let Some((user, pass)) = auth {
+        proxy = proxy.basic_auth(&user, &pass);
+    }
+    proxy
 }
 
 /// Default number of concurrent in-flight network requests.

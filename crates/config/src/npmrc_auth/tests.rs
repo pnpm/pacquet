@@ -1,6 +1,24 @@
 use super::{EnvVar, NpmrcAuth, RawCreds, base64_decode, base64_encode};
 use crate::Config;
+use pacquet_network::NoProxySetting;
 use pretty_assertions::assert_eq;
+
+/// Generate a per-test unit struct implementing [`EnvVar`] from a
+/// `&[(&str, &str)]` literal — saves each cascade test from spelling
+/// out an `impl EnvVar` block. Avoids touching the real process
+/// environment so cascade tests don't need
+/// [`crate::test_env_guard::EnvGuard`]'s global lock.
+macro_rules! static_env {
+    ($name:ident, $entries:expr) => {
+        struct $name;
+        impl EnvVar for $name {
+            fn var(name: &str) -> Option<String> {
+                let entries: &[(&str, &str)] = $entries;
+                entries.iter().find(|(k, _)| *k == name).map(|(_, v)| (*v).to_string())
+            }
+        }
+    };
+}
 
 /// Test fake: the process environment is empty. Per the DI
 /// pattern from
@@ -21,14 +39,14 @@ fn picks_up_registry_and_normalises_trailing_slash() {
     assert_eq!(auth.registry.as_deref(), Some("https://r.example"));
 
     let mut config = Config::new();
-    auth.apply_to(&mut config);
+    auth.apply_to::<NoEnv>(&mut config);
     assert_eq!(config.registry, "https://r.example/");
 }
 
 #[test]
 fn preserves_existing_trailing_slash() {
     let mut config = Config::new();
-    NpmrcAuth::from_ini::<NoEnv>("registry=https://r.example/\n").apply_to(&mut config);
+    NpmrcAuth::from_ini::<NoEnv>("registry=https://r.example/\n").apply_to::<NoEnv>(&mut config);
     assert_eq!(config.registry, "https://r.example/");
 }
 
@@ -53,7 +71,7 @@ node-linker=hoisted
 ";
     let config_before = Config::new();
     let mut config = Config::new();
-    NpmrcAuth::from_ini::<NoEnv>(ini).apply_to(&mut config);
+    NpmrcAuth::from_ini::<NoEnv>(ini).apply_to::<NoEnv>(&mut config);
     assert_eq!(config.store_dir, config_before.store_dir);
     assert_eq!(config.lockfile, config_before.lockfile);
     assert_eq!(config.hoist, config_before.hoist);
@@ -99,7 +117,7 @@ fn parses_default_auth_token_and_keys_to_registry() {
     assert_eq!(auth.default_creds.auth_token.as_deref(), Some("top-secret"));
 
     let mut config = Config::new();
-    auth.apply_to(&mut config);
+    auth.apply_to::<NoEnv>(&mut config);
     assert_eq!(
         config.auth_headers.for_url("https://registry.npmjs.org/foo/-/foo-1.0.0.tgz").as_deref(),
         Some("Bearer top-secret"),
@@ -142,7 +160,7 @@ fn basic_auth_built_from_username_and_password() {
     let password_b64 = base64_encode(raw_password);
     let ini = format!("//reg.com/:username=alice\n//reg.com/:_password={password_b64}\n");
     let mut config = Config::new();
-    NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to(&mut config);
+    NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to::<NoEnv>(&mut config);
     assert_eq!(
         config.auth_headers.for_url("https://reg.com/").as_deref(),
         Some(format!("Basic {}", base64_encode("alice:p@ss")).as_str()),
@@ -154,7 +172,7 @@ fn auth_pair_base64_passes_through_to_basic_header() {
     let pair = base64_encode("alice:p@ss");
     let ini = format!("//reg.com/:_auth={pair}\n");
     let mut config = Config::new();
-    NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to(&mut config);
+    NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to::<NoEnv>(&mut config);
     assert_eq!(
         config.auth_headers.for_url("https://reg.com/").as_deref(),
         Some(format!("Basic {pair}").as_str()),
@@ -196,7 +214,7 @@ fn top_level_auth_pair_keys_to_default_registry_basic_header() {
     let pair = base64_encode("bob:hunter2");
     let ini = format!("_auth={pair}\n");
     let mut config = Config::new();
-    NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to(&mut config);
+    NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to::<NoEnv>(&mut config);
     assert_eq!(
         config.auth_headers.for_url("https://registry.npmjs.org/").as_deref(),
         Some(format!("Basic {pair}").as_str()),
@@ -209,7 +227,7 @@ fn top_level_username_password_keys_to_default_registry_basic_header() {
     let password_b64 = base64_encode(raw_password);
     let ini = format!("username=bob\n_password={password_b64}\n");
     let mut config = Config::new();
-    NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to(&mut config);
+    NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to::<NoEnv>(&mut config);
     assert_eq!(
         config.auth_headers.for_url("https://registry.npmjs.org/").as_deref(),
         Some(format!("Basic {}", base64_encode("bob:hunter2")).as_str()),
@@ -223,7 +241,7 @@ fn top_level_username_password_keys_to_default_registry_basic_header() {
 fn lone_per_registry_password_produces_no_header() {
     let ini = format!("//reg.com/:_password={}\n", base64_encode("solo"));
     let mut config = Config::new();
-    NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to(&mut config);
+    NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to::<NoEnv>(&mut config);
     assert_eq!(config.auth_headers.for_url("https://reg.com/"), None);
 }
 
@@ -237,7 +255,7 @@ fn per_registry_username_password_apply_through_build_auth_headers() {
     let password_b64 = base64_encode(raw_password);
     let ini = format!("//reg.example/:username=alice\n//reg.example/:_password={password_b64}\n");
     let mut config = Config::new();
-    NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to(&mut config);
+    NpmrcAuth::from_ini::<NoEnv>(&ini).apply_to::<NoEnv>(&mut config);
     assert_eq!(
         config.auth_headers.for_url("https://reg.example/foo").as_deref(),
         Some(format!("Basic {}", base64_encode("alice:hunter2")).as_str()),
@@ -283,7 +301,7 @@ fn invalid_base64_password_falls_back_to_raw_value() {
     // returns `None` and the raw string is used as the password.
     let ini = "//reg.com/:username=alice\n//reg.com/:_password=raw*pw\n";
     let mut config = Config::new();
-    NpmrcAuth::from_ini::<NoEnv>(ini).apply_to(&mut config);
+    NpmrcAuth::from_ini::<NoEnv>(ini).apply_to::<NoEnv>(&mut config);
     assert_eq!(
         config.auth_headers.for_url("https://reg.com/").as_deref(),
         Some(format!("Basic {}", base64_encode("alice:raw*pw")).as_str()),
@@ -308,4 +326,148 @@ fn base64_decode_covers_every_alphabet_branch() {
     // Invalid byte returns None so the parser keeps the raw
     // value verbatim. `*` is not in the alphabet.
     assert_eq!(base64_decode("not*base64"), None);
+}
+
+// --- Proxy parsing and cascade tests ---
+
+#[test]
+fn parses_https_proxy_from_ini() {
+    let auth = NpmrcAuth::from_ini::<NoEnv>("https-proxy=http://proxy.example:8080\n");
+    assert_eq!(auth.https_proxy.as_deref(), Some("http://proxy.example:8080"));
+}
+
+#[test]
+fn parses_http_proxy_from_ini() {
+    let auth = NpmrcAuth::from_ini::<NoEnv>("http-proxy=http://proxy.example:3128\n");
+    assert_eq!(auth.http_proxy.as_deref(), Some("http://proxy.example:3128"));
+}
+
+#[test]
+fn parses_legacy_proxy_key_from_ini() {
+    let auth = NpmrcAuth::from_ini::<NoEnv>("proxy=http://legacy.example:8080\n");
+    assert_eq!(auth.legacy_proxy.as_deref(), Some("http://legacy.example:8080"));
+    assert_eq!(auth.https_proxy, None, "legacy `proxy` is its own slot");
+}
+
+#[test]
+fn no_proxy_and_noproxy_aliases_last_wins() {
+    // pnpm pipes both spellings into a single `noProxy` slot — the last
+    // assignment in `.npmrc` order wins, same as upstream's single field.
+    let auth = NpmrcAuth::from_ini::<NoEnv>("no-proxy=first.example\nnoproxy=second.example\n");
+    assert_eq!(auth.no_proxy.as_deref(), Some("second.example"));
+
+    let auth = NpmrcAuth::from_ini::<NoEnv>("noproxy=second.example\nno-proxy=first.example\n");
+    assert_eq!(auth.no_proxy.as_deref(), Some("first.example"));
+}
+
+#[test]
+fn cascade_https_proxy_uses_legacy_proxy_when_unset() {
+    // Mirrors upstream: `httpsProxy ?? proxy ?? env`.
+    let auth = NpmrcAuth::from_ini::<NoEnv>("proxy=http://legacy.example:8080\n");
+    let mut config = Config::new();
+    auth.apply_to::<NoEnv>(&mut config);
+    assert_eq!(config.proxy.https_proxy.as_deref(), Some("http://legacy.example:8080"));
+}
+
+#[test]
+fn cascade_explicit_https_proxy_wins_over_legacy_key() {
+    let auth = NpmrcAuth::from_ini::<NoEnv>(
+        "https-proxy=http://https.example:8080\nproxy=http://legacy.example:8080\n",
+    );
+    let mut config = Config::new();
+    auth.apply_to::<NoEnv>(&mut config);
+    assert_eq!(config.proxy.https_proxy.as_deref(), Some("http://https.example:8080"));
+}
+
+#[test]
+fn cascade_http_proxy_uses_resolved_https_proxy() {
+    // pnpm: `httpProxy ?? httpsProxy ?? env(HTTP_PROXY) ?? env(PROXY)`.
+    // With only `https-proxy` set the http side inherits it — *and* the
+    // env vars are not consulted.
+    static_env!(
+        EnvHttpButOverridden,
+        &[("HTTP_PROXY", "http://env.example:80"), ("PROXY", "http://envproxy.example:80")]
+    );
+    let auth = NpmrcAuth::from_ini::<NoEnv>("https-proxy=http://https.example:8080\n");
+    let mut config = Config::new();
+    auth.apply_to::<EnvHttpButOverridden>(&mut config);
+    assert_eq!(config.proxy.http_proxy.as_deref(), Some("http://https.example:8080"));
+}
+
+#[test]
+fn cascade_no_proxy_true_literal_becomes_bypass_variant() {
+    let auth = NpmrcAuth::from_ini::<NoEnv>("no-proxy=true\n");
+    let mut config = Config::new();
+    auth.apply_to::<NoEnv>(&mut config);
+    assert_eq!(config.proxy.no_proxy, Some(NoProxySetting::Bypass));
+}
+
+#[test]
+fn cascade_no_proxy_comma_list_trimmed() {
+    let auth = NpmrcAuth::from_ini::<NoEnv>("no-proxy= foo.example , , bar.example ,\n");
+    let mut config = Config::new();
+    auth.apply_to::<NoEnv>(&mut config);
+    assert_eq!(
+        config.proxy.no_proxy,
+        Some(NoProxySetting::List(vec!["foo.example".to_string(), "bar.example".to_string()])),
+    );
+}
+
+#[test]
+fn cascade_env_fallback_only_fires_when_npmrc_unset() {
+    static_env!(
+        AllProxyEnvs,
+        &[
+            ("HTTPS_PROXY", "http://https-env.example:8080"),
+            ("HTTP_PROXY", "http://http-env.example:8080"),
+            ("NO_PROXY", "skip.example"),
+        ]
+    );
+    let auth = NpmrcAuth::default();
+    let mut config = Config::new();
+    auth.apply_to::<AllProxyEnvs>(&mut config);
+    assert_eq!(config.proxy.https_proxy.as_deref(), Some("http://https-env.example:8080"));
+    assert_eq!(config.proxy.http_proxy.as_deref(), Some("http://https-env.example:8080"));
+    assert_eq!(config.proxy.no_proxy, Some(NoProxySetting::List(vec!["skip.example".to_string()])));
+}
+
+#[test]
+fn cascade_npmrc_value_wins_over_env() {
+    static_env!(
+        ConflictingEnv,
+        &[("HTTPS_PROXY", "http://env.example:8080"), ("NO_PROXY", "env.example")]
+    );
+    let auth = NpmrcAuth::from_ini::<NoEnv>(
+        "https-proxy=http://npmrc.example:8080\nno-proxy=npmrc.example\n",
+    );
+    let mut config = Config::new();
+    auth.apply_to::<ConflictingEnv>(&mut config);
+    assert_eq!(config.proxy.https_proxy.as_deref(), Some("http://npmrc.example:8080"));
+    assert_eq!(
+        config.proxy.no_proxy,
+        Some(NoProxySetting::List(vec!["npmrc.example".to_string()])),
+    );
+}
+
+#[test]
+fn cascade_http_proxy_env_fallback_chain_proxy_var() {
+    // When neither `.npmrc` nor `https-proxy` is set, http falls through
+    // `HTTP_PROXY` first, then the bare `PROXY` env.
+    static_env!(BareProxy, &[("PROXY", "http://barenv.example:80")]);
+    let auth = NpmrcAuth::default();
+    let mut config = Config::new();
+    auth.apply_to::<BareProxy>(&mut config);
+    assert_eq!(config.proxy.http_proxy.as_deref(), Some("http://barenv.example:80"));
+    assert_eq!(config.proxy.https_proxy, None);
+}
+
+#[test]
+fn cascade_env_var_lowercase_lookup() {
+    // Upstream tries upper then lower case. With only the lowercase env
+    // populated, the lookup must still find it.
+    static_env!(LowercaseEnv, &[("https_proxy", "http://lower.example:8080")]);
+    let auth = NpmrcAuth::default();
+    let mut config = Config::new();
+    auth.apply_to::<LowercaseEnv>(&mut config);
+    assert_eq!(config.proxy.https_proxy.as_deref(), Some("http://lower.example:8080"));
 }

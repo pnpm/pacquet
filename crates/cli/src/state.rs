@@ -2,7 +2,7 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_config::Config;
 use pacquet_lockfile::{LoadLockfileError, Lockfile};
-use pacquet_network::ThrottledClient;
+use pacquet_network::{ProxyError, ThrottledClient};
 use pacquet_package_manager::ResolvedPackages;
 use pacquet_package_manifest::{PackageManifest, PackageManifestError};
 use pacquet_tarball::MemCache;
@@ -31,10 +31,13 @@ pub struct State {
 #[non_exhaustive]
 pub enum InitStateError {
     #[diagnostic(transparent)]
-    LoadManifest(#[error(source)] PackageManifestError),
+    Manifest(#[error(source)] PackageManifestError),
 
     #[diagnostic(transparent)]
-    LoadLockfile(#[error(source)] LoadLockfileError),
+    Lockfile(#[error(source)] LoadLockfileError),
+
+    #[diagnostic(transparent)]
+    Proxy(#[error(source)] ProxyError),
 }
 
 impl State {
@@ -56,10 +59,11 @@ impl State {
             config,
             manifest: manifest_path
                 .pipe(PackageManifest::create_if_needed)
-                .map_err(InitStateError::LoadManifest)?,
+                .map_err(InitStateError::Manifest)?,
             lockfile: call_load_lockfile(should_load, Lockfile::load_from_current_dir)
-                .map_err(InitStateError::LoadLockfile)?,
-            http_client: ThrottledClient::new_for_installs(),
+                .map_err(InitStateError::Lockfile)?,
+            http_client: ThrottledClient::for_installs(&config.proxy)
+                .map_err(InitStateError::Proxy)?,
             tarball_mem_cache: MemCache::new(),
             resolved_packages: ResolvedPackages::new(),
         })

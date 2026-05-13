@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use pacquet_network::{AuthHeaders, base64_encode};
+use pacquet_network::{AuthHeaders, NoProxySetting, base64_encode};
 
 use crate::{Config, api::EnvVar, env_replace::env_replace};
 
@@ -12,7 +12,11 @@ use crate::{Config, api::EnvVar, env_replace::env_replace};
 /// * default-registry credentials (`_auth`, `_authToken`,
 ///   `username` + `_password`),
 /// * per-registry credentials keyed on a nerf-darted URI prefix
-///   (e.g. `//npm.pkg.github.com/pnpm/:_authToken=…`).
+///   (e.g. `//npm.pkg.github.com/pnpm/:_authToken=…`),
+/// * proxy keys (`https-proxy`, `http-proxy`, `proxy` legacy, and
+///   `no-proxy` / `noproxy` aliases). The env-var fallback cascade
+///   (`HTTPS_PROXY`, `HTTP_PROXY`, `PROXY`, `NO_PROXY` + lowercase)
+///   fires from [`NpmrcAuth::apply_proxy_cascade`].
 ///
 /// Values pass through `${VAR}` substitution before being stored,
 /// matching pnpm's `loadNpmrcFiles.ts` flow. Substitution failures are
@@ -40,6 +44,20 @@ pub(crate) struct NpmrcAuth {
     /// Surfaced as warnings; `pnpm` does the same in
     /// [`substituteEnv`](https://github.com/pnpm/pnpm/blob/601317e7a3/config/reader/src/loadNpmrcFiles.ts#L156-L162).
     pub warnings: Vec<String>,
+    /// `https-proxy=…` from .npmrc. Applied by
+    /// [`NpmrcAuth::apply_proxy_cascade`].
+    pub https_proxy: Option<String>,
+    /// `http-proxy=…` from .npmrc.
+    pub http_proxy: Option<String>,
+    /// Legacy `proxy=…` from .npmrc. Feeds into the `httpsProxy` slot
+    /// only when `https-proxy` is unset — mirrors upstream's
+    /// [`pnpmConfig.httpsProxy = pnpmConfig.proxy`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L591-L600).
+    pub legacy_proxy: Option<String>,
+    /// `no-proxy=…` or `noproxy=…` from .npmrc. Last write wins (matches
+    /// upstream's
+    /// [single `noProxy` slot](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L598-L600)
+    /// fed by either alias).
+    pub no_proxy: Option<String>,
 }
 
 /// Raw (unparsed) credential fields for a given registry URI, mirroring
@@ -113,6 +131,26 @@ impl NpmrcAuth {
                 continue;
             }
 
+            match key.as_str() {
+                "https-proxy" => {
+                    auth.https_proxy = Some(value);
+                    continue;
+                }
+                "http-proxy" => {
+                    auth.http_proxy = Some(value);
+                    continue;
+                }
+                "proxy" => {
+                    auth.legacy_proxy = Some(value);
+                    continue;
+                }
+                "no-proxy" | "noproxy" => {
+                    auth.no_proxy = Some(value);
+                    continue;
+                }
+                _ => {}
+            }
+
             if let Some((uri, suffix)) = split_creds_key(&key) {
                 let entry = auth.creds_by_uri.entry(uri.to_owned()).or_default();
                 apply_creds_field(entry, suffix, value);
@@ -122,6 +160,47 @@ impl NpmrcAuth {
             apply_creds_field(&mut auth.default_creds, key.as_str(), value);
         }
         auth
+    }
+
+    /// Resolve the `(https_proxy, http_proxy, no_proxy)` triple on
+    /// `config.proxy`, mirroring upstream's
+    /// [`config/reader/src/index.ts:591-600`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L591-L600)
+    /// cascade. `.npmrc` always wins over env vars; the legacy `proxy=`
+    /// key feeds the `httpsProxy` slot only (the http side falls back
+    /// to the resolved `httpsProxy` before consulting env). `noProxy`
+    /// accepts the literal token `true` to mean "bypass every proxy"
+    /// — matching the `string | true` shape of upstream's
+    /// [`Config.noProxy`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/Config.ts#L142-L146).
+    ///
+    /// Generic over [`EnvVar`] so cascade tests can drive every branch
+    /// without mutating the process environment (no `EnvGuard` global
+    /// lock).
+    pub fn apply_proxy_cascade<Api: EnvVar>(&mut self, config: &mut Config) {
+        // Upstream's `getProcessEnv` tries literal-, upper-, and
+        // lower-case in order (config/reader/src/index.ts:689-693). For
+        // the proxy var names below the literal form is already either
+        // fully upper or fully lower, so the triple collapses to two
+        // real attempts.
+        fn env_pair<Api: EnvVar>(upper: &str, lower: &str) -> Option<String> {
+            Api::var(upper).or_else(|| Api::var(lower))
+        }
+
+        config.proxy.https_proxy = self
+            .https_proxy
+            .take()
+            .or_else(|| self.legacy_proxy.clone())
+            .or_else(|| env_pair::<Api>("HTTPS_PROXY", "https_proxy"));
+        config.proxy.http_proxy = self
+            .http_proxy
+            .take()
+            .or_else(|| config.proxy.https_proxy.clone())
+            .or_else(|| env_pair::<Api>("HTTP_PROXY", "http_proxy"))
+            .or_else(|| env_pair::<Api>("PROXY", "proxy"));
+        config.proxy.no_proxy = self
+            .no_proxy
+            .take()
+            .or_else(|| env_pair::<Api>("NO_PROXY", "no_proxy"))
+            .map(|raw| parse_no_proxy(&raw));
     }
 
     /// Phase 1: write the resolved `registry` onto `config` and emit
@@ -167,20 +246,37 @@ impl NpmrcAuth {
             Arc::new(AuthHeaders::from_creds_map(auth_header_by_uri, Some(&config.registry)));
     }
 
-    /// Convenience wrapper that runs [`apply_registry_and_warn`]
-    /// followed by [`build_auth_headers`] in one call. Used by tests
-    /// and other callers that don't layer additional config sources
-    /// on top of `.npmrc`. Production code in [`crate::Config::current`]
-    /// inserts `pnpm-workspace.yaml` between the two phases so
-    /// default-registry creds key at the final URL.
+    /// Convenience wrapper that runs [`apply_registry_and_warn`],
+    /// [`apply_proxy_cascade`], and [`build_auth_headers`] in one call.
+    /// Used by tests and other callers that don't layer additional
+    /// config sources on top of `.npmrc`. Production code in
+    /// [`crate::Config::current`] inserts `pnpm-workspace.yaml` between
+    /// phase 1 and phase 2 so default-registry creds key at the final
+    /// URL.
     ///
     /// [`apply_registry_and_warn`]: NpmrcAuth::apply_registry_and_warn
+    /// [`apply_proxy_cascade`]: NpmrcAuth::apply_proxy_cascade
     /// [`build_auth_headers`]: NpmrcAuth::build_auth_headers
     #[cfg(test)]
-    pub fn apply_to(mut self, config: &mut Config) {
+    pub fn apply_to<Api: EnvVar>(mut self, config: &mut Config) {
         self.apply_registry_and_warn(config);
+        self.apply_proxy_cascade::<Api>(config);
         self.build_auth_headers(config);
     }
+}
+
+/// Parse the raw `no-proxy` value into [`NoProxySetting`].
+///
+/// `"true"` (after trimming) is the literal-`true` shape from upstream's
+/// `noProxy: string | true` type. Anything else is comma-split, trimmed,
+/// empties dropped.
+fn parse_no_proxy(raw: &str) -> NoProxySetting {
+    if raw.trim() == "true" {
+        return NoProxySetting::Bypass;
+    }
+    NoProxySetting::List(
+        raw.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect(),
+    )
 }
 
 /// Convert raw .npmrc credentials into the `Authorization` header

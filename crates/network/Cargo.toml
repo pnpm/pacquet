@@ -11,9 +11,13 @@ license.workspace    = true
 repository.workspace = true
 
 [dependencies]
-pipe-trait = { workspace = true }
-reqwest    = { workspace = true }
-tokio      = { workspace = true }
+derive_more = { workspace = true }
+miette      = { workspace = true }
+pipe-trait  = { workspace = true }
+reqwest     = { workspace = true }
+tokio       = { workspace = true }
 
 [dev-dependencies]
+mockito           = { workspace = true }
 pretty_assertions = { workspace = true }
+tokio             = { workspace = true, features = ["macros", "rt-multi-thread"] }
