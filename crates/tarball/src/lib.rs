@@ -528,7 +528,19 @@ fn extract_tarball_entries(
         // — would land files outside the store (directory traversal).
         // Reject loudly rather than silently normalize so tampering
         // is visible.
-        let mut cleaned = PathBuf::new();
+        //
+        // Collect components into a `Vec<String>` and join with `/`
+        // rather than going through [`PathBuf::push`] + `to_string_lossy`.
+        // `PathBuf` uses the platform's native separator, so on
+        // Windows the joined form would be `bin\tool` — which
+        // diverges from pnpm's string-based path layer (always `/`)
+        // and breaks any [`ignore_file_pattern`] regex / hand-coded
+        // matcher that expects forward slashes. The shared `index.db`
+        // also has to stay byte-identical to what pnpm writes, so a
+        // pacquet install on Windows must emit the same keys.
+        // `to_string_lossy()` coerces non-UTF-8 bytes to U+FFFD
+        // per-component.
+        let mut parts: Vec<String> = Vec::new();
         for component in entry_path.components().skip(1) {
             let Component::Normal(part) = component else {
                 return Err(TarballError::ReadTarballEntries(std::io::Error::new(
@@ -538,9 +550,9 @@ fn extract_tarball_entries(
                     ),
                 )));
             };
-            cleaned.push(part);
+            parts.push(part.to_string_lossy().into_owned());
         }
-        if cleaned.as_os_str().is_empty() {
+        if parts.is_empty() {
             return Err(TarballError::ReadTarballEntries(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
@@ -548,10 +560,7 @@ fn extract_tarball_entries(
                 ),
             )));
         }
-        // `to_string_lossy()` coerces non-UTF-8 bytes to U+FFFD —
-        // matching pnpm's string-based path layer so a shared
-        // `index.db` stays consistent across the two tools.
-        let cleaned_entry_path = cleaned.to_string_lossy().into_owned();
+        let cleaned_entry_path = parts.join("/");
         // Drop ignored entries before the CAS write. Mirrors
         // upstream's `ignoreFilePattern` semantics: paths are matched
         // *after* the top-level prefix strip, so the callback sees
