@@ -134,7 +134,7 @@ fn question_mark_does_not_cross_directory() {
     });
     let out = packlist(root, &manifest).unwrap();
 
-    assert!(!out.iter().any(|p| p == "a/b/index.js"), "`?` must not match `/`; received {out:?}",);
+    assert!(!out.iter().any(|p| p == "a/b/index.js"), "`?` must not match `/`; received {out:?}");
 }
 
 #[test]
