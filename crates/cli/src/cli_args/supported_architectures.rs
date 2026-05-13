@@ -31,18 +31,18 @@ pub struct SupportedArchitecturesArgs {
     /// should be kept. Repeat or comma-separate for multiple values.
     /// Overrides `supportedArchitectures.cpu` from
     /// `pnpm-workspace.yaml` for this axis only.
-    #[clap(long, value_delimiter = ',', num_args = 1.., global = true)]
+    #[clap(long, value_delimiter = ',', num_args = 1..)]
     pub cpu: Vec<String>,
 
     /// Operating systems whose platform-tagged optional dependencies
     /// should be kept. Overrides `supportedArchitectures.os`.
-    #[clap(long, value_delimiter = ',', num_args = 1.., global = true)]
+    #[clap(long, value_delimiter = ',', num_args = 1..)]
     pub os: Vec<String>,
 
     /// libc families whose platform-tagged optional dependencies
     /// should be kept (`glibc`, `musl`). Overrides
     /// `supportedArchitectures.libc`.
-    #[clap(long, value_delimiter = ',', num_args = 1.., global = true)]
+    #[clap(long, value_delimiter = ',', num_args = 1..)]
     pub libc: Vec<String>,
 }
 
