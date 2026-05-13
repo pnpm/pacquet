@@ -1,0 +1,346 @@
+//! Unit tests for [`crate::installability::compute_skipped_snapshots`].
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+use pacquet_lockfile::{
+    LockfileResolution, PackageKey, PackageMetadata, PkgNameVerPeer, SnapshotEntry,
+    TarballResolution,
+};
+use pacquet_reporter::{LogEvent, Reporter, SkippedOptionalReason};
+use pretty_assertions::assert_eq;
+
+use crate::installability::{
+    InstallabilityHost, any_installability_constraint, compute_skipped_snapshots,
+};
+
+// Thread-local recording so the cargo-default parallel test runner
+// can fan out without tests polluting each other's event stream.
+// `Reporter::emit` is a free function; the captured buffer has to
+// live in static storage somewhere — thread-local trades a small
+// allocation per test thread for zero cross-test contention.
+thread_local! {
+    static RECORDED_EVENTS: RefCell<Vec<LogEvent>> = const { RefCell::new(Vec::new()) };
+}
+
+struct RecordingReporter;
+
+impl Reporter for RecordingReporter {
+    fn emit(event: &LogEvent) {
+        RECORDED_EVENTS.with(|cell| cell.borrow_mut().push(event.clone()));
+    }
+}
+
+fn take_events() -> Vec<LogEvent> {
+    RECORDED_EVENTS.with(|cell| std::mem::take(&mut *cell.borrow_mut()))
+}
+
+fn reset_events() {
+    RECORDED_EVENTS.with(|cell| cell.borrow_mut().clear());
+}
+
+fn snapshot_key(name_at_version: &str) -> PackageKey {
+    name_at_version.parse::<PkgNameVerPeer>().expect("valid package key")
+}
+
+fn synthetic_metadata(
+    engines: Option<&[(&str, &str)]>,
+    cpu: Option<&[&str]>,
+    os: Option<&[&str]>,
+    libc: Option<&[&str]>,
+) -> PackageMetadata {
+    // Tarball resolution — the installability check ignores the
+    // resolution shape entirely, but every `PackageMetadata` must
+    // carry one.
+    PackageMetadata {
+        resolution: LockfileResolution::Tarball(TarballResolution {
+            integrity: None,
+            tarball: "https://example.test/pkg.tgz".to_string(),
+            git_hosted: None,
+        }),
+        engines: engines
+            .map(|e| e.iter().map(|(k, v)| ((*k).to_string(), (*v).to_string())).collect()),
+        cpu: cpu.map(|v| v.iter().map(|s| (*s).to_string()).collect()),
+        os: os.map(|v| v.iter().map(|s| (*s).to_string()).collect()),
+        libc: libc.map(|v| v.iter().map(|s| (*s).to_string()).collect()),
+        deprecated: None,
+        has_bin: None,
+        prepare: None,
+        bundled_dependencies: None,
+        peer_dependencies: None,
+        peer_dependencies_meta: None,
+    }
+}
+
+fn host(node_version: &str, os: &'static str, cpu: &'static str) -> InstallabilityHost {
+    InstallabilityHost {
+        node_version: node_version.to_string(),
+        node_detected: true,
+        os,
+        cpu,
+        libc: "unknown",
+        supported_architectures: None,
+        engine_strict: false,
+    }
+}
+
+/// Mirrors `optionalDependencies.ts:74` `skip optional dependency that
+/// does not support the current OS`: an optional package whose `os`
+/// list excludes the host is skipped, and the
+/// `pnpm:skipped-optional-dependency` event carries the
+/// `unsupported_platform` reason.
+#[test]
+fn skip_optional_with_wrong_os() {
+    reset_events();
+    let key = snapshot_key("not-compatible-with-any-os@1.0.0");
+    let mut snapshots = HashMap::new();
+    snapshots.insert(key.clone(), SnapshotEntry { optional: true, ..Default::default() });
+    let mut packages = HashMap::new();
+    packages.insert(
+        key.clone(),
+        synthetic_metadata(None, None, Some(&["this-os-does-not-exist"]), None),
+    );
+
+    let skipped = compute_skipped_snapshots::<RecordingReporter>(
+        &snapshots,
+        &packages,
+        &host("20.10.0", "darwin", "arm64"),
+        "/proj",
+    )
+    .unwrap();
+
+    assert_eq!(skipped.len(), 1);
+    assert!(skipped.contains(&key));
+
+    let events = take_events();
+    let skipped_events: Vec<_> =
+        events.iter().filter(|e| matches!(e, LogEvent::SkippedOptionalDependency(_))).collect();
+    assert_eq!(skipped_events.len(), 1);
+    if let LogEvent::SkippedOptionalDependency(log) = skipped_events[0] {
+        assert_eq!(log.reason, SkippedOptionalReason::UnsupportedPlatform);
+        assert_eq!(log.package.name, "not-compatible-with-any-os");
+        assert_eq!(log.package.version, "1.0.0");
+        assert_eq!(log.prefix, "/proj");
+    }
+}
+
+/// Mirrors `optionalDependencies.ts:143` `skip optional dependency
+/// that does not support the current Node version`. The engine
+/// rejection surfaces as `unsupported_engine`.
+#[test]
+fn skip_optional_with_wrong_node_engine() {
+    reset_events();
+    let key = snapshot_key("for-legacy-node@1.0.0");
+    let mut snapshots = HashMap::new();
+    snapshots.insert(key.clone(), SnapshotEntry { optional: true, ..Default::default() });
+    let mut packages = HashMap::new();
+    packages.insert(key.clone(), synthetic_metadata(Some(&[("node", "0.10")]), None, None, None));
+
+    let skipped = compute_skipped_snapshots::<RecordingReporter>(
+        &snapshots,
+        &packages,
+        &host("20.10.0", "darwin", "arm64"),
+        "/proj",
+    )
+    .unwrap();
+
+    assert!(skipped.contains(&key));
+    let events = take_events();
+    let skipped_events: Vec<_> =
+        events.iter().filter(|e| matches!(e, LogEvent::SkippedOptionalDependency(_))).collect();
+    assert_eq!(skipped_events.len(), 1);
+    if let LogEvent::SkippedOptionalDependency(log) = skipped_events[0] {
+        assert_eq!(log.reason, SkippedOptionalReason::UnsupportedEngine);
+    }
+}
+
+/// Compatible snapshots stay out of the skip set and trigger no events.
+#[test]
+fn compatible_snapshots_are_not_skipped() {
+    reset_events();
+    let key = snapshot_key("compat@1.0.0");
+    let mut snapshots = HashMap::new();
+    snapshots.insert(key.clone(), SnapshotEntry { optional: true, ..Default::default() });
+    let mut packages = HashMap::new();
+    packages.insert(key, synthetic_metadata(None, None, Some(&["darwin", "linux"]), None));
+
+    let skipped = compute_skipped_snapshots::<RecordingReporter>(
+        &snapshots,
+        &packages,
+        &host("20.10.0", "darwin", "arm64"),
+        "/proj",
+    )
+    .unwrap();
+
+    assert!(skipped.is_empty());
+    let events = take_events();
+    assert!(
+        events.iter().all(|e| !matches!(e, LogEvent::SkippedOptionalDependency(_))),
+        "expected no skipped-optional events, got {events:?}",
+    );
+}
+
+/// A non-optional incompatible package does NOT get skipped — it
+/// surfaces a tracing-level warning and proceeds, matching pnpm's
+/// non-engineStrict default. Verifies the skip set stays empty in
+/// that case.
+#[test]
+fn non_optional_incompatible_is_not_skipped() {
+    reset_events();
+    let key = snapshot_key("non-optional-but-wrong-os@1.0.0");
+    let mut snapshots = HashMap::new();
+    snapshots.insert(key.clone(), SnapshotEntry { optional: false, ..Default::default() });
+    let mut packages = HashMap::new();
+    packages.insert(key, synthetic_metadata(None, None, Some(&["this-os-does-not-exist"]), None));
+
+    let skipped = compute_skipped_snapshots::<RecordingReporter>(
+        &snapshots,
+        &packages,
+        &host("20.10.0", "darwin", "arm64"),
+        "/proj",
+    )
+    .unwrap();
+
+    assert!(skipped.is_empty());
+    let events = take_events();
+    assert!(
+        events.iter().all(|e| !matches!(e, LogEvent::SkippedOptionalDependency(_))),
+        "non-optional must not fire skipped-optional events",
+    );
+}
+
+/// Fast path: a lockfile where no metadata row declares any
+/// installability constraint skips the per-snapshot pass entirely.
+/// Verifies the optimization triggers and produces the same
+/// observable behavior as the slow path (empty skip set, no events).
+#[test]
+fn no_constraints_skips_the_per_snapshot_pass() {
+    reset_events();
+    let key = snapshot_key("no-constraints@1.0.0");
+    let mut snapshots = HashMap::new();
+    snapshots.insert(key.clone(), SnapshotEntry { optional: true, ..Default::default() });
+    let mut packages = HashMap::new();
+    // No engines / cpu / os / libc — the fast path returns an
+    // empty SkippedSnapshots without inspecting individual
+    // snapshots.
+    packages.insert(key, synthetic_metadata(None, None, None, None));
+
+    let skipped = compute_skipped_snapshots::<RecordingReporter>(
+        &snapshots,
+        &packages,
+        &host("20.10.0", "darwin", "arm64"),
+        "/proj",
+    )
+    .unwrap();
+
+    assert!(skipped.is_empty());
+    let events = take_events();
+    assert!(
+        events.iter().all(|e| !matches!(e, LogEvent::SkippedOptionalDependency(_))),
+        "fast path must not fire skipped-optional events",
+    );
+}
+
+/// `engines` block with no `node` / `pnpm` key (e.g. only `npm`)
+/// does NOT trigger the slow path. Pacquet doesn't evaluate the npm
+/// engine, so a package declaring `engines.npm` alone is no
+/// constraint as far as installability is concerned.
+#[test]
+fn engines_without_node_or_pnpm_does_not_count_as_constraint() {
+    let key = snapshot_key("npm-engine-only@1.0.0");
+    let mut packages = HashMap::new();
+    packages.insert(key, synthetic_metadata(Some(&[("npm", ">=8")]), None, None, None));
+    assert!(
+        !any_installability_constraint(&packages),
+        "engines.npm alone should not block the fast path",
+    );
+}
+
+/// `cpu` / `os` / `libc` set to the `["any"]` sentinel is a no-op
+/// in `check_platform`'s `check_list`, so it must not trigger the
+/// slow path either.
+#[test]
+fn platform_any_sentinel_does_not_count_as_constraint() {
+    let key = snapshot_key("any-platforms@1.0.0");
+    let mut packages = HashMap::new();
+    packages.insert(key, synthetic_metadata(None, Some(&["any"]), Some(&["any"]), Some(&["any"])));
+    assert!(
+        !any_installability_constraint(&packages),
+        "cpu/os/libc = [\"any\"] should not block the fast path",
+    );
+}
+
+/// Empty `cpu` / `os` / `libc` lists carry no exclusion either —
+/// they cannot reject any host value. Should not block the fast
+/// path.
+#[test]
+fn empty_platform_lists_do_not_count_as_constraint() {
+    let key = snapshot_key("empty-platforms@1.0.0");
+    let mut packages = HashMap::new();
+    packages.insert(key, synthetic_metadata(None, Some(&[]), Some(&[]), Some(&[])));
+    assert!(
+        !any_installability_constraint(&packages),
+        "empty platform lists should not block the fast path",
+    );
+}
+
+/// A meaningful `engines.node` triggers the slow path. Sanity check
+/// the predicate doesn't over-aggressively fast-path.
+#[test]
+fn meaningful_engines_node_triggers_slow_path() {
+    let key = snapshot_key("for-legacy-node@1.0.0");
+    let mut packages = HashMap::new();
+    packages.insert(key, synthetic_metadata(Some(&[("node", "0.10")]), None, None, None));
+    assert!(any_installability_constraint(&packages), "engines.node must trigger the slow path");
+}
+
+/// A meaningful non-`any` platform value triggers the slow path.
+#[test]
+fn meaningful_platform_value_triggers_slow_path() {
+    let key = snapshot_key("not-compatible-with-any-os@1.0.0");
+    let mut packages = HashMap::new();
+    packages.insert(key, synthetic_metadata(None, None, Some(&["this-os-does-not-exist"]), None));
+    assert!(any_installability_constraint(&packages), "non-any os must trigger the slow path");
+}
+
+/// Peer-resolved variants of the same metadata row (e.g.
+/// `react-dom@17.0.2(react@17.0.2)` vs the same against `react@18`)
+/// must dedup at the reporter — upstream emits one event per
+/// `pkgId`, not per snapshot.
+#[test]
+fn duplicate_metadata_dedupes_reporter_events() {
+    reset_events();
+    let metadata_key = snapshot_key("not-compatible-with-any-os@1.0.0");
+    let snapshot_key_a = snapshot_key("not-compatible-with-any-os@1.0.0(react@17.0.2)");
+    let snapshot_key_b = snapshot_key("not-compatible-with-any-os@1.0.0(react@18.0.0)");
+
+    let mut snapshots = HashMap::new();
+    snapshots
+        .insert(snapshot_key_a.clone(), SnapshotEntry { optional: true, ..Default::default() });
+    snapshots
+        .insert(snapshot_key_b.clone(), SnapshotEntry { optional: true, ..Default::default() });
+    let mut packages = HashMap::new();
+    packages.insert(
+        metadata_key,
+        synthetic_metadata(None, None, Some(&["this-os-does-not-exist"]), None),
+    );
+
+    let skipped = compute_skipped_snapshots::<RecordingReporter>(
+        &snapshots,
+        &packages,
+        &host("20.10.0", "darwin", "arm64"),
+        "/proj",
+    )
+    .unwrap();
+
+    // Both snapshot variants land in the skip set (each variant has
+    // its own virtual-store slot to suppress).
+    assert!(skipped.contains(&snapshot_key_a));
+    assert!(skipped.contains(&snapshot_key_b));
+
+    // ...but the reporter only sees one event for the metadata row.
+    let events = take_events();
+    let skipped_events: Vec<_> =
+        events.iter().filter(|e| matches!(e, LogEvent::SkippedOptionalDependency(_))).collect();
+    assert_eq!(skipped_events.len(), 1, "must dedup per metadata row");
+}

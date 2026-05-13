@@ -2073,6 +2073,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pacquet-package-is-installable"
+version = "0.0.1"
+dependencies = [
+ "derive_more",
+ "miette 7.6.0",
+ "node-semver",
+ "pacquet-testing-utils",
+ "pretty_assertions",
+ "serde",
+]
+
+[[package]]
 name = "pacquet-package-manager"
 version = "0.0.1"
 dependencies = [
@@ -2093,6 +2105,7 @@ dependencies = [
  "pacquet-lockfile",
  "pacquet-modules-yaml",
  "pacquet-network",
+ "pacquet-package-is-installable",
  "pacquet-package-manifest",
  "pacquet-patching",
  "pacquet-registry",

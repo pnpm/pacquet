@@ -1,3 +1,4 @@
+use crate::SkippedSnapshots;
 use crate::graph_sequencer::{GraphSequencerResult, graph_sequencer};
 use pacquet_lockfile::{PackageKey, ProjectSnapshot, SnapshotEntry};
 use pacquet_patching::ExtendedPatchInfo;
@@ -38,6 +39,7 @@ pub fn build_sequence(
     patches: Option<&HashMap<PackageKey, ExtendedPatchInfo>>,
     snapshots: &HashMap<PackageKey, SnapshotEntry>,
     importers: &HashMap<String, ProjectSnapshot>,
+    skipped: &SkippedSnapshots,
 ) -> Vec<Vec<PackageKey>> {
     let children = build_children_map(snapshots);
     let root_dep_paths = collect_root_dep_paths(importers, snapshots);
@@ -45,11 +47,10 @@ pub fn build_sequence(
     let mut nodes_to_build_set: HashSet<PackageKey> = HashSet::new();
     let mut nodes_to_build: Vec<PackageKey> = Vec::new();
     let mut walked: HashSet<PackageKey> = HashSet::new();
+    let ctx = GetSubgraphCtx { children: &children, requires_build, patches, skipped };
     get_subgraph_to_build(
         &root_dep_paths,
-        &children,
-        requires_build,
-        patches,
+        &ctx,
         &mut nodes_to_build_set,
         &mut nodes_to_build,
         &mut walked,
@@ -163,6 +164,17 @@ fn collect_root_dep_paths(
     roots
 }
 
+/// Per-walk invariant inputs to [`get_subgraph_to_build`]. Bundled
+/// into a struct so the recursive call doesn't have to thread eight
+/// arguments through every level — the three mutable accumulators
+/// stay as `&mut` params (one each because they're typed differently).
+struct GetSubgraphCtx<'a> {
+    children: &'a HashMap<PackageKey, Vec<PackageKey>>,
+    requires_build: &'a HashMap<PackageKey, bool>,
+    patches: Option<&'a HashMap<PackageKey, ExtendedPatchInfo>>,
+    skipped: &'a SkippedSnapshots,
+}
+
 /// Walk the dep graph from `entry_nodes`, filling `nodes_to_build` with
 /// packages whose subtree (including themselves) contains a build candidate.
 ///
@@ -170,41 +182,58 @@ fn collect_root_dep_paths(
 /// `https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/buildSequence.ts`.
 /// A node is a candidate when `requires_build` is set OR when an entry
 /// for the peer-stripped key is present in `patches` (mirrors
-/// upstream's `node.requiresBuild || node.patch != null`).
+/// upstream's `node.requiresBuild || node.patch != null`) — *unless*
+/// the node is in `skipped`, in which case its virtual-store slot
+/// was never created so neither the requires-build nor patch path
+/// can run. Mirrors pnpm's `lockfileToDepGraph` flow where skipped
+/// snapshots never enter the build graph at all (the patch lookup
+/// upstream walks `pkgGraph[depPath]?.patch` and `depGraph` itself
+/// excludes skipped nodes).
 ///
 /// Returns whether *any* of the entry nodes (or their subtrees) needs to build.
 fn get_subgraph_to_build(
     entry_nodes: &[PackageKey],
-    children: &HashMap<PackageKey, Vec<PackageKey>>,
-    requires_build: &HashMap<PackageKey, bool>,
-    patches: Option<&HashMap<PackageKey, ExtendedPatchInfo>>,
+    ctx: &GetSubgraphCtx<'_>,
     nodes_to_build_set: &mut HashSet<PackageKey>,
     nodes_to_build: &mut Vec<PackageKey>,
     walked: &mut HashSet<PackageKey>,
 ) -> bool {
     let mut current_should_be_built = false;
     for dep_path in entry_nodes {
-        if !children.contains_key(dep_path) {
+        if !ctx.children.contains_key(dep_path) {
             continue; // already in node_modules / not part of this graph
         }
         if walked.contains(dep_path) {
             continue;
         }
+
+        // A skipped snapshot never had its virtual-store slot
+        // created, so neither requires-build nor a configured
+        // patch can produce work. Mirrors pnpm's `lockfileToDepGraph`
+        // flow where skipped depPaths are dropped from `depGraph`
+        // entirely: a child reachable only via a skipped edge
+        // doesn't enter the build graph either. Gate *before*
+        // recursion so a skipped optional doesn't drag its
+        // transitive deps into the walk via an edge pnpm wouldn't
+        // see.
+        //
+        // A descendant of a skipped node that's ALSO reachable from
+        // a non-skipped root still gets visited normally on that
+        // other branch, because we don't poison `walked` for the
+        // child here — we just skip this edge.
+        if ctx.skipped.contains(dep_path) {
+            walked.insert(dep_path.clone());
+            continue;
+        }
+
         walked.insert(dep_path.clone());
 
-        let child_paths = children.get(dep_path).cloned().unwrap_or_default();
-        let child_should_be_built = get_subgraph_to_build(
-            &child_paths,
-            children,
-            requires_build,
-            patches,
-            nodes_to_build_set,
-            nodes_to_build,
-            walked,
-        );
+        let child_paths = ctx.children.get(dep_path).cloned().unwrap_or_default();
+        let child_should_be_built =
+            get_subgraph_to_build(&child_paths, ctx, nodes_to_build_set, nodes_to_build, walked);
 
-        let needs_build = requires_build.get(dep_path).copied().unwrap_or(false);
-        let has_patch = patches.is_some_and(|p| p.contains_key(&dep_path.without_peer()));
+        let needs_build = ctx.requires_build.get(dep_path).copied().unwrap_or(false);
+        let has_patch = ctx.patches.is_some_and(|p| p.contains_key(&dep_path.without_peer()));
 
         if child_should_be_built || needs_build || has_patch {
             if nodes_to_build_set.insert(dep_path.clone()) {

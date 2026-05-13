@@ -52,12 +52,31 @@ pub fn engine_name(node_major: u32, platform: Option<&str>, arch: Option<&str>) 
 /// won't match any pnpm-written entry — safe) or skip the
 /// cache-read entirely when this returns `None`.
 pub fn detect_node_major() -> Option<u32> {
+    let raw = detect_node_version_raw()?;
+    parse_node_version_output(&raw)
+}
+
+/// Discover the host Node binary's full version by spawning
+/// `node --version` and stripping the leading `v`. Returns the
+/// trimmed semver-shaped string (e.g. `"22.11.0"`) or `None` if
+/// detection fails for any of the reasons listed on
+/// [`detect_node_major`].
+///
+/// Used by `pacquet-package-is-installable`'s `check_engine` to
+/// evaluate `engines.node` ranges. Pacquet's installability check
+/// needs the full version, not just the major, because ranges like
+/// `>=14.18.0` would otherwise spuriously reject `14.17.x`.
+pub fn detect_node_version() -> Option<String> {
+    let raw = detect_node_version_raw()?;
+    Some(raw.strip_prefix('v').unwrap_or(&raw).to_string())
+}
+
+fn detect_node_version_raw() -> Option<String> {
     let output = std::process::Command::new("node").arg("--version").output().ok()?;
     if !output.status.success() {
         return None;
     }
-    let stdout = std::str::from_utf8(&output.stdout).ok()?.trim();
-    parse_node_version_output(stdout)
+    Some(std::str::from_utf8(&output.stdout).ok()?.trim().to_string())
 }
 
 /// Parse `v22.11.0`-style output from `node --version` to the major
@@ -76,7 +95,7 @@ fn parse_node_version_output(stdout: &str) -> Option<u32> {
 /// `sunos` / `aix` / `android`. Rust uses `macos` / `linux` /
 /// `windows` / `freebsd` / `openbsd` / `solaris` / `aix` /
 /// `android`. Only `macos`, `windows`, and `solaris` differ.
-fn host_platform() -> &'static str {
+pub fn host_platform() -> &'static str {
     match std::env::consts::OS {
         "macos" => "darwin",
         "windows" => "win32",
@@ -93,7 +112,7 @@ fn host_platform() -> &'static str {
 /// what Node itself emits on each target — anything left as
 /// passthrough (e.g. `arm`, `s390x`, `riscv64`) already matches
 /// between the two naming schemes.
-fn host_arch() -> &'static str {
+pub fn host_arch() -> &'static str {
     match std::env::consts::ARCH {
         "x86_64" => "x64",
         "aarch64" => "arm64",
@@ -105,6 +124,22 @@ fn host_arch() -> &'static str {
         "loongarch64" => "loong64",
         other => other,
     }
+}
+
+/// Host libc family, mapped to the same string `detect-libc.familySync()`
+/// returns upstream. Pacquet currently always reports `"unknown"`,
+/// which matches non-Linux hosts (and any Linux host where the
+/// upstream detection failed). `check_platform` treats `"unknown"`
+/// as "skip libc constraint" — see the call site at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/config/package-is-installable/src/checkPlatform.ts#L38>.
+///
+/// TODO: wire real detection (the `detect-libc` Rust crate, or a
+/// custom `ldd`-based probe) in slice 2 alongside `supportedArchitectures`
+/// — the libc constraint becomes load-bearing on Alpine / musl
+/// hosts that today over-install glibc-only optional binary
+/// packages.
+pub fn host_libc() -> &'static str {
+    "unknown"
 }
 
 #[cfg(test)]

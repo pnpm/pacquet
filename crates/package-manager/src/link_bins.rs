@@ -1,4 +1,4 @@
-use crate::PackageManifests;
+use crate::{PackageManifests, SkippedSnapshots};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_cmd_shim::{
@@ -138,6 +138,13 @@ pub struct LinkVirtualStoreBins<'a> {
     /// installed earlier in the same run still get their bins
     /// linked.
     pub package_manifests: &'a PackageManifests,
+    /// Snapshots the installability pass marked optional+incompatible.
+    /// Their slots were never created by [`crate::CreateVirtualStore`],
+    /// so the bin linker has nothing to walk for them — and any
+    /// child-manifest disk read against their non-existent
+    /// `<slot>/node_modules/<alias>` would fail. Excluding them up
+    /// front matches the rest of the install pipeline's filtering.
+    pub skipped: &'a SkippedSnapshots,
 }
 
 impl<'a> LinkVirtualStoreBins<'a> {
@@ -162,8 +169,13 @@ impl<'a> LinkVirtualStoreBins<'a> {
             + FsSetExecutable
             + FsEnsureExecutableBits,
     {
-        let LinkVirtualStoreBins { virtual_store_dir, snapshots, packages, package_manifests } =
-            self;
+        let LinkVirtualStoreBins {
+            virtual_store_dir,
+            snapshots,
+            packages,
+            package_manifests,
+            skipped,
+        } = self;
         if let Some(snapshots) = snapshots {
             let has_bin_set = build_has_bin_set(packages);
             run_lockfile_driven::<Api>(
@@ -171,6 +183,7 @@ impl<'a> LinkVirtualStoreBins<'a> {
                 snapshots,
                 has_bin_set.as_ref(),
                 package_manifests,
+                skipped,
             )
         } else {
             run_with_readdir::<Api>(virtual_store_dir)
@@ -227,6 +240,7 @@ fn run_lockfile_driven<Api>(
     snapshots: &HashMap<PackageKey, SnapshotEntry>,
     has_bin_set: Option<&HashSet<PackageKey>>,
     package_manifests: &PackageManifests,
+    skipped: &SkippedSnapshots,
 ) -> Result<(), LinkVirtualStoreBinsError>
 where
     Api: FsReadFile
@@ -249,7 +263,18 @@ where
     // a `HashMap` directly with `par_iter` would require collecting
     // anyway, and explicit collection here keeps the parallelism
     // contract obvious.
-    let slot_entries: Vec<(&PackageKey, &SnapshotEntry)> = snapshots.iter().collect();
+    //
+    // Filter out installability-skipped snapshots here: their
+    // virtual-store slot was never created (see
+    // [`crate::CreateVirtualStore::run`]'s `survivors` filter), so
+    // attempting to walk the snapshot's `dependencies` /
+    // `optional_dependencies` for bin linking would either fall
+    // through to a cold-batch disk read against a non-existent
+    // `<slot>/node_modules/<alias>` (returning `None` harmlessly but
+    // wasting work) or — worse — create a `<slot>/.../node_modules/.bin`
+    // directory under a slot that doesn't exist on disk.
+    let slot_entries: Vec<(&PackageKey, &SnapshotEntry)> =
+        snapshots.iter().filter(|(slot_key, _)| !skipped.contains(slot_key)).collect();
     slot_entries.par_iter().try_for_each(|(slot_key, snapshot)| {
         let children = snapshot
             .dependencies

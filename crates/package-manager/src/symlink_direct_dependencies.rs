@@ -1,4 +1,4 @@
-use crate::{link_direct_dep_bins, symlink_package};
+use crate::{SkippedSnapshots, link_direct_dep_bins, symlink_package};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_cmd_shim::LinkBinsError;
@@ -28,6 +28,13 @@ where
     /// Install root, threaded into the `pnpm:root` `prefix` field.
     /// Same value as the `prefix` in [`pacquet_reporter::StageLog`].
     pub requester: &'a str,
+    /// Snapshots the installability pass marked optional+incompatible.
+    /// A direct dep whose resolved snapshot key is in this set is
+    /// omitted from `node_modules/<name>` (no symlink, no
+    /// `pnpm:root added` event, no bin linking). Mirrors pnpm's
+    /// `linkDirectDeps` walk skipping entries whose `depPath` is
+    /// in `skipPkgIds`.
+    pub skipped: &'a SkippedSnapshots,
 }
 
 /// Error type of [`SymlinkDirectDependencies`].
@@ -49,7 +56,8 @@ where
 {
     /// Execute the subroutine.
     pub fn run<R: Reporter>(self) -> Result<(), SymlinkDirectDependenciesError> {
-        let SymlinkDirectDependencies { config, importers, dependency_groups, requester } = self;
+        let SymlinkDirectDependencies { config, importers, dependency_groups, requester, skipped } =
+            self;
 
         let project_snapshot = importers.get(Lockfile::ROOT_IMPORTER_KEY).ok_or_else(|| {
             SymlinkDirectDependenciesError::MissingRootImporter {
@@ -99,6 +107,16 @@ where
                     .map(move |(name, spec)| (name, spec, group))
             })
             .filter(|(name, _, _)| seen.insert(*name))
+            // Drop direct deps whose resolved snapshot landed in the
+            // skipped set. Without this filter, the symlink would
+            // either dangle (no virtual-store slot was created) or
+            // — worse — point at a half-installed slot from a prior
+            // install. Mirrors upstream's `linkDirectDeps` walk
+            // skipping entries whose `depPath` is in `skipPkgIds`.
+            .filter(|(name, spec, _)| {
+                let resolved = PkgNameVerPeer::new(PkgName::clone(name), spec.version.clone());
+                !skipped.contains(&resolved)
+            })
             .collect();
 
         entries.par_iter().for_each(|(name, spec, group)| {

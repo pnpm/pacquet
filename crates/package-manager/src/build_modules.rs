@@ -1,3 +1,4 @@
+use crate::SkippedSnapshots;
 use crate::build_sequence::build_sequence;
 use crate::version_policy::{VersionPolicyError, expand_package_version_specs};
 use derive_more::{Display, Error};
@@ -247,6 +248,13 @@ pub struct BuildModules<'a> {
     /// Floored to `1` to guarantee forward progress on
     /// resource-constrained hosts.
     pub child_concurrency: u32,
+    /// Snapshots the installability pass marked optional+incompatible.
+    /// Excluded from both `requires_build` computation and the
+    /// `build_sequence` input — pacquet does not run scripts (or
+    /// even check `binding.gyp`) for slots that don't exist on
+    /// disk. Mirrors pnpm's `lockfileToDepGraph` flow where skipped
+    /// snapshots never enter the build graph.
+    pub skipped: &'a SkippedSnapshots,
 }
 
 impl<'a> BuildModules<'a> {
@@ -275,6 +283,7 @@ impl<'a> BuildModules<'a> {
             scripts_prepend_node_path,
             unsafe_perm,
             child_concurrency,
+            skipped,
         } = self;
 
         let Some(snapshots) = snapshots else { return Ok(Vec::new()) };
@@ -292,6 +301,12 @@ impl<'a> BuildModules<'a> {
         // moved to the build entry point.
         let requires_build_map: HashMap<PackageKey, bool> = snapshots
             .keys()
+            // Skip snapshots that never landed on disk. `pkg_requires_build`
+            // would just return `false` for a missing dir, but the
+            // walk would still spend a syscall per skipped key — the
+            // filter short-circuits that on installs with large
+            // optional fan-out.
+            .filter(|key| !skipped.contains(key))
             .map(|key| {
                 let pkg_dir = virtual_store_dir_for_key(virtual_store_dir, key);
                 (key.clone(), pkg_requires_build(&pkg_dir))
@@ -353,7 +368,7 @@ impl<'a> BuildModules<'a> {
         let deps_state_cache: Mutex<pacquet_graph_hasher::DepsStateCache<PackageKey>> =
             Mutex::new(pacquet_graph_hasher::DepsStateCache::new());
 
-        let chunks = build_sequence(&requires_build_map, patches, snapshots, importers);
+        let chunks = build_sequence(&requires_build_map, patches, snapshots, importers, skipped);
 
         // Collect peer-stripped keys so the final list is unique and
         // sorted lexicographically — matches `dedupePackageNamesFromIgnoredBuilds`.

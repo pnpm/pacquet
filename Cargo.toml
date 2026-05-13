@@ -13,26 +13,27 @@ repository  = "https://github.com/pnpm/pacquet"
 
 [workspace.dependencies]
 # Crates
-pacquet-cli              = { path = "crates/cli" }
-pacquet-cmd-shim         = { path = "crates/cmd-shim" }
-pacquet-fs               = { path = "crates/fs" }
-pacquet-registry         = { path = "crates/registry" }
-pacquet-tarball          = { path = "crates/tarball" }
-pacquet-testing-utils    = { path = "crates/testing-utils" }
-pacquet-package-manifest = { path = "crates/package-manifest" }
-pacquet-package-manager  = { path = "crates/package-manager" }
-pacquet-lockfile         = { path = "crates/lockfile" }
-pacquet-modules-yaml     = { path = "crates/modules-yaml" }
-pacquet-network          = { path = "crates/network" }
-pacquet-config           = { path = "crates/config" }
-pacquet-executor         = { path = "crates/executor" }
-pacquet-git-fetcher      = { path = "crates/git-fetcher" }
-pacquet-diagnostics      = { path = "crates/diagnostics" }
-pacquet-graph-hasher     = { path = "crates/graph-hasher" }
-pacquet-store-dir        = { path = "crates/store-dir" }
-pacquet-reporter         = { path = "crates/reporter" }
-pacquet-patching         = { path = "crates/patching" }
-pacquet-real-hoist       = { path = "crates/real-hoist" }
+pacquet-cli                    = { path = "crates/cli" }
+pacquet-cmd-shim               = { path = "crates/cmd-shim" }
+pacquet-fs                     = { path = "crates/fs" }
+pacquet-registry               = { path = "crates/registry" }
+pacquet-tarball                = { path = "crates/tarball" }
+pacquet-testing-utils          = { path = "crates/testing-utils" }
+pacquet-package-manifest       = { path = "crates/package-manifest" }
+pacquet-package-manager        = { path = "crates/package-manager" }
+pacquet-package-is-installable = { path = "crates/package-is-installable" }
+pacquet-lockfile               = { path = "crates/lockfile" }
+pacquet-modules-yaml           = { path = "crates/modules-yaml" }
+pacquet-network                = { path = "crates/network" }
+pacquet-config                 = { path = "crates/config" }
+pacquet-executor               = { path = "crates/executor" }
+pacquet-git-fetcher            = { path = "crates/git-fetcher" }
+pacquet-diagnostics            = { path = "crates/diagnostics" }
+pacquet-graph-hasher           = { path = "crates/graph-hasher" }
+pacquet-store-dir              = { path = "crates/store-dir" }
+pacquet-reporter               = { path = "crates/reporter" }
+pacquet-patching               = { path = "crates/patching" }
+pacquet-real-hoist             = { path = "crates/real-hoist" }
 
 # Tasks
 pacquet-registry-mock = { path = "tasks/registry-mock" }
