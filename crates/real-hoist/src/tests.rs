@@ -64,8 +64,10 @@ fn hoist_throws_on_broken_lockfile() {
     };
 
     let err = hoist(&lockfile, &HoistOpts::default()).expect_err("missing snapshot should error");
-    let HoistError::LockfileMissingDependency { pkg_key } = err;
-    assert_eq!(pkg_key, "foo@1.0.0");
+    match err {
+        HoistError::LockfileMissingDependency { pkg_key } => assert_eq!(pkg_key, "foo@1.0.0"),
+        other => panic!("expected LockfileMissingDependency, got {other:?}"),
+    }
 }
 
 /// An empty lockfile (no importers at all) hoists to an empty
@@ -421,4 +423,115 @@ fn transitive_npm_alias_resolves_target_snapshot() {
     assert_eq!(refs.len(), 1);
     let host = root_children.iter().find(|d| d.0.name == "host").unwrap().0.clone();
     assert!(host.dependencies.borrow().is_empty(), "host stripped of its aliased dep: {host:#?}");
+}
+
+/// A package with `peer_dependencies` declared in the lockfile's
+/// `packages:` map must surface `UnsupportedPeerDependency` rather
+/// than silently hoist past parents that supply the peer. The
+/// algorithm doesn't model peer constraints today; refusing
+/// upfront keeps a future caller from getting a wrong layout.
+#[test]
+fn peer_dependency_in_lockfile_surfaces_unsupported() {
+    use pacquet_lockfile::{LockfileResolution, PackageMetadata, TarballResolution};
+    let mut importers = HashMap::new();
+    let mut root_deps = ResolvedDependencyMap::new();
+    root_deps.insert(pkg_name("widget"), resolved_dep("1.0.0"));
+    importers.insert(
+        Lockfile::ROOT_IMPORTER_KEY.to_string(),
+        ProjectSnapshot { dependencies: Some(root_deps), ..ProjectSnapshot::default() },
+    );
+
+    // `widget@1.0.0` declares `react` as a peer dep — the
+    // `packages:` map carries that information at the
+    // `name@version` (peer-stripped) key.
+    let mut packages = HashMap::new();
+    let mut peer_deps = HashMap::new();
+    peer_deps.insert("react".to_string(), "^18".to_string());
+    packages.insert(
+        dep_key("widget", "1.0.0").without_peer(),
+        PackageMetadata {
+            resolution: LockfileResolution::Tarball(TarballResolution {
+                tarball: "https://example.invalid/widget-1.0.0.tgz".to_string(),
+                integrity: None,
+                git_hosted: None,
+            }),
+            engines: None,
+            cpu: None,
+            os: None,
+            libc: None,
+            deprecated: None,
+            has_bin: None,
+            prepare: None,
+            bundled_dependencies: None,
+            peer_dependencies: Some(peer_deps),
+            peer_dependencies_meta: None,
+        },
+    );
+
+    let mut snapshots = HashMap::new();
+    snapshots.insert(dep_key("widget", "1.0.0"), SnapshotEntry::default());
+
+    let lockfile = Lockfile {
+        lockfile_version: lockfile_version(),
+        settings: None,
+        overrides: None,
+        importers,
+        packages: Some(packages),
+        snapshots: Some(snapshots),
+    };
+
+    let err = hoist(&lockfile, &HoistOpts::default()).expect_err("peer dep should bail");
+    match err {
+        HoistError::UnsupportedPeerDependency { ident, peers } => {
+            assert_eq!(ident, "widget@1.0.0", "carries the offending ident: {ident}");
+            assert!(peers.contains("react"), "carries the peer name set: {peers:?}");
+        }
+        other => panic!("expected UnsupportedPeerDependency, got {other:?}"),
+    }
+}
+
+/// Non-empty `hoisting_limits` surfaces `UnsupportedHoistingLimits`.
+/// The algorithm doesn't honor limits today, so flattening past
+/// them would silently violate the borders the caller asked to
+/// keep.
+#[test]
+fn non_empty_hoisting_limits_surfaces_unsupported() {
+    let lockfile = empty_lockfile();
+    let mut opts = HoistOpts::default();
+    opts.hoisting_limits.insert(".@".to_string(), Default::default());
+
+    let err = hoist(&lockfile, &opts).expect_err("hoisting_limits should bail");
+    match err {
+        HoistError::UnsupportedHoistingLimits { len } => assert_eq!(len, 1),
+        other => panic!("expected UnsupportedHoistingLimits, got {other:?}"),
+    }
+}
+
+/// A lockfile with importers beyond `.` (a workspace) surfaces
+/// `UnsupportedWorkspace`. Multi-importer hoisting requires
+/// workspace-aware traversal and a different output shape.
+#[test]
+fn multi_importer_lockfile_surfaces_unsupported_workspace() {
+    let mut importers = HashMap::new();
+    importers.insert(Lockfile::ROOT_IMPORTER_KEY.to_string(), ProjectSnapshot::default());
+    importers.insert("packages/foo".to_string(), ProjectSnapshot::default());
+    importers.insert("packages/bar".to_string(), ProjectSnapshot::default());
+
+    let lockfile = Lockfile {
+        lockfile_version: lockfile_version(),
+        settings: None,
+        overrides: None,
+        importers,
+        packages: None,
+        snapshots: None,
+    };
+
+    let err = hoist(&lockfile, &HoistOpts::default()).expect_err("workspace should bail");
+    match err {
+        HoistError::UnsupportedWorkspace { mut extra_importers } => {
+            extra_importers.sort();
+            assert_eq!(extra_importers, vec!["packages/bar", "packages/foo"]);
+        }
+        other => panic!("expected UnsupportedWorkspace, got {other:?}"),
+    }
 }

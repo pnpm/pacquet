@@ -160,6 +160,64 @@ pub enum HoistError {
         /// resolve.
         pkg_key: String,
     },
+    /// A package in the lockfile declares peer dependencies (or
+    /// transitive peer dependencies). The hoist algorithm doesn't
+    /// model peer-dependency constraints yet, so it would freely
+    /// hoist this node past parents that supply the peer — a
+    /// silent shadowing pnpm would reject. Refuse upfront rather
+    /// than emit a wrong layout.
+    #[display("hoister cannot yet model peer dependencies (package {ident}, peers: {peers:?})")]
+    #[diagnostic(
+        code(ERR_PACQUET_HOIST_UNSUPPORTED_PEER),
+        help(
+            "the hoisted node-linker requires peer-aware hoisting; \
+             this support is staged for a later sub-slice of #438."
+        )
+    )]
+    UnsupportedPeerDependency {
+        /// The snapshot key of the offending package.
+        ident: String,
+        /// The peer / transitive-peer names that block the hoist.
+        peers: BTreeSet<String>,
+    },
+    /// The caller passed a non-empty `hoisting_limits` map. The
+    /// hoist algorithm doesn't enforce limits yet, so flattening
+    /// would violate the borders the caller asked to keep. Refuse
+    /// upfront.
+    #[display(
+        "hoister cannot yet enforce `hoisting_limits`; the supplied map is non-empty ({len} entries)"
+    )]
+    #[diagnostic(
+        code(ERR_PACQUET_HOIST_UNSUPPORTED_HOISTING_LIMITS),
+        help(
+            "support for `hoistingLimits` is staged for a later sub-slice of #438; \
+             pass an empty map for now."
+        )
+    )]
+    UnsupportedHoistingLimits {
+        /// How many entries the caller supplied. Carries no
+        /// semantic value beyond debug; if zero we wouldn't have
+        /// fired.
+        len: usize,
+    },
+    /// The lockfile contains more than one importer. The hoist
+    /// algorithm doesn't yet support workspace projects (multi-
+    /// importer hoist trees with `workspace:` references). Refuse
+    /// upfront rather than build a single-importer layout that
+    /// pnpm would reject.
+    #[display("hoister cannot yet model workspace lockfiles; extra importers: {extra_importers:?}")]
+    #[diagnostic(
+        code(ERR_PACQUET_HOIST_UNSUPPORTED_WORKSPACE),
+        help(
+            "multi-importer (workspace) lockfile support is staged for a later sub-slice of #438; \
+             single-importer lockfiles with only the `.` importer key work today."
+        )
+    )]
+    UnsupportedWorkspace {
+        /// The importer IDs the lockfile carries beyond the root
+        /// `.` importer.
+        extra_importers: Vec<String>,
+    },
 }
 
 /// Identity-hashed wrapper around `Rc<T>`. Two `RcByPtr` values are
@@ -224,6 +282,22 @@ impl<T> From<Rc<T>> for RcByPtr<T> {
 ///
 /// [upstream]: https://github.com/pnpm/pnpm/blob/94240bc0464196bd52f7006b97f6d9a43df34633/installing/linking/real-hoist/src/index.ts
 pub fn hoist(lockfile: &Lockfile, opts: &HoistOpts) -> Result<HoisterResult, HoistError> {
+    // Refuse upfront for inputs the algorithm doesn't yet model.
+    // Better an explicit error than a silently-invented layout
+    // pnpm would reject.
+    if !opts.hoisting_limits.is_empty() {
+        return Err(HoistError::UnsupportedHoistingLimits { len: opts.hoisting_limits.len() });
+    }
+    let extra_importers: Vec<String> = lockfile
+        .importers
+        .keys()
+        .filter(|k| k.as_str() != Lockfile::ROOT_IMPORTER_KEY)
+        .cloned()
+        .collect();
+    if !extra_importers.is_empty() {
+        return Err(HoistError::UnsupportedWorkspace { extra_importers });
+    }
+
     let mut nodes: HashMap<String, Rc<HoisterTree>> = HashMap::new();
 
     let mut root_children: IndexSet<RcByPtr<HoisterTree>> = IndexSet::new();
@@ -289,6 +363,15 @@ pub fn hoist(lockfile: &Lockfile, opts: &HoistOpts) -> Result<HoisterResult, Hoi
         hoist_priority: 0,
         dependencies: RefCell::new(root_children),
     });
+
+    // Scan the constructed tree for peer-constrained packages.
+    // `peer_names` only gets populated when the lockfile's
+    // `packages` map declares `peerDependencies` (or
+    // `transitive_peer_dependencies` on a snapshot), so a peer-
+    // free lockfile passes the guard unchanged.
+    if let Some(err) = find_first_peer_constrained(&root_node) {
+        return Err(err);
+    }
 
     let result = nm_hoist(&root_node, opts);
 
@@ -536,6 +619,29 @@ fn percent_encode_path(s: &str) -> String {
 /// [hoist.ts:329][upstream] for the subset above.
 ///
 /// [upstream]: https://github.com/yarnpkg/berry/blob/4287909fa6a0a1ec976a55776bff606864b31990/packages/yarnpkg-nm/sources/hoist.ts#L329
+/// Walk the constructed tree and return the first node whose
+/// `peer_names` is non-empty as an `UnsupportedPeerDependency`
+/// error. Returns `None` when the tree is peer-free.
+fn find_first_peer_constrained(root: &Rc<HoisterTree>) -> Option<HoistError> {
+    let mut visited: HashSet<*const HoisterTree> = HashSet::new();
+    let mut stack: Vec<Rc<HoisterTree>> = vec![Rc::clone(root)];
+    while let Some(node) = stack.pop() {
+        if !visited.insert(Rc::as_ptr(&node)) {
+            continue;
+        }
+        if !node.peer_names.is_empty() {
+            return Some(HoistError::UnsupportedPeerDependency {
+                ident: node.reference.clone(),
+                peers: node.peer_names.clone(),
+            });
+        }
+        for dep in node.dependencies.borrow().iter() {
+            stack.push(Rc::clone(&dep.0));
+        }
+    }
+    None
+}
+
 fn nm_hoist(tree: &HoisterTree, _opts: &HoistOpts) -> HoisterResult {
     let mut memo: HashMap<*const HoisterTree, Rc<HoisterResult>> = HashMap::new();
     let root = convert(tree, &mut memo);
