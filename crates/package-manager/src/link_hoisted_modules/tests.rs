@@ -382,3 +382,43 @@ fn orphan_already_removed_is_tolerated() {
     };
     link_hoisted_modules::<SilentReporter>(&opts).expect("phantom orphan tolerated");
 }
+
+/// A hierarchy entry whose directory has no matching graph node
+/// surfaces as `MissingGraphNode` rather than being silently
+/// skipped. Pinning fail-fast on internal inconsistency between
+/// the hierarchy and graph — Slice 4's walker keeps the two in
+/// sync, but a future bug there shouldn't yield a partial
+/// install layout.
+#[test]
+fn hierarchy_entry_missing_from_graph_errors() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let lockfile_dir = tmp.path().join("repo");
+    let modules = lockfile_dir.join("node_modules");
+    let dir = modules.join("phantom");
+
+    // Hierarchy references `phantom`, but the graph is empty.
+    let mut hierarchy_children = BTreeMap::new();
+    hierarchy_children.insert(dir.clone(), DepHierarchy::default());
+    let mut hierarchy = BTreeMap::new();
+    hierarchy.insert(lockfile_dir.clone(), DepHierarchy(hierarchy_children));
+
+    let graph = DependenciesGraph::new();
+    let cas_paths = CasPathsByPkgId::new();
+    let logged = AtomicU8::new(0);
+    let opts = LinkHoistedModulesOpts {
+        graph: &graph,
+        prev_graph: None,
+        hierarchy: &hierarchy,
+        cas_paths_by_pkg_id: &cas_paths,
+        import_method: PackageImportMethod::Auto,
+        logged_methods: &logged,
+        requester: lockfile_dir.to_str().expect("requester"),
+    };
+    let err = link_hoisted_modules::<SilentReporter>(&opts).expect_err("inconsistency surfaces");
+    match err {
+        LinkHoistedModulesError::MissingGraphNode { dir: reported_dir } => {
+            assert_eq!(reported_dir, dir);
+        }
+        other => panic!("expected MissingGraphNode, got {other:?}"),
+    }
+}

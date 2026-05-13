@@ -101,6 +101,19 @@ pub enum LinkHoistedModulesError {
     #[diagnostic(code(ERR_PACQUET_LINK_HOISTED_MISSING_CAS))]
     MissingCasPaths { pkg_id_with_patch_hash: String, dir: PathBuf },
 
+    /// A hierarchy entry referenced a directory that has no
+    /// corresponding entry in `graph`. Slice 4's walker inserts
+    /// a graph node every time it inserts a hierarchy entry, so
+    /// this shouldn't fire from a real walker result — but
+    /// surfacing the inconsistency fails the install fast rather
+    /// than producing a partial layout. Upstream effectively
+    /// does the same (a missing `graph[dir]` triggers a
+    /// `Cannot read properties of undefined` TypeError on the
+    /// next line), pacquet just spells the error out.
+    #[display("Hierarchy references {dir:?} but no matching graph node exists")]
+    #[diagnostic(code(ERR_PACQUET_LINK_HOISTED_MISSING_GRAPH_NODE))]
+    MissingGraphNode { dir: PathBuf },
+
     #[diagnostic(transparent)]
     ImportIndexedDir(#[error(source)] ImportIndexedDirError),
 
@@ -200,9 +213,11 @@ fn link_all_pkgs_in_order<R: Reporter>(
         .0
         .par_iter()
         .map(|(dir, sub_hierarchy)| {
-            if let Some(node) = opts.graph.get(dir) {
-                import_node::<R>(node, opts)?;
-            }
+            let node = opts
+                .graph
+                .get(dir)
+                .ok_or_else(|| LinkHoistedModulesError::MissingGraphNode { dir: dir.clone() })?;
+            import_node::<R>(node, opts)?;
             link_all_pkgs_in_order::<R>(sub_hierarchy, dir, opts)
         })
         .collect::<Result<Vec<_>, _>>()?;
