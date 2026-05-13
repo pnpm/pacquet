@@ -54,6 +54,7 @@ fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path)
         child_concurrency: 1,
         git_shallow_hosts: pacquet_config::default_git_shallow_hosts(),
         supported_architectures: None,
+        ignored_optional_dependencies: None,
         auth_headers: Default::default(),
         proxy: Default::default(),
         tls: Default::default(),

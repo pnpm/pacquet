@@ -280,8 +280,38 @@ where
                         importer_id: Lockfile::ROOT_IMPORTER_KEY.to_string(),
                     }
                 })?;
-                satisfies_package_manifest(importer, manifest, Lockfile::ROOT_IMPORTER_KEY)
-                    .map_err(|reason| InstallError::OutdatedLockfile { reason })?;
+                // Outdated-settings gate (umbrella #434 slice 7): check
+                // `ignoredOptionalDependencies` drift between the
+                // lockfile-recorded set and the current config before
+                // the per-importer specifier check. Mirrors upstream's
+                // [`getOutdatedLockfileSetting`](https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/settings-checker/src/getOutdatedLockfileSetting.ts).
+                // Upstream flips `needsFullResolution` and re-runs the
+                // resolver; pacquet has no resolver, so the matching
+                // action is to abort with `OutdatedLockfile`.
+                pacquet_lockfile::check_lockfile_settings(
+                    lockfile,
+                    config.ignored_optional_dependencies.as_deref(),
+                )
+                .map_err(|reason| InstallError::OutdatedLockfile { reason })?;
+                // Build the `ignoredOptionalDependencies` matcher once.
+                // Empty config → never matches. Uses the same
+                // glob-pattern engine as `hoistPattern` /
+                // `publicHoistPattern` (mirrors upstream's
+                // `createMatcher` at
+                // <https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts>).
+                let ignored_matcher = config
+                    .ignored_optional_dependencies
+                    .as_deref()
+                    .map(pacquet_config::matcher::create_matcher);
+                let is_ignored_optional: &dyn Fn(&str) -> bool =
+                    &|name: &str| ignored_matcher.as_ref().is_some_and(|m| m.matches(name));
+                satisfies_package_manifest(
+                    importer,
+                    manifest,
+                    Lockfile::ROOT_IMPORTER_KEY,
+                    is_ignored_optional,
+                )
+                .map_err(|reason| InstallError::OutdatedLockfile { reason })?;
 
                 let frozen_result = InstallFrozenLockfile {
                     http_client,

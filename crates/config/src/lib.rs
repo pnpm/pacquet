@@ -512,6 +512,23 @@ pub struct Config {
     /// value).
     pub supported_architectures: Option<pacquet_package_is_installable::SupportedArchitectures>,
 
+    /// `ignoredOptionalDependencies` from `pnpm-workspace.yaml`. A
+    /// list of dep-name patterns the user wants entirely excluded
+    /// from resolution + install. At manifest read time each
+    /// matching key is dropped from `optionalDependencies` AND from
+    /// `dependencies` (a package may list the same dep under both
+    /// to make it optional only for some installers). Mirrors
+    /// upstream's
+    /// [`createOptionalDependenciesRemover`](https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts).
+    ///
+    /// The resolved set is also recorded on the lockfile so a
+    /// subsequent install can detect drift between
+    /// `pnpm-workspace.yaml` and the lockfile-recorded set —
+    /// mismatch triggers `OutdatedLockfile`. Mirrors upstream's
+    /// drift check at
+    /// [`getOutdatedLockfileSetting.ts:58-60`](https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/settings-checker/src/getOutdatedLockfileSetting.ts#L58-L60).
+    pub ignored_optional_dependencies: Option<Vec<String>>,
+
     /// Per-registry `Authorization` header lookup, populated from
     /// `.npmrc` auth keys (`_auth`, `_authToken`, `username`/`_password`,
     /// scoped variants). Threaded through the network and tarball
