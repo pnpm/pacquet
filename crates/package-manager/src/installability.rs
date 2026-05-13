@@ -116,7 +116,21 @@ impl SkippedSnapshots {
     /// Record an `optional: true` snapshot whose fetch / extract
     /// failed during this install. Slice 4 wire-up — call site is
     /// inside [`crate::CreateVirtualStore`]'s cold-batch dispatch.
+    ///
+    /// Disjoint-subset guard: if `key` is already in the
+    /// higher-precedence `installability` set, the insert is a
+    /// no-op so [`len`] / [`iter`] stay consistent with [`contains`].
+    /// In practice this can't happen because installability-skipped
+    /// snapshots are filtered out of the cold-batch dispatch before
+    /// any fetch runs, but the guard keeps the invariant honest.
+    ///
+    /// [`len`]: SkippedSnapshots::len
+    /// [`iter`]: SkippedSnapshots::iter
+    /// [`contains`]: SkippedSnapshots::contains
     pub fn add_fetch_failed(&mut self, key: PackageKey) {
+        if self.installability.contains(&key) {
+            return;
+        }
         self.fetch_failed.insert(key);
     }
 
@@ -128,7 +142,25 @@ impl SkippedSnapshots {
     /// entry. Downstream gates then drop the snapshot from
     /// extraction, symlinking, building, and hoisting through the
     /// same skip-set check they use for installability skips.
+    ///
+    /// Disjoint-subset guard: a snapshot that is both
+    /// installability-skipped (platform / engine mismatch) and
+    /// would-be excluded by `--no-optional` stays in the
+    /// higher-precedence `installability` subset only. This is the
+    /// realistic overlap case (an `optional: true` snapshot that's
+    /// also `os: [<wrong>]`), and putting it in both subsets would
+    /// make [`len`] / [`iter`] inconsistent with [`contains`].
+    /// Same guard applies against `fetch_failed`, though that
+    /// overlap can't arise in practice (a snapshot dropped by
+    /// `--no-optional` never reaches the cold-batch dispatch).
+    ///
+    /// [`len`]: SkippedSnapshots::len
+    /// [`iter`]: SkippedSnapshots::iter
+    /// [`contains`]: SkippedSnapshots::contains
     pub fn add_optional_excluded(&mut self, key: PackageKey) {
+        if self.installability.contains(&key) || self.fetch_failed.contains(&key) {
+            return;
+        }
         self.optional_excluded.insert(key);
     }
 

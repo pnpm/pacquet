@@ -2072,3 +2072,85 @@ async fn frozen_install_optional_included_surfaces_missing_metadata() {
 
     drop(dir);
 }
+
+/// Regression coverage for the shared-dependency case from
+/// [`installing/deps-installer/test/install/optionalDependencies.ts:712`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/test/install/optionalDependencies.ts#L712)
+/// (`dependency that is both optional and non-optional is installed,
+/// when optional dependencies should be skipped`).
+///
+/// `SnapshotEntry::optional` is set by upstream's resolver only
+/// when a snapshot is reachable **exclusively** through optional
+/// edges. A snapshot reachable through any non-optional edge carries
+/// `optional: false` and **must not** be dropped by `--no-optional`.
+///
+/// Fixture: a single snapshot `shared@1.0.0` with `optional: false`
+/// (default) and metadata missing from `packages:`. With
+/// `--no-optional`, the filter must skip this snapshot only if it
+/// checks the `optional` flag — if it accidentally drops every
+/// snapshot listed under `optionalDependencies` regardless of the
+/// flag, the install would silently succeed (the missing-metadata
+/// error wouldn't surface). Conversely, if the filter is correct,
+/// the install aborts with `MissingPackageMetadata` because the
+/// non-optional snapshot reaches cache-key derivation.
+#[tokio::test]
+async fn frozen_install_no_optional_keeps_shared_non_optional_snapshot() {
+    const SHARED_NON_OPTIONAL_LOCKFILE: &str = text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    optionalDependencies:"
+        "      shared:"
+        "        specifier: 1.0.0"
+        "        version: 1.0.0"
+        "packages: {}"
+        "snapshots:"
+        "  shared@1.0.0: {}"
+    };
+
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let mut manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    manifest.add_dependency("shared", "1.0.0", DependencyGroup::Optional).unwrap();
+    manifest.save().unwrap();
+
+    let mut config = Config::new();
+    config.lockfile = false;
+    config.enable_global_virtual_store = false;
+    config.store_dir = store_dir.into();
+    config.modules_dir = modules_dir;
+    config.virtual_store_dir = virtual_store_dir;
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(SHARED_NON_OPTIONAL_LOCKFILE)
+        .expect("parse shared-non-optional fixture lockfile");
+
+    let result = Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        // `--no-optional` shape: Optional NOT in the dispatch list.
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        supported_architectures: None,
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await;
+
+    let err =
+        result.expect_err("snapshot with optional:false must NOT be dropped by --no-optional");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("MissingPackageMetadata"),
+        "expected MissingPackageMetadata (proves the snapshot was kept), got {msg}",
+    );
+
+    drop(dir);
+}
