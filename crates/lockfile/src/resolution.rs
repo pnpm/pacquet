@@ -173,6 +173,70 @@ pub struct VariationsResolution {
     pub variants: Vec<PlatformAssetResolution>,
 }
 
+/// Host triple used to pick a variant out of a [`VariationsResolution`].
+/// Mirrors pnpm's
+/// [`PlatformSelector`](https://github.com/pnpm/pnpm/blob/94240bc046/resolving/resolver-base/src/index.ts#L78-L83).
+///
+/// `libc`'s tri-state encodes pnpm's `string | null | undefined` shape:
+///
+/// - `None` — the host's libc constraint is irrelevant (macOS, Windows,
+///   BSD, …). Matches a variant whose `libc` is `None` (the default
+///   build); a `libc: "musl"` variant is rejected since `musl` is a
+///   non-default, non-interchangeable artifact.
+/// - `Some("glibc")` — Linux with glibc. Same matching rule as `None`:
+///   the default variant wins, musl variants are skipped. Upstream
+///   collapses `null` and `"glibc"` into the same arm in
+///   [`libcMatches`](https://github.com/pnpm/pnpm/blob/94240bc046/resolving/resolver-base/src/index.ts#L100-L107)
+///   because the variant emitter only annotates non-glibc builds.
+/// - `Some("musl")` — Linux with musl. Requires an exact `libc:
+///   "musl"` annotation on the variant, so the glibc default doesn't
+///   silently install.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlatformSelector {
+    pub os: String,
+    pub cpu: String,
+    pub libc: Option<String>,
+}
+
+/// Pick the variant whose target list contains the host triple, or
+/// `None` if no variant matches. Port of pnpm's
+/// [`selectPlatformVariant`](https://github.com/pnpm/pnpm/blob/94240bc046/resolving/resolver-base/src/index.ts#L92-L98).
+///
+/// Iterates `variants` in declaration order and returns the first
+/// `PlatformAssetResolution` whose `targets[]` contains an `(os, cpu,
+/// libc?)` triple matching `selector`. Each variant's target list is
+/// scanned linearly — `targets[]` is typically 1–3 entries (one per
+/// architecture combo that shares an artifact), so the nested-loop
+/// cost is negligible.
+pub fn select_platform_variant<'a>(
+    variants: &'a [PlatformAssetResolution],
+    selector: &PlatformSelector,
+) -> Option<&'a PlatformAssetResolution> {
+    variants.iter().find(|variant| {
+        variant.targets.iter().any(|target| {
+            target.os == selector.os
+                && target.cpu == selector.cpu
+                && libc_matches(target.libc.as_deref(), selector.libc.as_deref())
+        })
+    })
+}
+
+/// Check whether a variant's `libc` annotation matches the host
+/// selector's `libc` value. Port of upstream's
+/// [`libcMatches`](https://github.com/pnpm/pnpm/blob/94240bc046/resolving/resolver-base/src/index.ts#L100-L107).
+///
+/// The contract is asymmetric on purpose: `None` and `"glibc"` on the
+/// selector side both demand `None` on the variant (the unannotated
+/// default), so a `musl` variant cannot win for a glibc host. A
+/// non-default selector value (e.g. `"musl"`) requires the variant to
+/// declare the exact same value.
+pub(crate) fn libc_matches(variant_libc: Option<&str>, requested_libc: Option<&str>) -> bool {
+    match requested_libc {
+        None | Some("glibc") => variant_libc.is_none(),
+        Some(requested) => variant_libc == Some(requested),
+    }
+}
+
 /// Represent the resolution object.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, From, TryInto)]
 #[serde(from = "ResolutionSerde", into = "ResolutionSerde")]
