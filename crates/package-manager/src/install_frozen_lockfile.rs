@@ -86,15 +86,26 @@ pub enum InstallFrozenLockfileError {
     #[diagnostic(transparent)]
     VersionPolicy(#[error(source)] VersionPolicyError),
 
-    /// Wraps an installability check that surfaced an engine-strict
-    /// abort. Pacquet's default config has `engine_strict = false`,
-    /// so the install path doesn't currently reach this — but the
-    /// error type is wired through so a future config wiring of
-    /// `engineStrict: true` does the right thing without churning
-    /// the error enum again.
+    /// Wraps any error `compute_skipped_snapshots` surfaces from the
+    /// installability pass. Three sources, all reachable under
+    /// today's default config:
     ///
-    /// Mirrors upstream's `throw warn` at
-    /// <https://github.com/pnpm/pnpm/blob/94240bc046/config/package-is-installable/src/index.ts#L63>.
+    /// - `InstallabilityError::InvalidNodeVersion` — the resolved
+    ///   `current_node_version` isn't a parseable exact semver.
+    ///   Pacquet falls back to a synthetic `99999.0.0` when
+    ///   `node --version` fails, so this is currently unreachable
+    ///   from production — but a future `nodeVersion` config wiring
+    ///   (slice 2) will surface user-supplied bad values here,
+    ///   mirroring upstream's `ERR_PNPM_INVALID_NODE_VERSION` throw
+    ///   at <https://github.com/pnpm/pnpm/blob/94240bc046/config/package-is-installable/src/checkEngine.ts#L25-L27>.
+    /// - `InstallabilityError::Engine` / `InstallabilityError::Platform`
+    ///   from a non-optional incompatible snapshot with
+    ///   `engine_strict = true`. Pacquet's default has
+    ///   `engine_strict = false`, so this path is currently
+    ///   unreachable from production either — wired through so the
+    ///   slice that lands the config setting doesn't churn the
+    ///   error enum again. Mirrors upstream's `throw warn` at
+    ///   <https://github.com/pnpm/pnpm/blob/94240bc046/config/package-is-installable/src/index.ts#L63>.
     #[diagnostic(transparent)]
     Installability(#[error(source)] Box<pacquet_package_is_installable::InstallabilityError>),
 }
