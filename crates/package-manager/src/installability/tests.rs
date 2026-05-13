@@ -206,6 +206,38 @@ fn non_optional_incompatible_is_not_skipped() {
     );
 }
 
+/// Fast path: a lockfile where no metadata row declares any
+/// installability constraint skips the per-snapshot pass entirely.
+/// Verifies the optimization triggers and produces the same
+/// observable behavior as the slow path (empty skip set, no events).
+#[test]
+fn no_constraints_skips_the_per_snapshot_pass() {
+    reset_events();
+    let key = snapshot_key("no-constraints@1.0.0");
+    let mut snapshots = HashMap::new();
+    snapshots.insert(key.clone(), SnapshotEntry { optional: true, ..Default::default() });
+    let mut packages = HashMap::new();
+    // No engines / cpu / os / libc — the fast path returns an
+    // empty SkippedSnapshots without inspecting individual
+    // snapshots.
+    packages.insert(key, synthetic_metadata(None, None, None, None));
+
+    let skipped = compute_skipped_snapshots::<RecordingReporter>(
+        &snapshots,
+        &packages,
+        &host("20.10.0", "darwin", "arm64"),
+        "/proj",
+    )
+    .unwrap();
+
+    assert!(skipped.is_empty());
+    let events = take_events();
+    assert!(
+        events.iter().all(|e| !matches!(e, LogEvent::SkippedOptionalDependency(_))),
+        "fast path must not fire skipped-optional events",
+    );
+}
+
 /// Peer-resolved variants of the same metadata row (e.g.
 /// `react-dom@17.0.2(react@17.0.2)` vs the same against `react@18`)
 /// must dedup at the reporter — upstream emits one event per

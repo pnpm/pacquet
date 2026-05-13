@@ -141,15 +141,25 @@ pub fn check_package(
     manifest: &PackageInstallabilityManifest,
     options: &InstallabilityOptions<'_>,
 ) -> Result<Option<InstallabilityError>, InvalidNodeVersionError> {
-    let wanted_platform = WantedPlatform {
-        os: manifest.os.clone().or_else(|| Some(vec!["any".to_string()])),
-        cpu: manifest.cpu.clone().or_else(|| Some(vec!["any".to_string()])),
-        libc: manifest.libc.clone().or_else(|| Some(vec!["any".to_string()])),
-    };
-
+    // Pacquet-only optimization (still wire-compatible with upstream):
+    // upstream's `index.ts:82-86` defaults each absent platform axis
+    // to `['any']` before passing it down to `checkPlatform`. That
+    // shape is functionally equivalent to "no constraint", since
+    // `checkList` short-circuits a single-element `['any']` to
+    // accept. Pacquet's `check_platform` already skips an axis when
+    // the wanted field is `None`, so we can pass the manifest fields
+    // straight through — no need to allocate `vec!["any".to_string()]`
+    // per axis per snapshot. The observable behavior is identical;
+    // only the per-snapshot allocation count changes (3 fewer Vec /
+    // String allocations when none of the axes are specified, which
+    // is the common case in real lockfiles).
     if let Some(platform_err) = check_platform(
         package_id,
-        &wanted_platform,
+        &WantedPlatform {
+            os: manifest.os.clone(),
+            cpu: manifest.cpu.clone(),
+            libc: manifest.libc.clone(),
+        },
         options.supported_architectures,
         options.current_os,
         options.current_cpu,

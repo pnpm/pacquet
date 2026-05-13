@@ -137,6 +137,27 @@ pub fn compute_skipped_snapshots<R: Reporter>(
     host: &InstallabilityHost,
     prefix: &str,
 ) -> Result<SkippedSnapshots, Box<InstallabilityError>> {
+    // Fast path: if no package in the lockfile declares any
+    // installability constraint, every snapshot is trivially
+    // installable. Skip the per-snapshot
+    // `without_peer()` / `to_string()` / `package_is_installable`
+    // loop entirely. Pacquet has no resolver so the lockfile's
+    // packages map is fixed for the duration of the install; one
+    // linear scan early is much cheaper than walking the snapshots
+    // map and decomposing each metadata row only to find no
+    // constraints to evaluate.
+    //
+    // Concretely on the integrated benchmark (1352 packages with no
+    // platform / engine constraints): drops ~1352 `String` and
+    // `PackageKey` allocations and the matching number of
+    // `package_is_installable` calls. The scan is O(N) on `packages`
+    // — same shape as the loop it short-circuits — but does at most
+    // four `Option::is_some` checks per row and short-circuits on
+    // the first declared constraint.
+    if !any_installability_constraint(packages) {
+        return Ok(SkippedSnapshots::new());
+    }
+
     let mut skipped = SkippedSnapshots::new();
     let mut seen_emit: HashSet<PackageKey> = HashSet::new();
 
@@ -192,6 +213,17 @@ pub fn compute_skipped_snapshots<R: Reporter>(
     }
 
     Ok(skipped)
+}
+
+/// True if any package metadata row in the lockfile declares an
+/// `engines` / `cpu` / `os` / `libc` constraint pacquet would need
+/// to evaluate. Short-circuits on the first hit. When this returns
+/// false, [`compute_skipped_snapshots`] skips the per-snapshot pass
+/// entirely.
+fn any_installability_constraint(packages: &HashMap<PackageKey, PackageMetadata>) -> bool {
+    packages
+        .values()
+        .any(|m| m.engines.is_some() || m.cpu.is_some() || m.os.is_some() || m.libc.is_some())
 }
 
 fn manifest_from_metadata(metadata: &PackageMetadata) -> PackageInstallabilityManifest {
