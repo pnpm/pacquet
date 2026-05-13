@@ -27,14 +27,14 @@ fn optimistic_wire_method_collapses_auto_and_clone_or_copy_to_clone() {
 }
 
 /// `CreateVirtualDirBySnapshot::run` emits `pnpm:progress imported`
-/// after `create_cas_files` succeeds. Driving with an empty
+/// after `import_indexed_dir` succeeds. Driving with an empty
 /// `cas_paths` map exercises the success path without hitting the
-/// network: `create_cas_files` mkdirs the empty directory and
+/// network: `import_indexed_dir` mkdirs the empty directory and
 /// returns Ok, then the imported emit fires. Asserts the wire
 /// fields (`method`, `requester`, `to`) match what the install
 /// layer threaded down.
 #[tokio::test]
-async fn run_emits_imported_event_after_create_cas_files() {
+async fn run_emits_imported_event_after_import_indexed_dir() {
     static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
 
     struct RecordingReporter;

@@ -509,15 +509,26 @@ impl Config {
     /// keeps the without-lockfile path on the project-local layout
     /// while the frozen-lockfile path consumes the GVS-derived value.
     ///
-    /// `virtual_store_dir_explicit` carries the "did the user set it"
-    /// signal `SmartDefault` cannot express on its own — yaml's
-    /// [`WorkspaceSettings::virtual_store_dir`] is the source today.
-    /// When `true` *and* GVS is on, `global_virtual_store_dir` mirrors
-    /// `virtual_store_dir` (the user picked the GVS root explicitly).
-    /// Otherwise it falls back to `<store_dir>/links`, mirroring
-    /// upstream's unconditional `globalVirtualStoreDir = storeDir/links`
-    /// assignment for the unset case.
-    pub fn apply_global_virtual_store_derivation(&mut self, virtual_store_dir_explicit: bool) {
+    /// `virtual_store_dir_explicit` carries the "did the user set
+    /// `virtualStoreDir` in yaml" signal `SmartDefault` cannot express
+    /// on its own. When `true` *and* GVS is on, `global_virtual_store_dir`
+    /// mirrors `virtual_store_dir` (the user picked the GVS root via the
+    /// shared key). `global_virtual_store_dir_explicit` is the analogous
+    /// signal for the dedicated `globalVirtualStoreDir` yaml key — when
+    /// set, that value wins and the derivation leaves
+    /// `global_virtual_store_dir` alone. Otherwise the field falls back
+    /// to `<store_dir>/links`, mirroring upstream's unconditional
+    /// `globalVirtualStoreDir = storeDir/links` assignment for the unset
+    /// case.
+    pub fn apply_global_virtual_store_derivation(
+        &mut self,
+        virtual_store_dir_explicit: bool,
+        global_virtual_store_dir_explicit: bool,
+    ) {
+        if global_virtual_store_dir_explicit {
+            // User pinned the dedicated GVS key in yaml — honor it.
+            return;
+        }
         self.global_virtual_store_dir =
             if self.enable_global_virtual_store && virtual_store_dir_explicit {
                 self.virtual_store_dir.clone()
@@ -611,13 +622,13 @@ impl Config {
         // dependency just for the lookup — the contract is fixed by
         // pnpm upstream, so the duplication is low-risk.
         //
-        // Capture `virtual_store_dir_explicit` from the yaml *before*
-        // applying it so the GVS derivation downstream can tell apart
-        // "user pinned virtualStoreDir" from "default value falling
-        // through from SmartDefault". Without this signal the
-        // derivation would always see a populated
-        // `config.virtual_store_dir` (the SmartDefault already wrote
-        // one in) and could never re-point it at `<store_dir>/links`.
+        // Capture the "did yaml set this field" booleans *before*
+        // applying yaml so the GVS derivation downstream can tell apart
+        // user-pinned values from SmartDefault fallbacks. Without these
+        // signals the derivation would always see populated values
+        // (SmartDefault wrote them in) and would either always or never
+        // re-point them, neither of which matches upstream's
+        // [`extendInstallOptions.ts:343-355`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/extendInstallOptions.ts#L343-L355).
         let env_workspace_dir = std::env::var_os("NPM_CONFIG_WORKSPACE_DIR")
             .or_else(|| std::env::var_os("npm_config_workspace_dir"))
             .filter(|v| !v.is_empty())
@@ -651,6 +662,7 @@ impl Config {
         };
 
         let mut virtual_store_dir_explicit = false;
+        let mut global_virtual_store_dir_explicit = false;
         if let Some((base_dir, settings)) = workspace_yaml {
             // Re-anchor the path-valued defaults to the workspace root
             // before applying settings. Without this, a `pacquet install`
@@ -670,18 +682,22 @@ impl Config {
             config.virtual_store_dir = base_dir.join("node_modules/.pnpm");
             if let Some(settings) = settings {
                 virtual_store_dir_explicit = settings.virtual_store_dir.is_some();
+                global_virtual_store_dir_explicit = settings.global_virtual_store_dir.is_some();
                 settings.apply_to(&mut config, &base_dir);
             }
         }
 
-        // Derive the GVS-related paths last so they see the final
+        // Derive `global_virtual_store_dir` last so it sees the final
         // `store_dir` / `virtual_store_dir` after yaml has been
-        // applied. Mirrors upstream's
-        // [`extendInstallOptions.ts:343-355`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/extendInstallOptions.ts#L343-L355):
-        // when GVS is on and the user hasn't pinned `virtualStoreDir`,
-        // it's re-pointed at `<store_dir>/links`. The install layer
-        // then reads the resolved value through `VirtualStoreLayout`.
-        config.apply_global_virtual_store_derivation(virtual_store_dir_explicit);
+        // applied. An explicit `globalVirtualStoreDir` in yaml wins
+        // over the derivation; otherwise the field falls back to the
+        // user's pinned `virtualStoreDir` (under GVS-on) or to
+        // `<store_dir>/links`. See
+        // [`Self::apply_global_virtual_store_derivation`].
+        config.apply_global_virtual_store_derivation(
+            virtual_store_dir_explicit,
+            global_virtual_store_dir_explicit,
+        );
 
         Ok(config)
     }
@@ -959,6 +975,37 @@ mod tests {
         assert!(config.enable_global_virtual_store);
         assert_eq!(config.virtual_store_dir, user_path);
         assert_eq!(config.global_virtual_store_dir, user_path);
+    }
+
+    /// An explicit `globalVirtualStoreDir` in yaml wins over the
+    /// derivation: the resolved field equals the user-supplied path,
+    /// not `<store_dir>/links` and not the user's `virtualStoreDir`.
+    /// Mirrors upstream's
+    /// [`getOptionsFromRootManifest.ts`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/getOptionsFromRootManifest.ts)
+    /// — `globalVirtualStoreDir` is read into the config there with
+    /// the same resolve-relative-to-workspace semantics. Without this
+    /// preservation the value parses from yaml and then gets
+    /// silently overwritten by the derivation.
+    #[test]
+    pub fn yaml_global_virtual_store_dir_wins_over_derivation() {
+        let tmp = tempdir().unwrap();
+        let yaml_gvs = tmp.path().join("my-shared-store");
+        fs::write(
+            tmp.path().join("pnpm-workspace.yaml"),
+            format!("globalVirtualStoreDir: {}\n", yaml_gvs.display()),
+        )
+        .expect("write to pnpm-workspace.yaml");
+        let config =
+            Config::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
+                .expect("yaml is valid");
+        assert!(config.enable_global_virtual_store, "GVS defaults to true");
+        // `virtual_store_dir` stays at the project-local default,
+        // because the user didn't pin `virtualStoreDir`.
+        assert_eq!(config.virtual_store_dir, tmp.path().join("node_modules/.pnpm"));
+        // The explicit yaml value wins — neither the derivation's
+        // `<store_dir>/links` fallback nor any mirroring of
+        // `virtual_store_dir` clobbers it.
+        assert_eq!(config.global_virtual_store_dir, yaml_gvs);
     }
 
     /// Pnpm's
