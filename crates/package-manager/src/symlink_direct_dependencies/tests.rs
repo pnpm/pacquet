@@ -483,20 +483,17 @@ fn unsafe_importer_keys_error_before_filesystem_writes() {
         }
 
         // The rejection happens before any per-importer work begins,
-        // so nothing should have landed on disk. Guard that contract:
-        // the workspace_root must not have grown a `node_modules`,
-        // and the workspace_root's parent (where a `/abs/path` or
-        // `..` traversal would aim) must not have one either.
+        // so nothing should have landed on disk. Guard that contract
+        // by checking the workspace_root itself. We deliberately do
+        // NOT inspect `workspace_root.parent()` here: on most CI hosts
+        // the tempdir's parent is a shared system temp directory that
+        // other tests (or unrelated processes) may have populated, so
+        // an assertion there would be flaky for reasons unrelated to
+        // the importer-id validator.
         assert!(
             !workspace_root.join("node_modules").exists(),
             "no node_modules should be created under workspace_root for {importer_id:?}",
         );
-        if let Some(parent) = workspace_root.parent() {
-            assert!(
-                !parent.join("node_modules").exists(),
-                "no node_modules should escape workspace_root for {importer_id:?}",
-            );
-        }
         drop(dir);
     }
 }

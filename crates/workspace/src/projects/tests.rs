@@ -73,7 +73,10 @@ fn filters_node_modules() {
         !names.contains(&"foo".to_string()),
         "node_modules contents must not surface as workspace projects: {names:?}",
     );
-    assert!(names.contains(&"real".to_string()));
+    assert!(
+        names.contains(&"real".to_string()),
+        "expected the `real` project to be enumerated; got {names:?}",
+    );
 }
 
 #[test]

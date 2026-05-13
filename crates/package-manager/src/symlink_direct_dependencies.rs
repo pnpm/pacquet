@@ -33,10 +33,12 @@ use std::{
 ///   per-project emit at
 ///   <https://github.com/pnpm/pnpm/blob/94240bc046/installing/linking/direct-dep-linker/src/linkDirectDeps.ts#L131>.
 ///
-/// The virtual store dir (`config.virtual_store_dir`) stays singular —
-/// it lives at `<workspace_root>/node_modules/.pacquet` (pnpm uses
-/// `.pnpm`; pacquet's directory name is fixed by `default_virtual_store_dir`).
-/// Only the per-project `node_modules/` and its symlinks fan out.
+/// The virtual store dir (`config.virtual_store_dir`) stays singular
+/// across the install — only the per-project `node_modules/` and its
+/// symlinks fan out. By default `pacquet_config::default_virtual_store_dir`
+/// anchors it at `<workspace_root>/node_modules/.pnpm` (matching pnpm),
+/// but the actual location is whatever the resolved `Config` field
+/// holds — `pnpm-workspace.yaml`'s `virtualStoreDir` can move it.
 #[must_use]
 pub struct SymlinkDirectDependencies<'a, DependencyGroupList>
 where

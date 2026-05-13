@@ -598,6 +598,22 @@ impl Config {
             && let Some((path, settings)) = WorkspaceSettings::find_and_load(&start)?
         {
             let base_dir = path.parent().unwrap_or(&start).to_path_buf();
+            // Re-anchor the path-valued defaults to the workspace root
+            // before applying settings. Without this, a `pacquet install`
+            // run from a workspace subdirectory leaves
+            // `modules_dir` / `virtual_store_dir` anchored at the CLI
+            // `--dir` (the subdir), while the per-importer
+            // [`SymlinkDirectDependencies`] writes are anchored at the
+            // workspace root — producing two `node_modules` layouts
+            // for the same install. pnpm v11 ties
+            // `pnpmConfig.dir = lockfileDir` exactly so its defaults
+            // resolve from the workspace root; we mirror that here.
+            //
+            // Applied *before* `settings.apply_to` so an explicit
+            // `modulesDir` / `virtualStoreDir` in `pnpm-workspace.yaml`
+            // still wins.
+            config.modules_dir = base_dir.join("node_modules");
+            config.virtual_store_dir = base_dir.join("node_modules/.pnpm");
             settings.apply_to(&mut config, &base_dir);
         }
 
@@ -894,5 +910,50 @@ mod tests {
             matches!(err, crate::LoadWorkspaceYamlError::ParseYaml { .. }),
             "expected ParseYaml, got {err:?}",
         );
+    }
+
+    /// Running `pacquet install` from a workspace subdirectory must
+    /// not leave `modules_dir` / `virtual_store_dir` anchored at the
+    /// CLI `--dir`. The presence of `pnpm-workspace.yaml` in an
+    /// ancestor signals that the workspace root is the install anchor,
+    /// matching pnpm v11's `pnpmConfig.dir = lockfileDir` rule. Without
+    /// this, the per-importer `node_modules` writes (under the
+    /// workspace root) and the virtual store (under the subdir) would
+    /// produce two inconsistent layouts for the same install.
+    #[test]
+    pub fn workspace_subdir_anchors_modules_at_workspace_root() {
+        let tmp = tempdir().unwrap();
+        let workspace_root = tmp.path();
+        let subdir = workspace_root.join("packages/web");
+        fs::create_dir_all(&subdir).expect("create subdir");
+        fs::write(workspace_root.join("pnpm-workspace.yaml"), "packages:\n  - packages/*\n")
+            .expect("write to pnpm-workspace.yaml");
+
+        let config = Config::current(|| subdir.clone().pipe(Ok::<_, ()>), || None, Config::new)
+            .expect("config loads");
+
+        assert_eq!(
+            config.modules_dir,
+            workspace_root.join("node_modules"),
+            "modules_dir must be anchored at the workspace root, not the subdir",
+        );
+        assert_eq!(
+            config.virtual_store_dir,
+            workspace_root.join("node_modules/.pnpm"),
+            "virtual_store_dir must be anchored at the workspace root, not the subdir",
+        );
+    }
+
+    /// A single-project install (no `pnpm-workspace.yaml` anywhere)
+    /// keeps the CLI `--dir` as the anchor. Guards against the
+    /// re-anchor block accidentally firing when no workspace exists.
+    #[test]
+    pub fn single_project_anchors_modules_at_cwd() {
+        let tmp = tempdir().unwrap();
+        let config =
+            Config::current(|| tmp.path().to_path_buf().pipe(Ok::<_, ()>), || None, Config::new)
+                .expect("config loads");
+        assert_eq!(config.modules_dir, tmp.path().join("node_modules"));
+        assert_eq!(config.virtual_store_dir, tmp.path().join("node_modules/.pnpm"));
     }
 }
