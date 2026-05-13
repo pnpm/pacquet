@@ -32,6 +32,8 @@ fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path)
         lockfile: false,
         prefer_frozen_lockfile: false,
         skip_runtimes: false,
+        offline: false,
+        prefer_offline: false,
         lockfile_include_tarball_url: false,
         registry: "https://registry.npmjs.com/".to_string(),
         auto_install_peers: false,

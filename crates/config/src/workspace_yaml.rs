@@ -113,6 +113,8 @@ pub struct WorkspaceSettings {
     pub modules_cache_max_age: Option<u64>,
     pub lockfile: Option<bool>,
     pub prefer_frozen_lockfile: Option<bool>,
+    pub offline: Option<bool>,
+    pub prefer_offline: Option<bool>,
     pub lockfile_include_tarball_url: Option<bool>,
     pub registry: Option<String>,
     pub auto_install_peers: Option<bool>,
@@ -290,7 +292,8 @@ impl WorkspaceSettings {
         apply! {
             hoist, shamefully_hoist,
             node_linker, symlink, package_import_method, modules_cache_max_age,
-            lockfile, prefer_frozen_lockfile, lockfile_include_tarball_url,
+            lockfile, prefer_frozen_lockfile, offline, prefer_offline,
+            lockfile_include_tarball_url,
             auto_install_peers, dedupe_peer_dependents, strict_peer_dependencies,
             resolve_peers_from_workspace_root, verify_store_integrity,
             side_effects_cache, side_effects_cache_readonly,

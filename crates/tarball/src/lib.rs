@@ -264,6 +264,32 @@ pub enum TarballError {
         #[error(source)]
         source: std::io::Error,
     },
+
+    /// `offline: true` was set and the package's tarball wasn't
+    /// found in the local store. Pacquet refuses to fetch the
+    /// network. Upstream pnpm's `--offline` only gates the metadata
+    /// fetch in [`pickPackage`](https://github.com/pnpm/pnpm/blob/94240bc046/resolving/npm-resolver/src/pickPackage.ts);
+    /// pacquet has no metadata fetch on the frozen-install path, so
+    /// the same flag's most useful effect lands here: surface a
+    /// clear "the snapshot isn't cached" error rather than letting
+    /// the underlying network refusal propagate.
+    ///
+    /// `ERR_PACQUET_NO_OFFLINE_TARBALL` is a pacquet-specific code
+    /// (upstream has no exact equivalent); the message shape
+    /// follows upstream's
+    /// [`ERR_PNPM_NO_OFFLINE_META`](https://github.com/pnpm/pnpm/blob/94240bc046/resolving/npm-resolver/src/pickPackage.ts)
+    /// — "Failed to resolve `<pkg>` in package mirror `<dir>`".
+    #[from(ignore)]
+    #[display(
+        "Failed to fetch tarball for {package_id} from {url} in offline mode: snapshot not present in local store"
+    )]
+    #[diagnostic(
+        code(ERR_PACQUET_NO_OFFLINE_TARBALL),
+        help(
+            "Drop `--offline` (or `offline=true` in pnpm-workspace.yaml) or run an online install first to populate the store."
+        )
+    )]
+    NoOfflineTarball { package_id: String, url: String },
 }
 
 /// Per-package callback that decides whether a given archive entry
@@ -1252,6 +1278,16 @@ pub struct DownloadTarballToStore<'a> {
     /// Arc per retry attempt is cheap; the inner trait object
     /// is shared.
     pub ignore_file_pattern: Option<Arc<IgnoreEntryFilter>>,
+    /// `offline` from `Config`. When `true` and both the warm
+    /// prefetch (`prefetched_cas_paths`) and the SQLite `index.db`
+    /// lookup (`load_cached_cas_paths`) miss, the fetcher fails fast
+    /// with [`TarballError::NoOfflineTarball`] rather than hitting
+    /// the registry. The upstream `--offline` flag gates the
+    /// metadata-fetch path inside `pickPackage`; pacquet has no
+    /// metadata-fetch path on the frozen-install flow (the lockfile
+    /// pins every resolution), so this gate is pacquet's most useful
+    /// interpretation of the flag for frozen installs.
+    pub offline: bool,
 }
 
 /// Project [`TarballError`] onto pnpm's `requestRetryLogger`'s
@@ -1309,6 +1345,16 @@ fn tarball_error_to_request_retry(err: &TarballError) -> RequestRetryError {
         }
         TarballError::ReadZipArchive { .. } | TarballError::ReadZipEntries { .. } => {
             out.code = Some("ERR_PACQUET_ZIP".to_string());
+        }
+        TarballError::NoOfflineTarball { .. } => {
+            // The retry classifier sees this only if the offline gate
+            // were ever placed inside the retry loop (it isn't —
+            // `NoOfflineTarball` short-circuits before
+            // `fetch_and_extract_with_retry`). The arm exists for
+            // exhaustiveness; the `code` field mirrors the upstream
+            // shape so a future surface that does run this error
+            // through the retry logger renders the right code.
+            out.code = Some("ERR_PACQUET_NO_OFFLINE_TARBALL".to_string());
         }
     }
     out
@@ -1912,6 +1958,26 @@ impl<'a> DownloadTarballToStore<'a> {
             return Ok(cas_paths);
         }
 
+        // Offline-mode gate: both cache lookups missed. Upstream pnpm
+        // gates only its metadata path on `--offline`; pacquet has no
+        // metadata path on the frozen-install flow, so the gate lands
+        // here. Error rather than fall through to the network — same
+        // shape as upstream's `ERR_PNPM_NO_OFFLINE_META`, scoped to
+        // tarballs because that's what pacquet's frozen install needs
+        // network for.
+        if self.offline {
+            tracing::warn!(
+                target: "pacquet::download",
+                ?package_url,
+                ?package_id,
+                "offline mode: tarball missing from local store; refusing network fetch",
+            );
+            return Err(TarballError::NoOfflineTarball {
+                package_id: package_id.to_string(),
+                url: package_url.to_string(),
+            });
+        }
+
         tracing::info!(target: "pacquet::download", ?package_url, "New cache");
 
         // Run the full fetch + integrity + extract pipeline under
@@ -2256,6 +2322,12 @@ pub struct DownloadZipArchiveToStore<'a> {
     /// See [`DownloadTarballToStore::ignore_file_pattern`] — the
     /// per-fetch archive filter is shared by both archive types.
     pub ignore_file_pattern: Option<Arc<IgnoreEntryFilter>>,
+    /// See [`DownloadTarballToStore::offline`]. Same semantics for
+    /// the zip-archive path: when both cache lookups miss and
+    /// `offline` is `true`, the fetcher fails with
+    /// [`TarballError::NoOfflineTarball`] rather than hitting the
+    /// network.
+    pub offline: bool,
 }
 
 impl<'a> DownloadZipArchiveToStore<'a> {
@@ -2315,6 +2387,22 @@ impl<'a> DownloadZipArchiveToStore<'a> {
             tracing::info!(target: "pacquet::download", ?package_url, ?package_id, "Reusing cached CAFS entry — skipping zip download");
             emit_progress_found_in_store::<R>(package_id, requester);
             return Ok(cas_paths);
+        }
+
+        // Offline-mode gate (zip archive). Same shape as the tarball
+        // path above — see the matching comment there for the
+        // upstream rationale.
+        if self.offline {
+            tracing::warn!(
+                target: "pacquet::download",
+                ?package_url,
+                ?package_id,
+                "offline mode: zip archive missing from local store; refusing network fetch",
+            );
+            return Err(TarballError::NoOfflineTarball {
+                package_id: package_id.to_string(),
+                url: package_url.to_string(),
+            });
         }
 
         tracing::info!(target: "pacquet::download", ?package_url, "New cache (zip)");

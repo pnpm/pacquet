@@ -177,6 +177,7 @@ async fn packages_under_orgs_should_work() {
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
         ignore_file_pattern: None,
+        offline: false,
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -226,6 +227,7 @@ async fn should_throw_error_on_checksum_mismatch() {
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
         ignore_file_pattern: None,
+        offline: false,
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -302,6 +304,7 @@ async fn reuses_cached_cas_paths_when_index_entry_is_live() {
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
         ignore_file_pattern: None,
+        offline: false,
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -362,6 +365,7 @@ async fn reuses_prefetched_cas_paths_when_provided() {
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
         ignore_file_pattern: None,
+        offline: false,
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -590,6 +594,7 @@ async fn falls_through_when_cafs_file_missing() {
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
         ignore_file_pattern: None,
+        offline: false,
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -650,6 +655,7 @@ async fn falls_through_when_digest_is_malformed() {
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
         ignore_file_pattern: None,
+        offline: false,
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -713,6 +719,7 @@ async fn falls_through_when_cafs_path_is_a_directory() {
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
         ignore_file_pattern: None,
+        offline: false,
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -786,6 +793,7 @@ async fn falls_through_when_cafs_path_is_a_symlink() {
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
         ignore_file_pattern: None,
+        offline: false,
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -1343,6 +1351,7 @@ fn run_with_mem_cache_does_not_deadlock_on_dashmap_shard_contention() {
                     retry_opts: RetryOpts { retries: 0, ..RetryOpts::default() },
                     auth_headers,
                     ignore_file_pattern: None,
+                    offline: false,
                 };
 
                 // Spawn each task and yield once before the next so the
@@ -1588,6 +1597,7 @@ async fn mem_cache_hit_emits_found_in_store_for_second_requester() {
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
         ignore_file_pattern: None,
+        offline: false,
     }
     .run_with_mem_cache::<RecordingReporter>(&mem_cache)
     .await
@@ -1615,6 +1625,7 @@ async fn mem_cache_hit_emits_found_in_store_for_second_requester() {
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
         ignore_file_pattern: None,
+        offline: false,
     }
     .run_with_mem_cache::<RecordingReporter>(&mem_cache)
     .await
@@ -1704,6 +1715,7 @@ async fn run_with_mem_cache_recovers_from_owning_fetch_error() {
         retry_opts: test_retry_opts(),
         auth_headers,
         ignore_file_pattern: None,
+        offline: false,
     };
 
     // Drive both calls concurrently. Pre-fix: the first to hit the
@@ -1985,6 +1997,7 @@ async fn found_in_store_event_fires_on_cache_hit() {
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
         ignore_file_pattern: None,
+        offline: false,
     }
     .run_without_mem_cache::<SilentReporter>()
     .await
@@ -2022,6 +2035,7 @@ async fn found_in_store_event_fires_on_cache_hit() {
         retry_opts: test_retry_opts(),
         auth_headers: &AuthHeaders::default(),
         ignore_file_pattern: None,
+        offline: false,
     }
     .run_without_mem_cache::<RecordingReporter>()
     .await
@@ -2373,4 +2387,126 @@ fn extract_zip_normalizes_dot_segments_in_entry_paths() {
     assert!(!cas_paths.keys().any(|k| k.contains("/./")), "no entry should retain a `.` segment");
 
     drop(tempdir);
+}
+
+/// `offline: true` short-circuits the fetcher before any network
+/// request when the package isn't in the local store. Mocks a server
+/// with `.expect(0)` so the assertion fires *only* if the fetcher
+/// ever calls the mocked URL; the offline gate must keep it from
+/// ever reaching `fetch_and_extract_with_retry`.
+#[tokio::test]
+async fn offline_mode_skips_network_on_cache_miss() {
+    use pacquet_diagnostics::miette::Diagnostic;
+
+    let (store_dir_keep, store_path) = tempdir_with_leaked_path();
+    let mut server = mockito::Server::new_async().await;
+    // `.expect(0)` — if the fetcher attempts the network at all,
+    // mockito's drop checker fails the test on the `.assert_async`
+    // call below.
+    let must_not_fire =
+        server.mock("GET", "/pkg.tgz").with_status(200).expect(0).create_async().await;
+
+    let url = format!("{}/pkg.tgz", server.url());
+    let pkg_integrity = integrity(FASTIFY_ERROR_INTEGRITY);
+    let pkg_id = "@fastify/error@3.3.0";
+
+    let err = DownloadTarballToStore {
+        http_client: &Default::default(),
+        store_dir: store_path,
+        store_index: None,
+        store_index_writer: None,
+        verify_store_integrity: true,
+        verified_files_cache: SharedVerifiedFilesCache::default(),
+        package_integrity: &pkg_integrity,
+        package_unpacked_size: None,
+        package_url: &url,
+        package_id: pkg_id,
+        requester: "",
+        prefetched_cas_paths: None,
+        retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
+        ignore_file_pattern: None,
+        offline: true,
+    }
+    .run_without_mem_cache::<SilentReporter>()
+    .await
+    .expect_err("offline + cache miss must error before reaching the network");
+
+    // Variant shape + diagnostic code together. The `code` check
+    // pins the user-facing surface — `ERR_PACQUET_NO_OFFLINE_TARBALL`
+    // is part of the CLI contract, just like upstream's
+    // `ERR_PNPM_NO_OFFLINE_META`.
+    let TarballError::NoOfflineTarball { package_id, url: errored_url } = &err else {
+        panic!("expected NoOfflineTarball, got {err:?}");
+    };
+    assert_eq!(package_id, pkg_id);
+    assert_eq!(errored_url, &url);
+    let code = err.code().map(|c| c.to_string()).unwrap_or_default();
+    assert_eq!(
+        code, "ERR_PACQUET_NO_OFFLINE_TARBALL",
+        "diagnostic code is part of the user-facing surface; must stay stable",
+    );
+
+    // No network call was made — confirms the gate fired before any
+    // attempt at `fetch_and_extract_with_retry`.
+    must_not_fire.assert_async().await;
+
+    drop(store_dir_keep);
+}
+
+/// `offline: true` is *not* consulted when the local store already
+/// has the file: the prefetched-CAS-paths branch should still
+/// short-circuit happily, regardless of the offline flag. Without
+/// this guard, a regression that bumped the offline check above the
+/// prefetch lookup would break warm installs under `--offline`.
+#[tokio::test]
+async fn offline_mode_still_uses_prefetched_cache() {
+    let (store_dir_keep, store_path) = tempdir_with_leaked_path();
+    // Server with `.expect(0)` — the prefetched-CAS-paths branch must
+    // short-circuit before any HTTP call.
+    let mut server = mockito::Server::new_async().await;
+    let must_not_fire =
+        server.mock("GET", "/pkg.tgz").with_status(200).expect(0).create_async().await;
+
+    let url = format!("{}/pkg.tgz", server.url());
+    let pkg_integrity = integrity(FASTIFY_ERROR_INTEGRITY);
+    let pkg_id = "@fastify/error@3.3.0";
+
+    // Seed the prefetched cache with a placeholder entry for our
+    // (integrity, pkg_id) — value content doesn't matter; the gate
+    // we're exercising only checks key presence. `PrefetchedCasPaths`
+    // is a `HashMap` type alias, so a struct literal works directly.
+    let cache_key = store_index_key(&pkg_integrity.to_string(), pkg_id);
+    let mut prefetched: PrefetchedCasPaths = HashMap::new();
+    prefetched.insert(cache_key, Arc::new(HashMap::new()));
+
+    let cas_paths = DownloadTarballToStore {
+        http_client: &Default::default(),
+        store_dir: store_path,
+        store_index: None,
+        store_index_writer: None,
+        verify_store_integrity: true,
+        verified_files_cache: SharedVerifiedFilesCache::default(),
+        package_integrity: &pkg_integrity,
+        package_unpacked_size: None,
+        package_url: &url,
+        package_id: pkg_id,
+        requester: "",
+        prefetched_cas_paths: Some(&prefetched),
+        retry_opts: test_retry_opts(),
+        auth_headers: &AuthHeaders::default(),
+        ignore_file_pattern: None,
+        offline: true,
+    }
+    .run_without_mem_cache::<SilentReporter>()
+    .await
+    .expect("warm install under --offline must succeed when the package is prefetched");
+
+    // Prefetched seed used a placeholder empty map; the return must
+    // surface that empty map (the offline gate didn't fire, the
+    // prefetch lookup did).
+    assert!(cas_paths.is_empty(), "got the prefetched-empty map back: {cas_paths:?}");
+    must_not_fire.assert_async().await;
+
+    drop(store_dir_keep);
 }

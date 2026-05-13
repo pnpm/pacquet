@@ -218,6 +218,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
                     retry_opts: retry_opts_from_config(config),
                     auth_headers: &config.auth_headers,
                     ignore_file_pattern: None,
+                    offline: config.offline,
                 }
                 .run_without_mem_cache::<R>()
                 .await
@@ -601,6 +602,7 @@ async fn fetch_binary_resolution_to_cas<R: Reporter>(
             retry_opts: retry_opts_from_config(config),
             auth_headers: &config.auth_headers,
             ignore_file_pattern,
+            offline: config.offline,
         }
         .run_without_mem_cache::<R>()
         .await
@@ -621,6 +623,7 @@ async fn fetch_binary_resolution_to_cas<R: Reporter>(
             auth_headers: &config.auth_headers,
             archive_prefix: binary.prefix.as_deref(),
             ignore_file_pattern,
+            offline: config.offline,
         }
         .run_without_mem_cache::<R>()
         .await

@@ -272,6 +272,42 @@ pub struct Config {
     /// with another pacquet binary) flip this to `true`.
     pub skip_runtimes: bool,
 
+    /// Refuse network requests during install. Mirrors pnpm's
+    /// [`offline`](https://github.com/pnpm/pnpm/blob/94240bc046/resolving/npm-resolver/src/pickPackage.ts)
+    /// flag — upstream gates the metadata-fetch path with
+    /// `ERR_PNPM_NO_OFFLINE_META` when no cached metadata exists for a
+    /// spec. Pacquet doesn't have a metadata-fetch path yet (no
+    /// resolver until Stage 2), so the same flag instead gates
+    /// pacquet's tarball-fetch fall-through: when both the warm
+    /// prefetch and the SQLite `index.db` lookup miss, the tarball
+    /// fetcher fails fast with `ERR_PACQUET_NO_OFFLINE_TARBALL`
+    /// rather than hitting the registry. The frozen-lockfile install
+    /// path needs no metadata, so the surface area collapses to
+    /// "every snapshot must already be in the local store".
+    ///
+    /// Pacquet's tarball-side gate has no exact upstream counterpart
+    /// (pnpm doesn't gate the tarball fetcher on `offline`), but it's
+    /// the most useful interpretation of the flag for a frozen
+    /// installer: surface a clear `offline` error rather than letting
+    /// the underlying `connection refused` / DNS error propagate.
+    /// The Stage 2 resolver will additionally honor the flag on the
+    /// metadata path.
+    pub offline: bool,
+
+    /// Prefer the local store on read, fall back to the network on a
+    /// cache miss. Mirrors pnpm's
+    /// [`preferOffline`](https://github.com/pnpm/pnpm/blob/94240bc046/resolving/npm-resolver/src/pickPackage.ts)
+    /// flag, which biases the resolver to use cached metadata when
+    /// available even past the freshness window.
+    ///
+    /// Pacquet's frozen-install path already prefers the local store
+    /// — the warm prefetch + SQLite-cache lookups always run before
+    /// any network fetch — so `prefer_offline` is effectively a no-op
+    /// today. The field exists so `.npmrc` / yaml / CLI all parse the
+    /// flag cleanly; Stage 2's resolver will honor it the same way
+    /// upstream does.
+    pub prefer_offline: bool,
+
     /// Add the full URL to the package's tarball to every entry in pnpm-lock.yaml.
     pub lockfile_include_tarball_url: bool,
 
