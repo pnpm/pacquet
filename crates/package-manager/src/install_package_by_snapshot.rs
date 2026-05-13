@@ -7,14 +7,20 @@ use miette::Diagnostic;
 use pacquet_config::Config;
 use pacquet_executor::ScriptsPrependNodePath as ExecScriptsPrependNodePath;
 use pacquet_git_fetcher::{GitFetchOutput, GitFetcher, GitFetcherError, GitHostedTarballFetcher};
-use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
+use pacquet_graph_hasher::{host_arch, host_libc, host_platform};
+use pacquet_lockfile::{
+    BinaryArchive, BinaryResolution, LockfileResolution, PackageKey, PackageMetadata,
+    PlatformSelector, SnapshotEntry, select_platform_variant,
+};
 use pacquet_network::ThrottledClient;
 use pacquet_reporter::{LogEvent, LogLevel, ProgressLog, ProgressMessage, Reporter};
 use pacquet_store_dir::{
     SharedReadonlyStoreIndex, SharedVerifiedFilesCache, StoreIndexWriter,
     git_hosted_store_index_key,
 };
-use pacquet_tarball::{DownloadTarballToStore, PrefetchedCasPaths, TarballError};
+use pacquet_tarball::{
+    DownloadTarballToStore, DownloadZipArchiveToStore, PrefetchedCasPaths, TarballError,
+};
 use pipe_trait::Pipe;
 use std::{
     borrow::Cow,
@@ -94,6 +100,42 @@ pub enum InstallPackageBySnapshotError {
     /// every fetcher path that exits through `pacquet-git-fetcher`.
     #[diagnostic(transparent)]
     GitFetch(#[error(source)] GitFetcherError),
+
+    /// No variant in a [`LockfileResolution::Variations`] matches the
+    /// host triple `(os, cpu, libc?)`. Surfaces with the host triple
+    /// plus the list of advertised target triples so the user can see
+    /// at a glance whether they're running on an unsupported platform
+    /// or whether the lockfile was generated without the host's
+    /// architecture in mind.
+    #[display(
+        "Package `{package_key}` is a runtime dependency, but none of its declared variants matches the host triple (os = `{host_os}`, cpu = `{host_cpu}`, libc = `{host_libc:?}`). Available variants: {available_targets}"
+    )]
+    #[diagnostic(code(pacquet_package_manager::no_matching_platform_variant))]
+    NoMatchingPlatformVariant {
+        package_key: String,
+        host_os: &'static str,
+        host_cpu: &'static str,
+        host_libc: Option<&'static str>,
+        /// Pre-rendered list of the lockfile's advertised target
+        /// triples, formatted as `os/cpu[+libc]`. Lives in the error
+        /// payload rather than the lockfile (which is borrowed from
+        /// the install request) so the error stays cheap to construct
+        /// at the rejection site and isn't tied to the lockfile's
+        /// lifetime.
+        available_targets: String,
+    },
+
+    /// A variant inside a [`LockfileResolution::Variations`] carries
+    /// a resolution other than [`LockfileResolution::Binary`].
+    /// Upstream contract guarantees variants are atomic
+    /// `BinaryResolution`s; this variant catches lockfile corruption
+    /// or a future shape pacquet doesn't recognise rather than
+    /// silently routing through and confusing the install pipeline.
+    #[display(
+        "Package `{package_key}` carries a runtime variant whose inner resolution is `{inner_kind}` rather than `binary`; pacquet only knows how to install binary-shaped variants."
+    )]
+    #[diagnostic(code(pacquet_package_manager::variant_has_non_binary_resolution))]
+    VariantHasNonBinaryResolution { package_key: String, inner_kind: &'static str },
 }
 
 impl<'a> InstallPackageBySnapshot<'a> {
@@ -217,22 +259,80 @@ impl<'a> InstallPackageBySnapshot<'a> {
             // dispatch for `Binary` / `Variations` lands in Slice D.
             // Until then, surface the kind via the typed
             // `UnsupportedResolution` error so a v11 lockfile with a
-            // runtime entry fails with a clear, structured message.
-            // (Without these arms, adding the new `LockfileResolution`
-            // variants would surface as a compile-time
-            // non-exhaustive-match error rather than building cleanly
-            // — these arms are what makes Slice A standalone.)
-            LockfileResolution::Binary(_) => {
-                return Err(InstallPackageBySnapshotError::UnsupportedResolution {
-                    package_key: package_key.to_string(),
-                    resolution_kind: "binary",
-                });
+            // Runtime artifacts (Node.js / Bun / Deno) — `Binary`
+            // and `Variations` carry a `BinaryResolution` describing
+            // the archive to fetch. `Variations` is the multi-
+            // platform wrapper: pick the variant whose `targets`
+            // includes the host triple, then route through the same
+            // `BinaryResolution` extractor (mirrors upstream's
+            // [`binary-fetcher/src/index.ts`](https://github.com/pnpm/pnpm/blob/94240bc046/fetching/binary-fetcher/src/index.ts)).
+            LockfileResolution::Binary(binary) => {
+                fetch_binary_resolution_to_cas::<R>(
+                    binary,
+                    http_client,
+                    config,
+                    store_index,
+                    store_index_writer,
+                    verified_files_cache,
+                    prefetched_cas_paths,
+                    &package_id,
+                    requester,
+                )
+                .await?
             }
-            LockfileResolution::Variations(_) => {
-                return Err(InstallPackageBySnapshotError::UnsupportedResolution {
-                    package_key: package_key.to_string(),
-                    resolution_kind: "variations",
-                });
+            LockfileResolution::Variations(variations) => {
+                let selector = host_platform_selector();
+                let Some(variant) = select_platform_variant(&variations.variants, &selector) else {
+                    return Err(InstallPackageBySnapshotError::NoMatchingPlatformVariant {
+                        package_key: package_key.to_string(),
+                        host_os: host_platform(),
+                        host_cpu: host_arch(),
+                        host_libc: match host_libc() {
+                            "unknown" => None,
+                            other => Some(other),
+                        },
+                        available_targets: render_variant_targets(&variations.variants),
+                    });
+                };
+                // Upstream's `PlatformAssetResolution.resolution`
+                // is always atomic (`BinaryResolution`); pacquet's
+                // type widens to the full `LockfileResolution` for
+                // serde uniformity but `select_platform_variant`'s
+                // docs spell out that nested `Variations` would just
+                // route their picked variant's inner shape back
+                // through this dispatcher (no infinite recursion
+                // because this arm doesn't call back into the
+                // variant selector). The match below only
+                // recognises `Binary`; anything else is either a
+                // corrupt lockfile or a future shape pacquet hasn't
+                // learned about yet, so reject loudly rather than
+                // silently route through.
+                let LockfileResolution::Binary(binary) = &variant.resolution else {
+                    return Err(InstallPackageBySnapshotError::VariantHasNonBinaryResolution {
+                        package_key: package_key.to_string(),
+                        inner_kind: match &variant.resolution {
+                            LockfileResolution::Tarball(_) => "tarball",
+                            LockfileResolution::Registry(_) => "registry",
+                            LockfileResolution::Directory(_) => "directory",
+                            LockfileResolution::Git(_) => "git",
+                            LockfileResolution::Variations(_) => "variations",
+                            // Already matched above; reach is unreachable.
+                            LockfileResolution::Binary(_) => "binary",
+                        },
+                    });
+                };
+                fetch_binary_resolution_to_cas::<R>(
+                    binary,
+                    http_client,
+                    config,
+                    store_index,
+                    store_index_writer,
+                    verified_files_cache,
+                    prefetched_cas_paths,
+                    &package_id,
+                    requester,
+                )
+                .await?
             }
             LockfileResolution::Git(git_resolution) => {
                 // Same `built = true` rationale as the git-hosted
@@ -320,6 +420,119 @@ fn tarball_url_and_integrity<'a>(
             unreachable!("tarball_url_and_integrity called with non-tarball resolution");
         }
     }
+}
+
+/// Build the host's [`PlatformSelector`] for runtime-variant
+/// matching. Mirrors pnpm's call shape at the binary-fetcher
+/// dispatch site: `{ os: process.platform, cpu: process.arch, libc:
+/// process.platform === 'linux' ? family : null }`.
+///
+/// `host_libc()` returns `"unknown"` on every non-Linux host and
+/// `"glibc"` / `"musl"` on Linux. Translate `"unknown"` to `None`
+/// so [`select_platform_variant`]'s asymmetric libc rule applies
+/// the same way upstream's does: `None` and `Some("glibc")` both
+/// require the variant to omit `libc`, and `Some("musl")` requires
+/// an exact match.
+pub(crate) fn host_platform_selector() -> PlatformSelector {
+    let libc = match host_libc() {
+        "unknown" => None,
+        other => Some(other.to_string()),
+    };
+    PlatformSelector { os: host_platform().to_string(), cpu: host_arch().to_string(), libc }
+}
+
+/// Fetch a [`BinaryResolution`] into the CAS, returning the
+/// per-file `{relative_path → cas_path}` map the snapshot's virtual
+/// directory needs. Dispatches on the archive type:
+///
+/// - [`BinaryArchive::Tarball`] uses [`DownloadTarballToStore`]
+///   with `package_unpacked_size: None` (binary archives don't
+///   carry that hint upstream either).
+/// - [`BinaryArchive::Zip`] uses [`DownloadZipArchiveToStore`]
+///   with `archive_prefix: binary.prefix.as_deref()` so the runtime
+///   archive's top-level wrapper (e.g.
+///   `node-v22.0.0-darwin-arm64/`) is stripped before the CAS keys
+///   are written.
+///
+/// The Node-runtime `NODE_EXTRAS_IGNORE_PATTERN` filter that strips
+/// bundled `npm` / `corepack` from the archive will land in Slice
+/// D2; for now the filter slot stays `None` and the full archive
+/// contents are imported. Bin-link cmd-shims for the runtime
+/// executables likewise wait for Slice D2.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "matches the field set DownloadTarballToStore / DownloadZipArchiveToStore need"
+)]
+async fn fetch_binary_resolution_to_cas<R: Reporter>(
+    binary: &BinaryResolution,
+    http_client: &ThrottledClient,
+    config: &'static Config,
+    store_index: Option<&SharedReadonlyStoreIndex>,
+    store_index_writer: Option<&Arc<StoreIndexWriter>>,
+    verified_files_cache: &SharedVerifiedFilesCache,
+    prefetched_cas_paths: Option<&PrefetchedCasPaths>,
+    package_id: &str,
+    requester: &str,
+) -> Result<HashMap<String, PathBuf>, InstallPackageBySnapshotError> {
+    match binary.archive {
+        BinaryArchive::Tarball => DownloadTarballToStore {
+            http_client,
+            store_dir: &config.store_dir,
+            store_index: store_index.cloned(),
+            store_index_writer: store_index_writer.cloned(),
+            verify_store_integrity: config.verify_store_integrity,
+            verified_files_cache: Arc::clone(verified_files_cache),
+            package_integrity: &binary.integrity,
+            package_unpacked_size: None,
+            package_url: &binary.url,
+            package_id,
+            requester,
+            prefetched_cas_paths,
+            retry_opts: retry_opts_from_config(config),
+            auth_headers: &config.auth_headers,
+            ignore_file_pattern: None,
+        }
+        .run_without_mem_cache::<R>()
+        .await
+        .map_err(InstallPackageBySnapshotError::DownloadTarball),
+        BinaryArchive::Zip => DownloadZipArchiveToStore {
+            http_client,
+            store_dir: &config.store_dir,
+            store_index: store_index.cloned(),
+            store_index_writer: store_index_writer.cloned(),
+            verify_store_integrity: config.verify_store_integrity,
+            verified_files_cache: Arc::clone(verified_files_cache),
+            package_integrity: &binary.integrity,
+            package_url: &binary.url,
+            package_id,
+            requester,
+            prefetched_cas_paths,
+            retry_opts: retry_opts_from_config(config),
+            auth_headers: &config.auth_headers,
+            archive_prefix: binary.prefix.as_deref(),
+            ignore_file_pattern: None,
+        }
+        .run_without_mem_cache::<R>()
+        .await
+        .map_err(InstallPackageBySnapshotError::DownloadTarball),
+    }
+}
+
+/// Render a variant's target list as a human-readable string for
+/// inclusion in the [`InstallPackageBySnapshotError::NoMatchingPlatformVariant`]
+/// error. Each target is rendered as `os/cpu` or `os/cpu+libc`,
+/// joined with `, `.
+fn render_variant_targets(variants: &[pacquet_lockfile::PlatformAssetResolution]) -> String {
+    let mut entries: Vec<String> = Vec::new();
+    for variant in variants {
+        for target in &variant.targets {
+            match &target.libc {
+                Some(libc) => entries.push(format!("{}/{}+{libc}", target.os, target.cpu)),
+                None => entries.push(format!("{}/{}", target.os, target.cpu)),
+            }
+        }
+    }
+    entries.join(", ")
 }
 
 /// `pnpm:progress` `resolved` for a frozen-lockfile snapshot the
