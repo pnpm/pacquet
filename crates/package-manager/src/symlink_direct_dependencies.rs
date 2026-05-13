@@ -13,6 +13,7 @@ use pacquet_reporter::{
 use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
+    ffi::OsStr,
     path::{Path, PathBuf},
 };
 
@@ -123,6 +124,20 @@ where
         // importers anyway.
         let dependency_groups: Vec<DependencyGroup> = dependency_groups.into_iter().collect();
 
+        // Each importer's modules dir is `<importer_root>/<modules_dir_basename>`.
+        // Pnpm's `modulesDir` setting is a directory name (a single
+        // component, default `node_modules`) applied uniformly under
+        // every importer. Pacquet stores `config.modules_dir` as a
+        // full path anchored at the workspace root, so peel off the
+        // last component to get the per-importer suffix — that way a
+        // `modulesDir: custom_modules` override in
+        // `pnpm-workspace.yaml` propagates to every importer instead
+        // of leaving the symlink stage stuck on `node_modules` while
+        // other stages (`.modules.yaml` writing, bin linking) use
+        // `config.modules_dir`.
+        let modules_dir_name: &OsStr =
+            config.modules_dir.file_name().unwrap_or_else(|| OsStr::new("node_modules"));
+
         // Sorted iteration so `pnpm:root` event order stays
         // deterministic. The wire shape doesn't require this, but a
         // deterministic order makes assertions in tests (and the
@@ -141,7 +156,7 @@ where
             // Safe: we just iterated `importers.keys()`.
             let project_snapshot = &importers[importer_id];
             let project_dir = importer_root_dir(workspace_root, importer_id);
-            let modules_dir = project_dir.join("node_modules");
+            let modules_dir = project_dir.join(modules_dir_name);
 
             link_one_importer::<R>(
                 importer_id,

@@ -1000,7 +1000,10 @@ mod tests {
             "NPM_CONFIG_WORKSPACE_DIR",
             "npm_config_workspace_dir",
         ]);
-        // SAFETY: lock held by `_guard`.
+        // SAFETY: lock held by `_guard`. Two removes are fine on
+        // both POSIX (case-sensitive: two distinct vars) and Windows
+        // (case-insensitive: the second remove is a no-op on an
+        // already-absent variable).
         unsafe {
             env::remove_var("NPM_CONFIG_WORKSPACE_DIR");
             env::remove_var("npm_config_workspace_dir");
@@ -1031,9 +1034,20 @@ mod tests {
         let env_workspace = tempdir().unwrap();
         let cwd_dir = tempdir().unwrap();
         // SAFETY: lock held by `_guard`. Cleared on drop.
+        //
+        // Set the uppercase name only and let the lowercase name
+        // keep whatever the inherited environment had. Touching the
+        // lowercase name here would corrupt the test on Windows,
+        // where env vars are case-insensitive: `remove_var` on
+        // either spelling clears the *same* variable that
+        // `set_var("NPM_CONFIG_WORKSPACE_DIR", ...)` just set, and
+        // the test would observe "no env override" instead of the
+        // env path. Since [`Config::current`] checks the uppercase
+        // spelling first via `or_else` (matching pnpm), an
+        // externally-set lowercase value is unobservable here, so
+        // leaving it alone keeps both platforms green.
         unsafe {
             env::set_var("NPM_CONFIG_WORKSPACE_DIR", env_workspace.path());
-            env::remove_var("npm_config_workspace_dir");
         }
 
         let config = Config::current(
@@ -1064,10 +1078,15 @@ mod tests {
             "NPM_CONFIG_WORKSPACE_DIR",
             "npm_config_workspace_dir",
         ]);
-        // SAFETY: lock held by `_guard`.
+        // SAFETY: lock held by `_guard`. Setting *both* names to
+        // empty handles both platforms: on POSIX they're distinct
+        // vars (clear each); on Windows they're aliases for the
+        // same variable (the second `set_var` is a no-op). Either
+        // way, both reads return empty, the truthy filter rejects
+        // both, and the install falls through to the cwd-walk.
         unsafe {
             env::set_var("NPM_CONFIG_WORKSPACE_DIR", "");
-            env::remove_var("npm_config_workspace_dir");
+            env::set_var("npm_config_workspace_dir", "");
         }
         let tmp = tempdir().unwrap();
         let config =

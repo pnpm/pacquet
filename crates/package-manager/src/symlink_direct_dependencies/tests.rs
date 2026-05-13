@@ -95,10 +95,14 @@ fn emits_pnpm_root_added_per_direct_dependency() {
     // matching FS effect would mask a real regression.
     let fastify_link = modules_dir.join("fastify");
     let dev_dep_link = modules_dir.join("@pnpm.e2e/dev-dep");
-    eprintln!("fastify_link = {fastify_link:?}");
-    assert!(is_symlink_or_junction(&fastify_link).unwrap());
-    eprintln!("dev_dep_link = {dev_dep_link:?}");
-    assert!(is_symlink_or_junction(&dev_dep_link).unwrap());
+    assert!(
+        is_symlink_or_junction(&fastify_link).unwrap(),
+        "expected a symlink at {fastify_link:?}",
+    );
+    assert!(
+        is_symlink_or_junction(&dev_dep_link).unwrap(),
+        "expected a symlink at {dev_dep_link:?}",
+    );
 
     let captured = EVENTS.lock().unwrap();
     let expected_prefix = project_root.to_string_lossy().into_owned();
@@ -496,4 +500,69 @@ fn unsafe_importer_keys_error_before_filesystem_writes() {
         );
         drop(dir);
     }
+}
+
+/// A custom `modulesDir` (set via `pnpm-workspace.yaml`'s
+/// `modulesDir` field) must propagate to every importer's per-project
+/// dir, not stay hard-coded to `node_modules`. Otherwise the symlink
+/// stage would write under `<importer>/node_modules/` while
+/// `.modules.yaml` writing and bin linking (which still use
+/// `config.modules_dir`) would target the configured name — two
+/// inconsistent layouts for the same install. Mirrors pnpm where
+/// `modulesDir` is one directory-name applied uniformly under every
+/// importer's `rootDir`.
+#[test]
+fn custom_modules_dir_propagates_to_each_importer() {
+    let dir = tempdir().unwrap();
+    let workspace_root: PathBuf = dir.path().into();
+    let virtual_store_dir = workspace_root.join("custom_modules/.pacquet");
+
+    let mut config = Config::new();
+    config.store_dir = dir.path().join("pacquet-store").into();
+    // `config.modules_dir`'s basename is the per-importer suffix.
+    // Use a non-default name so a regression to the hard-coded
+    // `node_modules` would fail the assertion below.
+    config.modules_dir = workspace_root.join("custom_modules");
+    config.virtual_store_dir = virtual_store_dir.clone();
+    let config = config.leak();
+
+    let target = virtual_store_dir.join("fastify@4.0.0").join("node_modules").join("fastify");
+    fs::create_dir_all(&target).expect("create symlink target");
+
+    let mut deps = ResolvedDependencyMap::new();
+    deps.insert(
+        "fastify".parse().unwrap(),
+        ResolvedDependencySpec {
+            specifier: "^4.0.0".to_string(),
+            version: "4.0.0".parse::<pacquet_lockfile::PkgVerPeer>().unwrap().into(),
+        },
+    );
+    let mut importers = HashMap::new();
+    importers.insert(
+        "packages/web".to_string(),
+        ProjectSnapshot { dependencies: Some(deps), ..ProjectSnapshot::default() },
+    );
+
+    SymlinkDirectDependencies {
+        config,
+        importers: &importers,
+        dependency_groups: [DependencyGroup::Prod],
+        workspace_root: &workspace_root,
+    }
+    .run::<SilentReporter>()
+    .expect("symlink should succeed");
+
+    let expected = workspace_root.join("packages/web/custom_modules/fastify");
+    assert!(
+        is_symlink_or_junction(&expected).unwrap(),
+        "expected per-importer symlink under the configured `modulesDir`: {expected:?}",
+    );
+    // The default `node_modules/` must NOT exist under the
+    // importer's rootDir — that would mean the symlink stage
+    // ignored the override.
+    assert!(
+        !workspace_root.join("packages/web/node_modules").exists(),
+        "no `node_modules/` should be created when `modulesDir` overrides the suffix",
+    );
+    drop(dir);
 }
