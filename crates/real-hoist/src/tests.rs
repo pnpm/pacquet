@@ -83,10 +83,10 @@ fn empty_lockfile_yields_empty_root() {
 /// A minimal lockfile with one direct dependency and one
 /// transitive: `root → a@1 → b@1`. With the stub `nm_hoist` no
 /// hoisting happens, so the result must have `a` as the only
-/// root child and `b` under it. Pinning this shape now means
-/// Sub-slice 3b's algorithm replacement is observably correct
-/// when the tree shape changes (root will then see both `a` and
-/// `b` after a real hoist).
+/// root child and `b` under it. Pins the current shape so that
+/// when the stub is replaced with the real algorithm the tree
+/// changing to `root → {a, b}` is an observable diff in this
+/// test rather than a silent behaviour change elsewhere.
 #[test]
 fn one_transitive_dep_appears_under_its_parent_in_the_stub() {
     let mut importers = HashMap::new();

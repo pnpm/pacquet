@@ -7,15 +7,8 @@
 //! per workspace importer), runs the algorithm, and post-filters
 //! `externalDependencies` out of the top-level result.
 //!
-//! This is Sub-slice 3a of the hoisted-linker umbrella ([#438]). It
-//! ships the IO types, the lockfile-to-`HoisterTree` translation, and a
-//! stub `nm_hoist` that returns the input tree unchanged. Later
-//! sub-slices replace the stub with the real algorithm and add the
-//! `hoistingLimits` / `externalDependencies` knobs.
-//!
 //! [upstream-wrapper]: https://github.com/pnpm/pnpm/blob/94240bc0464196bd52f7006b97f6d9a43df34633/installing/linking/real-hoist/src/index.ts
 //! [yarn-hoist]: https://github.com/yarnpkg/berry/blob/4287909fa6a0a1ec976a55776bff606864b31990/packages/yarnpkg-nm/sources/hoist.ts
-//! [#438]: https://github.com/pnpm/pacquet/issues/438
 
 use derive_more::{Display, Error};
 use indexmap::IndexSet;
@@ -202,10 +195,11 @@ impl<T> From<Rc<T>> for RcByPtr<T> {
 /// `@yarnpkg/nm` hoister over it. Ports
 /// [`installing/linking/real-hoist/src/index.ts`][upstream].
 ///
-/// The inner hoist algorithm is currently stubbed (returns the
-/// input tree shape unchanged). The lockfile-to-tree translation
-/// and the `LockfileMissingDependencyError` surface are the parts
-/// pinned by Sub-slice 3a; later sub-slices replace the stub.
+/// The inner hoist algorithm is currently stubbed: it returns the
+/// input tree shape converted to `HoisterResult` without moving
+/// anything. The lockfile-to-tree translation and the
+/// `LockfileMissingDependencyError` surface are what this function
+/// pins today.
 ///
 /// [upstream]: https://github.com/pnpm/pnpm/blob/94240bc0464196bd52f7006b97f6d9a43df34633/installing/linking/real-hoist/src/index.ts
 pub fn hoist(lockfile: &Lockfile, opts: &HoistOpts) -> Result<HoisterResult, HoistError> {
@@ -220,9 +214,8 @@ pub fn hoist(lockfile: &Lockfile, opts: &HoistOpts) -> Result<HoisterResult, Hoi
     // `externalDependencies` are added as `link:` placeholders at
     // the root so the hoister won't move anything else into those
     // slots; they're stripped from the result after hoisting.
-    // Pacquet has no consumer for this yet (the umbrella's Slice 10
-    // wires it through configuration), but the wrapper handles it
-    // for parity with upstream's signature.
+    // Pacquet has no consumer for this yet, but the wrapper handles
+    // it for parity with upstream's signature.
     for dep in &opts.external_dependencies {
         let placeholder = Rc::new(HoisterTree {
             name: dep.clone(),
@@ -238,9 +231,9 @@ pub fn hoist(lockfile: &Lockfile, opts: &HoistOpts) -> Result<HoisterResult, Hoi
 
     // Non-root importers (workspace projects) become children of
     // the virtual `.` root. Pacquet's install pipeline doesn't yet
-    // support workspaces (umbrella Slice 9), so the wrapper accepts
-    // them but the rest of the install code path will reject a
-    // multi-importer lockfile elsewhere.
+    // support workspaces, so the wrapper accepts them but the rest
+    // of the install code path will reject a multi-importer
+    // lockfile elsewhere.
     let mut non_root: Vec<(&String, &ProjectSnapshot)> = lockfile
         .importers
         .iter()
@@ -481,8 +474,7 @@ fn percent_encode_path(s: &str) -> String {
 
 /// Stub for the `@yarnpkg/nm` hoist algorithm. Walks the input tree
 /// and returns it in `HoisterResult` shape unchanged — no actual
-/// hoisting happens. Sub-slice 3b replaces this with the real
-/// algorithm.
+/// hoisting happens. The real algorithm replaces this body.
 fn nm_hoist(tree: &HoisterTree, _opts: &HoistOpts) -> HoisterResult {
     let mut memo: HashMap<*const HoisterTree, Rc<HoisterResult>> = HashMap::new();
     convert(tree, &mut memo).as_ref().clone()
