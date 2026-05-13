@@ -283,31 +283,21 @@ async fn mockito_integration_no_proxy_bypasses_proxy() {
 // --- TLS / local-address tests ---
 
 /// Minimal self-signed certificate used to assert `Certificate::from_pem`
-/// accepts well-formed PEM. Generated with:
-/// `openssl req -x509 -newkey rsa:2048 -nodes -days 36500 -subj '/CN=pacquet-test' -keyout /dev/null -out -`.
-/// The key is discarded; only the cert is used so the test stays
-/// deterministic without baking a real private key into the workspace.
-const TEST_CA_PEM: &str = "\
------BEGIN CERTIFICATE-----
-MIIDETCCAfmgAwIBAgIUIcw8Is8WTT3dI+8uzRff9vwHYNswDQYJKoZIhvcNAQEL
-BQAwFzEVMBMGA1UEAwwMcGFjcXVldC10ZXN0MCAXDTI2MDUxMzE5NDkwMloYDzIx
-MjYwNDE5MTk0OTAyWjAXMRUwEwYDVQQDDAxwYWNxdWV0LXRlc3QwggEiMA0GCSqG
-SIb3DQEBAQUAA4IBDwAwggEKAoIBAQDiM6R1AhUaedph1vxg0iDjZZkCnWriLVy2
-h03R6y6Z4J+hmjHSNsmvhl8bwRYLZ61hhkFj958tPHRO61oRapvLniStCeNCDZ/V
-T8N15nZZQ65SIAK99pY3PDXLBYgQxQLO5a3IsyJzqtG2tsLNTPA2Vz4CIh0dGTrw
-e5GTrZgSkjqGpHoESkqSewMGQOd/G5WoAJIYucNr3Hno5gzHmWtZ/Mi8ZqSVKjb1
-VwvA7XI8s9o3218LW6sH5B7ZjQorqSeTXfWe5haxuqkOhKMQlk9xcH/h32rlfLdo
-4wt3WfbiI0LFIf9LQnwhI9J46ZzevgnOMFeIEOWqtIfrwZinRolXAgMBAAGjUzBR
-MB0GA1UdDgQWBBQ/pGdSbkcQjL/ACemx6otWLSl+QzAfBgNVHSMEGDAWgBQ/pGdS
-bkcQjL/ACemx6otWLSl+QzAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUA
-A4IBAQAgjzB9XWTxO1t9I+0XR0kCYGimtfvqzgNUoB9MJA7MmzuayoN8y9jGwc5V
-F9nS1OLCIJ5i3G6y1OcUZZkP++YNc0Og4AtCrJH/efOlfZbvdLAbn1tGOcXV8F47
-xMNjfAH4KPBRqMxk9x4bn+UQOu8MtSgY/WUy930Ah+0oxMScHUhV5zVAiNlpWpn7
-pTIKjJSTwGrIEh9rEyEhxAIy1Z0SDMQ1xFdtE9i5YT+a9Rb8+bMtXqnX/0tlsPqf
-tttKzUKwlWpxOvjQaeXzf3OmvYfOQzj2t+b31tWo+L4ILdihKxaHrUbi+qW6BSXS
-XI1GpjBqMhGhvl5QJZsy3F2pAuA2
------END CERTIFICATE-----
-";
+/// accepts well-formed PEM. Lives at
+/// `crates/network/tests/fixtures/test-ca.pem` rather than inline so
+/// the base64-encoded body stays out of the typos linter's word
+/// dictionary. Regenerate with:
+///
+/// ```text
+/// openssl req -x509 -newkey rsa:2048 -nodes -days 36500 \
+///     -subj '/CN=pacquet-test' -keyout /dev/null \
+///     -out crates/network/tests/fixtures/test-ca.pem
+/// ```
+///
+/// The private key is discarded; only the cert is used so the
+/// fixture stays deterministic without baking real key material into
+/// the workspace.
+const TEST_CA_PEM: &str = include_str!("../tests/fixtures/test-ca.pem");
 
 #[test]
 fn for_installs_with_valid_ca_pem_builds() {

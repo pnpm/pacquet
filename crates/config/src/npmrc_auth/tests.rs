@@ -474,26 +474,10 @@ fn cascade_env_var_lowercase_lookup() {
 
 // --- TLS + local-address tests ---
 
-const TEST_CA_PEM: &str = "\
------BEGIN CERTIFICATE-----
-MIIDETCCAfmgAwIBAgIUIcw8Is8WTT3dI+8uzRff9vwHYNswDQYJKoZIhvcNAQEL
-BQAwFzEVMBMGA1UEAwwMcGFjcXVldC10ZXN0MCAXDTI2MDUxMzE5NDkwMloYDzIx
-MjYwNDE5MTk0OTAyWjAXMRUwEwYDVQQDDAxwYWNxdWV0LXRlc3QwggEiMA0GCSqG
-SIb3DQEBAQUAA4IBDwAwggEKAoIBAQDiM6R1AhUaedph1vxg0iDjZZkCnWriLVy2
-h03R6y6Z4J+hmjHSNsmvhl8bwRYLZ61hhkFj958tPHRO61oRapvLniStCeNCDZ/V
-T8N15nZZQ65SIAK99pY3PDXLBYgQxQLO5a3IsyJzqtG2tsLNTPA2Vz4CIh0dGTrw
-e5GTrZgSkjqGpHoESkqSewMGQOd/G5WoAJIYucNr3Hno5gzHmWtZ/Mi8ZqSVKjb1
-VwvA7XI8s9o3218LW6sH5B7ZjQorqSeTXfWe5haxuqkOhKMQlk9xcH/h32rlfLdo
-4wt3WfbiI0LFIf9LQnwhI9J46ZzevgnOMFeIEOWqtIfrwZinRolXAgMBAAGjUzBR
-MB0GA1UdDgQWBBQ/pGdSbkcQjL/ACemx6otWLSl+QzAfBgNVHSMEGDAWgBQ/pGdS
-bkcQjL/ACemx6otWLSl+QzAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUA
-A4IBAQAgjzB9XWTxO1t9I+0XR0kCYGimtfvqzgNUoB9MJA7MmzuayoN8y9jGwc5V
-F9nS1OLCIJ5i3G6y1OcUZZkP++YNc0Og4AtCrJH/efOlfZbvdLAbn1tGOcXV8F47
-xMNjfAH4KPBRqMxk9x4bn+UQOu8MtSgY/WUy930Ah+0oxMScHUhV5zVAiNlpWpn7
-pTIKjJSTwGrIEh9rEyEhxAIy1Z0SDMQ1xFdtE9i5YT+a9Rb8+bMtXqnX/0tlsPqf
-tttKzUKwlWpxOvjQaeXzf3OmvYfOQzj2t+b31tWo+L4ILdihKxaHrUbi+qW6BSXS
-XI1GpjBqMhGhvl5QJZsy3F2pAuA2
------END CERTIFICATE-----";
+/// Same self-signed cert as `crates/network/src/tests.rs`; loaded from
+/// the shared fixture under `crates/network/tests/fixtures/test-ca.pem`
+/// so the base64 body stays out of the typos linter's dictionary.
+const TEST_CA_PEM: &str = include_str!("../../../network/tests/fixtures/test-ca.pem");
 
 #[test]
 fn parses_inline_ca_from_ini() {
@@ -578,8 +562,7 @@ fn invalid_local_address_silently_dropped() {
     // pnpm hands the value verbatim to undici and lets Node error at
     // connect time; pacquet validates early but errors silently per
     // the same parity policy as a missing `cafile`.
-    let auth =
-        NpmrcAuth { local_address: Some("not-an-ip".to_string()), ..NpmrcAuth::default() };
+    let auth = NpmrcAuth { local_address: Some("not-an-ip".to_string()), ..NpmrcAuth::default() };
     let mut config = Config::new();
     auth.apply_to::<NoEnv>(&mut config);
     assert_eq!(config.tls.local_address, None);

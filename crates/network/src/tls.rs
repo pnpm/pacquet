@@ -45,8 +45,8 @@ pub struct TlsConfig {
     pub cert: Option<String>,
 
     /// PEM-encoded client private key. Paired with [`Self::cert`] when
-    /// both are set — reqwest's [`Identity::from_pem`] consumes them
-    /// concatenated in one buffer. Set from `.npmrc`'s `key` key.
+    /// both are set — reqwest's `Identity::from_pkcs8_pem` consumes
+    /// them as two separate buffers. Set from `.npmrc`'s `key` key.
     pub key: Option<String>,
 
     /// `strict-ssl` toggle. `None` = unset (defaults to `true` at
@@ -54,13 +54,14 @@ pub struct TlsConfig {
     /// `Some(false)` = disable both cert-chain and hostname
     /// verification (matches Node's `rejectUnauthorized=false` which
     /// short-circuits SNI / hostname checks too). Maps to reqwest's
-    /// [`danger_accept_invalid_certs`].
+    /// `ClientBuilder::danger_accept_invalid_certs`.
     pub strict_ssl: Option<bool>,
 
     /// Outbound interface IP. Maps to reqwest's
-    /// [`local_address`]. pnpm passes the value as a bare string with
-    /// no validation; pacquet parses it as [`IpAddr`] at config-load
-    /// time so an invalid value can be diagnosed early.
+    /// `ClientBuilder::local_address`. pnpm passes the value as a
+    /// bare string with no validation; pacquet parses it as
+    /// [`IpAddr`] at config-load time so an invalid value can be
+    /// diagnosed early.
     pub local_address: Option<IpAddr>,
 }
 
@@ -71,13 +72,12 @@ pub struct TlsConfig {
 /// / `ERR_PNPM_INVALID_KEY` error codes — invalid PEM surfaces as raw
 /// `tls.connect` errors at request time
 /// ([`dispatcher.ts:184-200`](https://github.com/pnpm/pnpm/blob/94240bc046/network/fetch/src/dispatcher.ts#L184-L200)).
-/// Pacquet validates eagerly because reqwest's
-/// [`Certificate::from_pem`] / [`Identity::from_pem`] return errors
-/// up-front and pushing that to per-request time would silently
-/// degrade every install behind a broken `ca`. Diagnostic messages
-/// are plain prose; no code attribute is emitted so reviewers can see
-/// at a glance that this is a pacquet-only diagnostic, not a pnpm
-/// error code.
+/// Pacquet validates eagerly because reqwest's `Certificate::from_pem`
+/// / `Identity::from_pkcs8_pem` return errors up-front and pushing
+/// that to per-request time would silently degrade every install
+/// behind a broken `ca`. Diagnostic messages are plain prose; no code
+/// attribute is emitted so reviewers can see at a glance that this is
+/// a pacquet-only diagnostic, not a pnpm error code.
 #[derive(Debug, derive_more::Display, derive_more::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum TlsError {

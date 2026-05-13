@@ -160,16 +160,16 @@ impl ThrottledClient {
     ///   `Proxy-Authorization` header — matching upstream's
     ///   [decode at dispatcher.ts:180-182](https://github.com/pnpm/pnpm/blob/94240bc046/network/fetch/src/dispatcher.ts#L180-L182).
     /// * **TLS.** Each PEM in [`TlsConfig::ca`] is added as a trusted
-    ///   root via [`reqwest::Certificate::from_pem`]. When both
+    ///   root via `reqwest::Certificate::from_pem`. When both
     ///   [`TlsConfig::cert`] and [`TlsConfig::key`] are set, they are
-    ///   concatenated and installed as a client [`Identity`].
-    ///   `strict_ssl` defaults to `true` and disables both
-    ///   chain-of-trust and hostname verification when `false` — same
-    ///   as Node's `rejectUnauthorized=false` short-circuit that pnpm
-    ///   forwards through undici
+    ///   passed to `Identity::from_pkcs8_pem` and installed as a
+    ///   client [`Identity`]. `strict_ssl` defaults to `true` and
+    ///   disables both chain-of-trust and hostname verification when
+    ///   `false` — same as Node's `rejectUnauthorized=false`
+    ///   short-circuit that pnpm forwards through undici
     ///   ([`dispatcher.ts:191,197,241,295`](https://github.com/pnpm/pnpm/blob/94240bc046/network/fetch/src/dispatcher.ts#L191)).
     /// * **`local_address`.** Pinned via
-    ///   [`reqwest::ClientBuilder::local_address`].
+    ///   `reqwest::ClientBuilder::local_address`.
     ///
     /// Returns [`ProxyError::InvalidProxy`] when either configured
     /// proxy URL fails to parse even after the auto-`http://` prefix
