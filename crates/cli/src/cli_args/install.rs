@@ -1,4 +1,5 @@
 use crate::State;
+use crate::cli_args::supported_architectures::SupportedArchitecturesArgs;
 use clap::Args;
 use miette::Context;
 use pacquet_package_manager::Install;
@@ -44,6 +45,13 @@ pub struct InstallArgs {
     #[clap(flatten)]
     pub dependency_options: InstallDependencyOptions,
 
+    /// `--cpu` / `--os` / `--libc` overrides for the optional-dep
+    /// platform filter. Mirrors upstream pnpm's CLI flags; merges
+    /// per-axis into `supportedArchitectures` loaded from
+    /// `pnpm-workspace.yaml`.
+    #[clap(flatten)]
+    pub supported_architectures: SupportedArchitecturesArgs,
+
     /// Don't generate a lockfile and fail if the lockfile is outdated.
     #[clap(long)]
     pub frozen_lockfile: bool,
@@ -53,7 +61,16 @@ impl InstallArgs {
     pub async fn run<R: Reporter>(self, state: State) -> miette::Result<()> {
         let State { tarball_mem_cache, http_client, config, manifest, lockfile, resolved_packages } =
             &state;
-        let InstallArgs { dependency_options, frozen_lockfile } = self;
+        let InstallArgs { dependency_options, supported_architectures, frozen_lockfile } = self;
+
+        // Merge CLI overrides with the yaml-derived value before
+        // handing off to the install pipeline. `state.config` is a
+        // shared `&'static Config`, so we compute the effective
+        // `SupportedArchitectures` from a clone instead of mutating
+        // in place; the install path takes the merged value as an
+        // explicit parameter.
+        let supported_architectures =
+            supported_architectures.apply_to(config.supported_architectures.clone());
 
         Install {
             tarball_mem_cache,
@@ -64,6 +81,7 @@ impl InstallArgs {
             dependency_groups: dependency_options.dependency_groups(),
             frozen_lockfile,
             resolved_packages,
+            supported_architectures,
         }
         .run::<R>()
         .await

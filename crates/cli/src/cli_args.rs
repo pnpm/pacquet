@@ -2,6 +2,7 @@ pub mod add;
 pub mod install;
 pub mod run;
 pub mod store;
+pub mod supported_architectures;
 
 use crate::State;
 use add::AddArgs;

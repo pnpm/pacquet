@@ -4,6 +4,7 @@ use crate::{
 use derive_more::{Display, Error};
 use indexmap::IndexMap;
 use miette::Diagnostic;
+use pacquet_package_is_installable::SupportedArchitectures;
 use pacquet_store_dir::StoreDir;
 use pipe_trait::Pipe;
 use serde::Deserialize;
@@ -136,6 +137,18 @@ pub struct WorkspaceSettings {
     /// pnpm's settings precedence, where `pnpm-workspace.yaml`
     /// replaces the built-in defaults rather than merging).
     pub git_shallow_hosts: Option<Vec<String>>,
+
+    /// `supportedArchitectures` from `pnpm-workspace.yaml`. Drives the
+    /// optional-dependency platform check at install time: a
+    /// `name: ['darwin'], cpu: ['arm64']` setting tells pacquet to
+    /// keep `darwin-arm64` variants of platform-tagged packages even
+    /// on a non-matching host. Per-axis CLI flags (`--cpu`, `--libc`,
+    /// `--os`) override individual axes — mirrors upstream's
+    /// [`overrideSupportedArchitecturesWithCLI`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/overrideSupportedArchitecturesWithCLI.ts).
+    /// Read from yaml verbatim (no `current` substitution here — that
+    /// happens at the [`pacquet_package_is_installable::check_platform`]
+    /// call site where the host triple is in scope).
+    pub supported_architectures: Option<SupportedArchitectures>,
 }
 
 /// Basename of the file pnpm reads; exported for test use.
@@ -279,6 +292,9 @@ impl WorkspaceSettings {
         // negative) goes through the upstream resolver.
         if let Some(v) = self.child_concurrency {
             config.child_concurrency = resolve_child_concurrency(Some(v));
+        }
+        if let Some(v) = self.supported_architectures {
+            config.supported_architectures = Some(v);
         }
     }
 }

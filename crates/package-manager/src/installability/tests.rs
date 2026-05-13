@@ -345,3 +345,75 @@ fn duplicate_metadata_dedupes_reporter_events() {
         events.iter().filter(|e| matches!(e, LogEvent::SkippedOptionalDependency(_))).collect();
     assert_eq!(skipped_events.len(), 1, "must dedup per metadata row");
 }
+
+/// `supportedArchitectures` widens the host triple so an optional
+/// package whose `os` would normally exclude the host stays in the
+/// install set when the user opts in via config / CLI. Ports the
+/// install-step half of upstream's
+/// `optionalDependencies.ts:594` `install optional dependency for
+/// the supported architecture set by the user`.
+///
+/// Setup: snapshot's metadata declares `os: ['darwin']`, but the
+/// host is linux. Without `supportedArchitectures`, the snapshot
+/// would be skipped (slice 1's behavior). With
+/// `supportedArchitectures.os = ['darwin']` set, the per-axis
+/// accept list is `['darwin']` instead of `['linux']`, and the
+/// snapshot stays.
+#[test]
+fn supported_architectures_widens_accept_set_so_optional_stays() {
+    reset_events();
+    let key = snapshot_key("darwin-only-pkg@1.0.0");
+    let mut snapshots = HashMap::new();
+    snapshots.insert(key.clone(), SnapshotEntry { optional: true, ..Default::default() });
+    let mut packages = HashMap::new();
+    packages.insert(key.clone(), synthetic_metadata(None, None, Some(&["darwin"]), None));
+
+    let mut host = host("20.10.0", "linux", "x64");
+    host.supported_architectures = Some(pacquet_package_is_installable::SupportedArchitectures {
+        os: Some(vec!["darwin".to_string()]),
+        cpu: None,
+        libc: None,
+    });
+
+    let skipped =
+        compute_skipped_snapshots::<RecordingReporter>(&snapshots, &packages, &host, "/proj")
+            .unwrap();
+
+    assert!(skipped.is_empty(), "supportedArchitectures.os=['darwin'] should keep the package");
+    let events = take_events();
+    assert!(
+        events.iter().all(|e| !matches!(e, LogEvent::SkippedOptionalDependency(_))),
+        "no skipped-optional event expected, got {events:?}",
+    );
+}
+
+/// `supportedArchitectures` is additive in pacquet's semantics: an
+/// axis explicitly listing only one value still skips packages
+/// whose constraint excludes that value. Setup: package wants
+/// `os: ['darwin']`, host is linux, supportedArchitectures.os =
+/// ['linux'] (NOT darwin). The skip still fires.
+#[test]
+fn supported_architectures_does_not_implicitly_include_host() {
+    reset_events();
+    let key = snapshot_key("darwin-only-pkg@1.0.0");
+    let mut snapshots = HashMap::new();
+    snapshots.insert(key.clone(), SnapshotEntry { optional: true, ..Default::default() });
+    let mut packages = HashMap::new();
+    packages.insert(key.clone(), synthetic_metadata(None, None, Some(&["darwin"]), None));
+
+    let mut host = host("20.10.0", "linux", "x64");
+    host.supported_architectures = Some(pacquet_package_is_installable::SupportedArchitectures {
+        os: Some(vec!["linux".to_string()]),
+        cpu: None,
+        libc: None,
+    });
+
+    let skipped =
+        compute_skipped_snapshots::<RecordingReporter>(&snapshots, &packages, &host, "/proj")
+            .unwrap();
+
+    assert!(
+        skipped.contains(&key),
+        "supportedArchitectures.os=['linux'] should still skip a darwin-only package",
+    );
+}

@@ -11,8 +11,9 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-pacquet-patching  = { workspace = true }
-pacquet-store-dir = { workspace = true }
+pacquet-package-is-installable = { workspace = true }
+pacquet-patching               = { workspace = true }
+pacquet-store-dir              = { workspace = true }
 
 derive_more   = { workspace = true }
 home          = { workspace = true }

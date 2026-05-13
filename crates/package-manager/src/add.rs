@@ -26,6 +26,10 @@ where
     pub list_dependency_groups: ListDependencyGroups, // must be a function because it is called multiple times
     pub package_name: &'a str, // TODO: 1. support version range, 2. multiple arguments, 3. name this `packages`
     pub save_exact: bool,      // TODO: add `save-exact` to `.npmrc`, merge configs, and remove this
+    /// CLI-merged `supportedArchitectures` forwarded to the
+    /// `Install` run that follows the manifest mutation. See
+    /// [`Install::supported_architectures`].
+    pub supported_architectures: Option<pacquet_package_is_installable::SupportedArchitectures>,
 }
 
 /// Error type of [`Add`].
@@ -56,6 +60,7 @@ where
             package_name,
             save_exact,
             resolved_packages,
+            supported_architectures,
         } = self;
 
         let latest_version = PackageVersion::fetch_from_registry(
@@ -83,6 +88,7 @@ where
             dependency_groups: list_dependency_groups(),
             frozen_lockfile: false,
             resolved_packages,
+            supported_architectures,
         }
         .run::<R>()
         .await
