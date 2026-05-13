@@ -59,9 +59,13 @@ pub struct TlsConfig {
 
     /// Outbound interface IP. Maps to reqwest's
     /// `ClientBuilder::local_address`. pnpm passes the value as a
-    /// bare string with no validation; pacquet parses it as
-    /// [`IpAddr`] at config-load time so an invalid value can be
-    /// diagnosed early.
+    /// bare string with no validation. Pacquet parses it as
+    /// [`IpAddr`] in the config layer and silently drops anything
+    /// that doesn't parse — mirroring pnpm's parity policy of letting
+    /// the network layer surface the failure when (and if) the value
+    /// actually gets used at connect time. A future enhancement could
+    /// emit a warning at parse time; tracked alongside the rest of
+    /// the TLS error-surface work.
     pub local_address: Option<IpAddr>,
 }
 

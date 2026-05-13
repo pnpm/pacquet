@@ -294,9 +294,12 @@ async fn mockito_integration_no_proxy_bypasses_proxy() {
 ///     -out crates/network/tests/fixtures/test-ca.pem
 /// ```
 ///
-/// The private key is discarded; only the cert is used so the
-/// fixture stays deterministic without baking real key material into
-/// the workspace.
+/// The private key is discarded — only the cert is committed so the
+/// workspace doesn't carry real key material. Each regeneration
+/// produces a different cert (fresh keypair, fresh serial); that's
+/// fine because nothing pins a specific issuer / fingerprint, the
+/// fixture only needs to be a valid X.509 PEM that
+/// `Certificate::from_pem` accepts.
 const TEST_CA_PEM: &str = include_str!("../tests/fixtures/test-ca.pem");
 
 #[test]
@@ -337,9 +340,10 @@ fn for_installs_with_invalid_ca_pem_errors_with_index() {
 fn for_installs_strict_ssl_false_relaxes_verification() {
     // `danger_accept_invalid_certs(true)` is a builder-level toggle —
     // we can't observe it directly without a self-signed-cert HTTPS
-    // server. Assert the client builds; the
-    // `mockito_integration_strict_ssl_false_accepts_self_signed`
-    // test below is the live-traffic counterpart.
+    // server, and mockito speaks plain HTTP only. Asserting the
+    // client builds is the best we can do here; a live-traffic
+    // integration test would need a TLS-capable mock server (e.g.
+    // `wiremock` with rustls) and is left as a future enhancement.
     let tls = TlsConfig { strict_ssl: Some(false), ..TlsConfig::default() };
     ThrottledClient::for_installs(&ProxyConfig::default(), &tls).expect("strict-ssl=false builds");
 }
