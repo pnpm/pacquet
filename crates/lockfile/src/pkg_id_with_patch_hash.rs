@@ -22,9 +22,12 @@ use serde::{Deserialize, Serialize};
 /// `String` (the value crosses JSON / YAML boundaries when it lands
 /// inside `.modules.yaml` or a side-effects-cache key).
 ///
-/// Modeled on [`pacquet_modules_yaml::DepPath`] — the closest
+/// Modelled on `pacquet_modules_yaml::DepPath` — the closest
 /// existing peer in pacquet, which ports the sibling brand from the
-/// same upstream `misc.ts` file under the same rules.
+/// same upstream `misc.ts` file under the same rules. Bare-text link
+/// rather than an intra-doc link because `pacquet-lockfile` doesn't
+/// depend on `pacquet-modules-yaml` and adding the dep just for a
+/// rustdoc reference would invert the natural crate ordering.
 #[derive(
     Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, From, Into,
 )]
@@ -32,7 +35,7 @@ use serde::{Deserialize, Serialize};
 pub struct PkgIdWithPatchHash(String);
 
 impl PkgIdWithPatchHash {
-    /// Borrow the underlying string. Mirrors [`pacquet_modules_yaml::DepPath::as_str`].
+    /// Borrow the underlying string. Mirrors `pacquet_modules_yaml::DepPath::as_str`.
     #[inline]
     pub fn as_str(&self) -> &str {
         &self.0
