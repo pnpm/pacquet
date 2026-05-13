@@ -319,6 +319,36 @@ where
             (seed, None)
         };
 
+        // `--no-optional` enforcement (umbrella slice 5). Mirrors
+        // upstream's depNode filter at
+        // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/link.ts#L109-L111>:
+        // when `include.optionalDependencies` is false, every
+        // snapshot whose `optional` flag is true gets dropped from
+        // the install graph. The lockfile's
+        // [`SnapshotEntry::optional`] is set by the resolver when
+        // the snapshot is reachable **only** through optional
+        // edges; a snapshot reachable through any non-optional
+        // edge carries `optional: false` and survives the filter
+        // (covers
+        // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/test/install/optionalDependencies.ts#L712>
+        // — `dependency that is both optional and non-optional is
+        // installed`). The exclusions land in the transient
+        // `optional_excluded` subset of [`SkippedSnapshots`] so
+        // they propagate to every downstream filter
+        // (`CreateVirtualStore`, `SymlinkDirectDependencies`,
+        // `BuildModules`, hoist) through the same gate
+        // installability skips use — and stay out of
+        // `.modules.yaml.skipped` so a future install without
+        // `--no-optional` brings them back.
+        let include_optional = dependency_groups.contains(&DependencyGroup::Optional);
+        if !include_optional && let Some(snaps) = snapshots {
+            for (key, snap) in snaps {
+                if snap.optional {
+                    skipped.add_optional_excluded(key.clone());
+                }
+            }
+        }
+
         // Compute `engine_name` *before* `CreateVirtualStore::run`
         // because the GVS-aware `VirtualStoreLayout` needs it to
         // produce the per-snapshot
@@ -540,6 +570,7 @@ where
                             &layout,
                             &private_dir,
                             &public_dir,
+                            &hoist_skipped,
                         )
                         .map_err(InstallFrozenLockfileError::HoistSymlink)?;
                         // Private-side bins → `<vs>/node_modules/.bin`.

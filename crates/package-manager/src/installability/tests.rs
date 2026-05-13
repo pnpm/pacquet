@@ -528,3 +528,66 @@ fn from_strings_skips_unparsable_entries() {
     assert!(set.contains(&key1));
     assert!(set.contains(&key2));
 }
+
+/// The three subsets (`installability`, `fetch_failed`,
+/// `optional_excluded`) must stay disjoint so [`SkippedSnapshots::len`]
+/// and [`SkippedSnapshots::iter`] stay consistent with
+/// [`SkippedSnapshots::contains`]. The realistic overlap is a
+/// platform-incompatible optional snapshot installed with
+/// `--no-optional`: the same key would be added to both
+/// `installability` (via the installability check) and
+/// `optional_excluded` (via the `--no-optional` filter).
+/// `add_optional_excluded` must no-op when the key is already
+/// installability-skipped; precedence is "installability wins"
+/// because that subset persists across installs.
+#[test]
+fn disjoint_subsets_preserve_len_and_iter() {
+    let key: PackageKey = "platform-mismatch-optional@1.0.0".parse().unwrap();
+    let mut skipped = SkippedSnapshots::new();
+    skipped.insert_installability(key.clone());
+    skipped.add_optional_excluded(key.clone());
+    // Even though both `add_*` methods were called for `key`, the
+    // higher-precedence subset wins — `len` and `iter` see exactly
+    // one entry, matching `contains`.
+    assert_eq!(skipped.len(), 1);
+    let collected: Vec<&PackageKey> = skipped.iter().collect();
+    assert_eq!(collected.len(), 1);
+    assert!(skipped.contains(&key));
+
+    // `add_fetch_failed` against the same key is similarly a no-op
+    // — installability has highest precedence.
+    skipped.add_fetch_failed(key.clone());
+    assert_eq!(skipped.len(), 1);
+}
+
+/// `add_fetch_failed` and `add_optional_excluded` are symmetric
+/// against each other — neither inserts when the other subset
+/// already has the key, so first-insert wins regardless of call
+/// order. This overlap can't arise in practice (a snapshot
+/// dropped by `--no-optional` never reaches the cold-batch
+/// dispatch where `fetch_failed` is populated), but the guard
+/// makes the public API safe to call in any order without
+/// breaking the disjoint-subset invariant.
+#[test]
+fn fetch_failed_and_optional_excluded_are_symmetric() {
+    // Order A: fetch_failed first, then optional_excluded — the
+    // second insert no-ops; the entry stays in fetch_failed.
+    let key: PackageKey = "weird-overlap@1.0.0".parse().unwrap();
+    let mut a = SkippedSnapshots::new();
+    a.add_fetch_failed(key.clone());
+    a.add_optional_excluded(key.clone());
+    assert_eq!(a.len(), 1);
+    assert_eq!(a.iter().count(), 1);
+    assert!(a.contains(&key));
+
+    // Order B: optional_excluded first, then fetch_failed — the
+    // second insert must also no-op (Copilot PR #485 review:
+    // `add_fetch_failed` needs the symmetric guard so callers
+    // can't corrupt the skip set by reversing the order).
+    let mut b = SkippedSnapshots::new();
+    b.add_optional_excluded(key.clone());
+    b.add_fetch_failed(key.clone());
+    assert_eq!(b.len(), 1);
+    assert_eq!(b.iter().count(), 1);
+    assert!(b.contains(&key));
+}
