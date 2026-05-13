@@ -13,7 +13,7 @@
 //! to flow through without an extra owned-data copy.
 
 use crate::{
-    cas_io::import_into_cas,
+    cas_io::{ImportedFiles, import_into_cas},
     error::{GitFetcherError, PreparePackageError},
     packlist::packlist,
     prepare_package::{PreparePackageOptions, PreparedPackage, prepare_package},
@@ -21,12 +21,13 @@ use crate::{
 use pacquet_executor::ScriptsPrependNodePath;
 use pacquet_package_manifest::safe_read_package_json_from_dir;
 use pacquet_reporter::Reporter;
-use pacquet_store_dir::StoreDir;
+use pacquet_store_dir::{PackageFilesIndex, StoreDir, StoreIndexWriter};
 use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::Arc,
 };
 
 /// One-shot fetcher for a single git resolution. Holds borrows for the
@@ -56,6 +57,20 @@ pub struct GitFetcher<'a> {
     /// install dispatcher uses (`<name>@<version>(<peer-suffix>)`).
     pub package_id: &'a str,
     pub requester: &'a str,
+    /// Install-scoped store-index writer. When provided, the fetcher
+    /// queues a `PackageFilesIndex` row at [`Self::files_index_file`]
+    /// after import so a future install's warm prefetch finds the
+    /// snapshot in `index.db` and skips the clone/checkout/prepare/
+    /// packlist re-run. Passing `None` (e.g., from tests) silently
+    /// skips the write — the install is still correct, just slower
+    /// on the next run.
+    pub store_index_writer: Option<&'a Arc<StoreIndexWriter>>,
+    /// Cache key the row lands at. Mirrors upstream's
+    /// `pickStoreIndexKey(resolution, pkgId, { built })` shape — for
+    /// git resolutions this is always the `gitHostedStoreIndexKey`
+    /// form (`pkg_id\t{built|not-built}`). The dispatcher computes
+    /// it once and threads it in.
+    pub files_index_file: &'a str,
 }
 
 /// Output of [`GitFetcher::run`]. Mirrors the shape of
@@ -154,7 +169,27 @@ impl<'a> GitFetcher<'a> {
             .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
         let files = packlist(&pkg_dir, &manifest).map_err(GitFetcherError::Packlist)?;
 
-        let cas_paths = import_into_cas(self.store_dir, &pkg_dir, &files)?;
+        let ImportedFiles { cas_paths, files_index } =
+            import_into_cas(self.store_dir, &pkg_dir, &files)?;
+
+        // Queue a `PackageFilesIndex` row so a future install's warm
+        // prefetch finds the snapshot in `index.db` and skips the
+        // clone+checkout+prepare+packlist re-run. Mirrors the role
+        // of `addFilesFromDir`'s store-index write inside upstream's
+        // `fetching/git-fetcher` at index.ts:65-73.
+        if let Some(writer) = self.store_index_writer {
+            writer.queue(
+                self.files_index_file.to_string(),
+                PackageFilesIndex {
+                    manifest: None,
+                    requires_build: Some(should_be_built),
+                    algo: "sha512".to_string(),
+                    files: files_index,
+                    side_effects: None,
+                },
+            );
+        }
+
         Ok(GitFetchOutput { cas_paths, built: should_be_built })
     }
 }

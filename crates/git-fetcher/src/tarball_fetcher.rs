@@ -28,7 +28,7 @@
 //!   model doesn't have a `globalWarn` equivalent.
 
 use crate::{
-    cas_io::{import_into_cas, materialize_into},
+    cas_io::{ImportedFiles, import_into_cas, materialize_into},
     error::GitFetcherError,
     fetcher::GitFetchOutput,
     packlist::packlist,
@@ -37,10 +37,11 @@ use crate::{
 use pacquet_executor::ScriptsPrependNodePath;
 use pacquet_package_manifest::safe_read_package_json_from_dir;
 use pacquet_reporter::Reporter;
-use pacquet_store_dir::StoreDir;
+use pacquet_store_dir::{PackageFilesIndex, StoreDir, StoreIndexWriter};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 /// One-shot fetcher for a single git-hosted tarball resolution.
@@ -73,6 +74,12 @@ pub struct GitHostedTarballFetcher<'a> {
     /// Used in log lines.
     pub package_id: &'a str,
     pub requester: &'a str,
+    /// Install-scoped store-index writer; see the matching field on
+    /// [`crate::GitFetcher`] for the rationale.
+    pub store_index_writer: Option<&'a Arc<StoreIndexWriter>>,
+    /// Cache key the row lands at; always the git-hosted shape for
+    /// this fetcher. See [`crate::GitFetcher::files_index_file`].
+    pub files_index_file: &'a str,
 }
 
 impl<'a> GitHostedTarballFetcher<'a> {
@@ -146,7 +153,28 @@ impl<'a> GitHostedTarballFetcher<'a> {
 
         // Step 4: Re-import the filtered file set back into CAS and
         // hand the resulting map to the install dispatcher.
-        let cas_paths = import_into_cas(self.store_dir, &pkg_dir, &files)?;
+        let ImportedFiles { cas_paths, files_index } =
+            import_into_cas(self.store_dir, &pkg_dir, &files)?;
+
+        // Step 5: Queue a `PackageFilesIndex` row so a future install's
+        // warm prefetch skips the materialize+prepare+packlist+re-import
+        // pass entirely. Upstream writes the final row at
+        // `gitHostedStoreIndexKey(pkgId, { built: shouldBeBuilt })` in
+        // `addFilesFromDir`; the dispatcher already builds the same
+        // key and passes it via `files_index_file`.
+        if let Some(writer) = self.store_index_writer {
+            writer.queue(
+                self.files_index_file.to_string(),
+                PackageFilesIndex {
+                    manifest: None,
+                    requires_build: Some(should_be_built),
+                    algo: "sha512".to_string(),
+                    files: files_index,
+                    side_effects: None,
+                },
+            );
+        }
+
         Ok(GitFetchOutput { cas_paths, built: should_be_built })
     }
 }

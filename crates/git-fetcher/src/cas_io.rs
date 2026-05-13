@@ -11,16 +11,25 @@
 //! - [`import_into_cas`] writes a prepared file set back to the CAS
 //!   and produces the `relative-path → cas-path` map the install
 //!   dispatcher hands to `CreateVirtualDirBySnapshot`.
-//! - [`is_file_executable`] / [`map_write_cas`] are minor helpers
-//!   factored out alongside the import.
+//! - [`map_write_cas`] is a minor helper factored out alongside the
+//!   import.
 
 use crate::error::GitFetcherError;
-use pacquet_store_dir::StoreDir;
+use pacquet_store_dir::{CafsFileInfo, StoreDir};
 use std::{
     collections::HashMap,
     fs, io,
     path::{Component, Path, PathBuf},
 };
+
+/// Result of [`import_into_cas`]. The dispatcher uses `cas_paths` to
+/// build the virtual-store layout; `files_index` is the
+/// [`pacquet_store_dir::PackageFilesIndex::files`] payload the warm
+/// prefetch on a future install reads to skip re-fetching.
+pub(crate) struct ImportedFiles {
+    pub cas_paths: HashMap<String, PathBuf>,
+    pub files_index: HashMap<String, CafsFileInfo>,
+}
 
 /// Safely join a relative path onto a trusted root.
 ///
@@ -109,44 +118,66 @@ pub(crate) fn materialize_into(
 }
 
 /// Write each file in `files` (relative to `pkg_dir`) into the CAS,
-/// returning the map the caller hands to `CreateVirtualDirBySnapshot`.
-/// Mirrors the role of upstream's
+/// returning both the install-dispatcher map and the
+/// [`pacquet_store_dir::PackageFilesIndex::files`] payload the fetcher
+/// queues to `index.db` so a future install's warm prefetch can skip
+/// the re-fetch. Mirrors the role of upstream's
 /// [`addFilesFromDir`](https://github.com/pnpm/pnpm/blob/94240bc046/store/cafs/src/addFilesFromDir.ts)
 /// on the post-prepare write side.
 pub(crate) fn import_into_cas(
     store_dir: &StoreDir,
     pkg_dir: &Path,
     files: &[String],
-) -> Result<HashMap<String, PathBuf>, GitFetcherError> {
-    let mut out = HashMap::with_capacity(files.len());
+) -> Result<ImportedFiles, GitFetcherError> {
+    let mut cas_paths = HashMap::with_capacity(files.len());
+    let mut files_index = HashMap::with_capacity(files.len());
     for rel in files {
         // See the matching note in `materialize_into`: `join_checked`
         // accepts forward-slash relative paths verbatim on every host.
         let source = join_checked(pkg_dir, rel)?;
+        let metadata = fs::metadata(&source).map_err(GitFetcherError::Io)?;
+        let mode = file_mode_from(&metadata);
+        // `add_files_from_dir` reads the full POSIX mode and routes
+        // the executable bit through `is_executable(mode)`. Match
+        // that so a git-hosted snapshot's `PackageFilesIndex.files`
+        // round-trips through pacquet's read side at
+        // `cas_file_path_by_mode` exactly like a tarball entry would.
         let bytes = fs::read(&source).map_err(GitFetcherError::Io)?;
-        let executable = is_file_executable(&source);
-        let (cas_path, _hash) =
+        let size = bytes.len() as u64;
+        let executable = (mode & 0o111) != 0;
+        let (cas_path, hash) =
             store_dir.write_cas_file(&bytes, executable).map_err(map_write_cas)?;
-        out.insert(rel.clone(), cas_path);
+        cas_paths.insert(rel.clone(), cas_path);
+        files_index.insert(
+            rel.clone(),
+            CafsFileInfo {
+                digest: format!("{hash:x}"),
+                mode,
+                size,
+                // `None` matches `add_files_from_dir`: the first
+                // integrity-check pass populates this. Staying
+                // consistent with the existing CAFS write path means
+                // the warm prefetch's verify logic exercises the
+                // same code path it does for tarball entries.
+                checked_at: None,
+            },
+        );
     }
-    Ok(out)
+    Ok(ImportedFiles { cas_paths, files_index })
 }
 
-/// `true` when the user-execute bit is set on the on-disk file.
-/// POSIX-only; on Windows every file lands as non-executable, matching
-/// pnpm v11's behavior where the executable mode flag is meaningful
-/// only on POSIX.
-pub(crate) fn is_file_executable(path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::metadata(path).map(|m| (m.permissions().mode() & 0o100) != 0).unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        false
-    }
+/// POSIX file mode (`meta.mode() & 0o777`) on Unix; a fixed `0o644`
+/// on Windows where the OS has no analog. Mirrors
+/// `pacquet_store_dir::add_files_from_dir::file_mode_from`.
+#[cfg(unix)]
+fn file_mode_from(meta: &fs::Metadata) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    meta.permissions().mode() & 0o777
+}
+
+#[cfg(not(unix))]
+fn file_mode_from(_meta: &fs::Metadata) -> u32 {
+    0o644
 }
 
 /// `true` when a CAS file path encodes "executable" via the `-exec`

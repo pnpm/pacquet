@@ -94,6 +94,8 @@ async fn fetcher_imports_package_into_cas() {
         store_dir: &store_dir,
         package_id: "pkg@1.0.0",
         requester: "/test",
+        store_index_writer: None,
+        files_index_file: "pkg@1.0.0\tbuilt",
     }
     .run::<SilentReporter>()
     .await
@@ -139,6 +141,8 @@ async fn fetcher_rejects_commit_mismatch() {
         store_dir: &store_dir,
         package_id: "pkg@1.0.0",
         requester: "/test",
+        store_index_writer: None,
+        files_index_file: "pkg@1.0.0\tbuilt",
     }
     .run::<SilentReporter>()
     .await
@@ -198,6 +202,8 @@ async fn fetcher_blocks_build_when_not_allowed() {
         store_dir: &store_dir,
         package_id: "naughty@2.0.0",
         requester: "/test",
+        store_index_writer: None,
+        files_index_file: "naughty@2.0.0\tbuilt",
     }
     .run::<SilentReporter>()
     .await
