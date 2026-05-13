@@ -209,13 +209,15 @@ pub struct Config {
     /// the machine: packages live under `<store_dir>/links/...` and each
     /// project registers itself at `<store_dir>/projects/<short-hash>`.
     /// When `false`, each project keeps its own virtual store at
-    /// `<project>/node_modules/.pnpm`. Default `true`, mirroring upstream's
-    /// [`config/reader/src/index.ts:392-394`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L392-L394).
+    /// `<project>/node_modules/.pnpm`.
     ///
-    /// CI auto-detect ([`config/reader/src/index.ts:543-548`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L543-L548))
-    /// is intentionally not ported here yet — it requires a CI-detection
-    /// helper pacquet doesn't have. Tracked as a follow-up of
-    /// pnpm/pacquet#432.
+    /// Default `false` — matches pnpm v11's effective default for
+    /// non-`--global` installs. The `true` assignment at
+    /// [`config/reader/src/index.ts:392-394`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L392-L394)
+    /// applies only inside upstream's `if (cliOptions['global'])`
+    /// block (see [`default_enable_global_virtual_store`] for the
+    /// full reasoning). Pacquet has no `--global` flow, so the only
+    /// applicable upstream default is `false`.
     #[default(_code = "default_enable_global_virtual_store()")]
     pub enable_global_virtual_store: bool,
 
@@ -1000,23 +1002,19 @@ mod tests {
         assert!(!config.symlink);
     }
 
-    /// `enableGlobalVirtualStore` defaults to `true`. The derivation
-    /// fires automatically from [`Config::current`] after yaml has
-    /// been applied, writing `<store_dir>/links` into
-    /// `global_virtual_store_dir` while leaving `virtual_store_dir`
-    /// at its project-local default — pacquet's split-field variant
-    /// of upstream's
-    /// [`extendInstallOptions.ts:343-355`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/extendInstallOptions.ts#L343-L355).
-    /// See [`Config::apply_global_virtual_store_derivation`] for why
-    /// pacquet keeps the two fields separate.
-    ///
-    /// Default `enableGlobalVirtualStore` is `false` — matches pnpm
+    /// `enableGlobalVirtualStore` defaults to `false` — matches pnpm
     /// v11's effective default for regular installs (the `true`
     /// assignment lives only inside the `--global` install branch;
-    /// see [`default_enable_global_virtual_store`]). Both
-    /// `virtual_store_dir` and `global_virtual_store_dir` still
-    /// derive cleanly so the downstream code can read either field
-    /// without first checking the toggle.
+    /// see [`default_enable_global_virtual_store`]). The derivation
+    /// still fires automatically from [`Config::current`] after yaml
+    /// has been applied, writing `<store_dir>/links` into
+    /// `global_virtual_store_dir` while leaving `virtual_store_dir`
+    /// at its project-local default — both fields stay valid so the
+    /// downstream code can read either one without first checking
+    /// the toggle. Pacquet's split-field variant of upstream's
+    /// [`extendInstallOptions.ts:343-355`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/extendInstallOptions.ts#L343-L355);
+    /// see [`Config::apply_global_virtual_store_derivation`] for why
+    /// pacquet keeps them separate.
     #[test]
     pub fn gvs_default_is_off_and_paths_derive_cleanly() {
         let tmp = tempdir().unwrap();

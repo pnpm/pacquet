@@ -99,7 +99,10 @@ pub struct WorkspaceSettings {
     pub symlink: Option<bool>,
     pub virtual_store_dir: Option<String>,
     /// `enableGlobalVirtualStore` from `pnpm-workspace.yaml`. Default
-    /// applied in [`Config`] is `true`, matching pnpm v11. See
+    /// applied in [`Config`] is `false` — matches pnpm v11's
+    /// effective default for non-`--global` installs (upstream's
+    /// `true` assignment lives only inside the `pnpm install --global`
+    /// branch, and pacquet has no `--global` flow). See
     /// [`Config::enable_global_virtual_store`].
     pub enable_global_virtual_store: Option<bool>,
     /// `globalVirtualStoreDir` from `pnpm-workspace.yaml`. Resolved
