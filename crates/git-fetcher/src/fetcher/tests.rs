@@ -15,6 +15,57 @@ fn skip_if_no_git() -> bool {
     false
 }
 
+/// Skip the test if `npm` (and `node`) aren't on `PATH`. Used by the
+/// real-prepare tests below, which spawn an actual lifecycle script:
+/// `prepare_package` synthesizes `npm install` for any non-pnpm
+/// preferred-pm, and that needs an npm binary to invoke. Hosts
+/// without node tooling (a Rust-only sandbox, an embedded CI image)
+/// silently skip rather than fail so the suite stays portable.
+fn skip_if_no_npm() -> bool {
+    if std::process::Command::new("npm").arg("--version").output().is_err() {
+        eprintln!("skipping: `npm` not on PATH");
+        return true;
+    }
+    if std::process::Command::new("node").arg("--version").output().is_err() {
+        eprintln!("skipping: `node` not on PATH");
+        return true;
+    }
+    false
+}
+
+/// Build a bare repo whose manifest declares a `prepare` script. The
+/// script is whatever the caller passes — typically a `node -e '…'`
+/// one-liner that writes a marker file or exits non-zero. Returns
+/// the `(bare_repo_path, commit_sha)` pair the fetcher needs.
+fn make_bare_repo_with_prepare_script(tmp: &Path, prepare_script: &str) -> (PathBuf, String) {
+    let work = tmp.join("work");
+    let bare = tmp.join("repo.git");
+    fs::create_dir_all(&work).unwrap();
+    exec_git(&["init", "-q", "-b", "main"], Some(&work)).unwrap();
+    exec_git(&["config", "user.email", "test@example.invalid"], Some(&work)).unwrap();
+    exec_git(&["config", "user.name", "Test"], Some(&work)).unwrap();
+    // Manifest with no dependencies so the synthesized `<pm>-install`
+    // step has nothing to fetch from a network registry — the test
+    // stays self-contained even without verdaccio / a mock registry.
+    // The prepare script is plumbed straight in.
+    let manifest = format!(
+        r#"{{"name":"x","version":"1.0.0","main":"index.js","scripts":{{"prepare":{prepare:?}}}}}"#,
+        prepare = prepare_script,
+    );
+    fs::write(work.join("package.json"), manifest).unwrap();
+    fs::write(work.join("index.js"), "module.exports = 'src';\n").unwrap();
+    exec_git(&["add", "-A"], Some(&work)).unwrap();
+    exec_git(&["-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"], Some(&work)).unwrap();
+    let commit = exec_git(&["rev-parse", "HEAD"], Some(&work)).unwrap().trim().to_string();
+    exec_git(&["clone", "--bare", "-q", &work.to_string_lossy(), &bare.to_string_lossy()], None)
+        .unwrap();
+    (bare, commit)
+}
+
+fn allow_all_builds<'a>() -> &'a (dyn Fn(&str, &str) -> bool + Send + Sync) {
+    &|_, _| true
+}
+
 /// Create a tiny bare git repo whose single commit ships a
 /// `package.json` and `index.js`. Returns `(bare_repo_path,
 /// commit_sha)`. The caller passes the bare-path as the fetcher's
@@ -440,4 +491,194 @@ async fn fetcher_skips_build_when_ignore_scripts() {
     );
     assert!(received.cas_paths.contains_key("package.json"));
     assert!(received.cas_paths.contains_key("index.js"));
+}
+
+/// Ports pnpm's `fetch a package from Git that has a prepare script`
+/// at <https://github.com/pnpm/pnpm/blob/94240bc046/fetching/git-fetcher/test/index.ts#L129>.
+/// End-to-end: a manifest with `scripts.prepare` set, `allow_build`
+/// returning true, and `ignore_scripts: false` runs the prepare
+/// lifecycle. The prepare script writes a marker file; the test
+/// confirms the marker lands in `cas_paths`, proving the script
+/// actually executed (the file didn't exist in the source tree).
+#[tokio::test(flavor = "multi_thread")]
+async fn fetcher_runs_prepare_script_when_allowed() {
+    if skip_if_no_git() || skip_if_no_npm() {
+        return;
+    }
+    let tmp = tempdir().unwrap();
+    // The prepare script writes a marker. Single-quoted inner
+    // string so the JSON doesn't need to escape it; node reads the
+    // `-e` arg verbatim. Avoid any module/path complications by
+    // using node's `fs.writeFileSync` with a relative path that
+    // ends up at the prepared `pkg_dir` root.
+    let (bare, commit) = make_bare_repo_with_prepare_script(
+        tmp.path(),
+        r#"node -e "require('fs').writeFileSync('PREPARED.marker', 'ok')""#,
+    );
+    let store_root = tempdir().unwrap();
+    let store_dir = StoreDir::from(store_root.path().to_path_buf());
+    let repo_url = format!("file://{}", bare.display());
+
+    let received = GitFetcher {
+        repo: &repo_url,
+        commit: &commit,
+        path: None,
+        git_shallow_hosts: &[],
+        allow_build: allow_all_builds(),
+        ignore_scripts: false,
+        unsafe_perm: true,
+        user_agent: None,
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        script_shell: None,
+        node_execpath: None,
+        npm_execpath: None,
+        store_dir: &store_dir,
+        package_id: "x@1.0.0",
+        requester: "/test",
+        store_index_writer: None,
+        files_index_file: "x@1.0.0\tbuilt",
+    }
+    .run::<SilentReporter>()
+    .await
+    .unwrap();
+
+    assert!(received.built, "manifest with prepare script must report should_be_built=true");
+    assert!(
+        received.cas_paths.contains_key("PREPARED.marker"),
+        "prepare script must have written PREPARED.marker into the prepared tree: keys = {:?}",
+        received.cas_paths.keys().collect::<Vec<_>>(),
+    );
+    assert!(received.cas_paths.contains_key("package.json"));
+    assert!(received.cas_paths.contains_key("index.js"));
+}
+
+/// Ports pnpm's `fail when preparing a git-hosted package` at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/fetching/git-fetcher/test/index.ts#L212>.
+/// A prepare script that exits non-zero must surface as
+/// `GitFetcherError::Prepare(PreparePackageError::LifecycleFailed)`
+/// carrying the `ERR_PNPM_PREPARE_PACKAGE` diagnostic code — the
+/// fetcher refuses to add a broken-build snapshot to the CAS.
+#[tokio::test(flavor = "multi_thread")]
+async fn fetcher_surfaces_prepare_failure() {
+    if skip_if_no_git() || skip_if_no_npm() {
+        return;
+    }
+    let tmp = tempdir().unwrap();
+    let (bare, commit) = make_bare_repo_with_prepare_script(
+        tmp.path(),
+        // node exits 1 → npm install's lifecycle propagates the
+        // failure → prepare_package wraps it as
+        // ERR_PNPM_PREPARE_PACKAGE.
+        r#"node -e "process.exit(1)""#,
+    );
+    let store_root = tempdir().unwrap();
+    let store_dir = StoreDir::from(store_root.path().to_path_buf());
+    let repo_url = format!("file://{}", bare.display());
+
+    let err = GitFetcher {
+        repo: &repo_url,
+        commit: &commit,
+        path: None,
+        git_shallow_hosts: &[],
+        allow_build: allow_all_builds(),
+        ignore_scripts: false,
+        unsafe_perm: true,
+        user_agent: None,
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        script_shell: None,
+        node_execpath: None,
+        npm_execpath: None,
+        store_dir: &store_dir,
+        package_id: "x@1.0.0",
+        requester: "/test",
+        store_index_writer: None,
+        files_index_file: "x@1.0.0\tbuilt",
+    }
+    .run::<SilentReporter>()
+    .await
+    .unwrap_err();
+
+    // Variant match first so the failure message at the panic site
+    // is informative on a `Prepare(InvalidPath {...})` regression
+    // (where the diagnostic code is `INVALID_PATH`, not the one we
+    // want here).
+    match &err {
+        GitFetcherError::Prepare(crate::error::PreparePackageError::LifecycleFailed { .. }) => {}
+        other => {
+            panic!("expected Prepare::LifecycleFailed (ERR_PNPM_PREPARE_PACKAGE), got {other:?}")
+        }
+    }
+    // Then assert the `#[diagnostic(code(...))]` text — a rename of
+    // the code on the enum variant (e.g. dropping the upstream
+    // `ERR_PNPM_PREPARE_PACKAGE` matcher in favor of a pacquet-only
+    // string) would silently regress error-code parity with pnpm
+    // without this check.
+    use miette::Diagnostic;
+    let code = err.code().map(|c| c.to_string()).unwrap_or_default();
+    assert_eq!(
+        code, "ERR_PNPM_PREPARE_PACKAGE",
+        "diagnostic code must match the upstream error contract",
+    );
+}
+
+/// Ports pnpm's `allow git package with prepare script` at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/fetching/git-fetcher/test/index.ts#L280>.
+/// Mirror of the existing `fetcher_blocks_build_when_not_allowed`
+/// (line 263) but with `allow_build` returning true: the gate
+/// permits the build, the script runs, and the snapshot ships. The
+/// distinction matters — without this test, a regression that
+/// inverted the gate's polarity (block-when-allowed) would still
+/// keep the block-test green.
+#[tokio::test(flavor = "multi_thread")]
+async fn fetcher_runs_prepare_when_allow_build_returns_true() {
+    if skip_if_no_git() || skip_if_no_npm() {
+        return;
+    }
+    let tmp = tempdir().unwrap();
+    let (bare, commit) = make_bare_repo_with_prepare_script(
+        tmp.path(),
+        r#"node -e "require('fs').writeFileSync('BUILD_RAN.marker', 'ok')""#,
+    );
+    let store_root = tempdir().unwrap();
+    let store_dir = StoreDir::from(store_root.path().to_path_buf());
+    let repo_url = format!("file://{}", bare.display());
+
+    // Targeted allow_build that returns true for *this* package only —
+    // catches a regression where the gate ignores the (name, version)
+    // pair and falls through to default-allow or default-deny.
+    let allow_x_only: &(dyn Fn(&str, &str) -> bool + Send + Sync) =
+        &|name, version| name == "x" && version == "1.0.0";
+
+    let received = GitFetcher {
+        repo: &repo_url,
+        commit: &commit,
+        path: None,
+        git_shallow_hosts: &[],
+        allow_build: allow_x_only,
+        ignore_scripts: false,
+        unsafe_perm: true,
+        user_agent: None,
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        script_shell: None,
+        node_execpath: None,
+        npm_execpath: None,
+        store_dir: &store_dir,
+        package_id: "x@1.0.0",
+        requester: "/test",
+        store_index_writer: None,
+        files_index_file: "x@1.0.0\tbuilt",
+    }
+    .run::<SilentReporter>()
+    .await
+    .unwrap();
+
+    assert!(
+        received.built,
+        "allow_build returning true must report should_be_built=true (manifest declared prepare)",
+    );
+    assert!(
+        received.cas_paths.contains_key("BUILD_RAN.marker"),
+        "allow_build returning true must let the prepare script run: keys = {:?}",
+        received.cas_paths.keys().collect::<Vec<_>>(),
+    );
 }
