@@ -540,7 +540,8 @@ fn applies_inline_ca_to_config() {
     let mut config = Config::new();
     auth.apply_to::<NoEnv>(&mut config);
     assert_eq!(config.tls.ca.len(), 1);
-    assert!(config.tls.ca[0].contains("BEGIN CERTIFICATE"));
+    let first = &config.tls.ca[0];
+    assert!(first.contains("BEGIN CERTIFICATE"), "inline CA missing header: {first:?}");
 }
 
 #[test]
@@ -593,9 +594,12 @@ fn cafile_reads_and_splits_into_per_cert_pems() {
     let mut config = Config::new();
     auth.apply_to::<NoEnv>(&mut config);
     assert_eq!(config.tls.ca.len(), 2, "expected 2 split certs, got {:?}", config.tls.ca);
-    for pem in &config.tls.ca {
-        assert!(pem.contains("BEGIN CERTIFICATE"));
-        assert!(pem.ends_with("-----END CERTIFICATE-----"));
+    for (i, pem) in config.tls.ca.iter().enumerate() {
+        assert!(pem.contains("BEGIN CERTIFICATE"), "cafile split {i} missing header: {pem:?}");
+        assert!(
+            pem.ends_with("-----END CERTIFICATE-----"),
+            "cafile split {i} missing trailing delimiter: {pem:?}",
+        );
     }
 }
 
@@ -623,16 +627,20 @@ fn inline_ca_and_cafile_concatenate() {
     let mut config = Config::new();
     auth.apply_to::<NoEnv>(&mut config);
     // Inline first, cafile second — same ordering pnpm produces.
-    assert_eq!(config.tls.ca.len(), 2);
+    assert_eq!(config.tls.ca.len(), 2, "tls.ca={:?}", config.tls.ca);
 }
 
 #[test]
 fn defaults_leave_tls_config_empty() {
     let mut config = Config::new();
     NpmrcAuth::default().apply_to::<NoEnv>(&mut config);
-    assert!(config.tls.ca.is_empty());
-    assert!(config.tls.cert.is_none());
-    assert!(config.tls.key.is_none());
+    assert!(config.tls.ca.is_empty(), "tls.ca={:?}", config.tls.ca);
+    assert!(config.tls.cert.is_none(), "tls.cert={:?}", config.tls.cert);
+    assert!(config.tls.key.is_none(), "tls.key={:?}", config.tls.key);
     assert_eq!(config.tls.strict_ssl, None);
-    assert!(config.tls.local_address.is_none());
+    assert!(
+        config.tls.local_address.is_none(),
+        "tls.local_address={:?}",
+        config.tls.local_address,
+    );
 }

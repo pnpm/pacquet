@@ -386,6 +386,20 @@ fn parse_bool(value: &str) -> Option<bool> {
 /// [`loadCAFile`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/loadNpmrcFiles.ts#L238-L265):
 /// re-append the delimiter to each split, trim, drop empties, and
 /// silently treat any read error as an empty list.
+///
+/// **Relative-path resolution caveat.** Pnpm's `loadCAFile` passes
+/// `cafile` straight to `fs.readFileSync` without `path.resolve` —
+/// relative paths therefore resolve against Node's `process.cwd()`,
+/// *not* against the directory the `.npmrc` was read from. Pnpm
+/// doesn't `process.chdir(opts.dir)` on `--dir`, so a project
+/// `.npmrc` containing `cafile=certs/ca.pem` invoked as
+/// `pnpm --dir /project install` from `/home/user` reads
+/// `/home/user/certs/ca.pem` and silently drops the CA list when it
+/// isn't found. Pacquet matches that exact behavior (cardinal rule:
+/// match pnpm even when the upstream behavior is surprising). Users
+/// who hit this should either use an absolute path in `cafile=`,
+/// `cd` into the project directory before running pacquet, or set
+/// the `ca=` inline form which doesn't read from disk.
 fn load_cafile(path: &Path) -> Vec<String> {
     let Ok(contents) = std::fs::read_to_string(path) else {
         return Vec::new();
