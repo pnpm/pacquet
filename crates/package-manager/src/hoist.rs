@@ -65,34 +65,41 @@ pub struct HoistGraphNode {
 /// Skips snapshots whose metadata key isn't in `packages` — same
 /// degraded behaviour as [`crate::deps_graph::build_deps_graph`]; the
 /// hoist pass simply won't see the missing snapshot.
+///
+/// Parallelized via rayon: each snapshot's children-map build is
+/// independent (no shared mutable state), and the children HashMap
+/// allocations are the dominant cost on large lockfiles. Using
+/// [`rayon::prelude::ParallelIterator::collect`] into a `HashMap`
+/// fans the per-snapshot work across the rayon thread pool and
+/// hands the result back as a single map.
 pub fn build_hoist_graph(
     snapshots: &HashMap<PackageKey, SnapshotEntry>,
     packages: &HashMap<PackageKey, PackageMetadata>,
 ) -> HashMap<PackageKey, HoistGraphNode> {
-    let mut graph = HashMap::with_capacity(snapshots.len());
-    for (key, snapshot) in snapshots {
-        let metadata_key = key.without_peer();
-        let Some(metadata) = packages.get(&metadata_key) else { continue };
-        let mut children: HashMap<String, PackageKey> = HashMap::new();
-        let dep_entries = snapshot
-            .dependencies
-            .iter()
-            .flat_map(|m| m.iter())
-            .chain(snapshot.optional_dependencies.iter().flat_map(|m| m.iter()));
-        for (alias, dep_ref) in dep_entries {
-            let resolved: PackageKey = dep_ref.resolve(alias);
-            children.insert(alias.to_string(), resolved);
-        }
-        graph.insert(
-            key.clone(),
-            HoistGraphNode {
-                name: key.name.clone(),
-                children,
-                has_bin: metadata.has_bin == Some(true),
-            },
-        );
-    }
-    graph
+    use rayon::prelude::*;
+    snapshots
+        .par_iter()
+        .filter_map(|(key, snapshot)| {
+            let metadata_key = key.without_peer();
+            let metadata = packages.get(&metadata_key)?;
+            let dep_entries = snapshot
+                .dependencies
+                .iter()
+                .flat_map(|m| m.iter())
+                .chain(snapshot.optional_dependencies.iter().flat_map(|m| m.iter()));
+            let children: HashMap<String, PackageKey> = dep_entries
+                .map(|(alias, dep_ref)| (alias.to_string(), dep_ref.resolve(alias)))
+                .collect();
+            Some((
+                key.clone(),
+                HoistGraphNode {
+                    name: key.name.clone(),
+                    children,
+                    has_bin: metadata.has_bin == Some(true),
+                },
+            ))
+        })
+        .collect()
 }
 
 /// Per-importer direct-dependency map. Mirrors upstream's
@@ -229,7 +236,7 @@ pub struct HoistResult {
 ///
 /// Returns `None` when the graph is empty (mirroring upstream's early
 /// return; spares the symlink pass any work).
-pub fn get_hoisted_dependencies(input: &HoistInputs) -> Option<HoistResult> {
+pub fn get_hoisted_dependencies<'a>(input: &'a HoistInputs<'a>) -> Option<HoistResult> {
     if input.graph.is_empty() {
         return None;
     }
@@ -243,8 +250,8 @@ pub fn get_hoisted_dependencies(input: &HoistInputs) -> Option<HoistResult> {
     // depth=0 transitives. Pacquet folds the same shape into the
     // `BfsEntry`s with depth `-1` for the importer pseudo-node and
     // depth `0` for the importer's direct deps.
-    let mut visited: HashSet<PackageKey> = HashSet::new();
-    let mut entries: Vec<BfsEntry> = Vec::new();
+    let mut visited: HashSet<&'a PackageKey> = HashSet::new();
+    let mut entries: Vec<BfsEntry<'a>> = Vec::new();
 
     // Importer pseudo-nodes (depth -1) — one per importer, carrying
     // its direct-deps map as `children`. Upstream stuffs all
@@ -257,39 +264,55 @@ pub fn get_hoisted_dependencies(input: &HoistInputs) -> Option<HoistResult> {
             // The pseudo-node's nodeId is the importer id. Upstream
             // uses an empty string `'' as T` for a single-importer
             // shape; the per-importer breakdown here gives a stable
-            // (depth, importer_id) sort.
+            // (depth, importer_id) sort. Cloning the few-byte
+            // importer ids is cheap; what matters perf-wise is that
+            // `children` is now borrowed.
             sort_key: importer_id.clone(),
-            children: direct_deps.clone(),
+            children: direct_deps,
         });
     }
 
     // BFS — walk children of each direct dep at depth 0, then their
     // children at depth 1, etc. Each visited node contributes a
-    // depth-N entry.
-    let mut queue: VecDeque<(PackageKey, i32)> = VecDeque::new();
+    // depth-N entry. The work queue holds borrowed `&PackageKey`
+    // pointing into the input `direct_deps_by_importer` / the
+    // graph's child maps; nothing is cloned.
+    let mut queue: VecDeque<(&'a PackageKey, i32)> = VecDeque::new();
     for direct_deps in input.direct_deps_by_importer.values() {
         for node_id in direct_deps.values() {
-            if !input.graph.contains_key(node_id) {
-                continue;
-            }
-            if visited.insert(node_id.clone()) {
-                queue.push_back((node_id.clone(), 0));
+            // `HashSet::get_or_insert_with` would let us own the
+            // visited entry as `&PackageKey` from the graph itself
+            // when the key matches; the simpler `contains_key + insert`
+            // path here trades a redundant lookup for explicit code.
+            let Some((graph_key, _)) = input.graph.get_key_value(node_id) else { continue };
+            if visited.insert(graph_key) {
+                queue.push_back((graph_key, 0));
             }
         }
     }
     while let Some((node_id, depth)) = queue.pop_front() {
-        let node = &input.graph[&node_id];
+        let node = &input.graph[node_id];
         entries.push(BfsEntry {
             depth,
+            // Stringifying the node id matches the previous
+            // implementation's lex-on-formatted-key tiebreaker so
+            // sort output stays byte-identical. `PackageKey` itself
+            // doesn't impl `Ord` (lockfile-crate types deliberately
+            // don't carry semantic ordering), and switching to
+            // component-wise lex would diverge from the old order
+            // for scoped names. The dominant per-node cost is the
+            // children HashMap, which is now borrowed; this single
+            // String per node is the cheap part.
             sort_key: node_id.to_string(),
-            children: node.children.clone(),
+            children: &node.children,
         });
         for child_id in node.children.values() {
-            if !input.graph.contains_key(child_id) {
-                continue;
-            }
-            if visited.insert(child_id.clone()) {
-                queue.push_back((child_id.clone(), depth + 1));
+            // Same get_key_value trick: pull a `&'a PackageKey` out
+            // of the graph's keyspace so the visited set can hold a
+            // reference instead of owning a clone.
+            let Some((graph_key, _)) = input.graph.get_key_value(child_id) else { continue };
+            if visited.insert(graph_key) {
+                queue.push_back((graph_key, depth + 1));
             }
         }
     }
@@ -304,9 +327,11 @@ pub fn get_hoisted_dependencies(input: &HoistInputs) -> Option<HoistResult> {
     // versions. Workspace importers' deps don't seed this set
     // because they live in their own `node_modules` and don't
     // collide with the root.
-    let root_direct = input.direct_deps_by_importer.get(".").cloned().unwrap_or_default();
-    let mut hoisted_aliases: HashSet<String> =
-        root_direct.keys().map(|k| k.to_lowercase()).collect();
+    let mut hoisted_aliases: HashSet<String> = input
+        .direct_deps_by_importer
+        .get(".")
+        .map(|m| m.keys().map(|k| k.to_lowercase()).collect())
+        .unwrap_or_default();
 
     let mut hoisted_dependencies: HoistedDependencies = BTreeMap::new();
     let mut hoisted_dependencies_by_node_id: HashMap<PackageKey, HashMap<String, HoistKind>> =
@@ -323,15 +348,15 @@ pub fn get_hoisted_dependencies(input: &HoistInputs) -> Option<HoistResult> {
     let mut public_bins_seen: HashSet<String> = HashSet::new();
 
     for entry in &entries {
-        // Iterate children in a deterministic order so the matcher
-        // index ties (when both public and private match the same
-        // alias) resolve identically across runs. Upstream relies on
-        // JS object insertion order; pacquet sorts by alias for
-        // stability — semantically equivalent because public always
-        // wins over private at the per-alias decision below.
-        let mut child_pairs: Vec<(&String, &PackageKey)> = entry.children.iter().collect();
-        child_pairs.sort_by(|a, b| a.0.cmp(b.0));
-        for (alias, child_node_id) in child_pairs {
+        // Within a single entry's children there are no alias
+        // collisions (children is a `HashMap<alias, _>`), so the
+        // matcher's per-alias decision is independent of iteration
+        // order. The on-disk output goes through `BTreeMap`
+        // serialization which sorts at write time; sorting again
+        // here would cost ~entries × log(avg-fanout) extra and
+        // produce no observable difference. Iterate the HashMap
+        // directly.
+        for (alias, child_node_id) in entry.children {
             let hoist_kind = if input.public_pattern.matches(alias) {
                 HoistKind::Public
             } else if input.private_pattern.matches(alias) {
@@ -392,13 +417,18 @@ pub fn get_hoisted_dependencies(input: &HoistInputs) -> Option<HoistResult> {
     })
 }
 
-/// Internal BFS row.
-struct BfsEntry {
+/// Internal BFS row. `children` borrows from the input graph (or the
+/// importer's direct-deps map for the depth=-1 pseudo-nodes) so the
+/// BFS allocates one `Vec<BfsEntry>` plus the `visited`/`queue`
+/// collections — no per-node HashMap clones, which was the dominant
+/// allocation hotspot pre-optimization. `sort_key` is still a
+/// `String` because `PackageKey` doesn't carry an `Ord` impl that
+/// would match the old `to_string()` lex order; that single
+/// allocation per node is cheap relative to what was a HashMap clone.
+struct BfsEntry<'a> {
     depth: i32,
-    /// Sort tiebreaker for entries at the same depth — `nodeId.to_string()`
-    /// for snapshot nodes, importer id for the depth=-1 pseudo-nodes.
     sort_key: String,
-    children: HashMap<String, PackageKey>,
+    children: &'a HashMap<String, PackageKey>,
 }
 
 /// Create the hoist symlinks. Mirrors upstream's
