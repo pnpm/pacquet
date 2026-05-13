@@ -1252,3 +1252,150 @@ async fn frozen_lockfile_errors_when_lockfile_has_no_root_importer() {
 
     drop(dir);
 }
+
+/// GVS-on frozen-lockfile install. With
+/// `enable_global_virtual_store: true` (pacquet's default, matching
+/// upstream's
+/// [`config/reader/src/index.ts:392-394`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L392-L394)),
+/// `Install::run` registers the project at
+/// `<store_dir>/projects/<short-hash>` (mirroring upstream's
+/// [`registerProject`](https://github.com/pnpm/pnpm/blob/94240bc046/store/controller/src/storeController/projectRegistry.ts))
+/// and routes every per-snapshot slot through
+/// [`crate::VirtualStoreLayout`]. The empty-snapshot lockfile here is
+/// enough to prove the wiring runs end-to-end without panicking and
+/// that the registry entry actually lands on disk; the GVS-shaped
+/// per-package path layout itself is unit-tested inside the
+/// [`crate::VirtualStoreLayout`] module, and the e2e port of
+/// upstream's `globalVirtualStore.ts` cases (with non-empty
+/// snapshots) is tracked as a follow-up.
+#[tokio::test]
+async fn frozen_lockfile_under_gvs_registers_project_and_runs_clean() {
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    // Place the manifest *inside* `project_root` — `Install::run`
+    // derives the registry target from `manifest.path().parent()`,
+    // so a manifest at `<tmp>/package.json` would register `<tmp>`
+    // and the symlink-resolves-to-project_root assertion below
+    // would silently pass for the wrong reason.
+    std::fs::create_dir_all(&project_root).expect("create project root");
+    let manifest_path = project_root.join("package.json");
+    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+    let mut config = Config::new();
+    // Pacquet's default is `true`; pin it explicitly so the test
+    // doesn't silently degrade if the default flips someday.
+    config.enable_global_virtual_store = true;
+    config.lockfile = false;
+    config.store_dir = store_dir.clone().into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    // Pin the GVS root to a known location under the test temp dir
+    // so any future assertions can target it without walking the
+    // SmartDefault'd cwd-based fallback.
+    config.global_virtual_store_dir = store_dir.join("links");
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies: {}"
+        "packages: {}"
+        "snapshots: {}"
+    })
+    .expect("parse minimal v9 lockfile");
+
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await
+    .expect("frozen-lockfile install under GVS should succeed");
+
+    // `register_project` wrote `<store_dir>/projects/<short-hash>`
+    // pointing back at the project dir. Resolve the symlink and
+    // canonicalize both ends — the test temp dir may itself be a
+    // symlink (e.g. `/tmp` → `/private/tmp` on macOS), and the
+    // registry stores the absolute project path at write time.
+    let projects_dir = store_dir.join("projects");
+    assert!(projects_dir.is_dir(), "GVS-on install must create <store_dir>/projects/");
+    let entries: Vec<_> =
+        std::fs::read_dir(&projects_dir).unwrap().collect::<Result<_, _>>().unwrap();
+    assert_eq!(entries.len(), 1, "exactly one project entry per `Install::run` invocation");
+    let entry_target = std::fs::read_link(entries[0].path()).expect("registry entry is a symlink");
+    assert_eq!(
+        dunce::canonicalize(&entry_target).expect("canonicalize registry target"),
+        dunce::canonicalize(&project_root).expect("canonicalize project root"),
+        "registry symlink must resolve back to the install's project root",
+    );
+
+    drop(dir);
+}
+
+/// GVS-off frozen-lockfile install. The dispatch path is the same,
+/// but `Install::run` skips the project-registry write entirely.
+/// Pins that turning off `enable_global_virtual_store` makes the
+/// install behave like today — no `<store_dir>/projects/` directory
+/// appears.
+#[tokio::test]
+async fn frozen_lockfile_with_gvs_off_skips_project_registry() {
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    std::fs::create_dir_all(&project_root).expect("create project root");
+    let manifest_path = project_root.join("package.json");
+    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+    let mut config = Config::new();
+    config.enable_global_virtual_store = false;
+    config.lockfile = false;
+    config.store_dir = store_dir.clone().into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies: {}"
+        "packages: {}"
+        "snapshots: {}"
+    })
+    .expect("parse minimal v9 lockfile");
+
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await
+    .expect("frozen-lockfile install with GVS off should succeed");
+
+    assert!(
+        !store_dir.join("projects").exists(),
+        "GVS-off install must NOT create the project-registry directory",
+    );
+
+    drop(dir);
+}

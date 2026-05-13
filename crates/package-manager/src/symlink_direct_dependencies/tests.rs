@@ -82,6 +82,7 @@ fn emits_pnpm_root_added_per_direct_dependency() {
 
     SymlinkDirectDependencies {
         config,
+        layout: &crate::VirtualStoreLayout::legacy(config.virtual_store_dir.clone()),
         importers: &importers,
         dependency_groups: [DependencyGroup::Prod, DependencyGroup::Dev],
         workspace_root: &project_root,
@@ -200,6 +201,7 @@ fn duplicate_dep_across_groups_collapses_to_one_entry() {
 
     SymlinkDirectDependencies {
         config,
+        layout: &crate::VirtualStoreLayout::legacy(config.virtual_store_dir.clone()),
         importers: &importers,
         // Prod first → first-wins gives `dependencyType: prod`.
         dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
@@ -336,8 +338,10 @@ fn empty_importers_is_a_no_op() {
     let config = config.leak();
 
     let importers = HashMap::new();
+    let layout = crate::VirtualStoreLayout::legacy(config.virtual_store_dir.clone());
     let result = SymlinkDirectDependencies {
         config,
+        layout: &layout,
         importers: &importers,
         dependency_groups: [DependencyGroup::Prod],
         workspace_root: &project_root,

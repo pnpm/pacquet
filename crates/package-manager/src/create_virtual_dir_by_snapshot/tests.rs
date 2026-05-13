@@ -60,8 +60,9 @@ async fn run_emits_imported_event_after_create_cas_files() {
     // but `#[tokio::test]` defaults to single-thread, so we run
     // `.run()` directly here. The function itself is sync — only
     // the caller's runtime flavor matters.
+    let layout = crate::VirtualStoreLayout::legacy(virtual_store_dir.clone());
     CreateVirtualDirBySnapshot {
-        virtual_store_dir: &virtual_store_dir,
+        layout: &layout,
         cas_paths: &cas_paths,
         import_method: PackageImportMethod::Hardlink,
         logged_methods: &logged_methods,

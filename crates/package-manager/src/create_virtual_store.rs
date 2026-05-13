@@ -79,6 +79,11 @@ pub struct CreateVirtualStore<'a> {
     /// [`CreateVirtualStore::run`].
     pub current_snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,
     pub current_packages: Option<&'a HashMap<PackageKey, PackageMetadata>>,
+    /// Install-scoped precomputed slot-directory mapping (GVS-aware).
+    /// Used by both the warm batch and the cold batch to decide where
+    /// each snapshot's `node_modules/<pkg>` lands. See
+    /// [`crate::VirtualStoreLayout`].
+    pub layout: &'a crate::VirtualStoreLayout,
     /// Install-scoped dedupe state for `pnpm:package-import-method`.
     /// See `link_file::log_method_once`.
     pub logged_methods: &'a AtomicU8,
@@ -139,6 +144,7 @@ impl<'a> CreateVirtualStore<'a> {
             snapshots,
             current_snapshots,
             current_packages,
+            layout,
             logged_methods,
             requester,
             store_index_writer,
@@ -531,7 +537,6 @@ impl<'a> CreateVirtualStore<'a> {
             }
         }
 
-        let virtual_store_dir = &config.virtual_store_dir;
         let import_method = config.package_import_method;
         {
             use rayon::prelude::*;
@@ -554,7 +559,7 @@ impl<'a> CreateVirtualStore<'a> {
                     emit_warm_snapshot_progress::<R>(&package_id, requester);
 
                     crate::CreateVirtualDirBySnapshot {
-                        virtual_store_dir,
+                        layout,
                         cas_paths: cas_paths.as_ref(),
                         import_method,
                         logged_methods,
@@ -597,6 +602,7 @@ impl<'a> CreateVirtualStore<'a> {
                     InstallPackageBySnapshot {
                         http_client,
                         config,
+                        layout,
                         store_index: store_index_ref,
                         store_index_writer: store_index_writer_ref,
                         prefetched_cas_paths: prefetched_ref,

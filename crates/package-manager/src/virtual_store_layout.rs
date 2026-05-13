@@ -63,6 +63,17 @@ pub struct VirtualStoreLayout {
 }
 
 impl VirtualStoreLayout {
+    /// Construct a layout that always uses the legacy
+    /// `<root>/<flat-name>` shape, regardless of any
+    /// `enable_global_virtual_store` setting on `Config`. The
+    /// non-frozen install path uses this — GVS is scoped to
+    /// frozen-lockfile installs (pnpm/pacquet#432), so without-lockfile
+    /// callers stay on the project-local flat layout even when
+    /// `enable_global_virtual_store: true` is configured.
+    pub fn legacy(root: impl Into<PathBuf>) -> Self {
+        VirtualStoreLayout { package_store_dir: root.into(), gvs_suffixes: None }
+    }
+
     /// Build the layout for one install. Reads
     /// [`Config::enable_global_virtual_store`] to decide whether to
     /// precompute GVS slot names, then iterates the lockfile's
@@ -90,7 +101,18 @@ impl VirtualStoreLayout {
         snapshots: Option<&HashMap<PackageKey, SnapshotEntry>>,
         packages: Option<&HashMap<PackageKey, PackageMetadata>>,
     ) -> Self {
-        let package_store_dir = config.virtual_store_dir.clone();
+        // Pacquet keeps `virtual_store_dir` and `global_virtual_store_dir`
+        // as two separate fields (see
+        // [`Config::apply_global_virtual_store_derivation`] for why).
+        // The frozen-lockfile install picks
+        // `global_virtual_store_dir` here when GVS is on so the
+        // without-lockfile path can stay on the project-local
+        // `virtual_store_dir` without colliding.
+        let package_store_dir = if config.enable_global_virtual_store {
+            config.global_virtual_store_dir.clone()
+        } else {
+            config.virtual_store_dir.clone()
+        };
         if !config.enable_global_virtual_store {
             return VirtualStoreLayout { package_store_dir, gvs_suffixes: None };
         }
@@ -236,10 +258,15 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::{collections::HashMap, path::PathBuf};
 
-    fn make_config(gvs: bool, virtual_store_dir: PathBuf) -> Config {
+    /// Build a `Config` test-double with the GVS-relevant fields
+    /// wired explicitly. `gvs_dir` populates `global_virtual_store_dir`
+    /// for the GVS-on path; `virtual_store_dir` stays at the
+    /// project-local default for the GVS-off path.
+    fn make_config(gvs: bool, virtual_store_dir: PathBuf, gvs_dir: PathBuf) -> Config {
         let mut config = Config::new();
         config.enable_global_virtual_store = gvs;
         config.virtual_store_dir = virtual_store_dir;
+        config.global_virtual_store_dir = gvs_dir;
         config
     }
 
@@ -248,7 +275,11 @@ mod tests {
     /// drop-in for the legacy path.
     #[test]
     fn slot_dir_uses_flat_name_when_gvs_off() {
-        let config = make_config(false, PathBuf::from("/tmp/proj/node_modules/.pnpm"));
+        let config = make_config(
+            false,
+            PathBuf::from("/tmp/proj/node_modules/.pnpm"),
+            PathBuf::from("/tmp/store/links"),
+        );
         let layout = VirtualStoreLayout::new(&config, "ignored", None, None);
         let key: PackageKey = "@scope/foo@1.2.3".parse().unwrap();
         assert_eq!(
@@ -263,7 +294,11 @@ mod tests {
     /// and depth.
     #[test]
     fn slot_dir_uses_gvs_layout_when_gvs_on() {
-        let config = make_config(true, PathBuf::from("/tmp/store/links"));
+        let config = make_config(
+            true,
+            PathBuf::from("/tmp/proj/node_modules/.pnpm"),
+            PathBuf::from("/tmp/store/links"),
+        );
         let key: PackageKey = "@scope/foo@1.2.3".parse().unwrap();
         let mut packages = HashMap::new();
         packages.insert(
@@ -311,7 +346,11 @@ mod tests {
     /// depth — easier `readdir`-driven traversal.
     #[test]
     fn slot_dir_prefixes_unscoped_with_at_slash_under_gvs() {
-        let config = make_config(true, PathBuf::from("/tmp/store/links"));
+        let config = make_config(
+            true,
+            PathBuf::from("/tmp/proj/node_modules/.pnpm"),
+            PathBuf::from("/tmp/store/links"),
+        );
         let key: PackageKey = "foo@1.0.0".parse().unwrap();
         let mut packages = HashMap::new();
         packages.insert(

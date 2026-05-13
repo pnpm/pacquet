@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::atomic::AtomicU8, time::SystemTime};
+use std::{collections::BTreeMap, path::Path, sync::atomic::AtomicU8, time::SystemTime};
 
 use crate::{
     InstallFrozenLockfile, InstallFrozenLockfileError, InstallWithoutLockfile,
@@ -215,6 +215,34 @@ where
         let logged_methods = AtomicU8::new(0);
 
         tracing::info!(target: "pacquet::install", "Start all");
+
+        // Register this project against the shared store when GVS is
+        // on, so a future `pacquet store prune` (tracked separately)
+        // can discover every project that still references a
+        // `<store_dir>/links/...` slot. Mirrors upstream's call into
+        // `@pnpm/store.controller`'s
+        // [`registerProject`](https://github.com/pnpm/pnpm/blob/94240bc046/store/controller/src/storeController/projectRegistry.ts).
+        // Fires once per `Install::run`, irrespective of frozen-vs-non-
+        // frozen dispatch — the registry tracks the project, not the
+        // particular install mode.
+        //
+        // Best-effort: a registry write failure shouldn't fail the
+        // install (the legacy non-GVS path doesn't need this entry).
+        // Surface as `tracing::warn!` so the failure is diagnosable but
+        // the install carries on. Skip the call entirely when GVS is
+        // off so a `<store_dir>/projects/` directory only appears on
+        // installs that actually use the shared store.
+        if config.enable_global_virtual_store {
+            let project_dir = Path::new(&prefix);
+            if let Err(error) = pacquet_store_dir::register_project(&config.store_dir, project_dir)
+            {
+                tracing::warn!(
+                    target: "pacquet::install",
+                    ?error,
+                    "Failed to register project in the global-virtual-store registry; install continues",
+                );
+            }
+        }
 
         // Dispatch priority, matching pnpm's CLI semantics:
         //

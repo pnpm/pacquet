@@ -175,7 +175,12 @@ impl AllowBuildPolicy {
 /// [`BuildModules::child_concurrency`] threads — mirrors upstream's
 /// [`runGroups(getWorkspaceConcurrency(opts.childConcurrency), groups)`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L124).
 pub struct BuildModules<'a> {
-    pub virtual_store_dir: &'a Path,
+    /// Install-scoped slot-directory mapping (GVS-aware). Replaces the
+    /// previous `virtual_store_dir: &Path` field — the layout already
+    /// knows the per-snapshot subdirectory shape (legacy flat-name vs
+    /// GVS `<scope>/<name>/<version>/<hash>`). See
+    /// [`crate::VirtualStoreLayout`].
+    pub layout: &'a crate::VirtualStoreLayout,
     pub modules_dir: &'a Path,
     pub lockfile_dir: &'a Path,
     pub snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,
@@ -266,7 +271,7 @@ impl<'a> BuildModules<'a> {
     /// <https://github.com/pnpm/pnpm/blob/80037699fb/installing/deps-installer/src/install/index.ts#L414>.
     pub fn run<R: Reporter>(self) -> Result<Vec<String>, BuildModulesError> {
         let BuildModules {
-            virtual_store_dir,
+            layout,
             modules_dir,
             lockfile_dir,
             snapshots,
@@ -308,7 +313,7 @@ impl<'a> BuildModules<'a> {
             // optional fan-out.
             .filter(|key| !skipped.contains(key))
             .map(|key| {
-                let pkg_dir = virtual_store_dir_for_key(virtual_store_dir, key);
+                let pkg_dir = virtual_store_dir_for_key(layout, key);
                 (key.clone(), pkg_requires_build(&pkg_dir))
             })
             .collect();
@@ -417,7 +422,7 @@ impl<'a> BuildModules<'a> {
                         dep_graph.as_ref(),
                         &deps_state_cache,
                         &ignored_builds,
-                        virtual_store_dir,
+                        layout,
                         modules_dir,
                         lockfile_dir,
                         &extra_bin_paths,
@@ -463,7 +468,7 @@ fn build_one_snapshot<R: Reporter>(
     dep_graph: Option<&HashMap<PackageKey, pacquet_graph_hasher::DepsGraphNode<PackageKey>>>,
     deps_state_cache: &Mutex<pacquet_graph_hasher::DepsStateCache<PackageKey>>,
     ignored_builds: &Mutex<BTreeSet<String>>,
-    virtual_store_dir: &Path,
+    layout: &crate::VirtualStoreLayout,
     modules_dir: &Path,
     lockfile_dir: &Path,
     extra_bin_paths: &[PathBuf],
@@ -592,7 +597,7 @@ fn build_one_snapshot<R: Reporter>(
         return Ok(());
     }
 
-    let pkg_dir = virtual_store_dir_for_key(virtual_store_dir, snapshot_key);
+    let pkg_dir = virtual_store_dir_for_key(layout, snapshot_key);
     if !pkg_dir.exists() {
         return Ok(());
     }
@@ -725,7 +730,12 @@ fn build_one_snapshot<R: Reporter>(
 /// Uses `without_peer()` to strip any peer-dependency suffix before
 /// computing the path, so keys like
 /// `/@pnpm.e2e/foo@1.0.0(@pnpm.e2e/bar@2.0.0)` resolve correctly.
-fn virtual_store_dir_for_key(virtual_store_dir: &Path, key: &PackageKey) -> PathBuf {
+///
+/// Threads through the install-scoped [`crate::VirtualStoreLayout`] so
+/// the call works under both the legacy flat-name layout and the
+/// GVS-shaped `<scope>/<name>/<version>/<hash>` layout — the layout's
+/// `slot_dir` is the single switchpoint.
+fn virtual_store_dir_for_key(layout: &crate::VirtualStoreLayout, key: &PackageKey) -> PathBuf {
     let bare_key = key.without_peer();
     let key_str = bare_key.to_string();
     let name_version = key_str.strip_prefix('/').unwrap_or(&key_str);
@@ -733,9 +743,7 @@ fn virtual_store_dir_for_key(virtual_store_dir: &Path, key: &PackageKey) -> Path
     let at_idx = name_version.rfind('@').unwrap_or(name_version.len());
     let name = &name_version[..at_idx];
 
-    let store_name = name_version.replace('/', "+");
-
-    virtual_store_dir.join(&store_name).join("node_modules").join(name)
+    layout.slot_dir(&bare_key).join("node_modules").join(name)
 }
 
 /// Parse `name` and `version` from a lockfile snapshot key like

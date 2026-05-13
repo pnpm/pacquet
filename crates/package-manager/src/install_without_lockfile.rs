@@ -205,10 +205,18 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
         // by walking `<virtual_store_dir>`, child manifests read from
         // disk). The frozen-lockfile path skips both via
         // [`LinkVirtualStoreBins::snapshots`] / `package_manifests`.
+        //
+        // The bin linker also doesn't need GVS-aware slot lookups
+        // here: without snapshots there are no GVS slot directories to
+        // compute. Construct a legacy layout so the readdir path
+        // enumerates `config.virtual_store_dir` exactly as before. GVS
+        // is scoped to frozen-lockfile installs (pnpm/pacquet#432); the
+        // without-lockfile fallback stays project-local.
+        let layout = crate::VirtualStoreLayout::legacy(config.virtual_store_dir.clone());
         let empty_manifests = std::collections::HashMap::new();
         let empty_skipped = crate::SkippedSnapshots::new();
         LinkVirtualStoreBins {
-            virtual_store_dir: &config.virtual_store_dir,
+            layout: &layout,
             snapshots: None,
             packages: None,
             package_manifests: &empty_manifests,
