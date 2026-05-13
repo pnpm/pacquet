@@ -1,8 +1,9 @@
 use super::{
     BadWorkspaceManifestNameError, FindWorkspaceDirError, INVALID_WORKSPACE_MANIFEST_FILENAMES,
-    find_workspace_dir, find_workspace_dir_from_env,
+    WORKSPACE_DIR_ENV_VAR, find_workspace_dir, find_workspace_dir_from_env_with,
 };
 use crate::WORKSPACE_MANIFEST_FILENAME;
+use std::ffi::OsString;
 use pretty_assertions::assert_eq;
 use std::fs;
 use tempfile::TempDir;
@@ -72,23 +73,58 @@ fn correct_filename_wins_over_misnamed_sibling() {
 /// `PathBuf::from("")`. Mirrors upstream's truthy `if (workspaceDir)`
 /// check.
 ///
-/// `std::env::set_var` mutates process-wide state, so this test is
-/// `#[serial]`-ish in spirit; in practice no other test in the crate
-/// reads these vars, so we keep it simple and just restore at the end.
+/// `std::env::set_var` has documented UB when other threads access
+/// the process environment concurrently (and Rust tests default to
+/// multi-threaded). The injected accessor on
+/// [`find_workspace_dir_from_env_with`] lets this test exercise the
+/// fall-through branch without touching the process env at all.
 #[test]
 fn empty_env_var_is_treated_as_unset() {
-    use std::env;
-    const VAR: &str = "NPM_CONFIG_WORKSPACE_DIR";
+    let env = |name: &str| -> Option<OsString> {
+        if name == WORKSPACE_DIR_ENV_VAR {
+            Some(OsString::from(""))
+        } else {
+            None
+        }
+    };
+    assert_eq!(
+        find_workspace_dir_from_env_with(env),
+        None,
+        "empty env var must fall through to the upward walk",
+    );
+}
 
-    let prior = env::var_os(VAR);
-    // SAFETY: single-threaded test runner pinpoints this var to one
-    // test process; no other test reads it. Restored below.
-    unsafe { env::set_var(VAR, "") };
-    let result = find_workspace_dir_from_env();
-    // Restore before asserting so a failure doesn't pollute neighbors.
-    match prior {
-        Some(value) => unsafe { env::set_var(VAR, value) },
-        None => unsafe { env::remove_var(VAR) },
-    }
-    assert_eq!(result, None, "empty env var must fall through to the upward walk");
+/// A non-empty value resolves to the workspace dir verbatim, via the
+/// same code path the production accessor uses. Pinning this here
+/// guards the truthy-value side of the fall-through above.
+#[test]
+fn non_empty_env_var_resolves_verbatim() {
+    let env = |name: &str| -> Option<OsString> {
+        if name == WORKSPACE_DIR_ENV_VAR {
+            Some(OsString::from("/explicit/root"))
+        } else {
+            None
+        }
+    };
+    assert_eq!(
+        find_workspace_dir_from_env_with(env),
+        Some(std::path::PathBuf::from("/explicit/root")),
+    );
+}
+
+/// The lowercase spelling is also honored, matching upstream's
+/// `process.env[VAR] ?? process.env[VAR.toLowerCase()]` lookup.
+#[test]
+fn lowercase_env_var_is_honored_as_fallback() {
+    let env = |name: &str| -> Option<OsString> {
+        if name == WORKSPACE_DIR_ENV_VAR.to_lowercase() {
+            Some(OsString::from("/lowercase/root"))
+        } else {
+            None
+        }
+    };
+    assert_eq!(
+        find_workspace_dir_from_env_with(env),
+        Some(std::path::PathBuf::from("/lowercase/root")),
+    );
 }

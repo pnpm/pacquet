@@ -26,6 +26,7 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use std::{
     env,
+    ffi::OsString,
     path::{Path, PathBuf},
 };
 
@@ -105,8 +106,24 @@ pub fn find_workspace_dir(cwd: &Path) -> Result<Option<PathBuf>, FindWorkspaceDi
 /// the upward walk and force the install into an invalid empty
 /// workspace dir.
 pub fn find_workspace_dir_from_env() -> Option<PathBuf> {
-    env::var_os(WORKSPACE_DIR_ENV_VAR)
-        .or_else(|| env::var_os(WORKSPACE_DIR_ENV_VAR.to_lowercase()))
+    find_workspace_dir_from_env_with(|name| env::var_os(name))
+}
+
+/// Variant of [`find_workspace_dir_from_env`] that reads from a
+/// caller-supplied env accessor instead of [`std::env::var_os`].
+///
+/// Exposed for tests: `std::env::set_var` has documented undefined
+/// behavior when other threads access the process environment
+/// concurrently, and Rust's default test runner is multi-threaded.
+/// Threading an accessor through here lets the test exercise the
+/// "empty value falls through" branch without touching the
+/// process-wide env at all.
+pub(crate) fn find_workspace_dir_from_env_with<F>(mut env: F) -> Option<PathBuf>
+where
+    F: FnMut(&str) -> Option<OsString>,
+{
+    env(WORKSPACE_DIR_ENV_VAR)
+        .or_else(|| env(&WORKSPACE_DIR_ENV_VAR.to_lowercase()))
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
 }

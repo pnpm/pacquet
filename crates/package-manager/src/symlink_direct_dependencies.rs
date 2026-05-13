@@ -169,8 +169,14 @@ fn validate_importer_id(importer_id: &str) -> Result<(), SymlinkDirectDependenci
         importer_id: importer_id.to_string(),
     };
 
-    if importer_id == "." || importer_id.is_empty() {
+    // `.` is the canonical root importer key. An empty string is
+    // non-standard — pnpm never writes one — and conflating it with
+    // `.` would mask malformed lockfiles, so reject it explicitly.
+    if importer_id == "." {
         return Ok(());
+    }
+    if importer_id.is_empty() {
+        return Err(unsafe_path());
     }
 
     // Absolute POSIX path. Pnpm writes relative paths; an absolute
@@ -210,11 +216,14 @@ fn validate_importer_id(importer_id: &str) -> Result<(), SymlinkDirectDependenci
 /// returned path is platform-native (`Path::join` handles the
 /// conversion on Windows).
 fn importer_root_dir(workspace_root: &Path, importer_id: &str) -> PathBuf {
-    if importer_id == "." || importer_id.is_empty() {
+    if importer_id == "." {
         workspace_root.to_path_buf()
     } else {
         // `importer_id` is POSIX in the lockfile; `Path::join` accepts
-        // forward slashes and converts to native separators.
+        // forward slashes and converts to native separators. The
+        // empty-key case is rejected upstream by
+        // [`validate_importer_id`], so this branch only runs on
+        // POSIX-relative sub-importer paths.
         workspace_root.join(importer_id)
     }
 }

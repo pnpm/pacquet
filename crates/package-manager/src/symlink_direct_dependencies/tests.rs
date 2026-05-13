@@ -446,6 +446,7 @@ fn unsafe_importer_keys_error_before_filesystem_writes() {
     // Each case is an importer key that must produce
     // `UnsafeImporterPath` without touching the filesystem.
     let cases: &[&str] = &[
+        "",                   // empty key (non-standard; `.` is the root)
         "/abs/path",          // absolute POSIX
         "..",                 // single parent
         "../sibling",         // traversal
