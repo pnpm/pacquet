@@ -72,6 +72,7 @@ fn synthetic_metadata(
 fn host(node_version: &str, os: &'static str, cpu: &'static str) -> InstallabilityHost {
     InstallabilityHost {
         node_version: node_version.to_string(),
+        node_detected: true,
         os,
         cpu,
         libc: "unknown",

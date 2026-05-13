@@ -150,6 +150,7 @@ where
             tokio::task::spawn_blocking(InstallabilityHost::detect).await.unwrap_or_else(|_| {
                 InstallabilityHost {
                     node_version: "99999.0.0".to_string(),
+                    node_detected: false,
                     os: pacquet_graph_hasher::host_platform(),
                     cpu: pacquet_graph_hasher::host_arch(),
                     libc: pacquet_graph_hasher::host_libc(),
@@ -196,9 +197,19 @@ where
         // `engine_name` for the side-effects-cache lookup. Derived
         // from the host's full node version we just detected — the
         // cache key only needs the major, so strip and reuse rather
-        // than spawning `node --version` a second time.
-        let engine_name: Option<String> = parse_major_from_version(&host.node_version)
-            .map(|major| pacquet_graph_hasher::engine_name(major, None, None));
+        // than spawning `node --version` a second time. Falls back
+        // to `None` when `node --version` itself didn't run; the
+        // installability path uses a synthetic version in that case,
+        // and feeding that synthetic into the cache key would poison
+        // the cache with rows keyed on a value subsequent installs
+        // won't match. Mirrors the prior `detect_node_major` flow
+        // upstream depends on.
+        let engine_name: Option<String> = if host.node_detected {
+            parse_major_from_version(&host.node_version)
+                .map(|major| pacquet_graph_hasher::engine_name(major, None, None))
+        } else {
+            None
+        };
 
         SymlinkDirectDependencies {
             config,

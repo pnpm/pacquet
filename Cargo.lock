@@ -2079,6 +2079,7 @@ dependencies = [
  "derive_more",
  "miette 7.6.0",
  "node-semver",
+ "pacquet-testing-utils",
  "pretty_assertions",
  "serde",
 ]

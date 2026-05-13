@@ -17,4 +17,5 @@ node-semver = { workspace = true }
 serde       = { workspace = true }
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
+pacquet-testing-utils = { workspace = true }
+pretty_assertions     = { workspace = true }

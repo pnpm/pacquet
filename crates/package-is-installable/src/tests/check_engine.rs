@@ -98,25 +98,6 @@ fn pnpm_is_a_prerelease_version_ge_major_satisfies() {
 }
 
 #[test]
-#[ignore = "pacquet's strip-prerelease fallback over-accepts here — see check_engine.rs"]
-fn pnpm_is_a_prerelease_version_strict_ge_full_version_does_not_satisfy() {
-    // Upstream: `>=9.0.0` against `9.0.0-alpha.1` returns an error
-    // even with `includePrerelease: true` (alpha.1 < 9.0.0 in semver
-    // order, no implicit `-0` floor when the bound is fully
-    // specified). Pacquet's strip-prerelease fallback over-accepts
-    // this case. Tracked for slice 1 follow-up; engine ranges of
-    // this exact shape are vanishingly rare in real package.json.
-    let err = check_engine(
-        PACKAGE_ID,
-        &wanted(None, Some(">=9.0.0")),
-        &current("0.2.1", Some("9.0.0-alpha.1")),
-    )
-    .expect("valid node version")
-    .expect("must report unsatisfied");
-    assert_eq!(err.wanted.pnpm.as_deref(), Some(">=9.0.0"));
-}
-
-#[test]
 fn engine_is_supported() {
     assert!(
         check_engine(
@@ -128,3 +109,11 @@ fn engine_is_supported() {
         .is_none(),
     );
 }
+
+// The strict-upper-bound prerelease semantics case lives in
+// `tests/known_failures.rs` as an integration test so `just
+// known-failures` (filter `^known_failures::`) picks it up. The
+// helper expects the `known_failures` module to sit at the top of a
+// test binary's path; a unit-test submodule would land at
+// `tests::check_engine::known_failures::...` and fall outside that
+// filter.

@@ -17,11 +17,11 @@ fn host_linux_x64() -> InstallabilityOptions<'static> {
     InstallabilityOptions {
         engine_strict: false,
         optional: false,
-        current_node_version: "20.10.0".to_string(),
+        current_node_version: "20.10.0",
         pnpm_version: None,
-        current_os: "linux".to_string(),
-        current_cpu: "x64".to_string(),
-        current_libc: "glibc".to_string(),
+        current_os: "linux",
+        current_cpu: "x64",
+        current_libc: "glibc",
         supported_architectures: None,
     }
 }

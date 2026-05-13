@@ -106,9 +106,9 @@ fn json_string_array(values: &[String]) -> String {
 /// honored exactly as upstream's `checkList`.
 ///
 /// `supported_architectures` substitutes for `['current']` per axis;
-/// `'current'` entries are replaced with the host value via
-/// [`dedupe_current`] before comparison, matching pnpm at
-/// <https://github.com/pnpm/pnpm/blob/94240bc046/config/package-is-installable/src/checkPlatform.ts#L88-L90>.
+/// `'current'` entries are replaced with the host value before
+/// comparison (see `dedupe_current` in this module), matching pnpm
+/// at <https://github.com/pnpm/pnpm/blob/94240bc046/config/package-is-installable/src/checkPlatform.ts#L88-L90>.
 ///
 /// `current_os`, `current_cpu`, and `current_libc` are passed in
 /// rather than read from the environment so this function stays

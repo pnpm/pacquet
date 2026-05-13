@@ -46,23 +46,6 @@ impl UnsupportedEngineError {
         let current_json = engine_json(&Some(current.node.clone()), &current.pnpm);
         Self { package_id, wanted, current, wanted_json, current_json }
     }
-
-    /// Construct a synthetic engine error for the
-    /// `InvalidNodeVersionError → InstallabilityError::Engine` mapping
-    /// in `package_is_installable`. Upstream `checkEngine` throws this
-    /// kind of error directly; pacquet's installability returns it via
-    /// the engine-error variant so callers don't have to widen their
-    /// error type.
-    pub(crate) fn synthetic_for_invalid_node(
-        package_id: &str,
-        err: &InvalidNodeVersionError,
-    ) -> Self {
-        Self::new(
-            package_id.to_string(),
-            WantedEngine::default(),
-            Engine { node: err.node_version.clone(), pnpm: None },
-        )
-    }
 }
 
 fn engine_json(node: &Option<String>, pnpm: &Option<String>) -> String {
@@ -100,7 +83,8 @@ pub struct InvalidNodeVersionError {
 /// The semver `satisfies` call uses `includePrerelease: true` upstream
 /// (so a `21.0.0-nightly...` host satisfies `^14.18.0 || >=16.0.0`).
 /// `node-semver`'s Rust port doesn't expose that flag, so this port
-/// approximates the behavior — see [`satisfies_with_prerelease`].
+/// approximates the behavior — see `satisfies_with_prerelease` in
+/// this module for the strategy + known divergences.
 pub fn check_engine(
     package_id: &str,
     wanted: &WantedEngine,
@@ -170,13 +154,29 @@ fn node_satisfies(current: &str, wanted: &str) -> Result<bool, InvalidVersion> {
 ///
 /// The fallback is a controlled over-acceptance: a prerelease
 /// `X.Y.Z-rc1` is taken as `X.Y.Z` for the bounded comparison. The
-/// realistic engine ranges (`>=N`, `^N`) all behave correctly. The
-/// edge case where this diverges from upstream is `<X.Y.Z` (a strict
-/// upper bound at exactly the same mmp): upstream's
-/// `includePrerelease: true` would let `X.Y.Z-rc1` through (since
-/// `X.Y.Z-rc1 < X.Y.Z` semantically), pacquet's strip turns it into
-/// `X.Y.Z` which is NOT `<X.Y.Z`. Engine ranges with that shape are
-/// vanishingly rare in real package.json files.
+/// realistic engine ranges that use just a major (`>=N`, `^N`, plain
+/// `N`) all behave correctly because `node-semver` expands those to
+/// a partial-version range that already accepts prereleases of N at
+/// the lower bound.
+///
+/// Two known divergences from upstream's `includePrerelease: true`:
+///
+/// - `>=X.Y.Z` (strict lower bound, fully specified mmp): upstream
+///   rejects `X.Y.Z-rc1` because alpha-class prereleases sort below
+///   the corresponding release in semver, so `X.Y.Z-rc1 < X.Y.Z`.
+///   Pacquet's strip turns the version into `X.Y.Z` which then
+///   satisfies `>=X.Y.Z` — over-acceptance. Pinned by the integration
+///   test `pnpm_is_a_prerelease_version_strict_ge_full_version_does_not_satisfy`
+///   under `known_failures`.
+/// - `<X.Y.Z` (strict upper bound, fully specified mmp): upstream
+///   accepts `X.Y.Z-rc1` (semver-less-than); pacquet's strip turns
+///   it into `X.Y.Z` which is NOT `<X.Y.Z` — under-acceptance.
+///
+/// Engine ranges with either of those exact shapes are vanishingly
+/// rare in real `package.json` files. A future change that lands
+/// byte-for-byte `includePrerelease: true` semantics (the
+/// `nodejs-semver` fork, or an open-coded bound walk) closes both
+/// gaps.
 fn satisfies_with_prerelease(version: &Version, wanted_range: &str) -> bool {
     let Ok(range) = Range::parse(wanted_range) else {
         // Match upstream `semver.satisfies` returning `false` for

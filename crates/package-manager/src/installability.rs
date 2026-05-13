@@ -66,6 +66,13 @@ impl SkippedSnapshots {
 /// or re-read `std::env::consts::OS`.
 pub struct InstallabilityHost {
     pub node_version: String,
+    /// `true` when `node_version` was discovered by spawning
+    /// `node --version`; `false` when the field carries the synthetic
+    /// fallback. The side-effects-cache key derives from this — a
+    /// fallback version must not seed the cache because subsequent
+    /// installs would key on the actual node major and miss every
+    /// row written under the fallback.
+    pub node_detected: bool,
     pub os: &'static str,
     pub cpu: &'static str,
     pub libc: &'static str,
@@ -76,8 +83,6 @@ pub struct InstallabilityHost {
 impl InstallabilityHost {
     /// Resolve the host context from the running process.
     ///
-    /// Resolve the host context from the running process.
-    ///
     /// `node_version` is detected via
     /// [`pacquet_graph_hasher::detect_node_version`]; when detection
     /// fails (no `node` on PATH), pacquet falls back to a synthetic
@@ -85,14 +90,18 @@ impl InstallabilityHost {
     /// The alternative `0.0.0` would falsely-skip every optional
     /// dependency targeting any concrete node range, which is worse
     /// than the over-acceptance the very-high fallback produces.
-    /// Slice 2 will wire a proper `nodeVersion` config setting and
-    /// surface `ERR_PNPM_INVALID_NODE_VERSION` to match upstream's
-    /// throw-on-detection-failure behavior.
+    /// `node_detected` records which path was taken so callers can
+    /// suppress side-effects-cache lookups when the version is
+    /// synthetic. Slice 2 will wire a proper `nodeVersion` config
+    /// setting and surface `ERR_PNPM_INVALID_NODE_VERSION` to match
+    /// upstream's throw-on-detection-failure behavior.
     pub fn detect() -> Self {
-        let node_version = pacquet_graph_hasher::detect_node_version()
-            .unwrap_or_else(|| "99999.0.0".to_string());
+        let detected = pacquet_graph_hasher::detect_node_version();
+        let node_detected = detected.is_some();
+        let node_version = detected.unwrap_or_else(|| "99999.0.0".to_string());
         Self {
             node_version,
+            node_detected,
             os: pacquet_graph_hasher::host_platform(),
             cpu: pacquet_graph_hasher::host_arch(),
             libc: pacquet_graph_hasher::host_libc(),
@@ -131,21 +140,27 @@ pub fn compute_skipped_snapshots<R: Reporter>(
     let mut skipped = SkippedSnapshots::new();
     let mut seen_emit: HashSet<PackageKey> = HashSet::new();
 
+    // Build the host-derived part of the options once. Only `optional`
+    // varies per snapshot, so the loop just toggles that field instead
+    // of cloning four Strings per iteration. `InstallabilityOptions`
+    // borrows its string fields for exactly this reuse pattern.
+    let base_options = InstallabilityOptions {
+        engine_strict: host.engine_strict,
+        optional: false,
+        current_node_version: host.node_version.as_str(),
+        pnpm_version: None,
+        current_os: host.os,
+        current_cpu: host.cpu,
+        current_libc: host.libc,
+        supported_architectures: host.supported_architectures.as_ref(),
+    };
+
     for (snapshot_key, snapshot) in snapshots {
         let metadata_key = snapshot_key.without_peer();
         let Some(metadata) = packages.get(&metadata_key) else { continue };
 
         let manifest = manifest_from_metadata(metadata);
-        let options = InstallabilityOptions {
-            engine_strict: host.engine_strict,
-            optional: snapshot.optional,
-            current_node_version: host.node_version.clone(),
-            pnpm_version: None,
-            current_os: host.os.to_string(),
-            current_cpu: host.cpu.to_string(),
-            current_libc: host.libc.to_string(),
-            supported_architectures: host.supported_architectures.as_ref(),
-        };
+        let options = InstallabilityOptions { optional: snapshot.optional, ..base_options };
 
         let pkg_id = metadata_key.to_string();
         match package_is_installable(&pkg_id, &manifest, &options) {

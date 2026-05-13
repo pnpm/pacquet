@@ -33,9 +33,13 @@ pub enum SkipReason {
     UnsupportedPlatform,
 }
 
-/// Union of the two non-strict error shapes [`check_package`] can
-/// return. Mirrors upstream's `UnsupportedEngineError |
-/// UnsupportedPlatformError` from `index.ts:81`.
+/// Errors [`package_is_installable`] can surface. The first two
+/// variants mirror upstream's `UnsupportedEngineError |
+/// UnsupportedPlatformError` from `index.ts:81`. The third propagates
+/// `checkEngine`'s `ERR_PNPM_INVALID_NODE_VERSION` throw at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/config/package-is-installable/src/checkEngine.ts#L25-L27>
+/// so callers keep the upstream error code instead of seeing it
+/// collapsed into a misleading engine-mismatch error.
 #[derive(Debug, Display, Error, Diagnostic, Clone, PartialEq, Eq)]
 pub enum InstallabilityError {
     #[display("{_0}")]
@@ -44,15 +48,25 @@ pub enum InstallabilityError {
     #[display("{_0}")]
     #[diagnostic(transparent)]
     Platform(UnsupportedPlatformError),
+    #[display("{_0}")]
+    #[diagnostic(transparent)]
+    InvalidNodeVersion(InvalidNodeVersionError),
 }
 
 impl InstallabilityError {
     /// Map the wrapped error variant to its `pnpm:skipped-optional-dependency`
     /// reason, matching `index.ts:57`'s `'unsupported_engine' |
     /// 'unsupported_platform'` ternary.
+    ///
+    /// `InvalidNodeVersion` is treated as an engine-class skip
+    /// because upstream's `checkEngine` throws it from inside the
+    /// engine evaluation; the reason discriminator on a
+    /// `pnpm:skipped-optional-dependency` event for an invalid node
+    /// version is therefore `unsupported_engine`, even though the
+    /// underlying error code is `ERR_PNPM_INVALID_NODE_VERSION`.
     pub fn skip_reason(&self) -> SkipReason {
         match self {
-            Self::Engine(_) => SkipReason::UnsupportedEngine,
+            Self::Engine(_) | Self::InvalidNodeVersion(_) => SkipReason::UnsupportedEngine,
             Self::Platform(_) => SkipReason::UnsupportedPlatform,
         }
     }
@@ -90,24 +104,28 @@ pub enum InstallabilityVerdict {
 
 /// Options threaded into [`package_is_installable`] / [`check_package`].
 ///
-/// `node_version` mirrors pnpm's `nodeVersion` config setting: if
-/// present and parseable, it's used as the current node version; if
-/// absent, the caller passes `current_node` from the actual runtime.
+/// `current_node_version` mirrors pnpm's `nodeVersion` config setting:
+/// if present and parseable, it's used as the current node version;
+/// if absent, the caller passes the actual runtime's version.
 /// `pnpm_version` is normally `None` for pacquet (pacquet isn't pnpm);
 /// upstream sets this from `getSystemPnpmVersion()` or a config
 /// override. `engine_strict` defaults to false (pnpm's default at
 /// <https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts>),
 /// and `supported_architectures` is read from `pnpm-workspace.yaml`
 /// when present.
-#[derive(Debug, Clone, Default)]
+///
+/// All string fields borrow so a caller running through many snapshots
+/// in a row can build the host-derived part of the struct once and
+/// only toggle `optional` per snapshot.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct InstallabilityOptions<'a> {
     pub engine_strict: bool,
     pub optional: bool,
-    pub current_node_version: String,
-    pub pnpm_version: Option<String>,
-    pub current_os: String,
-    pub current_cpu: String,
-    pub current_libc: String,
+    pub current_node_version: &'a str,
+    pub pnpm_version: Option<&'a str>,
+    pub current_os: &'a str,
+    pub current_cpu: &'a str,
+    pub current_libc: &'a str,
     pub supported_architectures: Option<&'a SupportedArchitectures>,
 }
 
@@ -133,9 +151,9 @@ pub fn check_package(
         package_id,
         &wanted_platform,
         options.supported_architectures,
-        &options.current_os,
-        &options.current_cpu,
-        &options.current_libc,
+        options.current_os,
+        options.current_cpu,
+        options.current_libc,
     ) {
         return Ok(Some(InstallabilityError::Platform(platform_err)));
     }
@@ -144,8 +162,10 @@ pub fn check_package(
         return Ok(None);
     };
 
-    let current =
-        Engine { node: options.current_node_version.clone(), pnpm: options.pnpm_version.clone() };
+    let current = Engine {
+        node: options.current_node_version.to_string(),
+        pnpm: options.pnpm_version.map(str::to_string),
+    };
     match check_engine(package_id, wanted_engines, &current)? {
         Some(engine_err) => Ok(Some(InstallabilityError::Engine(engine_err))),
         None => Ok(None),
@@ -175,14 +195,12 @@ pub fn package_is_installable(
         Ok(maybe) => maybe,
         Err(invalid_node) => {
             // Upstream `checkEngine` `throw`s on invalid node version
-            // regardless of `engineStrict`. Map to a synthetic Engine
-            // error so callers don't have to widen the error type.
-            // (Not expected on the install hot path: pacquet passes a
-            // parseable `current_node_version` from a detection step
-            // that itself falls back to a known good default.)
-            return Err(Box::new(InstallabilityError::Engine(
-                UnsupportedEngineError::synthetic_for_invalid_node(package_id, &invalid_node),
-            )));
+            // regardless of `engineStrict`. Surface as the dedicated
+            // `InvalidNodeVersion` variant so callers keep the
+            // `ERR_PNPM_INVALID_NODE_VERSION` code and message
+            // upstream uses, rather than a synthesized engine
+            // mismatch.
+            return Err(Box::new(InstallabilityError::InvalidNodeVersion(invalid_node)));
         }
     };
     let Some(warn) = warn else { return Ok(InstallabilityVerdict::Installable) };

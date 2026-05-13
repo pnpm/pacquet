@@ -62,7 +62,7 @@ pub fn detect_node_major() -> Option<u32> {
 /// detection fails for any of the reasons listed on
 /// [`detect_node_major`].
 ///
-/// Used by [`pacquet_package_is_installable::check_engine`] to
+/// Used by `pacquet-package-is-installable`'s `check_engine` to
 /// evaluate `engines.node` ranges. Pacquet's installability check
 /// needs the full version, not just the major, because ranges like
 /// `>=14.18.0` would otherwise spuriously reject `14.17.x`.
