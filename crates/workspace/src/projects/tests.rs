@@ -118,3 +118,29 @@ fn default_patterns_when_packages_omitted() {
     // `.` + `**` enumerates everything.
     assert_eq!(names, vec!["root".to_string(), "web".to_string()]);
 }
+
+/// `packages: []` (explicit empty array) is *not* the same as
+/// omitted: it means "enumerate only the workspace root project,"
+/// matching upstream's `opts.patterns ?? defaults` where `[]` is a
+/// truthy value that survives the nullish-coalesce. Without this,
+/// `packages: []` would silently fall back to `['.', '**']` and
+/// recurse through the whole tree.
+#[test]
+fn empty_patterns_array_enumerates_root_only() {
+    let tmp = TempDir::new().unwrap();
+    make_project(tmp.path(), ".", "root");
+    make_project(tmp.path(), "apps/web", "web");
+
+    let projects = find_workspace_projects(
+        tmp.path(),
+        &FindWorkspaceProjectsOpts { patterns: Some(Vec::new()) },
+    )
+    .unwrap();
+
+    let names: Vec<String> = projects
+        .iter()
+        .map(|p| p.manifest.value().get("name").unwrap().as_str().unwrap().to_string())
+        .collect();
+    // Only the workspace root surfaces — `web` is not enumerated.
+    assert_eq!(names, vec!["root".to_string()]);
+}

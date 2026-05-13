@@ -50,11 +50,17 @@ pub const WORKSPACE_MANIFEST_FILENAME: &str = "pnpm-workspace.yaml";
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceManifest {
     /// Glob patterns identifying the workspace's projects, relative to
-    /// the workspace dir. Empty when omitted; an explicit empty list is
-    /// distinguishable from "omitted" because an empty document yields
-    /// the default (empty) value too.
+    /// the workspace dir.
+    ///
+    /// `Option` rather than `Vec` so callers can distinguish three
+    /// states: `None` (the `packages` key is absent — fall back to the
+    /// default `['.', '**']` patterns, matching upstream's
+    /// `opts.patterns ?? defaults`), `Some(vec![])` (explicit empty
+    /// array — enumerate only the workspace root), and `Some(...)`
+    /// (the user's patterns). Collapsing the first two would silently
+    /// promote `packages: []` into a recursive scan.
     #[serde(default)]
-    pub packages: Vec<String>,
+    pub packages: Option<Vec<String>>,
 }
 
 /// Raised when `pnpm-workspace.yaml` parses as YAML but fails an
@@ -124,11 +130,13 @@ pub fn read_workspace_manifest(
     // for `packages:` at deserialization. The remaining upstream
     // invariant — entries cannot be empty strings — needs a manual
     // pass since serde doesn't know about that constraint.
-    for entry in &manifest.packages {
-        if entry.is_empty() {
-            return Err(ReadWorkspaceManifestError::Invalid(
-                InvalidWorkspaceManifestError::EmptyPackageEntry,
-            ));
+    if let Some(packages) = &manifest.packages {
+        for entry in packages {
+            if entry.is_empty() {
+                return Err(ReadWorkspaceManifestError::Invalid(
+                    InvalidWorkspaceManifestError::EmptyPackageEntry,
+                ));
+            }
         }
     }
 

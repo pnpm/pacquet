@@ -119,12 +119,31 @@ pub fn find_workspace_projects_no_check(
     opts: &FindWorkspaceProjectsOpts,
 ) -> Result<Vec<Project>, FindWorkspaceProjectsError> {
     // Upstream default mirrors tinyglobby's call site: when no patterns
-    // were configured, search the workspace root non-recursively *and*
-    // recursively. The two-pattern fallback covers both single-project
-    // and monorepo-with-no-`packages` setups.
+    // were configured (`opts.patterns ?? defaults`), search the
+    // workspace root non-recursively *and* recursively. The two-pattern
+    // fallback fires only on `None`, not on `Some(vec![])` — an explicit
+    // empty array means "enumerate only the workspace root" (which is
+    // unconditionally added below per upstream's
+    // https://github.com/pnpm/pnpm/issues/1986 rule).
     let default_patterns = [".".to_string(), "**".to_string()];
-    let patterns: &[String] =
-        opts.patterns.as_deref().filter(|p| !p.is_empty()).unwrap_or(&default_patterns);
+    let patterns: &[String] = match opts.patterns.as_deref() {
+        Some(p) => p,
+        None => &default_patterns,
+    };
+
+    // wax's `not` takes a single pattern; combine the ignores with
+    // `wax::any` so the walk filters them all in one pass, matching
+    // upstream's `ignore: ['**/node_modules/**', '**/bower_components/**']`.
+    // Built once outside the per-pattern loop and `.clone()`-d into each
+    // `Walk::not` call (both `Glob` and `Any` derive `Clone` in wax),
+    // since `IGNORE_PATTERNS` is a constant and reparsing it on every
+    // user-supplied pattern is wasted work.
+    let ignore_template = wax::any(IGNORE_PATTERNS.iter().copied()).map_err(|err| {
+        FindWorkspaceProjectsError::InvalidGlob {
+            pattern: "<built-in ignore>".to_string(),
+            message: err.to_string(),
+        }
+    })?;
 
     let mut manifest_paths: BTreeSet<PathBuf> = BTreeSet::new();
     for pattern in patterns {
@@ -135,16 +154,7 @@ pub fn find_workspace_projects_no_check(
                 message: err.to_string(),
             })?;
 
-        // wax's `not` takes a single pattern; combine the ignores with
-        // `wax::any` so the walk filters them all in one pass, matching
-        // upstream's `ignore: ['**/node_modules/**', '**/bower_components/**']`.
-        let ignore = wax::any(IGNORE_PATTERNS.iter().copied()).map_err(|err| {
-            FindWorkspaceProjectsError::InvalidGlob {
-                pattern: pattern.clone(),
-                message: err.to_string(),
-            }
-        })?;
-        let walk = glob.walk(workspace_root).not(ignore).map_err(|err| {
+        let walk = glob.walk(workspace_root).not(ignore_template.clone()).map_err(|err| {
             FindWorkspaceProjectsError::InvalidGlob {
                 pattern: pattern.clone(),
                 message: err.to_string(),
