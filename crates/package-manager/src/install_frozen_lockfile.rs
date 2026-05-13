@@ -387,19 +387,21 @@ where
                     let Some(dep_map) = dep_map else { continue };
                     for (alias, spec) in dep_map {
                         let Some(version) = spec.version.as_regular() else { continue };
-                        // Build the candidate snapshot key from
-                        // (alias, version). For non-aliased deps
-                        // this is the depPath verbatim; aliased
-                        // runtime deps (unusual) won't match
-                        // `packages` here, matching pnpm's lookup
-                        // by depPath rather than by alias.
-                        let candidate = format!("{alias}@{version}");
-                        if !candidate.contains("@runtime:") {
+                        // Typed `runtime:` check via [`PkgVerPeer::is_runtime`]
+                        // (#511) — replaces the prior
+                        // `format!("{alias}@{version}").contains("@runtime:")`
+                        // string-search. The substring approach also
+                        // failed silently when the resulting key
+                        // couldn't `parse::<PackageKey>` (which is
+                        // exactly what runtime depPaths used to do
+                        // because `PkgVerPeer` rejected the
+                        // `runtime:` prefix), so `--no-runtime`
+                        // wasn't actually filtering anything before
+                        // #511 landed.
+                        if !version.is_runtime() {
                             continue;
                         }
-                        let Ok(key) = candidate.parse::<pacquet_lockfile::PackageKey>() else {
-                            continue;
-                        };
+                        let key = pacquet_lockfile::PackageKey::new(alias.clone(), version.clone());
                         if let Some(meta) = pkgs.get(&key)
                             && matches!(
                                 &meta.resolution,

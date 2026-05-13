@@ -8,14 +8,32 @@ use std::{borrow::Cow, str::FromStr};
 ///
 /// Example: `1.21.3(@types/react@17.0.49)(react-dom@17.0.2)(react@17.0.2)`
 ///
+/// Also accepts an optional `runtime:` prefix for pnpm v11 runtime
+/// dependencies (`node@runtime:22.0.0`, `deno@runtime:1.x`,
+/// `bun@runtime:1`). The prefix is preserved through `Display` so
+/// the round-trip stays byte-stable. Mirrors upstream's depPath
+/// shape for `BinaryResolution` / `VariationsResolution` entries
+/// emitted by the runtime resolvers at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/engine/runtime>.
+///
 /// **NOTE:** The peer part isn't guaranteed to be correct. It is only assumed to be.
 #[derive(Debug, Display, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[display("{version}{peer}")]
+#[display("{}{version}{peer}", prefix.as_deref().unwrap_or(""))]
 #[serde(try_from = "Cow<'de, str>", into = "String")]
 pub struct PkgVerPeer {
+    /// `Some("runtime:")` for runtime depPaths, `None` for plain
+    /// semver. Preserved through `Display` so a round-trip
+    /// produces byte-stable output for the lockfile.
+    prefix: Option<String>,
     version: Version,
     peer: String,
 }
+
+/// `runtime:` is the only scheme prefix pacquet currently accepts.
+/// Defined here so call sites can match on it without re-spelling
+/// the literal everywhere. Other schemes (`tag:`, etc.) can be
+/// added later — see #511's "Out of scope" note.
+pub const RUNTIME_PREFIX: &str = "runtime:";
 
 impl PkgVerPeer {
     /// Get the version part.
@@ -28,9 +46,29 @@ impl PkgVerPeer {
         self.peer.as_str()
     }
 
+    /// Get the optional scheme prefix (e.g. `Some("runtime:")` for
+    /// `runtime:22.0.0`). Returns `None` for plain semver.
+    pub fn prefix(&self) -> Option<&'_ str> {
+        self.prefix.as_deref()
+    }
+
+    /// `true` when the prefix is `runtime:` — i.e. this entry
+    /// resolves through one of pnpm v11's runtime resolvers
+    /// (`node`/`deno`/`bun`). Typed replacement for the
+    /// `depPath.contains("@runtime:")` substring check upstream
+    /// uses at
+    /// <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/index.ts#L1374-L1387>.
+    pub fn is_runtime(&self) -> bool {
+        self.prefix.as_deref() == Some(RUNTIME_PREFIX)
+    }
+
     /// Destructure the struct into a tuple of version and peer.
+    /// Drops the scheme prefix — only useful for plain-semver
+    /// callers that wouldn't have ended up with a non-`None`
+    /// prefix anyway. Callers that care about the prefix should
+    /// use [`PkgVerPeer::prefix`] instead.
     pub fn into_tuple(self) -> (Version, String) {
-        let PkgVerPeer { version, peer } = self;
+        let PkgVerPeer { prefix: _, version, peer } = self;
         (version, peer)
     }
 }
@@ -47,22 +85,30 @@ pub enum ParsePkgVerPeerError {
 impl FromStr for PkgVerPeer {
     type Err = ParsePkgVerPeerError;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        if !value.ends_with(')') {
-            if value.find(['(', ')']).is_some() {
+        // Strip an optional `runtime:` prefix first. Only the
+        // literal `runtime:` is recognised today — other URL-style
+        // schemes (e.g. `tag:`) are out of scope per #511.
+        let (prefix, rest) = match value.strip_prefix(RUNTIME_PREFIX) {
+            Some(rest) => (Some(RUNTIME_PREFIX.to_string()), rest),
+            None => (None, value),
+        };
+
+        if !rest.ends_with(')') {
+            if rest.find(['(', ')']).is_some() {
                 return Err(ParsePkgVerPeerError::MismatchParenthesis);
             }
 
-            let version = value.parse().map_err(ParsePkgVerPeerError::ParseVersionFailure)?;
-            return Ok(PkgVerPeer { version, peer: String::new() });
+            let version = rest.parse().map_err(ParsePkgVerPeerError::ParseVersionFailure)?;
+            return Ok(PkgVerPeer { prefix, version, peer: String::new() });
         }
 
         let opening_parenthesis =
-            value.find('(').ok_or(ParsePkgVerPeerError::MismatchParenthesis)?;
-        let version = value[..opening_parenthesis]
+            rest.find('(').ok_or(ParsePkgVerPeerError::MismatchParenthesis)?;
+        let version = rest[..opening_parenthesis]
             .parse()
             .map_err(ParsePkgVerPeerError::ParseVersionFailure)?;
-        let peer = value[opening_parenthesis..].to_string();
-        Ok(PkgVerPeer { version, peer })
+        let peer = rest[opening_parenthesis..].to_string();
+        Ok(PkgVerPeer { prefix, version, peer })
     }
 }
 

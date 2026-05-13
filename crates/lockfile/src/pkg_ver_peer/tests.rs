@@ -118,3 +118,81 @@ fn deserialize_serialize() {
     case("1.21.3");
     case("1.21.3-rc.0");
 }
+
+// ---------------------------------------------------------------------------
+// `runtime:` scheme prefix (#511 / #437 §F unblocker)
+// ---------------------------------------------------------------------------
+
+/// `runtime:22.0.0` parses with the prefix recorded separately
+/// from the version. The version part is the bare semver, the
+/// peer part is empty.
+#[test]
+fn parse_runtime_prefix_without_peer() {
+    let parsed: PkgVerPeer = "runtime:22.0.0".parse().expect("runtime: prefix must parse");
+    assert_eq!(parsed.prefix(), Some("runtime:"));
+    assert_eq!(parsed.version(), &Version::from((22, 0, 0)));
+    assert_eq!(parsed.peer(), "");
+    assert!(parsed.is_runtime());
+}
+
+/// Runtime entries can in principle carry a peer suffix too
+/// (no upstream example today, but the grammar admits it). The
+/// prefix doesn't disable the parenthesis handling.
+#[test]
+fn parse_runtime_prefix_with_peer() {
+    let parsed: PkgVerPeer =
+        "runtime:1.0.0(some-peer@1.0.0)".parse().expect("runtime:+peer must parse");
+    assert_eq!(parsed.prefix(), Some("runtime:"));
+    assert_eq!(parsed.version(), &Version::from((1, 0, 0)));
+    assert_eq!(parsed.peer(), "(some-peer@1.0.0)");
+    assert!(parsed.is_runtime());
+}
+
+/// Plain semver still parses with `prefix() == None`. Baseline
+/// sanity to ensure the new branch doesn't false-trigger.
+#[test]
+fn parse_plain_semver_has_no_prefix() {
+    let parsed: PkgVerPeer = "1.21.3".parse().unwrap();
+    assert_eq!(parsed.prefix(), None);
+    assert!(!parsed.is_runtime());
+}
+
+/// Display round-trip: `runtime:22.0.0` parses then displays to
+/// the same byte string. Required so `PackageKey::to_string()`
+/// produces the same depPath the lockfile uses.
+#[test]
+fn runtime_prefix_round_trips_through_display() {
+    for input in
+        ["runtime:22.0.0", "runtime:1.0.0-beta.1", "runtime:1.0.0(some-peer@1.0.0)", "1.21.3"]
+    {
+        let parsed: PkgVerPeer = input.parse().expect("parse");
+        let displayed = parsed.to_string();
+        assert_eq!(displayed, input, "round-trip mismatch for {input:?}");
+    }
+}
+
+/// Other URL-style prefixes (`tag:` etc.) aren't recognised yet
+/// — only `runtime:` is. A `tag:` input parses as a plain
+/// version-with-bad-format and errors out. Per #511's "Out of
+/// scope": land `runtime:` first, generalize later if needed.
+#[test]
+fn other_scheme_prefixes_are_not_recognised() {
+    let err = "tag:22.0.0".parse::<PkgVerPeer>().expect_err("tag: prefix must not parse yet");
+    assert!(
+        matches!(err, ParsePkgVerPeerError::ParseVersionFailure(_)),
+        "expected ParseVersionFailure for unrecognised scheme, got {err:?}",
+    );
+}
+
+/// `runtime:` works at the `PackageKey` level too — i.e. via
+/// `PkgNameVerPeer::parse`. The bug the parent issue calls out
+/// is that `"node@runtime:22.0.0".parse::<PackageKey>()` errors;
+/// after this fix it round-trips.
+#[test]
+fn package_key_runtime_round_trip() {
+    use crate::PackageKey;
+    let parsed: PackageKey =
+        "node@runtime:22.0.0".parse().expect("PackageKey must accept runtime: depPaths");
+    assert_eq!(parsed.to_string(), "node@runtime:22.0.0");
+    assert!(parsed.suffix.is_runtime());
+}
