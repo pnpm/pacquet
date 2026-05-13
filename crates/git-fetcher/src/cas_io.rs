@@ -239,13 +239,19 @@ pub(crate) fn synthesize_files_index(
 /// the path doesn't match that shape, so callers can surface a clear
 /// error rather than silently producing a malformed digest.
 fn cas_path_digest(path: &Path) -> Option<String> {
+    // SHA-512 produces 64 bytes / 128 hex chars. The first 2 hex
+    // chars become the shard directory; the rest become the file
+    // stem. Anything outside that exact shape is not a v11 CAS path
+    // — fail closed instead of producing a short / over-long digest
+    // that would later poison `index.db`.
+    const STEM_LEN: usize = 128 - 2;
     let file_name = path.file_name()?.to_str()?;
     let stem = file_name.strip_suffix("-exec").unwrap_or(file_name);
     let shard = path.parent()?.file_name()?.to_str()?;
     if shard.len() != 2 || !shard.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    if !stem.bytes().all(|b| b.is_ascii_hexdigit()) || stem.is_empty() {
+    if stem.len() != STEM_LEN || !stem.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     Some(format!("{shard}{stem}"))
@@ -344,12 +350,28 @@ mod tests {
 
     #[test]
     fn cas_path_digest_rejects_malformed_paths() {
-        // Wrong shape — too few components.
+        // Shard has wrong length (3 chars vs the required 2) — the
+        // most common "wrong shape" failure mode for a path that
+        // accidentally ends up here from outside the CAS layout.
         assert!(cas_path_digest(Path::new("/tmp/foo")).is_none());
         // Non-hex shard.
         assert!(cas_path_digest(&PathBuf::from("/tmp/zz/abc")).is_none());
-        // Empty stem.
-        assert!(cas_path_digest(&PathBuf::from("/tmp/ab/")).is_none());
+        // Right shard shape but the stem is far too short to be
+        // half of a sha512 digest — explicitly exercises the
+        // length check so a future refactor can't silently weaken
+        // it back to "any non-empty hex string".
+        assert!(cas_path_digest(&PathBuf::from("/tmp/ab/cd")).is_none());
+        // Stem one char short of the full 126.
+        let short = format!("/tmp/ab/{}", "c".repeat(125));
+        assert!(cas_path_digest(&PathBuf::from(short)).is_none());
+        // Stem one char too long.
+        let long = format!("/tmp/ab/{}", "c".repeat(127));
+        assert!(cas_path_digest(&PathBuf::from(long)).is_none());
+        // Right total length but with a non-hex byte in the stem.
+        let mut bogus_stem = "c".repeat(125);
+        bogus_stem.push('z');
+        let bad_hex = format!("/tmp/ab/{bogus_stem}");
+        assert!(cas_path_digest(&PathBuf::from(bad_hex)).is_none());
     }
 
     #[test]

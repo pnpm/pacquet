@@ -471,28 +471,30 @@ async fn fast_path_queues_synthesized_index_row() {
     assert_eq!(resolved, bin_cas_path, "synthesized digest must round-trip to the input CAS path");
 }
 
-/// Sub-path resolutions never qualify for the fast path: `cas_paths`
-/// covers the whole monorepo while `packlist` only walks the
-/// sub-dir, so the count check could only coincidentally pass on
-/// degenerate single-package monorepos. Pin the slow-path behavior
-/// to guard against a future refactor that loosens the `path.is_none()`
-/// guard.
+/// Sub-path resolutions never qualify for the fast path: even when
+/// `cas_paths.len() == packlist.len()` (e.g. a tarball that only
+/// contains the sub-package's files), the keys themselves live
+/// under `packages/sub/...` while packlist runs *inside* `pkg_dir`
+/// and produces keys relative to that sub-dir. Returning the input
+/// `cas_paths` verbatim would surface monorepo-prefixed paths to
+/// the dispatcher and corrupt the virtual store. Pin the slow-path
+/// behavior to guard against a future refactor that loosens the
+/// `path.is_none()` guard.
 #[tokio::test(flavor = "multi_thread")]
 async fn sub_path_never_takes_fast_path() {
     let store_root = tempdir().unwrap();
     let store_dir = StoreDir::from(store_root.path().to_path_buf());
     let (writer, writer_task) = StoreIndexWriter::spawn(&store_dir);
 
-    // Single-package "monorepo": one package.json at the root, one
-    // at `packages/sub`. If the fast-path guard ever dropped
-    // `path.is_none()`, this configuration would slip through —
-    // root manifest + sub manifest = 2 files at the top, packlist
-    // of `packages/sub` returns 1 file, no coincidental match. The
-    // test verifies the slow path re-imports under the sub-path.
+    // Tarball contains *only* the sub-package's files, so the
+    // count check (`packlist.len() == cas_paths.len()`) would
+    // otherwise pass: both sides see exactly two files. The only
+    // thing keeping the fast path out is `path.is_none()`. If that
+    // guard ever weakens, the assertion below would flag the
+    // misshaped `packages/sub/...` keys in the row.
     let cas_paths = write_to_cas(
         &store_dir,
         &[
-            ("package.json", br#"{"name":"monorepo","version":"0.0.0","private":true}"#, false),
             (
                 "packages/sub/package.json",
                 br#"{"name":"sub","version":"1.0.0","main":"index.js"}"#,
@@ -503,7 +505,7 @@ async fn sub_path_never_takes_fast_path() {
     );
 
     let key = "sub@1.0.0\tbuilt";
-    let _ = GitHostedTarballFetcher {
+    let received = GitHostedTarballFetcher {
         cas_paths,
         path: Some("packages/sub"),
         allow_build: deny_all_builds(),
@@ -527,15 +529,27 @@ async fn sub_path_never_takes_fast_path() {
     drop(writer);
     writer_task.await.unwrap().unwrap();
 
+    // Output keys are relative to the sub-dir — never carrying the
+    // `packages/sub/` prefix. If the fast path had triggered
+    // (returning input `cas_paths` verbatim), the keys would still
+    // be the monorepo-prefixed paths.
+    let out_keys: Vec<&str> = received.cas_paths.keys().map(String::as_str).collect();
+    assert!(
+        !out_keys.iter().any(|k| k.contains("packages/")),
+        "slow path strips the sub-dir prefix: {out_keys:?}",
+    );
+    assert!(out_keys.contains(&"package.json"));
+    assert!(out_keys.contains(&"index.js"));
+
     let index = StoreIndex::open_in(&store_dir).unwrap();
-    let row = index.get(key).unwrap().expect("sub-path path takes slow path and writes a row");
-    // The slow path packlists relative to `pkg_dir = .../packages/sub`,
-    // so the row's file keys are relative to the sub-dir — not the
-    // monorepo root.
-    let keys: Vec<&str> = row.files.keys().map(String::as_str).collect();
-    assert!(keys.contains(&"package.json"), "sub-dir manifest");
-    assert!(keys.contains(&"index.js"), "sub-dir main");
-    assert!(!keys.iter().any(|k| k.contains("packages/")), "no monorepo prefixes in {keys:?}");
+    let row = index.get(key).unwrap().expect("sub-path takes slow path and writes a row");
+    let row_keys: Vec<&str> = row.files.keys().map(String::as_str).collect();
+    assert!(row_keys.contains(&"package.json"), "sub-dir manifest");
+    assert!(row_keys.contains(&"index.js"), "sub-dir main");
+    assert!(
+        !row_keys.iter().any(|k| k.contains("packages/")),
+        "no monorepo prefixes in {row_keys:?}",
+    );
 }
 
 /// `should_be_built && ignore_scripts` is the second fast-path
