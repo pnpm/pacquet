@@ -221,7 +221,48 @@ pub enum TarballError {
     )]
     #[diagnostic(code(pacquet_tarball::sibling_fetch_failed))]
     SiblingFetchFailed { url: String },
+
+    /// Path-traversal rejection on a zip entry. Mirrors upstream's
+    /// `PATH_TRAVERSAL` error in
+    /// [`fetching/binary-fetcher/src/index.ts`](https://github.com/pnpm/pnpm/blob/94240bc046/fetching/binary-fetcher/src/index.ts):
+    /// any entry whose path is absolute or whose normalized form
+    /// would land outside the target directory is rejected before any
+    /// bytes are written to the CAS.
+    #[from(ignore)]
+    #[display("Refusing to extract zip entry {entry_path:?} from {url} — {reason}")]
+    #[diagnostic(code(pacquet_tarball::path_traversal))]
+    PathTraversal { url: String, entry_path: String, reason: &'static str },
+
+    /// Zip-archive parse / read error. Wraps the underlying `zip`
+    /// crate error verbatim; pacquet does not interpret the failure
+    /// mode beyond surfacing the entry path that triggered it.
+    #[from(ignore)]
+    #[display("Failed to read zip archive {url}: {source}")]
+    #[diagnostic(code(pacquet_tarball::read_zip))]
+    ReadZipArchive {
+        url: String,
+        #[error(source)]
+        source: zip::result::ZipError,
+    },
 }
+
+/// Per-package callback that decides whether a given archive entry
+/// (path relative to the archive's top-level directory, after the
+/// `prefix` strip on zip archives, after the `package/` strip on
+/// npm tarballs) should be excluded from the CAS write.
+///
+/// Mirrors upstream's `ignoreFilePattern` / `archiveFilters` regex
+/// at <https://github.com/pnpm/pnpm/blob/94240bc046/fetching/binary-fetcher/src/index.ts>.
+/// Pacquet uses a callback rather than a regex so the caller can
+/// hand-code the filter without pulling a regex engine into
+/// `pacquet-tarball`; the canonical Node-runtime filter lives at
+/// the install-dispatch site (Slice D) where it's constructed once
+/// per fetch.
+///
+/// The callback receives the *cleaned* path (post-prefix strip,
+/// `to_string_lossy()` already applied), so its inputs are stable
+/// strings matching what pnpm's regex sees upstream.
+pub type IgnoreEntryFilter = dyn Fn(&str) -> bool + Send + Sync;
 
 /// Value of the cache.
 #[derive(Debug, Clone)]
@@ -413,6 +454,7 @@ fn normalize_bundled_manifest(value: &serde_json::Value) -> Option<serde_json::V
 fn extract_tarball_entries(
     archive: &mut Archive<Cursor<Vec<u8>>>,
     store_dir: &StoreDir,
+    ignore_file_pattern: Option<&IgnoreEntryFilter>,
 ) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
     let entries = archive
         .entries()
@@ -499,6 +541,18 @@ fn extract_tarball_entries(
         // matching pnpm's string-based path layer so a shared
         // `index.db` stays consistent across the two tools.
         let cleaned_entry_path = cleaned.to_string_lossy().into_owned();
+        // Drop ignored entries before the CAS write. Mirrors
+        // upstream's `ignoreFilePattern` semantics: paths are matched
+        // *after* the top-level prefix strip, so the callback sees
+        // the same strings pnpm's regex does. Bypassing the CAS
+        // write here also keeps the package's
+        // [`PackageFilesIndex`] tight — an ignored entry never
+        // surfaces in `files` or `manifest`.
+        if let Some(filter) = ignore_file_pattern
+            && filter(&cleaned_entry_path)
+        {
+            continue;
+        }
         let (file_path, file_hash) = store_dir
             .write_cas_file(&buffer, file_is_executable)
             .map_err(TarballError::WriteCasFile)?;
@@ -563,6 +617,159 @@ fn extract_tarball_entries(
         };
 
         if let Some(previous) = pkg_files_idx.files.insert(cleaned_entry_path, file_attrs) {
+            tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
+        }
+    }
+
+    Ok((cas_paths, pkg_files_idx))
+}
+
+/// Walk a zip archive, writing each regular-file entry into the CAFS
+/// and returning the `{relative-path → CAFS path}` map plus the
+/// per-package [`PackageFilesIndex`] row to hand off to the shared
+/// store-index writer. Mirrors the contract of [`extract_tarball_entries`]
+/// — same outputs, same per-file CAS write — but for binary
+/// `BinaryResolution { archive: zip, prefix: ... }` artifacts (the
+/// shape Node.js / Bun / Deno ships their Windows builds in).
+///
+/// Ports the inner loop of upstream's `extractZipToTarget` at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/fetching/binary-fetcher/src/index.ts>:
+///
+/// 1. Directory entries are skipped — AdmZip's
+///    `extractEntryTo(dir, ...)` expands a directory entry to every
+///    descendant via `getEntryChildren`, which would bypass the
+///    `ignoreEntry` filter on per-file paths. Iterating only over
+///    file entries achieves the same filter coverage.
+/// 2. Each entry's path is validated against absolute / `..`
+///    components via [`zip::read::ZipFile::enclosed_name`]. Any
+///    rejection is surfaced as [`TarballError::PathTraversal`] —
+///    same `PATH_TRAVERSAL` error code pnpm raises.
+/// 3. If `archive_prefix` is set and the entry path starts with
+///    `{prefix}/`, the prefix is stripped before the ignore-filter
+///    check and before the entry is recorded in `cas_paths`.
+///    Mirrors upstream's `basenamePrefix` slice — the regex sees
+///    paths relative to the archive's top-level directory.
+/// 4. The cleaned path then runs through `ignore_file_pattern`;
+///    matching entries are dropped before any CAS write.
+/// 5. The remaining entry's bytes are read and committed via
+///    [`StoreDir::write_cas_file`], mirroring upstream's
+///    `addFilesFromDir` import step (pnpm extracts to a temp dir then
+///    imports; pacquet writes directly to the CAS).
+///
+/// Unix mode is read off the central-directory record via
+/// [`zip::read::ZipFile::unix_mode`]; archives written by Windows
+/// tooling don't populate it and we fall back to `0o644`, matching
+/// the implicit mode `addFilesFromDir` ends up with after
+/// `fs.writeFile` on the temp dir.
+fn extract_zip_entries(
+    archive: &mut zip::ZipArchive<Cursor<Vec<u8>>>,
+    package_url: &str,
+    store_dir: &StoreDir,
+    archive_prefix: Option<&str>,
+    ignore_file_pattern: Option<&IgnoreEntryFilter>,
+) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
+    let entry_count = archive.len();
+    let mut cas_paths = HashMap::<String, PathBuf>::with_capacity(entry_count);
+    let mut pkg_files_idx = PackageFilesIndex {
+        manifest: None,
+        requires_build: None,
+        algo: "sha512".to_string(),
+        files: HashMap::with_capacity(entry_count),
+        side_effects: None,
+    };
+
+    // Build the `{prefix}/` slice once. Treat `Some("")` as `None`
+    // — upstream's `basename === ''` branch keeps entry paths
+    // verbatim. The trailing slash anchors the strip so a prefix of
+    // `foo` doesn't accidentally consume `foobar/...`.
+    let basename_prefix: Option<String> =
+        archive_prefix.filter(|p| !p.is_empty()).map(|p| format!("{p}/"));
+
+    for i in 0..entry_count {
+        let mut entry = archive.by_index(i).map_err(|source| TarballError::ReadZipArchive {
+            url: package_url.to_string(),
+            source,
+        })?;
+        if entry.is_dir() {
+            continue;
+        }
+
+        let raw_name = entry.name().to_string();
+        // [`zip::read::ZipFile::enclosed_name`] returns `None` for
+        // absolute paths and any path with a `..` component — a
+        // single check covers both forms of traversal upstream's
+        // `validatePathSecurity` rejects.
+        if entry.enclosed_name().is_none() {
+            return Err(TarballError::PathTraversal {
+                url: package_url.to_string(),
+                entry_path: raw_name,
+                reason: "zip entry path is absolute or escapes the archive root",
+            });
+        }
+
+        // Strip the archive's top-level basename (`prefix` on
+        // [`crate::BinaryResolution`]) so the ignore filter sees the
+        // same relative paths upstream's regex does. If the entry
+        // path doesn't start with `{prefix}/` we use the raw name —
+        // pnpm's slice does the same (no-op when the entry already
+        // lives at the archive root).
+        let cleaned = match basename_prefix.as_deref() {
+            Some(prefix) => raw_name.strip_prefix(prefix).unwrap_or(&raw_name).to_string(),
+            None => raw_name.clone(),
+        };
+        if cleaned.is_empty() {
+            // Skip an entry whose name was exactly the prefix
+            // directory: no relative payload survives the strip.
+            continue;
+        }
+
+        if let Some(filter) = ignore_file_pattern
+            && filter(&cleaned)
+        {
+            continue;
+        }
+
+        // Same allocation-safety shape as
+        // [`extract_tarball_entries`]: clamp the pre-allocation
+        // hint at 64 MiB so a maliciously huge `uncompressed_size`
+        // in the central directory can't crash the process before
+        // `read_to_end` has a chance to surface the real error.
+        const MAX_ENTRY_PREALLOC_BYTES: u64 = 64 * 1024 * 1024;
+        let prealloc_hint = entry.size().min(MAX_ENTRY_PREALLOC_BYTES) as usize;
+        let mut buffer = Vec::new();
+        buffer.try_reserve(prealloc_hint).map_err(|err| {
+            TarballError::ReadTarballEntries(std::io::Error::new(
+                std::io::ErrorKind::OutOfMemory,
+                format!("failed to reserve {prealloc_hint} bytes for zip entry: {err}"),
+            ))
+        })?;
+        entry.read_to_end(&mut buffer).map_err(TarballError::ReadTarballEntries)?;
+
+        // Central-directory record carries a Unix mode only when
+        // the archive was built by a Unix tool; Windows-built
+        // archives omit it. Fall back to `0o644` so the executable
+        // bit defaults to off — `addFilesFromDir` on pnpm's side
+        // lands at the same mode after `fs.writeFile`.
+        let file_mode = entry.unix_mode().unwrap_or(0o644);
+        let file_is_executable = file_mode::is_executable(file_mode);
+
+        let (file_path, file_hash) = store_dir
+            .write_cas_file(&buffer, file_is_executable)
+            .map_err(TarballError::WriteCasFile)?;
+
+        let file_size = u64::try_from(buffer.len()).unwrap_or(u64::MAX);
+        let checked_at = UNIX_EPOCH.elapsed().ok().and_then(|x| u64::try_from(x.as_millis()).ok());
+        let file_attrs = CafsFileInfo {
+            digest: format!("{file_hash:x}"),
+            mode: file_mode,
+            size: file_size,
+            checked_at,
+        };
+
+        if let Some(previous) = cas_paths.insert(cleaned.clone(), file_path) {
+            tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
+        }
+        if let Some(previous) = pkg_files_idx.files.insert(cleaned, file_attrs) {
             tracing::warn!(?previous, "Duplication detected. Old entry has been ejected");
         }
     }
@@ -952,6 +1159,16 @@ pub struct DownloadTarballToStore<'a> {
     /// 4xx / 5xx, network resets, timeouts, mid-stream body errors,
     /// integrity mismatches, and gzip / tar parse failures (#259).
     pub retry_opts: RetryOpts,
+    /// Per-package archive-entry filter applied during CAS extraction.
+    /// Receives the entry's path *after* the top-level
+    /// `package/` strip; returning `true` drops the entry before the
+    /// CAS write. Mirrors upstream's `ignoreFilePattern` /
+    /// `archiveFilters` regex at
+    /// <https://github.com/pnpm/pnpm/blob/94240bc046/fetching/binary-fetcher/src/index.ts>.
+    /// `None` (the default for ordinary npm tarballs) writes every
+    /// regular-file entry; `Some(filter)` is what the binary fetcher
+    /// uses to strip Node's bundled `npm` / `corepack` from the CAS.
+    pub ignore_file_pattern: Option<&'static IgnoreEntryFilter>,
 }
 
 /// Project [`TarballError`] onto pnpm's `requestRetryLogger`'s
@@ -1003,6 +1220,12 @@ fn tarball_error_to_request_retry(err: &TarballError) -> RequestRetryError {
         }
         TarballError::SiblingFetchFailed { .. } => {
             out.code = Some("ERR_PACQUET_SIBLING_FETCH".to_string());
+        }
+        TarballError::PathTraversal { .. } => {
+            out.code = Some("ERR_PACQUET_PATH_TRAVERSAL".to_string());
+        }
+        TarballError::ReadZipArchive { .. } => {
+            out.code = Some("ERR_PACQUET_ZIP".to_string());
         }
     }
     out
@@ -1061,6 +1284,7 @@ async fn fetch_and_extract_once<R: Reporter>(
     attempt: u32,
     store_dir: &'static StoreDir,
     auth_headers: &AuthHeaders,
+    ignore_file_pattern: Option<&'static IgnoreEntryFilter>,
 ) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
     let network_error =
         |error| TarballError::FetchTarball(NetworkError { url: package_url.to_string(), error });
@@ -1257,7 +1481,7 @@ async fn fetch_and_extract_once<R: Reporter>(
                 let mut archive = decompress_gzip(&buffer, package_unpacked_size)?
                     .pipe(Cursor::new)
                     .pipe(Archive::new);
-                extract_tarball_entries(&mut archive, store_dir)?
+                extract_tarball_entries(&mut archive, store_dir, ignore_file_pattern)?
             };
             Ok((cas_paths, pkg_files_idx))
         },
@@ -1293,11 +1517,12 @@ fn emit_progress_found_in_store<R: Reporter>(package_id: &str, requester: &str) 
     }));
 }
 
-// 8 arguments — over the default clippy threshold but each is
+// 9 arguments — over the default clippy threshold but each is
 // distinct: client + URL + integrity describe the request, ID +
 // requester are the reporter dimensions, unpacked-size is allocation
-// hinting, store_dir + retry_opts are install-scoped. Bundling into
-// a struct would just push the same fields into a wrapper.
+// hinting, store_dir + retry_opts are install-scoped, and
+// ignore_file_pattern is the per-fetch archive filter. Bundling
+// into a struct would just push the same fields into a wrapper.
 #[allow(clippy::too_many_arguments)]
 async fn fetch_and_extract_with_retry<R: Reporter>(
     http_client: &ThrottledClient,
@@ -1309,6 +1534,7 @@ async fn fetch_and_extract_with_retry<R: Reporter>(
     store_dir: &'static StoreDir,
     retry_opts: RetryOpts,
     auth_headers: &AuthHeaders,
+    ignore_file_pattern: Option<&'static IgnoreEntryFilter>,
 ) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
     let mut attempt: u32 = 0;
     loop {
@@ -1321,6 +1547,7 @@ async fn fetch_and_extract_with_retry<R: Reporter>(
             attempt,
             store_dir,
             auth_headers,
+            ignore_file_pattern,
         )
         .await;
         match result {
@@ -1505,6 +1732,7 @@ impl<'a> DownloadTarballToStore<'a> {
             prefetched_cas_paths,
             retry_opts,
             auth_headers,
+            ignore_file_pattern,
             ..
         } = self;
         let store_index = self.store_index.clone();
@@ -1588,6 +1816,7 @@ impl<'a> DownloadTarballToStore<'a> {
             store_dir,
             retry_opts,
             auth_headers,
+            ignore_file_pattern,
         )
         .await?;
 
@@ -1608,6 +1837,355 @@ impl<'a> DownloadTarballToStore<'a> {
                 target: "pacquet::download",
                 ?index_key,
                 "no shared store-index writer; skipping index row for this tarball",
+            );
+        }
+
+        Ok(cas_paths)
+    }
+}
+
+/// Run one full zip-archive fetch attempt: hit the network, drain the
+/// body into RAM, verify the integrity hash, then walk the zip and
+/// extract every file entry into the CAFS. Mirrors
+/// [`fetch_and_extract_once`] one-for-one (same network permit
+/// shape, same post-download semaphore gate, same retry-friendly
+/// errors) — only the spawn_blocking body differs: integrity check
+/// then [`extract_zip_entries`] instead of the gzip + tar path.
+///
+/// Mirrors upstream's `downloadAndUnpackZip` at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/fetching/binary-fetcher/src/index.ts>,
+/// but writes directly into the CAS rather than going through a
+/// temp dir + `addFilesFromDir` round-trip (pacquet's
+/// [`StoreDir::write_cas_file`] is the same content-addressed write
+/// `addFilesFromDir` does on each tempdir file).
+async fn fetch_and_extract_zip_once<R: Reporter>(
+    http_client: &ThrottledClient,
+    package_url: &str,
+    package_integrity: &Integrity,
+    package_id: &str,
+    attempt: u32,
+    store_dir: &'static StoreDir,
+    archive_prefix: Option<&str>,
+    ignore_file_pattern: Option<&'static IgnoreEntryFilter>,
+) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
+    let network_error =
+        |error| TarballError::FetchTarball(NetworkError { url: package_url.to_string(), error });
+
+    let client = http_client.acquire().await;
+
+    let send_result = client.get(package_url).send().await;
+    let size = send_result.as_ref().ok().and_then(|r| r.content_length());
+    R::emit(&LogEvent::FetchingProgress(FetchingProgressLog {
+        level: LogLevel::Debug,
+        message: FetchingProgressMessage::Started {
+            attempt: attempt + 1,
+            package_id: package_id.to_owned(),
+            size,
+        },
+    }));
+    let response_head = send_result.map_err(network_error)?;
+
+    let status = response_head.status();
+    if !status.is_success() {
+        const DRAIN_CAP: u64 = 64 * 1024;
+        if response_head.content_length().is_some_and(|len| len <= DRAIN_CAP) {
+            let _ = response_head.bytes().await;
+        }
+        return Err(TarballError::HttpStatus(HttpStatusError {
+            url: package_url.to_string(),
+            status: status.as_u16(),
+        }));
+    }
+
+    let expected_size = response_head.content_length();
+
+    let buffer = {
+        use futures_util::StreamExt;
+        let mut buf = allocate_tarball_buffer(expected_size, package_url)?;
+        let mut stream = response_head.bytes_stream();
+
+        const BIG_TARBALL_SIZE: u64 = 5 * 1024 * 1024;
+        const IN_PROGRESS_THROTTLE: Duration = Duration::from_millis(500);
+        let emit_progress = expected_size.is_some_and(|n| n >= BIG_TARBALL_SIZE);
+        let mut last_emit: Option<Instant> = None;
+        let mut last_emitted_downloaded: u64 = 0;
+        let mut downloaded: u64 = 0;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(network_error)?;
+            buf.extend_from_slice(&chunk);
+            downloaded = downloaded.saturating_add(chunk.len() as u64);
+            let throttle_ready = last_emit.is_none_or(|t| t.elapsed() >= IN_PROGRESS_THROTTLE);
+            if emit_progress && throttle_ready {
+                R::emit(&LogEvent::FetchingProgress(FetchingProgressLog {
+                    level: LogLevel::Debug,
+                    message: FetchingProgressMessage::InProgress {
+                        downloaded,
+                        package_id: package_id.to_owned(),
+                    },
+                }));
+                last_emit = Some(Instant::now());
+                last_emitted_downloaded = downloaded;
+            }
+        }
+        if emit_progress && downloaded != last_emitted_downloaded {
+            R::emit(&LogEvent::FetchingProgress(FetchingProgressLog {
+                level: LogLevel::Debug,
+                message: FetchingProgressMessage::InProgress {
+                    downloaded,
+                    package_id: package_id.to_owned(),
+                },
+            }));
+        }
+        buf
+    };
+    drop(client);
+
+    let _post_download_permit = post_download_semaphore()
+        .acquire()
+        .await
+        .expect("post-download semaphore shouldn't be closed this soon");
+
+    tracing::info!(target: "pacquet::download", ?package_url, "Download completed");
+
+    let package_integrity = package_integrity.clone();
+    let package_url_owned = package_url.to_string();
+    let archive_prefix_owned: Option<String> = archive_prefix.map(str::to_string);
+    let result = tokio::task::spawn_blocking(
+        move || -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
+            package_integrity.check(&buffer).map_err(|error| {
+                TarballError::Checksum(VerifyChecksumError {
+                    url: package_url_owned.clone(),
+                    error,
+                })
+            })?;
+
+            // Open the archive in a scope so the buffer + ZipArchive
+            // are released before we return — large runtime archives
+            // (Node.js for Windows is ~30 MB) keep the buffer alive
+            // through the whole read otherwise.
+            let (cas_paths, pkg_files_idx) = {
+                let cursor = Cursor::new(buffer);
+                let mut archive = zip::ZipArchive::new(cursor).map_err(|source| {
+                    TarballError::ReadZipArchive { url: package_url_owned.clone(), source }
+                })?;
+                extract_zip_entries(
+                    &mut archive,
+                    &package_url_owned,
+                    store_dir,
+                    archive_prefix_owned.as_deref(),
+                    ignore_file_pattern,
+                )?
+            };
+            Ok((cas_paths, pkg_files_idx))
+        },
+    )
+    .await
+    .map_err(TarballError::TaskJoin)??;
+
+    tracing::info!(target: "pacquet::download", ?package_url, "Checksum verified");
+
+    Ok(result)
+}
+
+/// Run [`fetch_and_extract_zip_once`] under pnpm's retry policy.
+/// Same shape as [`fetch_and_extract_with_retry`]: HTTP 401 / 403 /
+/// 404 fail fast, every other error retries with exponential
+/// backoff until [`RetryOpts::retries`] is exhausted. On success
+/// emits `pnpm:progress fetched` once per (resolved) package, same
+/// as the tarball path.
+// 9 arguments — over the default clippy threshold for the same
+// reason `fetch_and_extract_with_retry` is: each is distinct, and
+// bundling into a struct would just push the same fields into a
+// wrapper.
+#[allow(clippy::too_many_arguments)]
+async fn fetch_and_extract_zip_with_retry<R: Reporter>(
+    http_client: &ThrottledClient,
+    package_url: &str,
+    package_integrity: &Integrity,
+    package_id: &str,
+    requester: &str,
+    store_dir: &'static StoreDir,
+    retry_opts: RetryOpts,
+    archive_prefix: Option<&str>,
+    ignore_file_pattern: Option<&'static IgnoreEntryFilter>,
+) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
+    let mut attempt: u32 = 0;
+    loop {
+        let result = fetch_and_extract_zip_once::<R>(
+            http_client,
+            package_url,
+            package_integrity,
+            package_id,
+            attempt,
+            store_dir,
+            archive_prefix,
+            ignore_file_pattern,
+        )
+        .await;
+        match result {
+            Ok(value) => {
+                R::emit(&LogEvent::Progress(ProgressLog {
+                    level: LogLevel::Debug,
+                    message: ProgressMessage::Fetched {
+                        package_id: package_id.to_owned(),
+                        requester: requester.to_owned(),
+                    },
+                }));
+                return Ok(value);
+            }
+            Err(err) if !is_transient_error(&err) => return Err(err),
+            Err(err) if attempt >= retry_opts.retries => {
+                tracing::warn!(
+                    target: "pacquet::download",
+                    ?package_url,
+                    attempts = attempt + 1,
+                    ?err,
+                    "Zip archive fetch retry budget exhausted",
+                );
+                return Err(err);
+            }
+            Err(err) => {
+                let delay = retry_opts.delay_for(attempt);
+                tracing::warn!(
+                    target: "pacquet::download",
+                    ?package_url,
+                    attempt = attempt + 1,
+                    max_attempts = retry_opts.retries + 1,
+                    ?delay,
+                    ?err,
+                    "Zip archive fetch failed; retrying after backoff",
+                );
+                R::emit(&LogEvent::RequestRetry(RequestRetryLog {
+                    level: LogLevel::Debug,
+                    attempt: attempt + 1,
+                    error: tarball_error_to_request_retry(&err),
+                    max_retries: retry_opts.retries,
+                    method: "GET".to_string(),
+                    timeout: u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+                    url: package_url.to_string(),
+                }));
+                tokio::time::sleep(delay).await;
+                attempt += 1;
+            }
+        }
+    }
+}
+
+/// Counterpart to [`DownloadTarballToStore`] for zip-archive binary
+/// resolutions. Mirrors pnpm's `downloadAndUnpackZip` at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/fetching/binary-fetcher/src/index.ts>:
+/// the zip flow downloads the body, verifies the integrity hash,
+/// then walks zip entries and writes each to the CAFS — with the
+/// `prefix` field stripped from each entry path before the ignore
+/// filter and CAS write so the runtime's top-level
+/// `node-vX.Y.Z-<platform>-<arch>/` directory doesn't leak into
+/// downstream consumers' paths.
+///
+/// The store-index lookup, prefetch cache reuse, and store-index
+/// writer queueing match [`DownloadTarballToStore`] — runtime
+/// artifacts share the same `index.db` schema as ordinary npm
+/// packages.
+#[must_use]
+pub struct DownloadZipArchiveToStore<'a> {
+    pub http_client: &'a ThrottledClient,
+    pub store_dir: &'static StoreDir,
+    pub store_index: Option<SharedReadonlyStoreIndex>,
+    pub store_index_writer: Option<Arc<StoreIndexWriter>>,
+    pub verify_store_integrity: bool,
+    pub verified_files_cache: SharedVerifiedFilesCache,
+    pub package_integrity: &'a Integrity,
+    pub package_url: &'a str,
+    pub package_id: &'a str,
+    pub requester: &'a str,
+    pub prefetched_cas_paths: Option<&'a PrefetchedCasPaths>,
+    pub retry_opts: RetryOpts,
+    /// Basename of the archive's top-level directory, mirroring
+    /// [`crate::BinaryResolution::prefix`]. The zip extractor
+    /// strips `{prefix}/` from each entry path before the
+    /// ignore-filter check and the CAS write, so downstream
+    /// consumers see paths relative to the package root rather than
+    /// the runtime-version-stamped wrapper directory.
+    pub archive_prefix: Option<&'a str>,
+    pub ignore_file_pattern: Option<&'static IgnoreEntryFilter>,
+}
+
+impl<'a> DownloadZipArchiveToStore<'a> {
+    /// Execute the subroutine without an in-memory cache. Mirrors
+    /// [`DownloadTarballToStore::run_without_mem_cache`] — same
+    /// prefetch-cas-paths reuse, same SQLite-index lookup, same
+    /// store-index writer queue — only the network and extract
+    /// path differs (zip instead of gzip + tar).
+    pub async fn run_without_mem_cache<R: Reporter>(
+        &self,
+    ) -> Result<HashMap<String, PathBuf>, TarballError> {
+        let &DownloadZipArchiveToStore {
+            http_client,
+            store_dir,
+            package_integrity,
+            package_url,
+            package_id,
+            requester,
+            verify_store_integrity,
+            prefetched_cas_paths,
+            retry_opts,
+            archive_prefix,
+            ignore_file_pattern,
+            ..
+        } = self;
+        let store_index = self.store_index.clone();
+        let store_index_writer = self.store_index_writer.clone();
+        let verified_files_cache = Arc::clone(&self.verified_files_cache);
+
+        let cache_key = store_index_key(&package_integrity.to_string(), package_id);
+        if let Some(prefetched) = prefetched_cas_paths
+            && let Some(cas_paths) = prefetched.get(&cache_key)
+        {
+            tracing::info!(
+                target: "pacquet::download",
+                ?package_url,
+                ?package_id,
+                "Reusing prefetched CAFS entry — skipping zip download",
+            );
+            emit_progress_found_in_store::<R>(package_id, requester);
+            return Ok((**cas_paths).clone());
+        }
+        if let Some(cas_paths) = load_cached_cas_paths(
+            store_index,
+            store_dir,
+            cache_key,
+            verify_store_integrity,
+            verified_files_cache,
+        )
+        .await
+        {
+            tracing::info!(target: "pacquet::download", ?package_url, ?package_id, "Reusing cached CAFS entry — skipping zip download");
+            emit_progress_found_in_store::<R>(package_id, requester);
+            return Ok(cas_paths);
+        }
+
+        tracing::info!(target: "pacquet::download", ?package_url, "New cache (zip)");
+
+        let (cas_paths, pkg_files_idx) = fetch_and_extract_zip_with_retry::<R>(
+            http_client,
+            package_url,
+            package_integrity,
+            package_id,
+            requester,
+            store_dir,
+            retry_opts,
+            archive_prefix,
+            ignore_file_pattern,
+        )
+        .await?;
+
+        let index_key = store_index_key(&package_integrity.to_string(), package_id);
+        if let Some(writer) = store_index_writer {
+            writer.queue(index_key, pkg_files_idx);
+        } else {
+            tracing::warn!(
+                target: "pacquet::download",
+                ?index_key,
+                "no shared store-index writer; skipping index row for this zip archive",
             );
         }
 
