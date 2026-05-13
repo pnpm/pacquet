@@ -1,0 +1,321 @@
+use super::{ImportIndexedDirError, import_indexed_dir};
+use pacquet_config::PackageImportMethod;
+use pacquet_reporter::SilentReporter;
+use pretty_assertions::assert_eq;
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::atomic::AtomicU8,
+};
+use tempfile::tempdir;
+
+fn write_source(dir: &Path, rel: &str, contents: &[u8]) -> PathBuf {
+    let path = dir.join(rel);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create source parent");
+    }
+    fs::write(&path, contents).expect("write source file");
+    path
+}
+
+fn cas_map(entries: &[(&str, PathBuf)]) -> HashMap<String, PathBuf> {
+    entries.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect()
+}
+
+/// Smoke test: with no existing target, this behaves like
+/// `create_cas_files` — mkdir parents, link the files. Verifies the
+/// "fresh install" branch.
+#[test]
+fn fresh_target_links_files() {
+    let tmp = tempdir().unwrap();
+    let src_root = tmp.path().join("cas");
+    fs::create_dir_all(&src_root).unwrap();
+    let a = write_source(&src_root, "a.txt", b"alpha");
+    let b = write_source(&src_root, "b.txt", b"beta");
+    let cas = cas_map(&[("package.json", a), ("lib/index.js", b)]);
+
+    let target = tmp.path().join("pkg");
+    import_indexed_dir::<SilentReporter>(
+        &AtomicU8::new(0),
+        PackageImportMethod::Copy,
+        &target,
+        &cas,
+    )
+    .expect("fresh import should succeed");
+
+    assert_eq!(fs::read(target.join("package.json")).unwrap(), b"alpha");
+    assert_eq!(fs::read(target.join("lib/index.js")).unwrap(), b"beta");
+}
+
+/// The defining test for Slice 1: a re-install must replace every file
+/// in the package directory but leave a pre-existing `node_modules/`
+/// subdirectory (and everything inside it) untouched. Models the
+/// hoisted-linker pattern of "rimraf orphans, then re-import each
+/// package over the top, where some packages have already had their
+/// nested deps installed by a sibling pass".
+#[test]
+fn existing_target_replaces_files_and_preserves_node_modules() {
+    let tmp = tempdir().unwrap();
+    let src_root = tmp.path().join("cas");
+    fs::create_dir_all(&src_root).unwrap();
+    let pkg_json = write_source(&src_root, "package.json", b"{\"version\":\"2.0.0\"}");
+    let cas = cas_map(&[("package.json", pkg_json)]);
+
+    let target = tmp.path().join("pkg");
+    // Pre-existing package state: a stale package.json plus a nested
+    // node_modules/ that must not be clobbered.
+    fs::create_dir_all(&target).unwrap();
+    fs::write(target.join("package.json"), b"{\"version\":\"1.0.0\"}").unwrap();
+    fs::write(target.join("stale.txt"), b"left over from v1").unwrap();
+    fs::create_dir_all(target.join("node_modules/inner")).unwrap();
+    fs::write(target.join("node_modules/inner/index.js"), b"// inner dep").unwrap();
+    fs::write(target.join("node_modules/.placeholder"), b"keep me").unwrap();
+
+    import_indexed_dir::<SilentReporter>(
+        &AtomicU8::new(0),
+        PackageImportMethod::Copy,
+        &target,
+        &cas,
+    )
+    .expect("overwrite should succeed");
+
+    // New file in place, stale file evicted.
+    assert_eq!(fs::read(target.join("package.json")).unwrap(), b"{\"version\":\"2.0.0\"}");
+    assert!(!target.join("stale.txt").exists(), "stale file must be removed");
+    // Nested deps preserved verbatim — both files and the directory
+    // structure intact.
+    assert_eq!(fs::read(target.join("node_modules/inner/index.js")).unwrap(), b"// inner dep");
+    assert_eq!(fs::read(target.join("node_modules/.placeholder")).unwrap(), b"keep me");
+}
+
+/// If the package directory exists but has no `node_modules/`, the
+/// re-install still wipes the stale files. Variant of the previous
+/// test that exercises the "preserve" branch when there's nothing to
+/// preserve.
+#[test]
+fn existing_target_without_node_modules_replaces_cleanly() {
+    let tmp = tempdir().unwrap();
+    let src_root = tmp.path().join("cas");
+    fs::create_dir_all(&src_root).unwrap();
+    let pkg_json = write_source(&src_root, "package.json", b"new");
+    let cas = cas_map(&[("package.json", pkg_json)]);
+
+    let target = tmp.path().join("pkg");
+    fs::create_dir_all(target.join("nested")).unwrap();
+    fs::write(target.join("nested/old.txt"), b"old").unwrap();
+    fs::write(target.join("top.txt"), b"top").unwrap();
+
+    import_indexed_dir::<SilentReporter>(
+        &AtomicU8::new(0),
+        PackageImportMethod::Copy,
+        &target,
+        &cas,
+    )
+    .expect("overwrite should succeed");
+
+    assert_eq!(fs::read(target.join("package.json")).unwrap(), b"new");
+    assert!(!target.join("nested").exists(), "stale nested dir must be removed");
+    assert!(!target.join("top.txt").exists(), "stale top-level file must be removed");
+}
+
+/// A regular file occupying the target path is replaced with the
+/// freshly-imported directory. The hoisted-linker call site shouldn't
+/// hit this in practice, but bailing out would wedge the install.
+#[test]
+fn target_that_is_a_regular_file_gets_replaced() {
+    let tmp = tempdir().unwrap();
+    let src_root = tmp.path().join("cas");
+    fs::create_dir_all(&src_root).unwrap();
+    let a = write_source(&src_root, "a.txt", b"contents");
+    let cas = cas_map(&[("package.json", a)]);
+
+    let target = tmp.path().join("pkg");
+    fs::write(&target, b"a file, not a dir").unwrap();
+
+    import_indexed_dir::<SilentReporter>(
+        &AtomicU8::new(0),
+        PackageImportMethod::Copy,
+        &target,
+        &cas,
+    )
+    .expect("regular-file target should be replaced");
+
+    assert!(target.is_dir(), "target should now be a directory");
+    assert_eq!(fs::read(target.join("package.json")).unwrap(), b"contents");
+}
+
+/// A symlink occupying the target path is unlinked (not followed) and
+/// replaced with the imported package. The pointee — if it exists —
+/// must not be touched.
+#[test]
+#[cfg(unix)]
+fn target_that_is_a_symlink_gets_replaced_without_following() {
+    let tmp = tempdir().unwrap();
+    let src_root = tmp.path().join("cas");
+    fs::create_dir_all(&src_root).unwrap();
+    let a = write_source(&src_root, "a.txt", b"new");
+    let cas = cas_map(&[("package.json", a)]);
+
+    // Make a real directory elsewhere with a file we don't want
+    // overwritten, then point `target` at it via a symlink.
+    let pointee = tmp.path().join("real_dir");
+    fs::create_dir_all(&pointee).unwrap();
+    fs::write(pointee.join("sentinel.txt"), b"untouched").unwrap();
+    let target = tmp.path().join("pkg");
+    std::os::unix::fs::symlink(&pointee, &target).unwrap();
+
+    import_indexed_dir::<SilentReporter>(
+        &AtomicU8::new(0),
+        PackageImportMethod::Copy,
+        &target,
+        &cas,
+    )
+    .expect("symlink target should be replaced");
+
+    let target_meta = fs::symlink_metadata(&target).unwrap();
+    assert!(target_meta.file_type().is_dir(), "target is now a real directory");
+    assert_eq!(fs::read(target.join("package.json")).unwrap(), b"new");
+    // The original pointee must still contain its sentinel.
+    assert_eq!(fs::read(pointee.join("sentinel.txt")).unwrap(), b"untouched");
+}
+
+/// Deeply-nested files in the indexed map land in the right places on
+/// a fresh install. Sanity-checks that the parent-dir pre-pass inside
+/// `create_cas_files` is reached through the new entry point.
+#[test]
+fn fresh_target_creates_nested_directories() {
+    let tmp = tempdir().unwrap();
+    let src_root = tmp.path().join("cas");
+    fs::create_dir_all(&src_root).unwrap();
+    let a = write_source(&src_root, "a.txt", b"deep");
+    let b = write_source(&src_root, "b.txt", b"deeper");
+    let cas = cas_map(&[("lib/deep/file.js", a), ("lib/deep/nested/file.js", b)]);
+
+    let target = tmp.path().join("pkg");
+    import_indexed_dir::<SilentReporter>(
+        &AtomicU8::new(0),
+        PackageImportMethod::Copy,
+        &target,
+        &cas,
+    )
+    .expect("nested fresh import should succeed");
+
+    assert_eq!(fs::read(target.join("lib/deep/file.js")).unwrap(), b"deep");
+    assert_eq!(fs::read(target.join("lib/deep/nested/file.js")).unwrap(), b"deeper");
+}
+
+/// If the indexed file map names a `node_modules/...` entry while the
+/// destination already has a real `node_modules/` to preserve, surface
+/// the collision rather than silently merging. Upstream's
+/// `moveOrMergeModulesDirs` would merge; pacquet's slice-1 consumer
+/// (the hoisted-linker) never produces this state, so erroring loudly
+/// is the right call until a real caller demands the merge.
+#[test]
+fn node_modules_collision_in_file_map_errors() {
+    let tmp = tempdir().unwrap();
+    let src_root = tmp.path().join("cas");
+    fs::create_dir_all(&src_root).unwrap();
+    let regular = write_source(&src_root, "a.txt", b"top");
+    let inside_nm = write_source(&src_root, "b.txt", b"shipped-nm");
+    let cas = cas_map(&[("package.json", regular), ("node_modules/foo/index.js", inside_nm)]);
+
+    let target = tmp.path().join("pkg");
+    fs::create_dir_all(target.join("node_modules/existing")).unwrap();
+    fs::write(target.join("node_modules/existing/keep.js"), b"survivor").unwrap();
+
+    let err = import_indexed_dir::<SilentReporter>(
+        &AtomicU8::new(0),
+        PackageImportMethod::Copy,
+        &target,
+        &cas,
+    )
+    .expect_err("collision should surface");
+    assert!(matches!(err, ImportIndexedDirError::NodeModulesCollision { .. }), "got: {err:?}");
+
+    // After the error, the existing nested dep must still be on disk —
+    // the function's cleanup must not have rimrafed it as a side
+    // effect of the failed stage.
+    assert_eq!(fs::read(target.join("node_modules/existing/keep.js")).unwrap(), b"survivor");
+}
+
+/// On Unix, when `Hardlink` is available we want re-imports to share
+/// inodes with the freshly-staged source so re-installs benefit from
+/// the same store-sharing as fresh installs. Doubles as proof that
+/// the staging-rename path doesn't silently downgrade to copy.
+#[test]
+#[cfg(unix)]
+fn hardlink_method_survives_staging_swap() {
+    use std::os::unix::fs::MetadataExt;
+
+    let tmp = tempdir().unwrap();
+    let src_root = tmp.path().join("cas");
+    fs::create_dir_all(&src_root).unwrap();
+    let src = write_source(&src_root, "a.txt", b"shared");
+    let cas = cas_map(&[("package.json", src.clone())]);
+
+    let target = tmp.path().join("pkg");
+    fs::create_dir_all(&target).unwrap();
+    fs::write(target.join("package.json"), b"stale").unwrap();
+
+    import_indexed_dir::<SilentReporter>(
+        &AtomicU8::new(0),
+        PackageImportMethod::Hardlink,
+        &target,
+        &cas,
+    )
+    .expect("hardlink import should succeed on same-FS tempdir");
+
+    let src_ino = fs::metadata(&src).unwrap().ino();
+    let dst_ino = fs::metadata(target.join("package.json")).unwrap().ino();
+    assert_eq!(src_ino, dst_ino, "hardlinked re-import must share inode with the store source");
+}
+
+/// Two staging paths produced back-to-back in the same process must
+/// differ — otherwise concurrent rayon workers would collide on the
+/// rename target. Uses the function indirectly via two fresh-target
+/// installs in parallel.
+#[test]
+fn concurrent_imports_into_different_targets_do_not_collide() {
+    let tmp = tempdir().unwrap();
+    let src_root = tmp.path().join("cas");
+    fs::create_dir_all(&src_root).unwrap();
+    let a = write_source(&src_root, "a.txt", b"one");
+    let b = write_source(&src_root, "b.txt", b"two");
+    let cas_a = cas_map(&[("package.json", a)]);
+    let cas_b = cas_map(&[("package.json", b)]);
+
+    let target_a = tmp.path().join("pkg-a");
+    let target_b = tmp.path().join("pkg-b");
+    // Pre-seed both so the stage-and-swap path is exercised on both.
+    fs::create_dir_all(&target_a).unwrap();
+    fs::create_dir_all(&target_b).unwrap();
+    fs::write(target_a.join("stale.txt"), b"stale").unwrap();
+    fs::write(target_b.join("stale.txt"), b"stale").unwrap();
+
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            import_indexed_dir::<SilentReporter>(
+                &AtomicU8::new(0),
+                PackageImportMethod::Copy,
+                &target_a,
+                &cas_a,
+            )
+            .expect("a should succeed");
+        });
+        s.spawn(|| {
+            import_indexed_dir::<SilentReporter>(
+                &AtomicU8::new(0),
+                PackageImportMethod::Copy,
+                &target_b,
+                &cas_b,
+            )
+            .expect("b should succeed");
+        });
+    });
+
+    assert_eq!(fs::read(target_a.join("package.json")).unwrap(), b"one");
+    assert_eq!(fs::read(target_b.join("package.json")).unwrap(), b"two");
+    assert!(!target_a.join("stale.txt").exists());
+    assert!(!target_b.join("stale.txt").exists());
+}
