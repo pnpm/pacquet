@@ -241,7 +241,7 @@ fn validate_importer_id(importer_id: &str) -> Result<(), SymlinkDirectDependenci
 /// keeps lockfiles written by pacquet and pnpm interchangeable. The
 /// returned path is platform-native (`Path::join` handles the
 /// conversion on Windows).
-fn importer_root_dir(workspace_root: &Path, importer_id: &str) -> PathBuf {
+pub(crate) fn importer_root_dir(workspace_root: &Path, importer_id: &str) -> PathBuf {
     if importer_id == "." {
         workspace_root.to_path_buf()
     } else {

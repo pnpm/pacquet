@@ -14,7 +14,7 @@ use pacquet_reporter::{
 };
 use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
 use pipe_trait::Pipe;
-use std::sync::Mutex;
+use std::{path::PathBuf, sync::Mutex};
 use tempfile::tempdir;
 use text_block_macros::text_block;
 
@@ -1416,6 +1416,95 @@ async fn frozen_lockfile_with_gvs_off_skips_project_registry() {
         !store_dir.join("projects").exists(),
         "GVS-off install must NOT create the project-registry directory",
     );
+
+    drop(dir);
+}
+
+/// Workspace install under GVS registers each importer separately.
+/// Mirrors upstream's per-project
+/// [`registerProject`](https://github.com/pnpm/pnpm/blob/94240bc046/store/controller/src/storeController/projectRegistry.ts)
+/// call site, which fires once per workspace package — a workspace
+/// with `.` (root) and `packages/web` therefore ends up with two
+/// entries in `<store_dir>/projects/`, each resolving back to its
+/// own root dir. `pacquet store prune` (tracked separately) needs
+/// every reachable importer in the registry to keep the
+/// `<store_dir>/links/...` slots they share alive.
+#[tokio::test]
+async fn frozen_lockfile_under_gvs_registers_each_workspace_importer() {
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let workspace_root = dir.path().join("workspace");
+    let modules_dir = workspace_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    // Workspace layout: root + one sub-importer. Both directories
+    // have to exist on disk because `register_project` canonicalises
+    // the target before writing the symlink.
+    let web_dir = workspace_root.join("packages/web");
+    std::fs::create_dir_all(&web_dir).expect("create packages/web");
+    let manifest_path = workspace_root.join("package.json");
+    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    // The sub-importer needs a `package.json` too — the freshness check
+    // satisfies on the root only today, but the per-importer registry
+    // write still resolves the target on disk.
+    std::fs::write(web_dir.join("package.json"), "{}").expect("write packages/web/package.json");
+
+    let mut config = Config::new();
+    config.enable_global_virtual_store = true;
+    config.lockfile = false;
+    config.store_dir = store_dir.clone().into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    config.global_virtual_store_dir = store_dir.join("links");
+    let config = config.leak();
+
+    // Two importers: `.` and `packages/web`. Empty dep graph so the
+    // install reaches the per-importer registry-write loop without
+    // doing any actual fetch/link work.
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies: {}"
+        "  packages/web:"
+        "    dependencies: {}"
+        "packages: {}"
+        "snapshots: {}"
+    })
+    .expect("parse minimal v9 workspace lockfile");
+
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await
+    .expect("workspace frozen-lockfile install under GVS should succeed");
+
+    // Exactly two registry entries — one per importer. Resolve the
+    // symlink targets and confirm both project roots are present.
+    let projects_dir = store_dir.join("projects");
+    assert!(projects_dir.is_dir(), "GVS-on workspace install must create <store_dir>/projects/");
+    let mut targets: Vec<PathBuf> = std::fs::read_dir(&projects_dir)
+        .unwrap()
+        .map(|entry| {
+            let target = std::fs::read_link(entry.unwrap().path()).expect("registry entry");
+            dunce::canonicalize(&target).expect("canonicalize registry target")
+        })
+        .collect();
+    targets.sort();
+    let mut expected = [
+        dunce::canonicalize(&workspace_root).expect("canonicalize workspace root"),
+        dunce::canonicalize(&web_dir).expect("canonicalize packages/web"),
+    ];
+    expected.sort();
+    assert_eq!(targets, expected, "every importer must have a registry entry");
 
     drop(dir);
 }

@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::Path, sync::atomic::AtomicU8, time::SystemTime};
+use std::{collections::BTreeMap, sync::atomic::AtomicU8, time::SystemTime};
 
 use crate::{
     InstallFrozenLockfile, InstallFrozenLockfileError, InstallWithoutLockfile,
@@ -216,33 +216,6 @@ where
 
         tracing::info!(target: "pacquet::install", "Start all");
 
-        // Register this project against the shared store when both the
-        // frozen-lockfile dispatch and GVS are active — i.e. when the
-        // install actually places packages under `<store_dir>/links/...`.
-        // `InstallWithoutLockfile` still uses the project-local virtual
-        // store (`VirtualStoreLayout::legacy`), so a registry entry for
-        // it would point at a project that never touches the shared
-        // store. Gating on `frozen_lockfile` keeps
-        // `<store_dir>/projects/` aligned with what `pacquet store prune`
-        // (tracked separately) will need to walk.
-        //
-        // Mirrors upstream's call into `@pnpm/store.controller`'s
-        // [`registerProject`](https://github.com/pnpm/pnpm/blob/94240bc046/store/controller/src/storeController/projectRegistry.ts).
-        // Best-effort: a registry write failure shouldn't fail the
-        // install. Surface as `tracing::warn!` so the failure is
-        // diagnosable but the install carries on.
-        if frozen_lockfile && config.enable_global_virtual_store {
-            let project_dir = Path::new(&prefix);
-            if let Err(error) = pacquet_store_dir::register_project(&config.store_dir, project_dir)
-            {
-                tracing::warn!(
-                    target: "pacquet::install",
-                    ?error,
-                    "Failed to register project in the global-virtual-store registry; install continues",
-                );
-            }
-        }
-
         // Dispatch priority, matching pnpm's CLI semantics:
         //
         // 1. `--frozen-lockfile` is the strongest signal. If the user
@@ -297,6 +270,46 @@ where
             .run::<R>()
             .await
             .map_err(InstallError::FrozenLockfile)?;
+
+            // Register every importer against the shared store now
+            // that the install has materialized their `node_modules/`.
+            // Mirrors upstream's call into `@pnpm/store.controller`'s
+            // [`registerProject`](https://github.com/pnpm/pnpm/blob/94240bc046/store/controller/src/storeController/projectRegistry.ts),
+            // which runs once per importer — a workspace ends up with
+            // one symlink in `<store_dir>/projects/` per package, so
+            // `pacquet store prune` (tracked separately) can find
+            // every reachable consumer of `<store_dir>/links/...`.
+            //
+            // Gated on `frozen_lockfile && enable_global_virtual_store`:
+            // `InstallWithoutLockfile` keeps the project-local virtual
+            // store via `VirtualStoreLayout::legacy`, and a registry
+            // entry for it would point at a project that never
+            // touches the shared store.
+            //
+            // Best-effort: a registry write failure shouldn't fail
+            // the install. Surface as `tracing::warn!` so the failure
+            // is diagnosable but the install carries on. Validation
+            // of importer keys is done by
+            // [`crate::SymlinkDirectDependencies::run`] before we get
+            // here, so by this point every key is known-safe.
+            if config.enable_global_virtual_store {
+                for importer_id in importers.keys() {
+                    let project_dir = crate::symlink_direct_dependencies::importer_root_dir(
+                        &workspace_root,
+                        importer_id,
+                    );
+                    if let Err(error) =
+                        pacquet_store_dir::register_project(&config.store_dir, &project_dir)
+                    {
+                        tracing::warn!(
+                            target: "pacquet::install",
+                            ?error,
+                            importer_id = %importer_id,
+                            "Failed to register importer in the global-virtual-store registry; install continues",
+                        );
+                    }
+                }
+            }
         } else if config.lockfile {
             return Err(InstallError::UnsupportedLockfileMode);
         } else {
