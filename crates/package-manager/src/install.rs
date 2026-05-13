@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, sync::atomic::AtomicU8, time::SystemTime};
 
 use crate::{
-    InstallFrozenLockfile, InstallFrozenLockfileError, InstallWithoutLockfile,
+    HoistedDependencies, InstallFrozenLockfile, InstallFrozenLockfileError, InstallWithoutLockfile,
     InstallWithoutLockfileError, ResolvedPackages,
 };
 use derive_more::{Display, Error};
@@ -249,7 +249,7 @@ where
         //    normally generate / update a lockfile, which pacquet
         //    doesn't support yet → `UnsupportedLockfileMode`. `false`
         //    means "lockfile disabled, resolve from registry".
-        if frozen_lockfile {
+        let hoisted_dependencies: HoistedDependencies = if frozen_lockfile {
             let Some(lockfile) = lockfile else {
                 return Err(InstallError::NoLockfile);
             };
@@ -271,7 +271,7 @@ where
             satisfies_package_manifest(importer, manifest, Lockfile::ROOT_IMPORTER_KEY)
                 .map_err(|reason| InstallError::OutdatedLockfile { reason })?;
 
-            InstallFrozenLockfile {
+            let frozen_result = InstallFrozenLockfile {
                 http_client,
                 config,
                 importers,
@@ -328,6 +328,8 @@ where
                     }
                 }
             }
+
+            frozen_result
         } else if config.lockfile {
             return Err(InstallError::UnsupportedLockfileMode);
         } else {
@@ -343,8 +345,8 @@ where
             }
             .run::<R>()
             .await
-            .map_err(InstallError::WithoutLockfile)?;
-        }
+            .map_err(InstallError::WithoutLockfile)?
+        };
 
         tracing::info!(target: "pacquet::install", "Complete all");
 
@@ -365,7 +367,7 @@ where
         // tool) can detect a layout change and prune accordingly.
         write_modules_manifest::<RealApi>(
             &config.modules_dir,
-            build_modules_manifest(config, included),
+            build_modules_manifest(config, included, hoisted_dependencies),
         )
         .map_err(InstallError::WriteModules)?;
 
@@ -418,21 +420,32 @@ fn map_node_linker(linker: &NodeLinker) -> ModulesNodeLinker {
 ///
 /// Mirrors upstream's literal at
 /// <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-installer/src/install/index.ts#L1608-L1630>.
-/// Fields pacquet does not populate yet (`hoistedDependencies`,
-/// `pendingBuilds`, `skipped`, `injectedDeps`, `ignoredBuilds`,
-/// `allowBuilds`) default to empty / unset, which is exactly what
-/// upstream produces for a single-importer install with no skipped
-/// optional deps and no build allowlist.
-fn build_modules_manifest(config: &Config, included: IncludedDependencies) -> Modules {
+/// Fields pacquet does not populate yet (`pendingBuilds`, `skipped`,
+/// `injectedDeps`, `ignoredBuilds`, `allowBuilds`) default to empty
+/// / unset.
+///
+/// `hoistedDependencies` is now produced by the hoist pass in
+/// `InstallFrozenLockfile::run` and threaded in here — empty for the
+/// no-lockfile path and for installs where both hoist patterns are
+/// `None`. Persisting it lets a subsequent install detect a hoist
+/// pattern change and re-hoist appropriately (the partial-install
+/// path tracked at pnpm/pacquet#433 will consume it; today every
+/// install does the full hoist anyway).
+fn build_modules_manifest(
+    config: &Config,
+    included: IncludedDependencies,
+    hoisted_dependencies: HoistedDependencies,
+) -> Modules {
     Modules {
-        hoist_pattern: Some(config.hoist_pattern.clone()),
+        hoist_pattern: config.hoist_pattern.clone(),
+        hoisted_dependencies,
         included,
         layout_version: Some(LayoutVersion),
         node_linker: Some(map_node_linker(&config.node_linker)),
         // `${name}@${version}` per upstream. `CARGO_PKG_VERSION`
         // resolves at compile time to this crate's package version.
         package_manager: concat!("pacquet@", env!("CARGO_PKG_VERSION")).to_string(),
-        public_hoist_pattern: Some(config.public_hoist_pattern.clone()),
+        public_hoist_pattern: config.public_hoist_pattern.clone(),
         // RFC 1123 / `toUTCString()` format, matching upstream's
         // `new Date().toUTCString()` at line 1622.
         pruned_at: httpdate::fmt_http_date(SystemTime::now()),

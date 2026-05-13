@@ -1,4 +1,5 @@
 mod defaults;
+pub mod matcher;
 mod npmrc_auth;
 #[cfg(test)]
 mod test_env_guard;
@@ -138,15 +139,32 @@ pub struct Config {
     /// By default, all packages are hoisted - however, if you know that only some flawed packages
     /// have phantom dependencies, you can use this option to exclusively hoist the phantom
     /// dependencies (recommended).
-    #[default(_code = "default_hoist_pattern()")]
-    pub hoist_pattern: Vec<String>,
+    ///
+    /// `None` mirrors upstream's `null`: hoisting on the private side
+    /// is disabled. `Some([])` is "feature on but no pattern matches",
+    /// which still triggers the hoist pass (in case `public_hoist_pattern`
+    /// is set). `Some(non-empty)` is the normal case. The default is
+    /// `Some(["*"])`, matching pnpm.
+    ///
+    /// The hoist guard at the install call site is
+    /// `hoist_pattern.is_some() || public_hoist_pattern.is_some()` —
+    /// see upstream's
+    /// [`opts.hoistPattern != null || opts.publicHoistPattern != null`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/index.ts#L471)
+    /// gate.
+    #[default(_code = "Some(default_hoist_pattern())")]
+    pub hoist_pattern: Option<Vec<String>>,
 
     /// Unlike hoist-pattern, which hoists dependencies to a hidden modules directory inside the
     /// virtual store, public-hoist-pattern hoists dependencies matching the pattern to the root
     /// modules directory. Hoisting to the root modules directory means that application code will
     /// have access to phantom dependencies, even if they modify the resolution strategy improperly.
-    #[default(_code = "default_public_hoist_pattern()")]
-    pub public_hoist_pattern: Vec<String>,
+    ///
+    /// Same `Option` semantics as [`Self::hoist_pattern`] — `None`
+    /// disables public hoisting, `Some([])` runs the hoist pass with
+    /// no public matches, `Some(non-empty)` is the standard case.
+    /// Default is `Some(["*eslint*", "*prettier*"])`.
+    #[default(_code = "Some(default_public_hoist_pattern())")]
+    pub public_hoist_pattern: Option<Vec<String>>,
 
     /// By default, pnpm creates a semistrict node_modules, meaning dependencies have access to
     /// undeclared dependencies but modules outside of node_modules do not. With this layout,

@@ -1,6 +1,6 @@
 use crate::{
-    InstallPackageFromRegistry, InstallPackageFromRegistryError, LinkVirtualStoreBins,
-    LinkVirtualStoreBinsError, store_init::init_store_dir_best_effort,
+    HoistedDependencies, InstallPackageFromRegistry, InstallPackageFromRegistryError,
+    LinkVirtualStoreBins, LinkVirtualStoreBinsError, store_init::init_store_dir_best_effort,
 };
 use async_recursion::async_recursion;
 use dashmap::DashSet;
@@ -16,6 +16,7 @@ use pacquet_reporter::{LogEvent, LogLevel, Reporter, Stage, StageLog};
 use pacquet_store_dir::{SharedVerifiedFilesCache, StoreIndex, StoreIndexWriter};
 use pacquet_tarball::MemCache;
 use pipe_trait::Pipe;
+use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU8;
 
 /// In-memory cache for packages that have started resolving dependencies.
@@ -63,7 +64,16 @@ pub enum InstallWithoutLockfileError {
 
 impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
     /// Execute the subroutine.
-    pub async fn run<R: Reporter>(self) -> Result<(), InstallWithoutLockfileError>
+    ///
+    /// The without-lockfile path always returns an empty
+    /// [`HoistedDependencies`] map. Hoisting needs the resolved
+    /// snapshot graph the lockfile carries; without it, pacquet has
+    /// nothing to walk. Frozen-lockfile installs (the production
+    /// pacquet path) get the full hoist treatment via
+    /// [`crate::InstallFrozenLockfile::run`]. The signature symmetry
+    /// keeps `Install::run` from branching on which sub-path produced
+    /// the result.
+    pub async fn run<R: Reporter>(self) -> Result<HoistedDependencies, InstallWithoutLockfileError>
     where
         DependencyGroupList: IntoIterator<Item = DependencyGroup>,
     {
@@ -239,7 +249,7 @@ impl<'a, DependencyGroupList> InstallWithoutLockfile<'a, DependencyGroupList> {
             stage: Stage::ImportingDone,
         }));
 
-        Ok(())
+        Ok(BTreeMap::new())
     }
 }
 

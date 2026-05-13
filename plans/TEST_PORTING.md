@@ -97,39 +97,39 @@ Rust port notes:
 
 Primary tests:
 
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:24` `should hoist dependencies` repeats install with `hoistPattern: '*'` and `frozenLockfile: true`.
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:53` `should hoist dependencies to the root of node_modules when publicHoistPattern is used` covers baseline public hoist behavior.
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:71` `public hoist should not override directories that are already in the root of node_modules`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:89` `should hoist some dependencies to the root of node_modules when publicHoistPattern is used and others to the virtual store directory` covers combined private and public hoist patterns.
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:107` `should hoist dependencies by pattern` covers pattern-specific private hoisting.
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:121` `should remove hoisted dependencies`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:137` `should not override root packages with hoisted dependencies`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:148` `should rehoist when uninstalling a package`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:169` `should rehoist after running a general install`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:201` `should not override aliased dependencies`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:209` `hoistPattern=* throws exception when executed on node_modules installed w/o the option`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:220` `hoistPattern=undefined throws exception when executed on node_modules installed with hoist-pattern=*`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:233` `hoist by alias`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:249` `should remove aliased hoisted dependencies`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:272` `should update .modules.yaml when pruning if we are flattening`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:288` `should rehoist after pruning`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:320` `should hoist correctly peer dependencies`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:327` `should uninstall correctly peer dependencies`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:341` `hoist-pattern: hoist all dependencies to the virtual store node_modules` covers workspace install followed by frozen reinstall.
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:423` `hoist when updating in one of the workspace projects`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:514` `should recreate node_modules with hoisting`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:540` `hoisting should not create a broken symlink to a skipped optional dependency` covers hoisting with skipped optional packages.
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:567` `the hoisted packages should not override the bin files of the direct dependencies` covers public hoist bin precedence after frozen reinstall.
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:587` `hoist packages which is in the dependencies tree of the selected projects`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:682` `only hoist packages which is in the dependencies tree of the selected projects with sub dependencies`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:790` `should add extra node paths to command shims`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:799` `should not add extra node paths to command shims, when extend-node-path is set to false`
-- [ ] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:813` `hoistWorkspacePackages should hoist all workspace projects` covers workspace package hoisting and frozen reinstall.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:24` `should hoist dependencies` repeats install with `hoistPattern: '*'` and `frozenLockfile: true`. Single-importer subset ported as `private_hoist_default_pattern_hoists_transitives` in `crates/cli/tests/hoist.rs`. Repeat-install map preservation lives in the `known_failures` module (blocked on partial install, pnpm/pacquet#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:53` `should hoist dependencies to the root of node_modules when publicHoistPattern is used` covers baseline public hoist behavior. Ported as `public_hoist_star_hoists_to_root_node_modules`.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:71` `public hoist should not override directories that are already in the root of node_modules`. Stubbed in `known_failures::public_hoist_preserves_existing_root_directories` — pacquet's `symlink_package` does the conservative EEXIST swallow but not upstream's external-symlink introspection.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:89` `should hoist some dependencies to the root of node_modules when publicHoistPattern is used and others to the virtual store directory` covers combined private and public hoist patterns. Stubbed in `known_failures::combined_public_and_private_hoist_patterns_split_targets` — pacquet's algo handles it (covered by `public_pattern_wins_ties` unit test) but the upstream test uses package set the registry mock doesn't carry.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:107` `should hoist dependencies by pattern` covers pattern-specific private hoisting. Ported as `private_hoist_pattern_filters_aliases`.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:121` `should remove hoisted dependencies`. Stubbed in `known_failures::should_remove_hoisted_dependencies` (partial install, #433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:137` `should not override root packages with hoisted dependencies`. Stubbed in `known_failures::should_not_override_root_packages_with_hoisted_deps` (#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:148` `should rehoist when uninstalling a package`. Stubbed (#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:169` `should rehoist after running a general install`. Stubbed (#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:201` `should not override aliased dependencies`. Stubbed (#433 + alias-aware install plumbing).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:209` `hoistPattern=* throws exception when executed on node_modules installed w/o the option`. Stubbed (#433 — pattern-change detection across `.modules.yaml` reads).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:220` `hoistPattern=undefined throws exception when executed on node_modules installed with hoist-pattern=*`. Stubbed (#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:233` `hoist by alias`. Stubbed in `known_failures::hoist_by_alias` — algo is correct (unit-tested) but end-to-end exercises alias plumbing not all wired.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:249` `should remove aliased hoisted dependencies`. Stubbed (#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:272` `should update .modules.yaml when pruning if we are flattening`. Stubbed (#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:288` `should rehoist after pruning`. Stubbed (#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:320` `should hoist correctly peer dependencies`. Stubbed in `known_failures::should_hoist_correctly_peer_dependencies` — multi-variant peer install path not exercised.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:327` `should uninstall correctly peer dependencies`. Stubbed (#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:341` `hoist-pattern: hoist all dependencies to the virtual store node_modules` covers workspace install followed by frozen reinstall. Basic workspace shape ported as `workspace_hoist_walks_every_importer`; the upstream test additionally asserts preservation across re-installs which still needs partial install (#433) — stubbed in `known_failures::workspace_hoist_all_to_virtual_store_node_modules`.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:423` `hoist when updating in one of the workspace projects`. Stubbed in `known_failures::workspace_hoist_when_updating_one_project` — needs `pnpm add`-equivalent manifest mutation.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:514` `should recreate node_modules with hoisting`. Stubbed (#433).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:540` `hoisting should not create a broken symlink to a skipped optional dependency` covers hoisting with skipped optional packages. Stubbed in `known_failures::hoisting_skips_broken_symlink_for_skipped_optional` — pacquet doesn't yet skip optional deps on platform constraints.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:567` `the hoisted packages should not override the bin files of the direct dependencies` covers public hoist bin precedence after frozen reinstall. Stubbed in `known_failures::hoisted_packages_dont_override_direct_dep_bins` — bin-conflict resolution rules not implemented.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:587` `hoist packages which is in the dependencies tree of the selected projects`. Stubbed in `known_failures::workspace_hoist_packages_in_selected_projects_tree` — needs `--filter` selected-projects install, which workspace install (#443) didn't implement.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:682` `only hoist packages which is in the dependencies tree of the selected projects with sub dependencies`. Stubbed (`--filter` selected-projects install).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:790` `should add extra node paths to command shims`. Stubbed in `known_failures::should_add_extra_node_paths_to_command_shims` — `extendNodePath` not implemented.
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:799` `should not add extra node paths to command shims, when extend-node-path is set to false`. Stubbed (extendNodePath).
+- [x] `TypeScript repo: installing/deps-installer/test/install/hoist.ts:813` `hoistWorkspacePackages should hoist all workspace projects` covers workspace package hoisting and frozen reinstall. Stubbed in `known_failures::hoist_workspace_packages_hoists_all_workspace_projects` — needs the `hoistedWorkspacePackages` shape pacquet doesn't model yet (links workspace projects themselves into the hoist tree).
 
 Headless module-manifest checks:
 
-- [ ] `TypeScript repo: installing/deps-restorer/test/index.ts:569` `installing with hoistPattern=*` asserts private `hoistedDependencies` in `.modules.yaml`.
-- [ ] `TypeScript repo: installing/deps-restorer/test/index.ts:628` `installing with publicHoistPattern=*` asserts public `hoistedDependencies` in `.modules.yaml`.
+- [x] `TypeScript repo: installing/deps-restorer/test/index.ts:569` `installing with hoistPattern=*` asserts private `hoistedDependencies` in `.modules.yaml`. Ported as `modules_yaml_records_hoisted_dependencies` and `private_hoist_links_bins` in `crates/cli/tests/hoist.rs`.
+- [x] `TypeScript repo: installing/deps-restorer/test/index.ts:628` `installing with publicHoistPattern=*` asserts public `hoistedDependencies` in `.modules.yaml`. Ported as `public_hoist_star_hoists_to_root_node_modules` and `public_hoist_bin_is_linked_via_root_bin_dir`.
 - [ ] `TypeScript repo: installing/deps-restorer/test/index.ts:690` `installing with publicHoistPattern=* in a project with external lockfile` covers headless public hoist with an external lockfile/project root split.
 - [ ] `TypeScript repo: installing/deps-installer/test/install/sideEffects.ts:50` `caching side effects of native package when hoisting is used` is skipped upstream but documents side-effects cache behavior under private hoisting.
 
