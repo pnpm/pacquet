@@ -10,7 +10,7 @@ use super::{
 };
 use crate::{DepHierarchy, DependenciesGraph, DependenciesGraphNode};
 use pacquet_config::PackageImportMethod;
-use pacquet_lockfile::{DirectoryResolution, LockfileResolution};
+use pacquet_lockfile::{DirectoryResolution, LockfileResolution, PkgIdWithPatchHash};
 use pacquet_modules_yaml::DepPath;
 use pacquet_reporter::SilentReporter;
 use pretty_assertions::assert_eq;
@@ -33,7 +33,7 @@ fn make_node(alias: &str, dep_path: &str, pkg_id: &str, dir: PathBuf) -> Depende
     DependenciesGraphNode {
         alias: Some(alias.to_string()),
         dep_path: DepPath::from(dep_path.to_string()),
-        pkg_id_with_patch_hash: pkg_id.to_string(),
+        pkg_id_with_patch_hash: PkgIdWithPatchHash::from(pkg_id),
         dir,
         modules,
         children: BTreeMap::new(),
@@ -98,7 +98,7 @@ fn flat_layout(
         let dir = modules.join(alias);
         graph.insert(dir.clone(), make_node(alias, dep_path, pkg_id, dir.clone()));
         hierarchy_children.insert(dir, DepHierarchy::default());
-        cas_paths.insert(pkg_id.to_string(), plant_package(cas_root, pkg_id, files));
+        cas_paths.insert(PkgIdWithPatchHash::from(*pkg_id), plant_package(cas_root, pkg_id, files));
     }
     let mut hierarchy = BTreeMap::new();
     hierarchy.insert(lockfile_dir.to_path_buf(), DepHierarchy(hierarchy_children));
@@ -213,11 +213,11 @@ fn nested_hierarchy_materializes_inner_node_modules() {
 
     let mut cas_paths = CasPathsByPkgId::new();
     cas_paths.insert(
-        "outer@1.0.0".to_string(),
+        PkgIdWithPatchHash::from("outer@1.0.0"),
         plant_package(&cas_root, "outer@1.0.0", &[("package/outer.js", b"// outer")]),
     );
     cas_paths.insert(
-        "inner@2.0.0".to_string(),
+        PkgIdWithPatchHash::from("inner@2.0.0"),
         plant_package(&cas_root, "inner@2.0.0", &[("package/inner.js", b"// inner")]),
     );
 
@@ -270,7 +270,7 @@ fn missing_cas_for_required_dep_errors() {
     let err = link_hoisted_modules::<SilentReporter>(&opts).expect_err("required dep needs CAS");
     match err {
         LinkHoistedModulesError::MissingCasPaths { pkg_id_with_patch_hash, .. } => {
-            assert_eq!(pkg_id_with_patch_hash, "a@1.0.0");
+            assert_eq!(pkg_id_with_patch_hash, PkgIdWithPatchHash::from("a@1.0.0"));
         }
         other => panic!("expected MissingCasPaths, got {other:?}"),
     }

@@ -31,6 +31,7 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_cmd_shim::LinkBinsError;
 use pacquet_config::PackageImportMethod;
+use pacquet_lockfile::PkgIdWithPatchHash;
 use pacquet_reporter::Reporter;
 use rayon::prelude::*;
 use std::{
@@ -51,7 +52,7 @@ use std::{
 /// directories (version conflict → some dirs nest under siblings)
 /// and the CAS contents are the same regardless of where they're
 /// extracted to.
-pub type CasPathsByPkgId = HashMap<String, HashMap<String, PathBuf>>;
+pub type CasPathsByPkgId = HashMap<PkgIdWithPatchHash, HashMap<String, PathBuf>>;
 
 /// Inputs the linker reads from. Borrows everything so callers
 /// can keep ownership of the graph / CAS state — the linker
@@ -99,7 +100,7 @@ pub enum LinkHoistedModulesError {
     /// it wasn't given.
     #[display("Missing CAS paths for required package {pkg_id_with_patch_hash:?} at {dir:?}")]
     #[diagnostic(code(ERR_PACQUET_LINK_HOISTED_MISSING_CAS))]
-    MissingCasPaths { pkg_id_with_patch_hash: String, dir: PathBuf },
+    MissingCasPaths { pkg_id_with_patch_hash: PkgIdWithPatchHash, dir: PathBuf },
 
     /// A hierarchy entry referenced a directory that has no
     /// corresponding entry in `graph`. Slice 4's walker inserts
