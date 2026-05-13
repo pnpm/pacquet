@@ -129,8 +129,8 @@ impl std::fmt::Display for SpecDiff {
 }
 
 /// Singular/plural noun + past-tense verb for the `added` and
-/// `removed` buckets in [`SpecDiff::Display`]. Pulled out so the
-/// arms stay readable.
+/// `removed` buckets in [`SpecDiff`]'s `Display` impl. Pulled out so
+/// the arms stay readable.
 fn noun_verb_for(n: usize) -> (&'static str, &'static str) {
     match n {
         1 => ("dependency", "was"),
