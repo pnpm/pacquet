@@ -480,6 +480,22 @@ fn unsafe_importer_keys_error_before_filesystem_writes() {
             }
             other => panic!("expected UnsafeImporterPath for {importer_id:?}, got {other:?}"),
         }
+
+        // The rejection happens before any per-importer work begins,
+        // so nothing should have landed on disk. Guard that contract:
+        // the workspace_root must not have grown a `node_modules`,
+        // and the workspace_root's parent (where a `/abs/path` or
+        // `..` traversal would aim) must not have one either.
+        assert!(
+            !workspace_root.join("node_modules").exists(),
+            "no node_modules should be created under workspace_root for {importer_id:?}",
+        );
+        if let Some(parent) = workspace_root.parent() {
+            assert!(
+                !parent.join("node_modules").exists(),
+                "no node_modules should escape workspace_root for {importer_id:?}",
+            );
+        }
         drop(dir);
     }
 }
