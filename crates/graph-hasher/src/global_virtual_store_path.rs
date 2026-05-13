@@ -4,19 +4,18 @@
 //! [`formatGlobalVirtualStorePath`](https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-hasher/src/index.ts#L155-L160).
 //!
 //! The engine string contribution is gated by
-//! [`transitively_requires_build`]: when the caller supplies a
-//! `built_dep_paths` set (derived from `allowBuilds` /
-//! `dangerouslyAllowAllBuilds`), only snapshots that themselves run
-//! a build script — or that transitively depend on one — keep the
-//! engine in the GVS hash payload. Pure-JS leaves and their pure-JS
-//! ancestors hash with `engine = null`, so their GVS directories
-//! survive Node.js upgrades and architecture moves. Passing `None`
-//! for `built_dep_paths` reproduces the always-include behaviour
+//! `transitively_requires_build` (private to this crate): when the
+//! caller supplies a `built_dep_paths` set (derived from
+//! `allowBuilds` / `dangerouslyAllowAllBuilds`), only snapshots
+//! that themselves run a build script — or that transitively
+//! depend on one — keep the engine in the GVS hash payload.
+//! Pure-JS leaves and their pure-JS ancestors hash with
+//! `engine = null`, so their GVS directories survive Node.js
+//! upgrades and architecture moves. Passing `None` for
+//! `built_dep_paths` reproduces the always-include behaviour
 //! (matches upstream's
 //! [`builtDepPaths === undefined`](https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-hasher/src/index.ts#L140-L142)
 //! branch).
-//!
-//! [`transitively_requires_build`]: crate::dep_state::transitively_requires_build
 
 use crate::{
     HashEncoding,
@@ -56,7 +55,8 @@ use crate::dep_state::{DepsGraphNode, DepsStateCache};
 ///   every snapshot in the install — see
 ///   [`iterateHashedGraphNodes`](https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-hasher/src/index.ts#L99-L120)
 ///   for the upstream lifecycle. Untouched when `built_dep_paths`
-///   is `None`; callers can pass `&mut HashMap::new()` in that case.
+///   is `None`; callers that don't care can hold a throwaway
+///   `let mut cache = HashMap::new();` and pass `&mut cache`.
 pub fn calc_graph_node_hash<K>(
     graph: &HashMap<K, DepsGraphNode<K>>,
     cache: &mut DepsStateCache<K>,
