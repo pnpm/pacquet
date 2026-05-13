@@ -9,7 +9,7 @@ use crate::check_engine::{
     Engine, InvalidNodeVersionError, UnsupportedEngineError, WantedEngine, check_engine,
 };
 use crate::check_platform::{
-    SupportedArchitectures, UnsupportedPlatformError, WantedPlatform, check_platform,
+    SupportedArchitectures, UnsupportedPlatformError, WantedPlatformRef, check_platform,
 };
 
 /// Inputs from a package manifest (or lockfile metadata row) that
@@ -147,19 +147,19 @@ pub fn check_package(
     // shape is functionally equivalent to "no constraint", since
     // `checkList` short-circuits a single-element `['any']` to
     // accept. Pacquet's `check_platform` already skips an axis when
-    // the wanted field is `None`, so we can pass the manifest fields
-    // straight through — no need to allocate `vec!["any".to_string()]`
-    // per axis per snapshot. The observable behavior is identical;
-    // only the per-snapshot allocation count changes (3 fewer Vec /
-    // String allocations when none of the axes are specified, which
-    // is the common case in real lockfiles).
+    // the wanted slice is `None`, so we pass the manifest fields by
+    // reference straight through — no `vec!["any".to_string()]` per
+    // axis, no `WantedPlatform { ... }` clone of the manifest's
+    // owned vectors. The owned `WantedPlatform` only materialises
+    // inside `check_platform` when an error is returned.
+    let wanted = WantedPlatformRef {
+        os: manifest.os.as_deref(),
+        cpu: manifest.cpu.as_deref(),
+        libc: manifest.libc.as_deref(),
+    };
     if let Some(platform_err) = check_platform(
         package_id,
-        &WantedPlatform {
-            os: manifest.os.clone(),
-            cpu: manifest.cpu.clone(),
-            libc: manifest.libc.clone(),
-        },
+        wanted,
         options.supported_architectures,
         options.current_os,
         options.current_cpu,

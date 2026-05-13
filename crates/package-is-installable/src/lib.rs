@@ -27,7 +27,8 @@ pub use check_engine::{
     Engine, InvalidNodeVersionError, UnsupportedEngineError, WantedEngine, check_engine,
 };
 pub use check_platform::{
-    Platform, SupportedArchitectures, UnsupportedPlatformError, WantedPlatform, check_platform,
+    Platform, SupportedArchitectures, UnsupportedPlatformError, WantedPlatform, WantedPlatformRef,
+    check_platform,
 };
 pub use package_is_installable::{
     InstallabilityError, InstallabilityOptions, InstallabilityVerdict,

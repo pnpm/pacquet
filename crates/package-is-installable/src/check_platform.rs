@@ -32,6 +32,22 @@ pub struct WantedPlatform {
     pub libc: Option<Vec<String>>,
 }
 
+/// Borrow-only view of [`WantedPlatform`] used by [`check_platform`]
+/// on the install hot path. Lets the caller pass `manifest.os.as_deref()`
+/// (etc.) directly without cloning the manifest's owned `Vec<String>`s
+/// into a fresh `WantedPlatform` per snapshot. The owned form is
+/// only materialised inside `check_platform` when an error is
+/// produced (for diagnostic display).
+///
+/// `Copy` so the recursive / per-snapshot call sites don't need an
+/// extra reference layer; all three fields are already references.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WantedPlatformRef<'a> {
+    pub os: Option<&'a [String]>,
+    pub cpu: Option<&'a [String]>,
+    pub libc: Option<&'a [String]>,
+}
+
 /// Current host platform triple, as reported (or overridden by
 /// `supported_architectures`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -105,6 +121,13 @@ fn json_string_array(values: &[String]) -> String {
 /// host. Negation entries (`!foo`) and the special `any` sentinel are
 /// honored exactly as upstream's `checkList`.
 ///
+/// The wanted axes are taken as `Option<&[String]>` slices so the
+/// hot path doesn't allocate a `WantedPlatform` per snapshot —
+/// callers can pass `manifest.os.as_deref()` directly. The owned
+/// [`WantedPlatform`] form is only built when an error is returned
+/// (for diagnostic display via the
+/// [`UnsupportedPlatformError`]).
+///
 /// `supported_architectures` substitutes for `['current']` per axis;
 /// `'current'` entries are replaced with the host value before
 /// comparison (see `dedupe_current` in this module), matching pnpm
@@ -116,7 +139,7 @@ fn json_string_array(values: &[String]) -> String {
 /// translate directly).
 pub fn check_platform(
     package_id: &str,
-    wanted: &WantedPlatform,
+    wanted: WantedPlatformRef<'_>,
     supported: Option<&SupportedArchitectures>,
     current_os: &str,
     current_cpu: &str,
@@ -137,22 +160,30 @@ pub fn check_platform(
     let mut cpu_ok = true;
     let mut libc_ok = true;
 
-    if let Some(wanted_os) = wanted.os.as_ref() {
+    if let Some(wanted_os) = wanted.os {
         os_ok = check_list(&current.os, wanted_os);
     }
-    if let Some(wanted_cpu) = wanted.cpu.as_ref() {
+    if let Some(wanted_cpu) = wanted.cpu {
         cpu_ok = check_list(&current.cpu, wanted_cpu);
     }
     // Upstream skips the libc check when the host returned 'unknown'
     // from `detect-libc.familySync()`. Mirror that — non-Linux hosts
     // (and any Linux host where detection failed) bypass libc.
-    if let Some(wanted_libc) = wanted.libc.as_ref()
+    if let Some(wanted_libc) = wanted.libc
         && current_libc != "unknown"
     {
         libc_ok = check_list(&current.libc, wanted_libc);
     }
 
     if !os_ok || !cpu_ok || !libc_ok {
+        // Cold path. Only here do we materialise the owned
+        // `WantedPlatform` for the error payload — the rest of the
+        // pass borrows.
+        let owned_wanted = WantedPlatform {
+            os: wanted.os.map(<[String]>::to_vec),
+            cpu: wanted.cpu.map(<[String]>::to_vec),
+            libc: wanted.libc.map(<[String]>::to_vec),
+        };
         let real_current = Platform {
             os: vec![current_os.to_string()],
             cpu: vec![current_cpu.to_string()],
@@ -160,7 +191,7 @@ pub fn check_platform(
         };
         return Some(UnsupportedPlatformError::new(
             package_id.to_string(),
-            wanted.clone(),
+            owned_wanted,
             real_current,
         ));
     }
