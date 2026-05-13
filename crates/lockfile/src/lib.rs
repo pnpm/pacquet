@@ -75,11 +75,35 @@ impl Lockfile {
     /// Base file name of the lockfile.
     pub const FILE_NAME: &str = "pnpm-lock.yaml";
 
+    /// Base file name of the *current* lockfile written under the
+    /// virtual store. Mirrors upstream pnpm's `lock.yaml` (the file
+    /// that records what was actually materialized in
+    /// `node_modules/.pnpm`, as opposed to what the wanted lockfile
+    /// asks for).
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/fs/src/write.ts#L41-L51>.
+    pub const CURRENT_FILE_NAME: &str = "lock.yaml";
+
     /// The key used to refer to the root project inside `importers`.
     pub const ROOT_IMPORTER_KEY: &str = ".";
 
     /// Convenience accessor for the root project's snapshot.
     pub fn root_project(&self) -> Option<&'_ ProjectSnapshot> {
         self.importers.get(Lockfile::ROOT_IMPORTER_KEY)
+    }
+
+    /// `true` when no importer in this lockfile has either specifiers
+    /// or dependencies recorded. Mirrors upstream's `isEmptyLockfile`
+    /// at <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/fs/src/write.ts#L83-L85>;
+    /// upstream uses the result to suppress writing
+    /// `node_modules/.pnpm/lock.yaml` for an install that resolved to
+    /// zero packages. Only `specifiers` and `dependencies` participate
+    /// in the check — `devDependencies` and `optionalDependencies`
+    /// are ignored to match upstream exactly.
+    pub fn is_empty(&self) -> bool {
+        self.importers.values().all(|importer| {
+            importer.specifiers.as_ref().is_none_or(HashMap::is_empty)
+                && importer.dependencies.as_ref().is_none_or(HashMap::is_empty)
+        })
     }
 }

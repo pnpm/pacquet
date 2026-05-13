@@ -162,6 +162,19 @@ pub enum LogEvent {
     /// Emit site (build_failure): <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L218-L240>.
     #[serde(rename = "pnpm:skipped-optional-dependency")]
     SkippedOptionalDependency(SkippedOptionalDependencyLog),
+
+    /// One per snapshot whose `<virtual_store_dir>/...` directory
+    /// has gone missing on disk even though the current lockfile
+    /// records it as installed (`pnpm:_broken_node_modules`). The
+    /// frozen-lockfile path emits one of these per missing slot
+    /// before falling through to a full re-install of that snapshot.
+    ///
+    /// Upstream: <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L37>
+    /// (channel declaration) and
+    /// <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L258>
+    /// (per-snapshot emit site).
+    #[serde(rename = "pnpm:_broken_node_modules")]
+    BrokenModules(BrokenModulesLog),
 }
 
 /// `pnpm:context` payload.
@@ -582,6 +595,16 @@ pub enum SkippedOptionalReason {
     UnsupportedEngine,
     UnsupportedPlatform,
     ResolutionFailure,
+}
+
+/// `pnpm:_broken_node_modules` payload. `missing` is the absolute
+/// path to the snapshot's `node_modules/<pkg>` slot that the current-
+/// lockfile lookup expected on disk but didn't find. Mirrors the
+/// payload upstream emits at <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L258>.
+#[derive(Debug, Clone, Serialize)]
+pub struct BrokenModulesLog {
+    pub level: LogLevel,
+    pub missing: String,
 }
 
 /// Severity level on the [bunyan]-shaped envelope.

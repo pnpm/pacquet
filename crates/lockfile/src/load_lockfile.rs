@@ -5,6 +5,7 @@ use pipe_trait::Pipe;
 use std::{
     env, fs,
     io::{self, ErrorKind},
+    path::Path,
 };
 
 /// Error when reading lockfile the filesystem.
@@ -29,6 +30,30 @@ impl Lockfile {
     pub fn load_from_current_dir() -> Result<Option<Self>, LoadLockfileError> {
         let file_path =
             env::current_dir().map_err(LoadLockfileError::CurrentDir)?.join(Lockfile::FILE_NAME);
+        Self::load_from_path(&file_path)
+    }
+
+    /// Load the *current* lockfile from
+    /// `<virtual_store_dir>/lock.yaml`. Mirrors upstream's
+    /// `readCurrentLockfile` at
+    /// <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/fs/src/read.ts#L29-L37>:
+    /// the file records what pacquet actually materialized on the
+    /// previous install and is diffed against the wanted lockfile to
+    /// decide which snapshots can be skipped.
+    ///
+    /// Returns `Ok(None)` when the file is absent (a fresh install
+    /// against an empty `node_modules`), matching upstream's
+    /// ENOENT-as-`null` semantics. Same parse / version-check path as
+    /// the wanted lockfile, so a major-version mismatch surfaces as a
+    /// parse error rather than silently dropping the file.
+    pub fn load_current_from_virtual_store_dir(
+        virtual_store_dir: &Path,
+    ) -> Result<Option<Self>, LoadLockfileError> {
+        let file_path = virtual_store_dir.join(Lockfile::CURRENT_FILE_NAME);
+        Self::load_from_path(&file_path)
+    }
+
+    fn load_from_path(file_path: &Path) -> Result<Option<Self>, LoadLockfileError> {
         let content = match fs::read_to_string(file_path) {
             Ok(content) => content,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),

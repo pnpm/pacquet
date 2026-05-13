@@ -98,3 +98,78 @@ fn save_fails_with_wrapped_io_error_when_path_is_invalid() {
         "expected SaveLockfileError::WriteFile(_), got: {err:?}",
     );
 }
+
+/// `write_current` creates the virtual-store directory if needed and
+/// reading it back yields the same lockfile. Verifies the read/write
+/// round-trip across the new `lock.yaml` path.
+#[test]
+fn write_current_round_trips_through_read_current() {
+    let original: Lockfile = serde_saphyr::from_str(LOCKFILE_YAML).expect("parse fixture lockfile");
+
+    let tmp = tempdir().expect("create tempdir");
+    let virtual_store_dir = tmp.path().join("node_modules").join(".pacquet");
+
+    original.save_current_to_virtual_store_dir(&virtual_store_dir).expect("write current lockfile");
+
+    let lock_path = virtual_store_dir.join(Lockfile::CURRENT_FILE_NAME);
+    assert!(lock_path.exists(), "lock.yaml should be created");
+
+    let loaded = Lockfile::load_current_from_virtual_store_dir(&virtual_store_dir)
+        .expect("read current lockfile")
+        .expect("current lockfile should be present");
+
+    assert_eq!(original, loaded);
+}
+
+/// `load_current_from_virtual_store_dir` returns `Ok(None)` when the
+/// file does not exist — mirrors upstream's ENOENT-as-null contract
+/// for first-time installs.
+#[test]
+fn read_current_returns_none_when_file_missing() {
+    let tmp = tempdir().expect("create tempdir");
+    let virtual_store_dir = tmp.path().join("node_modules").join(".pacquet");
+
+    let result = Lockfile::load_current_from_virtual_store_dir(&virtual_store_dir)
+        .expect("missing file should not error");
+    assert!(result.is_none(), "expected None for missing lock.yaml, got: {result:?}");
+}
+
+/// Empty-lockfile writes delete any existing `lock.yaml` rather than
+/// rewriting it. Mirrors upstream's `rimraf` short-circuit at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/fs/src/write.ts#L45-L47>.
+#[test]
+fn write_current_deletes_file_when_lockfile_is_empty() {
+    let tmp = tempdir().expect("create tempdir");
+    let virtual_store_dir = tmp.path().join("node_modules").join(".pacquet");
+    std::fs::create_dir_all(&virtual_store_dir).unwrap();
+    let lock_path = virtual_store_dir.join(Lockfile::CURRENT_FILE_NAME);
+
+    // Pre-seed the file so we can observe the delete.
+    std::fs::write(&lock_path, "stale: true\n").unwrap();
+    assert!(lock_path.exists());
+
+    let empty: Lockfile =
+        serde_saphyr::from_str("lockfileVersion: '9.0'\n").expect("parse empty lockfile");
+    assert!(empty.is_empty(), "fixture should be considered empty");
+
+    empty
+        .save_current_to_virtual_store_dir(&virtual_store_dir)
+        .expect("write should succeed for empty lockfile");
+
+    assert!(!lock_path.exists(), "lock.yaml should be removed for empty lockfile");
+}
+
+/// Empty-lockfile writes are a no-op when the file was already
+/// absent. Mirrors `rimraf`'s ENOENT-as-OK behavior.
+#[test]
+fn write_current_is_a_noop_for_empty_lockfile_with_no_existing_file() {
+    let tmp = tempdir().expect("create tempdir");
+    let virtual_store_dir = tmp.path().join("node_modules").join(".pacquet");
+
+    let empty: Lockfile =
+        serde_saphyr::from_str("lockfileVersion: '9.0'\n").expect("parse empty lockfile");
+    empty
+        .save_current_to_virtual_store_dir(&virtual_store_dir)
+        .expect("write should succeed when target is missing");
+    assert!(!virtual_store_dir.join(Lockfile::CURRENT_FILE_NAME).exists());
+}

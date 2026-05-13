@@ -7,7 +7,7 @@ use crate::{
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_config::{Config, NodeLinker};
-use pacquet_lockfile::Lockfile;
+use pacquet_lockfile::{LoadLockfileError, Lockfile, SaveLockfileError};
 use pacquet_modules_yaml::{
     DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH, IncludedDependencies, LayoutVersion, Modules,
     NodeLinker as ModulesNodeLinker, RealApi, WriteModulesError, write_modules_manifest,
@@ -59,6 +59,20 @@ pub enum InstallError {
 
     #[diagnostic(transparent)]
     WriteModules(#[error(source)] WriteModulesError),
+
+    /// Surfaces a corrupted `<virtual_store_dir>/lock.yaml` rather
+    /// than silently skipping the optimization. Mirrors upstream's
+    /// `ignoreIncompatible: false` posture at
+    /// <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/index.ts#L226-L227>.
+    #[diagnostic(transparent)]
+    LoadCurrentLockfile(#[error(source)] LoadLockfileError),
+
+    /// Surfaces a failure to persist the current lockfile so the next
+    /// install can diff against it. A best-effort warn would let
+    /// silent disk-full or permission issues compound across installs;
+    /// fail the install instead.
+    #[diagnostic(transparent)]
+    SaveCurrentLockfile(#[error(source)] SaveLockfileError),
 }
 
 impl<'a, DependencyGroupList> Install<'a, DependencyGroupList>
@@ -121,15 +135,31 @@ where
             },
         }));
 
+        // Load the *current* lockfile that records what the previous
+        // install actually materialized in `<virtual_store_dir>/lock.yaml`.
+        // The frozen-lockfile path diffs each wanted snapshot against
+        // this on a per-`PackageKey` basis to decide whether the
+        // already-installed slot is still usable. `Ok(None)` on a
+        // first install (the file doesn't exist yet). A corrupted /
+        // version-incompatible file surfaces as `LoadCurrentLockfile`
+        // and fails the install — matching upstream's
+        // `ignoreIncompatible: false` posture at the deps-restorer
+        // call site rather than silently dropping the optimization.
+        //
+        // Mirrors upstream's `readCurrentLockfile` call at
+        // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/index.ts#L226-L227>.
+        let current_lockfile =
+            Lockfile::load_current_from_virtual_store_dir(&config.virtual_store_dir)
+                .map_err(InstallError::LoadCurrentLockfile)?;
+
         // `pnpm:context` carries the directories pnpm's reporter prints
-        // in the install header. `currentLockfileExists` reflects
-        // `node_modules/.pnpm/lock.yaml` upstream; pacquet doesn't yet
-        // read or write that file, so it's always `false` today.
-        // TODO: flip when the current-lockfile path lands.
-        // Upstream: <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/context/src/index.ts#L196>.
+        // in the install header. `currentLockfileExists` mirrors
+        // upstream's <https://github.com/pnpm/pnpm/blob/94240bc046/installing/context/src/index.ts#L196>:
+        // `true` once a previous install has written
+        // `<virtual_store_dir>/lock.yaml`.
         R::emit(&LogEvent::Context(ContextLog {
             level: LogLevel::Debug,
-            current_lockfile_exists: false,
+            current_lockfile_exists: current_lockfile.is_some(),
             store_dir: config.store_dir.display().to_string(),
             virtual_store_dir: config.virtual_store_dir.to_string_lossy().into_owned(),
         }));
@@ -177,6 +207,8 @@ where
                 importers,
                 packages: packages.as_ref(),
                 snapshots: snapshots.as_ref(),
+                current_snapshots: current_lockfile.as_ref().and_then(|l| l.snapshots.as_ref()),
+                current_packages: current_lockfile.as_ref().and_then(|l| l.packages.as_ref()),
                 dependency_groups,
                 logged_methods: &logged_methods,
                 requester: &prefix,
@@ -224,6 +256,26 @@ where
             build_modules_manifest(config, included),
         )
         .map_err(InstallError::WriteModules)?;
+
+        // Write `<virtual_store_dir>/lock.yaml`. Mirrors upstream's
+        // `writeCurrentLockfile` call at
+        // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/index.ts#L1597>:
+        // captures what was actually materialized so the next install
+        // can diff each snapshot against it and skip the unchanged
+        // slots. Persist *after* `write_modules_manifest` succeeds so
+        // a manifest failure can't leave a fresh current-lockfile
+        // pointing at incomplete install state — the next frozen
+        // reinstall would otherwise diff against a graph that never
+        // finished committing (review on #442). Today pacquet writes
+        // the wanted lockfile unchanged because there's only one
+        // importer to filter to; once workspace install (#431) lands
+        // this needs to narrow to the *filtered* lockfile (selected
+        // importers × engine filter).
+        if frozen_lockfile && let Some(lockfile) = lockfile {
+            lockfile
+                .save_current_to_virtual_store_dir(&config.virtual_store_dir)
+                .map_err(InstallError::SaveCurrentLockfile)?;
+        }
 
         // `pnpm:summary` closes the install and lets the reporter render
         // the accumulated `pnpm:root` events as a "+N -M" block. Must

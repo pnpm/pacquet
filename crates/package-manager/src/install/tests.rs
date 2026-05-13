@@ -8,8 +8,9 @@ use pacquet_modules_yaml::{
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use pacquet_registry_mock::AutoMockInstance;
 use pacquet_reporter::{
-    ContextLog, IgnoredScriptsLog, LogEvent, PackageManifestLog, PackageManifestMessage, Reporter,
-    SilentReporter, Stage, StageLog, StatsLog, StatsMessage, SummaryLog,
+    BrokenModulesLog, ContextLog, IgnoredScriptsLog, LogEvent, PackageManifestLog,
+    PackageManifestMessage, ProgressLog, ProgressMessage, Reporter, SilentReporter, Stage,
+    StageLog, StatsLog, StatsMessage, SummaryLog,
 };
 use pacquet_testing_utils::fs::{get_all_folders, is_symlink_or_junction};
 use pipe_trait::Pipe;
@@ -532,7 +533,9 @@ async fn install_emits_pnpm_event_sequence() {
 
     // Spot-check the context payload: pacquet's directories must
     // round-trip through the wire shape, and `currentLockfileExists`
-    // is the hard-coded `false` documented in `Install::run`.
+    // is `false` on this first install because no `lock.yaml` exists
+    // in the (just-created) virtual store yet — pacquet writes the
+    // file at end-of-install, so the next install would see `true`.
     let LogEvent::Context(ContextLog {
         current_lockfile_exists,
         store_dir: emitted_store_dir,
@@ -724,4 +727,402 @@ async fn install_optional_failing_postinstall_dep_via_registry_mock_succeeds() {
     );
 
     drop((dir, mock_instance));
+}
+
+/// A v9 lockfile fixture pinned to a placeholder package whose
+/// integrity is bogus on purpose. Pacquet enforces tarball integrity
+/// on the install path, so any test that lets the install reach the
+/// fetch site would fail — meaning a successful install with this
+/// fixture is *proof* that the per-snapshot skip path (issue #433
+/// section B) short-circuited the fetch entirely.
+const PARTIAL_INSTALL_LOCKFILE: &str = text_block! {
+    "lockfileVersion: '9.0'"
+    "importers:"
+    "  .:"
+    "    dependencies:"
+    "      placeholder:"
+    "        specifier: 1.0.0"
+    "        version: 1.0.0"
+    "packages:"
+    "  placeholder@1.0.0:"
+    "    resolution: {integrity: sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA, tarball: 'http://invalid.local/placeholder.tgz'}"
+    "snapshots:"
+    "  placeholder@1.0.0: {}"
+};
+
+/// Pre-populate the virtual-store slot that `PARTIAL_INSTALL_LOCKFILE`
+/// describes so the skip path has a directory to point at. Just the
+/// `<virtual_store_dir>/placeholder@1.0.0/node_modules/placeholder`
+/// dirent is enough — the skip check only stats the directory, it
+/// doesn't read CAS contents.
+fn seed_placeholder_virtual_store_slot(virtual_store_dir: &std::path::Path) {
+    let slot = virtual_store_dir.join("placeholder@1.0.0").join("node_modules").join("placeholder");
+    std::fs::create_dir_all(&slot).expect("create placeholder virtual-store slot");
+}
+
+/// Section B of pnpm/pacquet#433: a snapshot whose wiring and
+/// integrity match the current lockfile *and* whose virtual-store
+/// slot exists on disk is dropped from the install graph entirely.
+/// We prove this by pointing the lockfile at a bogus tarball URL —
+/// any code path that reaches the fetch site would fail, so a
+/// successful install demonstrates the skip path took over.
+#[tokio::test]
+async fn warm_reinstall_skips_snapshot_when_current_lockfile_matches() {
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+    let mut config = Config::new();
+    config.store_dir = store_dir.into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(PARTIAL_INSTALL_LOCKFILE)
+        .expect("parse partial-install fixture lockfile");
+
+    // Pre-seed the previous-install state: write the current lockfile
+    // identical to the wanted lockfile, and materialize the virtual-
+    // store slot the skip check stats against.
+    std::fs::create_dir_all(&virtual_store_dir).unwrap();
+    lockfile.save_current_to_virtual_store_dir(&virtual_store_dir).expect("seed current lockfile");
+    seed_placeholder_virtual_store_slot(&virtual_store_dir);
+
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await
+    .expect(
+        "skip path must short-circuit the fetch for the placeholder snapshot \
+         (bogus integrity + URL would otherwise fail the install)",
+    );
+
+    // `lock.yaml` survives the install — the end-of-install write
+    // persists the wanted lockfile back to disk.
+    let written = Lockfile::load_current_from_virtual_store_dir(&virtual_store_dir)
+        .expect("read written current lockfile")
+        .expect("current lockfile should be written");
+    assert_eq!(written.snapshots.as_ref().map(|s| s.len()), Some(1));
+
+    drop(dir);
+}
+
+/// When the cached directory is gone but the cache key still matches,
+/// pacquet emits `pnpm:_broken_node_modules` (mirroring upstream's
+/// debug emit at `lockfileToDepGraph.ts:258`) and falls through to the
+/// full install path for that snapshot.
+#[tokio::test]
+async fn warm_reinstall_emits_broken_modules_when_dir_is_missing() {
+    static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+    EVENTS.lock().unwrap().clear();
+
+    struct RecordingReporter;
+    impl Reporter for RecordingReporter {
+        fn emit(event: &LogEvent) {
+            EVENTS.lock().unwrap().push(event.clone());
+        }
+    }
+
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+    let mut config = Config::new();
+    config.store_dir = store_dir.into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    // Skip fetch retries entirely — the install is expected to fail
+    // after emitting `_broken_node_modules`, so any retry budget is
+    // pure waste here.
+    config.fetch_retries = 0;
+    config.fetch_retry_mintimeout = 1;
+    config.fetch_retry_maxtimeout = 1;
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(PARTIAL_INSTALL_LOCKFILE)
+        .expect("parse partial-install fixture lockfile");
+
+    // Pre-seed the current lockfile but deliberately *not* the
+    // virtual-store slot — the cache key matches but the directory is
+    // gone (the `rm -rf node_modules/.pnpm/<slot>` scenario).
+    std::fs::create_dir_all(&virtual_store_dir).unwrap();
+    lockfile.save_current_to_virtual_store_dir(&virtual_store_dir).expect("seed current lockfile");
+
+    // The install will attempt to fetch the placeholder (bogus URL),
+    // which fails — what we're testing is that the broken-modules
+    // signal fires *before* the fetch happens. So we look for the
+    // event in the captured set regardless of the final install
+    // result.
+    let _ = Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        resolved_packages: &Default::default(),
+    }
+    .run::<RecordingReporter>()
+    .await;
+
+    let captured = EVENTS.lock().unwrap();
+    let broken: Vec<&BrokenModulesLog> = captured
+        .iter()
+        .filter_map(|e| match e {
+            LogEvent::BrokenModules(b) => Some(b),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        broken.len(),
+        1,
+        "expected exactly one pnpm:_broken_node_modules emit; got: {captured:?}",
+    );
+    assert!(
+        broken[0].missing.contains("placeholder@1.0.0"),
+        "broken-modules `missing` path must name the affected slot; got: {missing}",
+        missing = broken[0].missing,
+    );
+
+    drop(dir);
+}
+
+/// Section A + D of pnpm/pacquet#433: a second install observes
+/// `pnpm:context.currentLockfileExists: true` once the first install
+/// has written `<virtual_store_dir>/lock.yaml`. Drives the read site
+/// (`Install::run` → `load_current_from_virtual_store_dir`) on real
+/// disk state produced by the matching write site.
+#[tokio::test]
+async fn context_log_reflects_current_lockfile_after_first_install() {
+    static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+    EVENTS.lock().unwrap().clear();
+
+    struct RecordingReporter;
+    impl Reporter for RecordingReporter {
+        fn emit(event: &LogEvent) {
+            EVENTS.lock().unwrap().push(event.clone());
+        }
+    }
+
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+    let mut config = Config::new();
+    config.store_dir = store_dir.into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    let config = config.leak();
+
+    // Non-empty lockfile with no snapshots: the root importer lists
+    // one dependency so `Lockfile::is_empty` returns `false` (and
+    // the end-of-install write persists the file rather than
+    // deleting it), but the empty `snapshots:` map means
+    // `CreateVirtualStore::run` has no fetches to attempt. The
+    // dangling symlink that `SymlinkDirectDependencies` creates is
+    // fine — `link_direct_dep_bins` swallows `NotFound` on the
+    // target's `package.json`. This keeps the test off the mock
+    // registry while still driving the read-after-write loop.
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies:"
+        "      placeholder:"
+        "        specifier: 1.0.0"
+        "        version: 1.0.0"
+        "packages: {}"
+        "snapshots: {}"
+    })
+    .expect("parse minimal v9 lockfile");
+    assert!(!lockfile.is_empty(), "fixture must be non-empty so the write path persists it");
+
+    // First install: `lock.yaml` does not exist yet.
+    EVENTS.lock().unwrap().clear();
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        resolved_packages: &Default::default(),
+    }
+    .run::<RecordingReporter>()
+    .await
+    .expect("first install should succeed");
+
+    let first_context = EVENTS
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|e| match e {
+            LogEvent::Context(c) => Some(c.clone()),
+            _ => None,
+        })
+        .expect("first install emitted a context event");
+    assert!(!first_context.current_lockfile_exists);
+
+    // The first install must have persisted the lockfile under the
+    // virtual store. If `save_current_to_virtual_store_dir` regressed
+    // for non-empty lockfiles, this check fails — and so does the
+    // false→true assertion below, which is the whole point of pinning
+    // the read-after-write loop.
+    let lock_yaml = virtual_store_dir.join(Lockfile::CURRENT_FILE_NAME);
+    assert!(
+        lock_yaml.is_file(),
+        "non-empty wanted lockfile must be persisted under <virtual_store_dir>/lock.yaml; found nothing at {lock_yaml:?}",
+    );
+
+    // Second install: identical inputs. The skip filter has nothing
+    // to skip (no snapshots), but the read-after-write loop still
+    // fires `current_lockfile_exists: true` because the first
+    // install's `lock.yaml` is now on disk.
+    EVENTS.lock().unwrap().clear();
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        resolved_packages: &Default::default(),
+    }
+    .run::<RecordingReporter>()
+    .await
+    .expect("second install should succeed");
+
+    let second_context = EVENTS
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|e| match e {
+            LogEvent::Context(c) => Some(c.clone()),
+            _ => None,
+        })
+        .expect("second install emitted a context event");
+    assert!(
+        second_context.current_lockfile_exists,
+        "context.currentLockfileExists must flip to true once lock.yaml is on disk",
+    );
+
+    drop(dir);
+}
+
+/// The skip path drops the snapshot from both the warm and cold
+/// batches, so a warm reinstall must report `added: 0` and emit
+/// zero `pnpm:progress imported` events. Pre-seeds `lock.yaml` and
+/// the virtual-store slot manually here — the
+/// [`context_log_reflects_current_lockfile_after_first_install`]
+/// test covers the read-after-write loop on its own, so this one
+/// can focus on the skip's reporter-visible effect.
+#[tokio::test]
+async fn warm_reinstall_reports_added_zero_and_emits_no_imported_events() {
+    static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+    EVENTS.lock().unwrap().clear();
+
+    struct RecordingReporter;
+    impl Reporter for RecordingReporter {
+        fn emit(event: &LogEvent) {
+            EVENTS.lock().unwrap().push(event.clone());
+        }
+    }
+
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+    let mut config = Config::new();
+    config.store_dir = store_dir.into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(PARTIAL_INSTALL_LOCKFILE)
+        .expect("parse partial-install fixture lockfile");
+
+    std::fs::create_dir_all(&virtual_store_dir).unwrap();
+    lockfile.save_current_to_virtual_store_dir(&virtual_store_dir).expect("seed current lockfile");
+    seed_placeholder_virtual_store_slot(&virtual_store_dir);
+
+    EVENTS.lock().unwrap().clear();
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        resolved_packages: &Default::default(),
+    }
+    .run::<RecordingReporter>()
+    .await
+    .expect("warm reinstall should succeed via the skip path");
+
+    // Stats reports `added: 0` — the only snapshot is the one that
+    // got skipped.
+    let added: Vec<u64> = EVENTS
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|e| match e {
+            LogEvent::Stats(StatsLog { message: StatsMessage::Added { added, .. }, .. }) => {
+                Some(*added)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(added, vec![0], "warm reinstall must report added: 0; got {added:?}");
+
+    // No per-snapshot `imported` progress event — the skip path
+    // removes the snapshot from both warm and cold batches.
+    let imported_count = EVENTS
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                LogEvent::Progress(ProgressLog { message: ProgressMessage::Imported { .. }, .. }),
+            )
+        })
+        .count();
+    assert_eq!(
+        imported_count, 0,
+        "skip path must suppress `pnpm:progress imported` for skipped snapshots",
+    );
+
+    drop(dir);
 }
