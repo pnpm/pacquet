@@ -154,3 +154,69 @@ fn dep_path_serializes_transparently() {
         "DepPath element did not serialize as a plain string",
     );
 }
+
+/// `hoistedLocations` is the per-depPath list of lockfile-relative
+/// directory paths that `linkHoistedModules` and rebuild consult to
+/// find where a package lives on disk. Pacquet has no consumer yet
+/// (the install pipeline still writes the field as `None`), so this
+/// test pins the schema-level round-trip until a real producer
+/// appears. Mirrors the optional `Record<string, string[]>` shape at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/installing/modules-yaml/src/index.ts#L43>.
+#[test]
+fn hoisted_locations_round_trips() {
+    let temp_dir = tempfile::tempdir().expect("create temporary directory");
+    let modules_dir = temp_dir.path();
+    let manifest = manifest_from_json(json!({
+        "layoutVersion": 5,
+        "hoistedLocations": {
+            "/accepts/1.3.7": ["node_modules/accepts"],
+            "/body-parser/1.19.0": [
+                "node_modules/body-parser",
+                "node_modules/express/node_modules/body-parser",
+            ],
+        },
+    }));
+    assert_eq!(
+        manifest.hoisted_locations.as_ref().expect("present").get("/accepts/1.3.7"),
+        Some(&vec!["node_modules/accepts".to_string()]),
+    );
+
+    write_modules_manifest::<RealApi>(modules_dir, manifest.clone()).expect("write manifest");
+    let actual = read_modules_manifest::<RealApi>(modules_dir)
+        .expect("read manifest")
+        .expect("manifest exists");
+    assert_eq!(actual.hoisted_locations, manifest.hoisted_locations);
+
+    let raw: Value = modules_dir
+        .join(".modules.yaml")
+        .pipe(fs::read_to_string)
+        .expect("read raw .modules.yaml")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse raw .modules.yaml");
+    assert_eq!(
+        raw["hoistedLocations"]["/body-parser/1.19.0"],
+        json!(["node_modules/body-parser", "node_modules/express/node_modules/body-parser"]),
+    );
+}
+
+/// A manifest with no `hoistedLocations` (the only state pacquet
+/// writes today) must omit the field on disk rather than emit
+/// `hoistedLocations: null`. Upstream's `Record<string, string[]> |
+/// undefined` shape relies on `JSON.stringify` dropping `undefined`
+/// values; pacquet relies on `skip_serializing_if = "Option::is_none"`.
+#[test]
+fn absent_hoisted_locations_is_omitted_on_write() {
+    let temp_dir = tempfile::tempdir().expect("create temporary directory");
+    let modules_dir = temp_dir.path();
+    let manifest = manifest_from_json(json!({ "layoutVersion": 5 }));
+    assert!(manifest.hoisted_locations.is_none(), "fixture seed");
+
+    write_modules_manifest::<RealApi>(modules_dir, manifest).expect("write manifest");
+    let raw: Value = modules_dir
+        .join(".modules.yaml")
+        .pipe(fs::read_to_string)
+        .expect("read raw .modules.yaml")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse raw .modules.yaml");
+    assert!(raw.get("hoistedLocations").is_none(), "hoistedLocations was emitted when None: {raw}");
+}
