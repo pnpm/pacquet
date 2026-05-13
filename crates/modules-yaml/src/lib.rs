@@ -208,6 +208,18 @@ pub struct Modules {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub injected_deps: Option<BTreeMap<String, Vec<String>>>,
 
+    /// Per-depPath list of lockfile-relative directory paths where
+    /// the package was placed under `nodeLinker: hoisted`. Required
+    /// by rebuild (which throws `MISSING_HOISTED_LOCATIONS` when
+    /// absent) and consulted by `lockfileToHoistedDepGraph`'s
+    /// skip-fetch optimization to decide whether the package is
+    /// already on disk. Mirrors upstream's optional
+    /// `Record<string, string[]>` at
+    /// <https://github.com/pnpm/pnpm/blob/94240bc046/installing/modules-yaml/src/index.ts#L43>.
+    /// Pacquet's install pipeline does not populate this yet; the
+    /// field is wired into the schema so a future hoisted-linker
+    /// implementation can write it without changing the on-disk
+    /// shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hoisted_locations: Option<BTreeMap<String, Vec<String>>>,
 
