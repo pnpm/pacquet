@@ -13,7 +13,8 @@ use smart_default::SmartDefault;
 use std::{collections::HashMap, fs, path::PathBuf};
 
 pub use crate::defaults::{
-    available_parallelism, default_unsafe_perm, is_unsafe_perm_posix, resolve_child_concurrency,
+    available_parallelism, default_git_shallow_hosts, default_unsafe_perm, is_unsafe_perm_posix,
+    resolve_child_concurrency,
 };
 use crate::defaults::{
     default_child_concurrency, default_enable_global_virtual_store, default_fetch_retries,
@@ -421,6 +422,18 @@ pub struct Config {
     /// [`runGroups(getWorkspaceConcurrency(opts.childConcurrency), groups)`](https://github.com/pnpm/pnpm/blob/b4f8f47ac2/building/during-install/src/index.ts#L124).
     #[default(_code = "default_child_concurrency()")]
     pub child_concurrency: u32,
+
+    /// Git host names where pacquet should clone via `git init` +
+    /// `git remote add` + `git fetch --depth 1 origin <commit>` instead
+    /// of a full `git clone`. Saves bandwidth and disk when the remote
+    /// only needs the pinned commit. Mirrors pnpm's `gitShallowHosts`
+    /// default at
+    /// <https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L155-L162>.
+    ///
+    /// The default list follows
+    /// <https://github.com/npm/git/blob/1e1dbd26bd/lib/clone.js#L13-L19>.
+    #[default(_code = "default_git_shallow_hosts()")]
+    pub git_shallow_hosts: Vec<String>,
 }
 
 impl Config {

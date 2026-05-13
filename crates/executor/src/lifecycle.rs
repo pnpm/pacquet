@@ -195,7 +195,13 @@ pub fn run_postinstall_hooks<R: Reporter>(
 /// Mirrors the upstream emit ordering: a `Script` event before the spawn,
 /// `Stdio` events for each stdout/stderr line, then an `Exit` event with
 /// the resolved exit code.
-fn run_lifecycle_hook<R: Reporter>(
+///
+/// `parent_env` is captured by the caller so multi-stage callers (the
+/// `run_postinstall_hooks` wrapper and `pacquet-git-fetcher`'s
+/// `preparePackage` port) can snapshot once and reuse across stages,
+/// matching upstream's behavior where each stage sees the same parent
+/// env regardless of what siblings wrote into the process's own env.
+pub fn run_lifecycle_hook<R: Reporter>(
     stage: &str,
     script: &str,
     opts: &RunPostinstallHooks<'_>,

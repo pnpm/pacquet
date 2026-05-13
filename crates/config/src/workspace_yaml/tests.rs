@@ -434,3 +434,24 @@ fn find_returns_none_when_no_manifest() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(WorkspaceSettings::find_and_load(tmp.path()).unwrap().is_none());
 }
+
+#[test]
+fn apply_replaces_git_shallow_hosts_defaults() {
+    // pnpm replaces the built-in default array wholesale rather than
+    // merging it, so we mirror that. See `default_git_shallow_hosts`.
+    let yaml = r#"
+gitShallowHosts:
+  - corp-git.example.com
+"#;
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    let mut config = Config::new();
+
+    // Sanity-check the default before applying — `github.com` is the
+    // first entry in pnpm's list, and replacement (not merging) is the
+    // bit we want to verify.
+    assert!(config.git_shallow_hosts.iter().any(|h| h == "github.com"));
+
+    settings.apply_to(&mut config, Path::new("/irrelevant"));
+
+    assert_eq!(config.git_shallow_hosts, vec!["corp-git.example.com".to_string()]);
+}

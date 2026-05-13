@@ -26,6 +26,7 @@ pacquet-modules-yaml     = { path = "crates/modules-yaml" }
 pacquet-network          = { path = "crates/network" }
 pacquet-config           = { path = "crates/config" }
 pacquet-executor         = { path = "crates/executor" }
+pacquet-git-fetcher      = { path = "crates/git-fetcher" }
 pacquet-diagnostics      = { path = "crates/diagnostics" }
 pacquet-graph-hasher     = { path = "crates/graph-hasher" }
 pacquet-store-dir        = { path = "crates/store-dir" }
