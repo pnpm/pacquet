@@ -209,13 +209,16 @@ pub struct Config {
     /// the machine: packages live under `<store_dir>/links/...` and each
     /// project registers itself at `<store_dir>/projects/<short-hash>`.
     /// When `false`, each project keeps its own virtual store at
-    /// `<project>/node_modules/.pnpm`. Default `true`, mirroring upstream's
-    /// [`config/reader/src/index.ts:392-394`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L392-L394).
+    /// `<project>/node_modules/.pnpm`.
     ///
-    /// CI auto-detect ([`config/reader/src/index.ts:543-548`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L543-L548))
-    /// is intentionally not ported here yet — it requires a CI-detection
-    /// helper pacquet doesn't have. Tracked as a follow-up of
-    /// pnpm/pacquet#432.
+    /// Default `false` — matches pnpm v11's effective default for
+    /// non-`--global` installs. The `true` assignment at
+    /// [`config/reader/src/index.ts:392-394`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L392-L394)
+    /// applies only inside upstream's `if (cliOptions['global'])`
+    /// block (see `default_enable_global_virtual_store` in
+    /// `crates/config/src/defaults.rs` for the full reasoning).
+    /// Pacquet has no `--global` flow, so the only applicable
+    /// upstream default is `false`.
     #[default(_code = "default_enable_global_virtual_store()")]
     pub enable_global_virtual_store: bool,
 
@@ -1000,17 +1003,21 @@ mod tests {
         assert!(!config.symlink);
     }
 
-    /// `enableGlobalVirtualStore` defaults to `true`. The derivation
-    /// fires automatically from [`Config::current`] after yaml has
-    /// been applied, writing `<store_dir>/links` into
+    /// `enableGlobalVirtualStore` defaults to `false` — matches pnpm
+    /// v11's effective default for regular installs (the `true`
+    /// assignment lives only inside the `--global` install branch;
+    /// see [`Config::enable_global_virtual_store`]). The derivation
+    /// still fires automatically from [`Config::current`] after yaml
+    /// has been applied, writing `<store_dir>/links` into
     /// `global_virtual_store_dir` while leaving `virtual_store_dir`
-    /// at its project-local default — pacquet's split-field variant
-    /// of upstream's
-    /// [`extendInstallOptions.ts:343-355`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/extendInstallOptions.ts#L343-L355).
-    /// See [`Config::apply_global_virtual_store_derivation`] for why
-    /// pacquet keeps the two fields separate.
+    /// at its project-local default — both fields stay valid so the
+    /// downstream code can read either one without first checking
+    /// the toggle. Pacquet's split-field variant of upstream's
+    /// [`extendInstallOptions.ts:343-355`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/extendInstallOptions.ts#L343-L355);
+    /// see [`Config::apply_global_virtual_store_derivation`] for why
+    /// pacquet keeps them separate.
     #[test]
-    pub fn gvs_default_writes_links_into_global_virtual_store_dir() {
+    pub fn gvs_default_is_off_and_paths_derive_cleanly() {
         let tmp = tempdir().unwrap();
         let config = Config::current::<RealApi, _, _, _, _>(
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
@@ -1018,7 +1025,10 @@ mod tests {
             Config::new,
         )
         .expect("workspace yaml absent => no error");
-        assert!(config.enable_global_virtual_store, "GVS defaults to true");
+        assert!(
+            !config.enable_global_virtual_store,
+            "GVS defaults to false (matches pnpm v11 for non-global installs)",
+        );
         // `virtual_store_dir` stays project-local. The
         // `<cwd>/node_modules/.pnpm` default has been re-anchored to
         // `tmp` by `Config::current` (see the cwd fixup block).
@@ -1048,7 +1058,7 @@ mod tests {
         assert_eq!(config.global_virtual_store_dir, config.store_dir.links());
     }
 
-    /// When the user pins `virtualStoreDir` *and* GVS is on,
+    /// When the user pins `virtualStoreDir` *and* opts into GVS,
     /// `globalVirtualStoreDir` mirrors that path — the user gets to
     /// pick where the shared store lives. `virtual_store_dir` itself
     /// still holds the pinned value (it's the same field the user
@@ -1059,7 +1069,7 @@ mod tests {
         let user_path = tmp.path().join("custom-links");
         fs::write(
             tmp.path().join("pnpm-workspace.yaml"),
-            format!("virtualStoreDir: {}\n", user_path.display()),
+            format!("enableGlobalVirtualStore: true\nvirtualStoreDir: {}\n", user_path.display()),
         )
         .expect("write to pnpm-workspace.yaml");
         let config = Config::current::<RealApi, _, _, _, _>(
@@ -1082,13 +1092,22 @@ mod tests {
     /// the same resolve-relative-to-workspace semantics. Without this
     /// preservation the value parses from yaml and then gets
     /// silently overwritten by the derivation.
+    ///
+    /// The fixture also enables GVS explicitly. Pacquet's default
+    /// is `enableGlobalVirtualStore: false` (matches pnpm v11 for
+    /// non-`--global` installs), so without the explicit opt-in the
+    /// GVS-on derivation path wouldn't run at all and the test
+    /// would say nothing about that path's behaviour.
     #[test]
     pub fn yaml_global_virtual_store_dir_wins_over_derivation() {
         let tmp = tempdir().unwrap();
         let yaml_gvs = tmp.path().join("my-shared-store");
         fs::write(
             tmp.path().join("pnpm-workspace.yaml"),
-            format!("globalVirtualStoreDir: {}\n", yaml_gvs.display()),
+            format!(
+                "enableGlobalVirtualStore: true\nglobalVirtualStoreDir: {}\n",
+                yaml_gvs.display(),
+            ),
         )
         .expect("write to pnpm-workspace.yaml");
         let config = Config::current::<RealApi, _, _, _, _>(
@@ -1097,7 +1116,7 @@ mod tests {
             Config::new,
         )
         .expect("yaml is valid");
-        assert!(config.enable_global_virtual_store, "GVS defaults to true");
+        assert!(config.enable_global_virtual_store);
         // `virtual_store_dir` stays at the project-local default,
         // because the user didn't pin `virtualStoreDir`.
         assert_eq!(config.virtual_store_dir, tmp.path().join("node_modules/.pnpm"));

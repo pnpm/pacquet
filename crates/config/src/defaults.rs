@@ -95,15 +95,25 @@ pub fn default_virtual_store_dir() -> PathBuf {
     env::current_dir().expect("current directory is unavailable").join("node_modules/.pnpm")
 }
 
-/// Default for `enableGlobalVirtualStore`. Mirrors pnpm v11's
-/// [`config/reader/src/index.ts:392-394`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L392-L394),
-/// which sets the value to `true` when unset. The CI auto-detect branch
-/// at [`config/reader/src/index.ts:543-548`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L543-L548)
-/// is intentionally not ported here — it depends on a CI-detection
-/// helper pacquet doesn't have yet and is tracked separately
-/// (pnpm/pacquet#432).
+/// Default for `enableGlobalVirtualStore`. Matches pnpm v11's
+/// effective default for regular installs: `false`.
+///
+/// The `true` assignment at
+/// [`config/reader/src/index.ts:392-394`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L392-L394)
+/// lives entirely inside the
+/// [`if (cliOptions['global'])` block](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L348-L395)
+/// (the `pnpm install --global` path), surrounded by
+/// `CONFIG_CONFLICT_*_WITH_GLOBAL` errors and closed by
+/// `} else if (!pnpmConfig.bin)`. For regular `pnpm install` the
+/// value stays `null`/unset, which evaluates as `false` everywhere
+/// downstream. Pacquet doesn't have a `--global` CLI flag at all
+/// (only `install --frozen-lockfile`), so the only applicable
+/// upstream default is the `false` one.
+///
+/// pnpm/pacquet#444 originally cited the same `L392-L394` range but
+/// read it as an unconditional default — corrected here.
 pub fn default_enable_global_virtual_store() -> bool {
-    true
+    false
 }
 
 pub fn default_registry() -> String {

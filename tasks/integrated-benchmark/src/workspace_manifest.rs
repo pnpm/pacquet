@@ -26,16 +26,17 @@ pub struct MinimalWorkspaceManifest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lockfile: Option<bool>,
     /// Mirrors pnpm's
-    /// [`enableGlobalVirtualStore`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L392-L394)
-    /// (default `true` in v11). The benchmark fixture pins this to
-    /// `false` so existing revisions can be compared apples-to-apples
-    /// against the project-local virtual-store layout pacquet shipped
-    /// before pnpm/pacquet#432 — both `pacquet@HEAD` and `pacquet@main`
-    /// then sit on the same `<project>/node_modules/.pnpm` shape, and
-    /// pnpm on the other side of the comparison honours the same
-    /// override. A separate GVS-on benchmark variant lives behind a
-    /// caller-supplied `--fixture-dir` with the flag flipped to
-    /// `true` (or omitted to inherit the default).
+    /// [`enableGlobalVirtualStore`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L392-L394).
+    /// Effective default is `false` for non-`--global` installs in
+    /// both pnpm v11 and pacquet (the `true` assignment in upstream
+    /// lives only inside the `pnpm install --global` branch). The
+    /// benchmark fixture still pins this to `false` so a future
+    /// default flip surfaces in CI rather than silently changing
+    /// the on-disk layout being measured: with GVS on, slot
+    /// directories move to `<storeDir>/links/<scope>/<name>/<version>/<hash>`,
+    /// a different shape from the project-local baseline. A
+    /// separate GVS-on benchmark variant lives behind a caller-
+    /// supplied `--fixture-dir` with the flag flipped to `true`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enable_global_virtual_store: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]

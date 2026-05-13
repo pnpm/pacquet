@@ -349,41 +349,62 @@ where
             }
         }
 
-        // Compute `engine_name` *before* `CreateVirtualStore::run`
-        // because the GVS-aware `VirtualStoreLayout` needs it to
-        // produce the per-snapshot
-        // `<scope>/<name>/<version>/<hash>` suffix that `pnpm` writes
-        // under `<store_dir>/links`. Same value also feeds
-        // `BuildModules`'s side-effects-cache key prefix.
+        // `engine_name` feeds two sites:
         //
-        // Two paths:
-        // - We already detected the host for the installability
-        //   check (constraint-bearing lockfile): reuse the cached
-        //   version. The synthetic-fallback case (`node_detected =
-        //   false`) yields `None` so a bogus `99999.0.0`-derived key
-        //   can't poison either the cache or the GVS hash.
-        // - We skipped the installability check (constraint-free
-        //   lockfile, the common case): no cached version. Fall
-        //   back to the legacy `detect_node_major` spawn. This used
-        //   to sit *after* `CreateVirtualStore::run` to overlap the
-        //   `node --version` cost with the install I/O, but the GVS
-        //   path now needs it earlier — the trade-off is a one-time
-        //   `node --version` spawn synchronous with install setup,
-        //   which is still tens of ms on the critical path. Users
-        //   who want the old overlap can opt out via
-        //   `enable_global_virtual_store: false`.
-        let engine_name: Option<String> = match &host_node {
-            Some((true, ver)) => parse_major_from_version(ver)
-                .map(|major| pacquet_graph_hasher::engine_name(major, None, None)),
-            Some((false, _)) => None,
-            None => tokio::task::spawn_blocking(|| {
-                pacquet_graph_hasher::detect_node_major()
-                    .map(|major| pacquet_graph_hasher::engine_name(major, None, None))
-            })
-            .await
-            .ok()
-            .flatten(),
+        // - The GVS-aware `VirtualStoreLayout` needs it *before*
+        //   `CreateVirtualStore::run` to produce per-snapshot
+        //   `<scope>/<name>/<version>/<hash>` suffixes under
+        //   `<store_dir>/links`. Only matters when GVS is on.
+        // - `BuildModules` uses it for the side-effects-cache key
+        //   prefix. Read by both the cache read-gate and the
+        //   write-gate (see `build_modules.rs:346-350`); when
+        //   `None`, both gates close and the cache is bypassed.
+        //
+        // Three paths:
+        // - Already detected the host for the installability check
+        //   (constraint-bearing lockfile): reuse the cached version
+        //   synchronously. Synthetic-fallback (`node_detected = false`)
+        //   yields `None` so a bogus `99999.0.0`-derived key can't
+        //   poison either the cache or the GVS hash.
+        // - GVS on, no host yet: spawn `node --version` synchronously
+        //   — layout construction below needs the result.
+        // - GVS off, no host yet: spawn into the blocking pool and
+        //   keep the join handle. The spawn runs concurrently with
+        //   `CreateVirtualStore::run`'s I/O, so the `node --version`
+        //   cost (~tens of ms) is hidden under the install. The
+        //   handle is awaited right before `BuildModules` —
+        //   `VirtualStoreLayout` is built with `None` here, which
+        //   is fine because GVS is off and the layout ignores the
+        //   field in that path.
+        let (initial_engine_name, deferred_engine_handle): (
+            Option<String>,
+            Option<tokio::task::JoinHandle<Option<String>>>,
+        ) = match &host_node {
+            Some((true, ver)) => (
+                parse_major_from_version(ver)
+                    .map(|major| pacquet_graph_hasher::engine_name(major, None, None)),
+                None,
+            ),
+            Some((false, _)) => (None, None),
+            None if config.enable_global_virtual_store => (
+                tokio::task::spawn_blocking(|| {
+                    pacquet_graph_hasher::detect_node_major()
+                        .map(|major| pacquet_graph_hasher::engine_name(major, None, None))
+                })
+                .await
+                .ok()
+                .flatten(),
+                None,
+            ),
+            None => (
+                None,
+                Some(tokio::task::spawn_blocking(|| {
+                    pacquet_graph_hasher::detect_node_major()
+                        .map(|major| pacquet_graph_hasher::engine_name(major, None, None))
+                })),
+            ),
         };
+        let engine_name = initial_engine_name;
 
         // Build the install-scoped slot-directory layout. When
         // `enable_global_virtual_store` is on the layout precomputes
@@ -686,6 +707,17 @@ where
             pacquet_config::ScriptsPrependNodePath::WarnOnly => {
                 ExecScriptsPrependNodePath::WarnOnly
             }
+        };
+
+        // Resolve the deferred `node --version` detection from the
+        // GVS-off path, if any. The handle was spawned before
+        // `CreateVirtualStore::run` so the `node` startup cost
+        // overlapped with install I/O. Falls back to the synchronous
+        // value when the spawn was never deferred (GVS on, or host
+        // already detected for the installability check).
+        let engine_name = match deferred_engine_handle {
+            Some(handle) => handle.await.ok().flatten(),
+            None => engine_name,
         };
 
         let ignored_builds = BuildModules {
