@@ -469,7 +469,11 @@ fn build_modules_manifest(
         // `new Date().toUTCString()` at line 1622.
         pruned_at: httpdate::fmt_http_date(SystemTime::now()),
         registries: Some(BTreeMap::from([("default".to_string(), config.registry.clone())])),
-        skipped: skipped.iter().map(ToString::to_string).collect(),
+        // `iter_installability` excludes fetch-failure entries so they
+        // don't get persisted across installs — matches upstream's
+        // silent swallow of optional fetch failures at
+        // <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L294-L298>.
+        skipped: skipped.iter_installability().map(ToString::to_string).collect(),
         store_dir: config.store_dir.display().to_string(),
         virtual_store_dir: config.virtual_store_dir.to_string_lossy().into_owned(),
         virtual_store_dir_max_length: DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,

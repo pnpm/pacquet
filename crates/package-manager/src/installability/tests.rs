@@ -7,7 +7,7 @@ use pacquet_lockfile::{
     LockfileResolution, PackageKey, PackageMetadata, PkgNameVerPeer, SnapshotEntry,
     TarballResolution,
 };
-use pacquet_reporter::{LogEvent, Reporter, SkippedOptionalReason};
+use pacquet_reporter::{LogEvent, Reporter, SkippedOptionalPackage, SkippedOptionalReason};
 use pretty_assertions::assert_eq;
 
 use crate::installability::{
@@ -120,8 +120,11 @@ fn skip_optional_with_wrong_os() {
     assert_eq!(skipped_events.len(), 1);
     if let LogEvent::SkippedOptionalDependency(log) = skipped_events[0] {
         assert_eq!(log.reason, SkippedOptionalReason::UnsupportedPlatform);
-        assert_eq!(log.package.name, "not-compatible-with-any-os");
-        assert_eq!(log.package.version, "1.0.0");
+        let SkippedOptionalPackage::Installed { name, version, .. } = &log.package else {
+            panic!("expected Installed payload for unsupported_platform, got {:?}", log.package);
+        };
+        assert_eq!(name, "not-compatible-with-any-os");
+        assert_eq!(version, "1.0.0");
         assert_eq!(log.prefix, "/proj");
     }
 }
