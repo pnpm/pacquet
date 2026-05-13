@@ -149,9 +149,15 @@ pub struct PlatformAssetTarget {
 ///
 /// The inner resolution is *atomic* upstream — a `BinaryResolution`,
 /// `TarballResolution`, etc. — never another `VariationsResolution`.
-/// Pacquet keeps it typed as the full `LockfileResolution` for
-/// serde-round-trip uniformity; the variant picker checks at runtime
-/// that the resolved inner is atomic.
+/// Pacquet's type is wider (the full [`LockfileResolution`]) for serde-
+/// round-trip uniformity, and we trust the lockfile to honor the
+/// upstream contract: [`select_platform_variant`] does not add a
+/// runtime check rejecting a nested `Variations`. A malformed
+/// lockfile that nested them would just route the picked variant's
+/// inner shape back through the install dispatcher, which surfaces
+/// each shape independently — no infinite recursion is possible
+/// because the install dispatcher does not call back into
+/// [`select_platform_variant`] for non-`Variations` inputs.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PlatformAssetResolution {
@@ -166,7 +172,7 @@ pub struct PlatformAssetResolution {
 ///
 /// At install time, the dispatcher walks `variants` in declaration
 /// order and picks the first whose `targets[]` includes the host
-/// triple — see `pick_variant` in `pacquet-package-manager`.
+/// triple — see [`select_platform_variant`] in this module.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct VariationsResolution {

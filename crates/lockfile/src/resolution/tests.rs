@@ -618,6 +618,28 @@ fn pick_rejects_default_variant_for_musl_host() {
     );
 }
 
+/// When two variants both match the same `(os, cpu, libc)` triple,
+/// declaration order wins — mirroring upstream's `Array.prototype.find`
+/// in `selectPlatformVariant`. Pinning this guards against a future
+/// refactor that reorders the iteration (e.g., to a `BTreeMap` keyed
+/// by triple) since pnpm-written lockfiles can rely on the order
+/// (e.g., listing a preferred build before a fallback).
+#[test]
+fn pick_returns_first_when_multiple_variants_match() {
+    // Both variants list the same darwin-arm64 target. The first one
+    // is identified by its URL via the inner `BinaryResolution`.
+    let variants = vec![
+        variant("first-darwin-arm64", vec![target("darwin", "arm64", None)]),
+        variant("second-darwin-arm64", vec![target("darwin", "arm64", None)]),
+    ];
+    let picked = select_platform_variant(&variants, &selector("darwin", "arm64", None))
+        .expect("matching variant");
+    let LockfileResolution::Binary(inner) = &picked.resolution else {
+        panic!("expected Binary inner resolution");
+    };
+    assert_eq!(inner.url, "first-darwin-arm64", "declaration order must win");
+}
+
 /// A musl variant is picked only when the selector requests musl.
 #[test]
 fn pick_matches_musl_variant_for_musl_host() {
