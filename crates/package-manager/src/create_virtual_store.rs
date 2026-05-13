@@ -725,6 +725,18 @@ fn snapshot_cache_key(
             // whether the snapshot is already in `index.db`.
             Ok(Some(git_hosted_store_index_key(&pkg_id, true)))
         }
+        // Slice A of #437 wires the lockfile types; the warm-batch
+        // store-index key for `Binary` will compose through the same
+        // `store_index_key(integrity, pkg_id)` shape the registry /
+        // tarball arms use once Slice D wires the fetcher.
+        // `Variations` is a meta-shape: its integrity (and target
+        // platforms) live on the picked variant, so a warm key only
+        // makes sense after variant selection has run. Treat both as
+        // cold by returning `Ok(None)` until Slice D adds variant
+        // selection + fetcher dispatch; the cold path in
+        // [`InstallPackageBySnapshot`] then raises the typed
+        // `UnsupportedResolution` for either kind.
+        LockfileResolution::Binary(_) | LockfileResolution::Variations(_) => Ok(None),
     }
 }
 

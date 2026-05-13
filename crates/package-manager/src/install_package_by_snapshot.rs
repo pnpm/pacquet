@@ -211,6 +211,27 @@ impl<'a> InstallPackageBySnapshot<'a> {
                     resolution_kind: "directory",
                 });
             }
+            // Slice A of #437 wires the lockfile types; the install
+            // dispatch for `Binary` / `Variations` lands in Slice D.
+            // Until then, surface the kind via the typed
+            // `UnsupportedResolution` error so a v11 lockfile with a
+            // runtime entry fails with a clear, structured message.
+            // (Without these arms, adding the new `LockfileResolution`
+            // variants would surface as a compile-time
+            // non-exhaustive-match error rather than building cleanly
+            // — these arms are what makes Slice A standalone.)
+            LockfileResolution::Binary(_) => {
+                return Err(InstallPackageBySnapshotError::UnsupportedResolution {
+                    package_key: package_key.to_string(),
+                    resolution_kind: "binary",
+                });
+            }
+            LockfileResolution::Variations(_) => {
+                return Err(InstallPackageBySnapshotError::UnsupportedResolution {
+                    package_key: package_key.to_string(),
+                    resolution_kind: "variations",
+                });
+            }
             LockfileResolution::Git(git_resolution) => {
                 // Same `built = true` rationale as the git-hosted
                 // tarball branch above — key shape stays in lock-step
@@ -286,10 +307,14 @@ fn tarball_url_and_integrity<'a>(
             Ok((Cow::Owned(tarball_url), &registry_resolution.integrity))
         }
         // Caller (`run`) only invokes this helper for the tarball /
-        // registry arms; git and directory resolutions never reach
-        // here. Return an unreachable-style error so a future caller
-        // that forgets to gate gets a clear panic in debug.
-        LockfileResolution::Directory(_) | LockfileResolution::Git(_) => {
+        // registry arms; git, directory, binary, and variations
+        // resolutions never reach here. Return an unreachable-style
+        // error so a future caller that forgets to gate gets a
+        // clear panic in debug.
+        LockfileResolution::Directory(_)
+        | LockfileResolution::Git(_)
+        | LockfileResolution::Binary(_)
+        | LockfileResolution::Variations(_) => {
             unreachable!("tarball_url_and_integrity called with non-tarball resolution");
         }
     }
