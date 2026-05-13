@@ -264,6 +264,7 @@ where
                 current_packages: current_lockfile.as_ref().and_then(|l| l.packages.as_ref()),
                 dependency_groups,
                 logged_methods: &logged_methods,
+                workspace_root: &workspace_root,
                 requester: &prefix,
             }
             .run::<R>()
