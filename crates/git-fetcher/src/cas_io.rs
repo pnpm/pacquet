@@ -18,9 +18,50 @@ use crate::error::GitFetcherError;
 use pacquet_store_dir::StoreDir;
 use std::{
     collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
+    fs, io,
+    path::{Component, Path, PathBuf},
 };
+
+/// Safely join a relative path onto a trusted root.
+///
+/// Rejects anything that wouldn't stay under `root`:
+///
+/// - Absolute paths (`/etc/passwd`, `C:\foo`, etc.) — refuse.
+/// - `..` / root / drive-prefix components — refuse.
+/// - `.` components — silently dropped.
+/// - Normal segments — pushed onto `root` one at a time.
+///
+/// Both `materialize_into` and `import_into_cas` receive their
+/// relative paths from the install dispatcher's `cas_paths` map,
+/// which traces back to either a tarball extraction or a packlist
+/// over a freshly-checked-out git tree. Tarball entries on the
+/// extraction side already get path-traversal guards in
+/// `pacquet-tarball`, but defense-in-depth at this layer means a
+/// future caller (or a bug in the upstream sanitiser) can't turn
+/// a malformed entry into a write outside the working tree.
+fn join_checked(root: &Path, rel: &str) -> Result<PathBuf, GitFetcherError> {
+    let rel_path = Path::new(rel);
+    if rel_path.is_absolute() {
+        return Err(GitFetcherError::Io(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("absolute path is not allowed in CAS entry: {rel}"),
+        )));
+    }
+    let mut out = root.to_path_buf();
+    for c in rel_path.components() {
+        match c {
+            Component::Normal(seg) => out.push(seg),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(GitFetcherError::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("non-normal path component in CAS entry: {rel}"),
+                )));
+            }
+        }
+    }
+    Ok(out)
+}
 
 /// Copy every CAS file referenced in `cas_paths` into `target_dir`,
 /// preserving relative paths. CAS files are hardlinked-or-copied per
@@ -39,7 +80,7 @@ pub(crate) fn materialize_into(
     target_dir: &Path,
 ) -> Result<(), GitFetcherError> {
     for (rel, cas_path) in cas_paths {
-        let target = target_dir.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
+        let target = join_checked(target_dir, &rel.replace('/', std::path::MAIN_SEPARATOR_STR))?;
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(GitFetcherError::Io)?;
         }
@@ -74,7 +115,7 @@ pub(crate) fn import_into_cas(
 ) -> Result<HashMap<String, PathBuf>, GitFetcherError> {
     let mut out = HashMap::with_capacity(files.len());
     for rel in files {
-        let source = pkg_dir.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
+        let source = join_checked(pkg_dir, &rel.replace('/', std::path::MAIN_SEPARATOR_STR))?;
         let bytes = fs::read(&source).map_err(GitFetcherError::Io)?;
         let executable = is_file_executable(&source);
         let (cas_path, _hash) =
@@ -119,4 +160,76 @@ pub(crate) fn map_write_cas(err: pacquet_store_dir::WriteCasFileError) -> GitFet
     GitFetcherError::AddFilesFromDir(pacquet_store_dir::AddFilesFromDirError::WriteCas(
         pacquet_store_dir::WriteCasFileError::WriteFile(inner),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GitFetcherError, join_checked, materialize_into};
+    use pacquet_store_dir::StoreDir;
+    use std::{collections::HashMap, io, path::Path};
+    use tempfile::tempdir;
+
+    fn assert_invalid_input(err: GitFetcherError) {
+        match err {
+            GitFetcherError::Io(io_err) => {
+                assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
+            }
+            other => panic!("expected Io(InvalidInput), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn join_checked_accepts_normal_segments() {
+        let root = Path::new("/root");
+        let joined = join_checked(root, "a/b/c.txt").unwrap();
+        // Use components() so the assertion stays platform-agnostic.
+        let expected: Vec<_> = Path::new("/root/a/b/c.txt").components().collect();
+        let actual: Vec<_> = joined.components().collect();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn join_checked_strips_current_dir_components() {
+        // `./a` and `a` both produce the same `<root>/a` — leading
+        // `./` is a no-op, matching upstream's `path.normalize`.
+        let root = Path::new("/root");
+        let joined = join_checked(root, "./a").unwrap();
+        let expected: Vec<_> = Path::new("/root/a").components().collect();
+        let actual: Vec<_> = joined.components().collect();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn join_checked_rejects_absolute_paths() {
+        assert_invalid_input(join_checked(Path::new("/root"), "/etc/passwd").unwrap_err());
+    }
+
+    #[test]
+    fn join_checked_rejects_parent_dir() {
+        assert_invalid_input(join_checked(Path::new("/root"), "../escape").unwrap_err());
+        // Even a `..` deep in the path must be refused — otherwise
+        // `a/../../escape` would slip through.
+        assert_invalid_input(join_checked(Path::new("/root"), "a/../escape").unwrap_err());
+    }
+
+    #[test]
+    fn materialize_into_rejects_traversal() {
+        // The dispatcher must never write a file outside `target_dir`
+        // even when handed a malicious `cas_paths` map. Build one
+        // with a `..` entry and confirm we get InvalidInput.
+        let target = tempdir().unwrap();
+        let cas_root = tempdir().unwrap();
+        let store_dir = StoreDir::from(cas_root.path().to_path_buf());
+        let (cas_path, _hash) = store_dir.write_cas_file(b"poison\n", false).unwrap();
+
+        let mut bad: HashMap<String, _> = HashMap::new();
+        bad.insert("../escape".to_string(), cas_path);
+
+        let err = materialize_into(&bad, target.path()).unwrap_err();
+        assert_invalid_input(err);
+        // The `escape` file must not exist anywhere — neither in the
+        // target dir nor in its parent.
+        assert!(!target.path().join("escape").exists());
+        assert!(!target.path().parent().unwrap().join("escape").exists());
+    }
 }
