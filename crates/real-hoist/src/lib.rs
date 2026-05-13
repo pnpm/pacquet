@@ -170,8 +170,9 @@ pub enum HoistError {
     #[diagnostic(
         code(ERR_PACQUET_HOIST_UNSUPPORTED_PEER),
         help(
-            "the hoisted node-linker requires peer-aware hoisting; \
-             this support is staged for a later sub-slice of #438."
+            "the hoister doesn't yet model peer-dependency constraints; \
+             pass a lockfile whose packages declare no `peerDependencies` \
+             (and whose snapshots carry no `transitivePeerDependencies`)."
         )
     )]
     UnsupportedPeerDependency {
@@ -189,10 +190,7 @@ pub enum HoistError {
     )]
     #[diagnostic(
         code(ERR_PACQUET_HOIST_UNSUPPORTED_HOISTING_LIMITS),
-        help(
-            "support for `hoistingLimits` is staged for a later sub-slice of #438; \
-             pass an empty map for now."
-        )
+        help("the hoister doesn't yet enforce `hoistingLimits`; pass an empty map.")
     )]
     UnsupportedHoistingLimits {
         /// How many entries the caller supplied. Carries no
@@ -209,8 +207,10 @@ pub enum HoistError {
     #[diagnostic(
         code(ERR_PACQUET_HOIST_UNSUPPORTED_WORKSPACE),
         help(
-            "multi-importer (workspace) lockfile support is staged for a later sub-slice of #438; \
-             single-importer lockfiles with only the `.` importer key work today."
+            "the hoister doesn't yet model multi-importer (workspace) lockfiles; \
+             pass a lockfile that carries only the `.` importer. \
+             pacquet's wider install path supports workspaces — see \
+             `SymlinkDirectDependencies` for the isolated-linker case."
         )
     )]
     UnsupportedWorkspace {
