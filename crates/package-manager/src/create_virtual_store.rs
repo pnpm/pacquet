@@ -14,7 +14,10 @@ use pacquet_reporter::{
     BrokenModulesLog, LogEvent, LogLevel, ProgressLog, ProgressMessage, Reporter, StatsLog,
     StatsMessage,
 };
-use pacquet_store_dir::{SharedVerifiedFilesCache, StoreIndex, StoreIndexWriter, store_index_key};
+use pacquet_store_dir::{
+    SharedVerifiedFilesCache, StoreIndex, StoreIndexWriter, git_hosted_store_index_key,
+    store_index_key,
+};
 use pacquet_tarball::{PrefetchResult, prefetch_cas_paths};
 use pipe_trait::Pipe;
 use std::{collections::HashMap, path::PathBuf, sync::atomic::AtomicU8};
@@ -675,45 +678,54 @@ fn snapshot_cache_key(
             metadata_key: metadata_key.to_string(),
         }
     })?;
-    let integrity = match &metadata.resolution {
-        LockfileResolution::Tarball(t) => t
-            .integrity
-            .as_ref()
-            .ok_or_else(|| {
-                CreateVirtualStoreError::InstallPackageBySnapshot(
-                    InstallPackageBySnapshotError::MissingTarballIntegrity {
-                        package_key: snapshot_key.to_string(),
-                    },
-                )
-            })?
-            .to_string(),
-        LockfileResolution::Registry(r) => r.integrity.to_string(),
-        LockfileResolution::Directory(_) => {
-            return Err(CreateVirtualStoreError::InstallPackageBySnapshot(
-                InstallPackageBySnapshotError::UnsupportedResolution {
-                    package_key: snapshot_key.to_string(),
-                    resolution_kind: "directory",
-                },
-            ));
-        }
-        LockfileResolution::Git(_) => {
-            // Git resolutions don't participate in the warm prefetch
-            // batch in this PR — the fetcher decides the
-            // `gitHostedStoreIndexKey` `built` bit at fetch time
-            // (`preparePackage` returns `shouldBeBuilt`) and writes
-            // no store-index row, so there's nothing for the warm
-            // path to read back yet. Returning `Ok(None)` routes the
-            // snapshot through the cold-batch
-            // [`InstallPackageBySnapshot`], where
-            // [`pacquet_git_fetcher::GitFetcher`] handles the
-            // clone + checkout + import. Wiring warm caching for
-            // git-hosted entries is a follow-up tracked alongside
-            // Section C (the git-hosted *tarball* path) in #436.
-            return Ok(None);
-        }
-    };
     let pkg_id = metadata_key.to_string();
-    Ok(Some(store_index_key(&integrity, &pkg_id)))
+    match &metadata.resolution {
+        LockfileResolution::Tarball(t) if t.git_hosted == Some(true) => {
+            // Git-hosted tarballs land in the CAS via
+            // `pacquet_git_fetcher::GitHostedTarballFetcher` and the
+            // row is written under `gitHostedStoreIndexKey(pkg_id,
+            // built)` rather than the integrity-based key. Use the
+            // same key shape here so the warm prefetch finds the
+            // row on a re-install. `built = true` matches the
+            // dispatcher's `!ignore_scripts` default — when ignore-
+            // scripts becomes configurable both sites flip together.
+            Ok(Some(git_hosted_store_index_key(&pkg_id, true)))
+        }
+        LockfileResolution::Tarball(t) => {
+            let integrity = t
+                .integrity
+                .as_ref()
+                .ok_or_else(|| {
+                    CreateVirtualStoreError::InstallPackageBySnapshot(
+                        InstallPackageBySnapshotError::MissingTarballIntegrity {
+                            package_key: snapshot_key.to_string(),
+                        },
+                    )
+                })?
+                .to_string();
+            Ok(Some(store_index_key(&integrity, &pkg_id)))
+        }
+        LockfileResolution::Registry(r) => {
+            Ok(Some(store_index_key(&r.integrity.to_string(), &pkg_id)))
+        }
+        LockfileResolution::Directory(_) => Err(CreateVirtualStoreError::InstallPackageBySnapshot(
+            InstallPackageBySnapshotError::UnsupportedResolution {
+                package_key: snapshot_key.to_string(),
+                resolution_kind: "directory",
+            },
+        )),
+        LockfileResolution::Git(_) => {
+            // `Git` resolutions land in CAS via
+            // `pacquet_git_fetcher::GitFetcher`, which writes the
+            // row under the same `gitHostedStoreIndexKey` shape as
+            // the git-hosted tarball path. Returning the key here
+            // lets the warm prefetch reuse a previous install's
+            // clone + checkout + prepare + packlist work — without
+            // this, every git install cold-paths regardless of
+            // whether the snapshot is already in `index.db`.
+            Ok(Some(git_hosted_store_index_key(&pkg_id, true)))
+        }
+    }
 }
 
 /// Two snapshots agree on dependency wiring when both their

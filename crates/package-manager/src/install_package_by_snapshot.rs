@@ -10,7 +10,10 @@ use pacquet_git_fetcher::{GitFetchOutput, GitFetcher, GitFetcherError, GitHosted
 use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_reporter::{LogEvent, LogLevel, ProgressLog, ProgressMessage, Reporter};
-use pacquet_store_dir::{SharedReadonlyStoreIndex, SharedVerifiedFilesCache, StoreIndexWriter};
+use pacquet_store_dir::{
+    SharedReadonlyStoreIndex, SharedVerifiedFilesCache, StoreIndexWriter,
+    git_hosted_store_index_key,
+};
 use pacquet_tarball::{DownloadTarballToStore, PrefetchedCasPaths, TarballError};
 use pipe_trait::Pipe;
 use std::{
@@ -169,6 +172,14 @@ impl<'a> InstallPackageBySnapshot<'a> {
                 if let LockfileResolution::Tarball(t) = &metadata.resolution
                     && t.git_hosted == Some(true)
                 {
+                    // `built = true` matches the dispatcher's default
+                    // (`ignore_scripts: false` everywhere). When
+                    // pacquet adds a configurable ignore-scripts mode
+                    // this `true` flips to `!ignore_scripts`, in lock-
+                    // step with the key shape `snapshot_cache_key`
+                    // produces — otherwise the prefetch and the write
+                    // would address different slots.
+                    let files_index_file = git_hosted_store_index_key(&package_id, true);
                     let GitFetchOutput { cas_paths, built: _built } = GitHostedTarballFetcher {
                         cas_paths: raw_cas_paths,
                         path: t.path.as_deref(),
@@ -183,6 +194,8 @@ impl<'a> InstallPackageBySnapshot<'a> {
                         store_dir: &config.store_dir,
                         package_id: &package_id,
                         requester,
+                        store_index_writer,
+                        files_index_file: &files_index_file,
                     }
                     .run::<R>()
                     .await
@@ -199,6 +212,10 @@ impl<'a> InstallPackageBySnapshot<'a> {
                 });
             }
             LockfileResolution::Git(git_resolution) => {
+                // Same `built = true` rationale as the git-hosted
+                // tarball branch above — key shape stays in lock-step
+                // with `snapshot_cache_key`.
+                let files_index_file = git_hosted_store_index_key(&package_id, true);
                 let GitFetchOutput { cas_paths, built: _built } = GitFetcher {
                     repo: &git_resolution.repo,
                     commit: &git_resolution.commit,
@@ -215,6 +232,8 @@ impl<'a> InstallPackageBySnapshot<'a> {
                     store_dir: &config.store_dir,
                     package_id: &package_id,
                     requester,
+                    store_index_writer,
+                    files_index_file: &files_index_file,
                 }
                 .run::<R>()
                 .await

@@ -2,8 +2,8 @@ use super::GitHostedTarballFetcher;
 use crate::error::{GitFetcherError, PreparePackageError};
 use pacquet_executor::ScriptsPrependNodePath;
 use pacquet_reporter::SilentReporter;
-use pacquet_store_dir::StoreDir;
-use std::{collections::HashMap, fs, path::PathBuf};
+use pacquet_store_dir::{StoreDir, StoreIndex, StoreIndexWriter};
+use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
 use tempfile::tempdir;
 
 fn deny_all_builds<'a>() -> &'a (dyn Fn(&str, &str) -> bool + Send + Sync) {
@@ -53,6 +53,8 @@ async fn passes_through_package_without_scripts() {
         store_dir: &store_dir,
         package_id: "x@1.0.0",
         requester: "/test",
+        store_index_writer: None,
+        files_index_file: "x@1.0.0\tbuilt",
     }
     .run::<SilentReporter>()
     .await
@@ -100,6 +102,8 @@ async fn filters_files_outside_files_field() {
         store_dir: &store_dir,
         package_id: "x@1.0.0",
         requester: "/test",
+        store_index_writer: None,
+        files_index_file: "x@1.0.0\tbuilt",
     }
     .run::<SilentReporter>()
     .await
@@ -143,6 +147,8 @@ async fn rejects_build_when_not_allowed() {
         store_dir: &store_dir,
         package_id: "naughty@2.0.0",
         requester: "/test",
+        store_index_writer: None,
+        files_index_file: "naughty@2.0.0\tbuilt",
     }
     .run::<SilentReporter>()
     .await
@@ -199,6 +205,8 @@ async fn path_field_packs_only_subdirectory() {
         store_dir: &store_dir,
         package_id: "sub@1.0.0",
         requester: "/test",
+        store_index_writer: None,
+        files_index_file: "sub@1.0.0\tbuilt",
     }
     .run::<SilentReporter>()
     .await
@@ -250,6 +258,8 @@ async fn materialized_temp_dir_does_not_corrupt_cas() {
         store_dir: &store_dir,
         package_id: "x@1.0.0",
         requester: "/test",
+        store_index_writer: None,
+        files_index_file: "x@1.0.0\tbuilt",
     }
     .run::<SilentReporter>()
     .await
@@ -259,5 +269,83 @@ async fn materialized_temp_dir_does_not_corrupt_cas() {
     assert_eq!(
         cas_bytes_before, cas_bytes_after,
         "fetcher must not mutate CAS entries it sourced from",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn writes_index_row_when_writer_provided() {
+    // Round-trip check: when the fetcher receives a `StoreIndexWriter`,
+    // it queues a `PackageFilesIndex` row at the given key. A future
+    // installs warm prefetch reads the same key and rebuilds the
+    // `cas_paths` map without re-running the fetcher.
+    let store_root = tempdir().unwrap();
+    let store_dir = StoreDir::from(store_root.path().to_path_buf());
+    let (writer, writer_task) = StoreIndexWriter::spawn(&store_dir);
+
+    let cas_paths = write_to_cas(
+        &store_dir,
+        &[
+            ("package.json", br#"{"name":"x","version":"1.0.0","main":"index.js"}"#, false),
+            ("index.js", b"module.exports = 7;\n", false),
+        ],
+    );
+
+    let key = "x@1.0.0\tbuilt";
+    let received = GitHostedTarballFetcher {
+        cas_paths,
+        path: None,
+        allow_build: deny_all_builds(),
+        ignore_scripts: false,
+        unsafe_perm: true,
+        user_agent: None,
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        script_shell: None,
+        node_execpath: None,
+        npm_execpath: None,
+        store_dir: &store_dir,
+        package_id: "x@1.0.0",
+        requester: "/test",
+        store_index_writer: Some(&Arc::clone(&writer)),
+        files_index_file: key,
+    }
+    .run::<SilentReporter>()
+    .await
+    .unwrap();
+
+    // Drop the producer handle so the writer task drains the channel
+    // and exits; await its join so the row is committed before we
+    // open a reader.
+    drop(writer);
+    writer_task.await.unwrap().unwrap();
+
+    let index = StoreIndex::open_in(&store_dir).unwrap();
+    let row = index.get(key).unwrap().expect("row must exist at the git-hosted key");
+    assert_eq!(row.algo, "sha512");
+    assert_eq!(row.requires_build, Some(received.built));
+    let keys: Vec<&str> = row.files.keys().map(String::as_str).collect();
+    assert!(keys.contains(&"package.json"), "package.json missing from row.files: {keys:?}");
+    assert!(keys.contains(&"index.js"), "index.js missing from row.files: {keys:?}");
+
+    // Per-file metadata must round-trip cleanly — the warm prefetch
+    // reconstructs the CAS file path from `digest` + `mode`, and the
+    // verify pass compares `size` against the on-disk file. If any
+    // of these drift, a follow-up install would miss the cache and
+    // silently fall through to the cold path.
+    let pj = row.files.get("package.json").expect("package.json entry");
+    assert!(!pj.digest.is_empty(), "digest must be populated");
+    assert!(
+        pj.digest.bytes().all(|b| b.is_ascii_hexdigit()),
+        "digest must be hex: {:?}",
+        pj.digest,
+    );
+    // The exec bit is captured via the POSIX mode. `package.json` is
+    // a regular file, so on POSIX the mode lands as `0o644`; on
+    // Windows pacquet writes a fixed `0o644` (matching
+    // `add_files_from_dir`).
+    assert_eq!(pj.mode & 0o777, 0o644, "package.json must be a non-executable regular-mode file");
+    assert_eq!(pj.size as usize, br#"{"name":"x","version":"1.0.0","main":"index.js"}"#.len());
+    assert_eq!(
+        pj.checked_at, None,
+        "freshly imported entries have no integrity-check timestamp yet",
     );
 }
