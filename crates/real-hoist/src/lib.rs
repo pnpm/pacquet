@@ -581,6 +581,29 @@ fn percent_encode_path(s: &str) -> String {
     out
 }
 
+/// Walk the constructed tree and return the first node whose
+/// `peer_names` is non-empty as an `UnsupportedPeerDependency`
+/// error. Returns `None` when the tree is peer-free.
+fn find_first_peer_constrained(root: &Rc<HoisterTree>) -> Option<HoistError> {
+    let mut visited: HashSet<*const HoisterTree> = HashSet::new();
+    let mut stack: Vec<Rc<HoisterTree>> = vec![Rc::clone(root)];
+    while let Some(node) = stack.pop() {
+        if !visited.insert(Rc::as_ptr(&node)) {
+            continue;
+        }
+        if !node.peer_names.is_empty() {
+            return Some(HoistError::UnsupportedPeerDependency {
+                ident: node.reference.clone(),
+                peers: node.peer_names.clone(),
+            });
+        }
+        for dep in node.dependencies.borrow().iter() {
+            stack.push(Rc::clone(&dep.0));
+        }
+    }
+    None
+}
+
 /// Pacquet's port of the `@yarnpkg/nm` hoist algorithm. Walks the
 /// input tree, deep-copies it into a `HoisterResult` shape, then
 /// pulls eligible descendants up to the root via single-pass BFS
@@ -605,7 +628,10 @@ fn percent_encode_path(s: &str) -> String {
 /// because they require additional graph structure and tests):
 ///
 /// * Peer-dependency constraints (`peer_names`) — packages that
-///   refuse to hoist past parents declaring them as peers.
+///   refuse to hoist past parents declaring them as peers. The
+///   wrapper refuses lockfiles that contain any peer-constrained
+///   nodes via `HoistError::UnsupportedPeerDependency`, so this
+///   function only ever sees peer-free input today.
 /// * Multi-round convergence — re-walking the tree to discover
 ///   newly-hoistable deps after the first pass. The BFS does
 ///   handle deep chains (`root → a → b → c` flattens in one
@@ -619,29 +645,6 @@ fn percent_encode_path(s: &str) -> String {
 /// [hoist.ts:329][upstream] for the subset above.
 ///
 /// [upstream]: https://github.com/yarnpkg/berry/blob/4287909fa6a0a1ec976a55776bff606864b31990/packages/yarnpkg-nm/sources/hoist.ts#L329
-/// Walk the constructed tree and return the first node whose
-/// `peer_names` is non-empty as an `UnsupportedPeerDependency`
-/// error. Returns `None` when the tree is peer-free.
-fn find_first_peer_constrained(root: &Rc<HoisterTree>) -> Option<HoistError> {
-    let mut visited: HashSet<*const HoisterTree> = HashSet::new();
-    let mut stack: Vec<Rc<HoisterTree>> = vec![Rc::clone(root)];
-    while let Some(node) = stack.pop() {
-        if !visited.insert(Rc::as_ptr(&node)) {
-            continue;
-        }
-        if !node.peer_names.is_empty() {
-            return Some(HoistError::UnsupportedPeerDependency {
-                ident: node.reference.clone(),
-                peers: node.peer_names.clone(),
-            });
-        }
-        for dep in node.dependencies.borrow().iter() {
-            stack.push(Rc::clone(&dep.0));
-        }
-    }
-    None
-}
-
 fn nm_hoist(tree: &HoisterTree, _opts: &HoistOpts) -> HoisterResult {
     let mut memo: HashMap<*const HoisterTree, Rc<HoisterResult>> = HashMap::new();
     let root = convert(tree, &mut memo);
