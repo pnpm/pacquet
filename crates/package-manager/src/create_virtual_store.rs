@@ -1,6 +1,6 @@
 use crate::{
     InstallPackageBySnapshot, InstallPackageBySnapshotError, SkippedSnapshots,
-    store_init::init_store_dir_best_effort,
+    install_package_by_snapshot::host_platform_selector, store_init::init_store_dir_best_effort,
 };
 use derive_more::{Display, Error};
 use futures_util::future;
@@ -8,6 +8,7 @@ use miette::Diagnostic;
 use pacquet_config::Config;
 use pacquet_lockfile::{
     LockfileResolution, PackageKey, PackageMetadata, PkgNameVerPeer, SnapshotEntry,
+    select_platform_variant,
 };
 use pacquet_network::ThrottledClient;
 use pacquet_reporter::{
@@ -788,18 +789,42 @@ fn snapshot_cache_key(
             // whether the snapshot is already in `index.db`.
             Ok(Some(git_hosted_store_index_key(&pkg_id, true)))
         }
-        // Slice A of #437 wires the lockfile types; the warm-batch
-        // store-index key for `Binary` will compose through the same
-        // `store_index_key(integrity, pkg_id)` shape the registry /
-        // tarball arms use once Slice D wires the fetcher.
-        // `Variations` is a meta-shape: its integrity (and target
-        // platforms) live on the picked variant, so a warm key only
-        // makes sense after variant selection has run. Treat both as
-        // cold by returning `Ok(None)` until Slice D adds variant
-        // selection + fetcher dispatch; the cold path in
-        // [`InstallPackageBySnapshot`] then raises the typed
-        // `UnsupportedResolution` for either kind.
-        LockfileResolution::Binary(_) | LockfileResolution::Variations(_) => Ok(None),
+        // Runtime artifacts (Node.js / Bun / Deno): the per-archive
+        // integrity is the warm-cache key, same shape as the
+        // registry / tarball arms above. Mirrors the per-snapshot
+        // dispatch in [`InstallPackageBySnapshot::run`]; the cold
+        // path's variant selector + binary fetcher writes the row
+        // under this key when it succeeds, so a re-install hits
+        // here instead of cold-fetching the runtime archive again.
+        LockfileResolution::Binary(binary) => {
+            Ok(Some(store_index_key(&binary.integrity.to_string(), &pkg_id)))
+        }
+        // `Variations` is a meta-shape: its integrity lives on the
+        // *picked* variant, not the wrapper. Run the same host-
+        // matching selector the cold path runs so the warm key
+        // resolves to the variant that would actually be installed.
+        // No variant matched → return `Ok(None)` and let the cold
+        // path surface the typed `NoMatchingPlatformVariant` error
+        // (a warm-key miss is the right shape; the warm prefetch
+        // is best-effort and the cold path is where errors are
+        // raised).
+        LockfileResolution::Variations(variations) => {
+            let selector = host_platform_selector();
+            let Some(variant) = select_platform_variant(&variations.variants, &selector) else {
+                return Ok(None);
+            };
+            match &variant.resolution {
+                LockfileResolution::Binary(binary) => {
+                    Ok(Some(store_index_key(&binary.integrity.to_string(), &pkg_id)))
+                }
+                // Non-`Binary` variant (corrupt lockfile, or a
+                // future shape pacquet doesn't recognise). The
+                // cold path raises the typed
+                // `VariantHasNonBinaryResolution` error; we just
+                // skip the warm key.
+                _ => Ok(None),
+            }
+        }
     }
 }
 
