@@ -20,7 +20,11 @@ use pacquet_store_dir::{
 };
 use pacquet_tarball::{PrefetchResult, prefetch_cas_paths};
 use pipe_trait::Pipe;
-use std::{collections::HashMap, path::PathBuf, sync::atomic::AtomicU8};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::atomic::AtomicU8,
+};
 
 /// Bundled package manifests recovered from the SQLite store index
 /// during [`CreateVirtualStore::run`], keyed by the same
@@ -60,11 +64,21 @@ pub type SideEffectsMapsBySnapshot =
     HashMap<PackageKey, std::sync::Arc<HashMap<String, HashMap<String, PathBuf>>>>;
 
 /// Output of [`CreateVirtualStore::run`]. Bundles the bin-link
-/// manifest cache and the per-snapshot side-effects-cache overlays
-/// the build-phase needs.
+/// manifest cache, the per-snapshot side-effects-cache overlays the
+/// build-phase needs, and the per-install fetch-failure set.
+///
+/// `fetch_failed` is the set of `optional: true` snapshots whose
+/// tarball / metadata / extract step blew up during this install.
+/// The caller (`InstallFrozenLockfile::run`) folds these into its
+/// own [`crate::SkippedSnapshots`] so downstream consumers
+/// (`build_sequence`, `link_bins`, hoisting, etc.) treat them as
+/// absent, mirroring upstream's `graph[dir]` simply not having the
+/// entry at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L294-L298>.
 pub struct CreateVirtualStoreOutput {
     pub package_manifests: PackageManifests,
     pub side_effects_maps_by_snapshot: SideEffectsMapsBySnapshot,
+    pub fetch_failed: HashSet<PackageKey>,
 }
 
 /// This subroutine generates filesystem layout for the virtual store at `node_modules/.pacquet`.
@@ -162,6 +176,7 @@ impl<'a> CreateVirtualStore<'a> {
             return Ok(CreateVirtualStoreOutput {
                 package_manifests: PackageManifests::new(),
                 side_effects_maps_by_snapshot: SideEffectsMapsBySnapshot::new(),
+                fetch_failed: HashSet::new(),
             });
         };
         let packages = packages.ok_or(CreateVirtualStoreError::MissingPackagesSection)?;
@@ -598,10 +613,22 @@ impl<'a> CreateVirtualStore<'a> {
 
         // Cold batch: snapshots that didn't prefetch — fall through to the
         // existing tokio + download path.
+        //
+        // Per-snapshot result is `Option<PackageKey>`: `Some(key)` flags
+        // a fetch/extract failure that was silently swallowed because
+        // the snapshot is `optional: true`. Mirrors upstream's
+        // `if (pkgSnapshot.optional) return; throw err;` at
+        // <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L294-L298>.
+        // Aggregated into `fetch_failed` for the caller to fold into
+        // its [`crate::SkippedSnapshots`] so downstream walkers
+        // (`build_sequence`, `link_bins`, hoist) treat the snapshot
+        // as absent.
+        let mut fetch_failed: HashSet<PackageKey> = HashSet::new();
         if !cold.is_empty() {
             let prefetched_ref = Some(&prefetched);
             let verified_files_cache_ref = &verified_files_cache;
-            cold.iter()
+            let outcomes: Vec<Option<PackageKey>> = cold
+                .iter()
                 .map(|(snapshot_key, snapshot)| async move {
                     let metadata_key = snapshot_key.without_peer();
                     let metadata = packages.get(&metadata_key).ok_or_else(|| {
@@ -610,7 +637,7 @@ impl<'a> CreateVirtualStore<'a> {
                             metadata_key: metadata_key.to_string(),
                         }
                     })?;
-                    InstallPackageBySnapshot {
+                    let result = InstallPackageBySnapshot {
                         http_client,
                         config,
                         layout,
@@ -626,11 +653,43 @@ impl<'a> CreateVirtualStore<'a> {
                         allow_build_policy,
                     }
                     .run::<R>()
-                    .await
-                    .map_err(CreateVirtualStoreError::InstallPackageBySnapshot)
+                    .await;
+                    match result {
+                        Ok(()) => Ok(None),
+                        Err(err) if snapshot.optional && is_fetch_side_failure(&err) => {
+                            // Silent swallow, matching upstream. `tracing::warn!`
+                            // gives operator visibility without polluting
+                            // the reporter wire (upstream's frozen path
+                            // emits nothing; only the resolver-side
+                            // emit site fires `pnpm:skipped-optional-
+                            // dependency reason=resolution_failure`).
+                            //
+                            // Scoped via [`is_fetch_side_failure`] to the
+                            // tarball-fetch / git-fetch / CAS-write
+                            // variants — i.e. the same surface upstream
+                            // wraps in
+                            // <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L286-L298>.
+                            // Local materialization (`CreateVirtualDir`)
+                            // and config-shape errors
+                            // (`MissingTarballIntegrity`,
+                            // `UnsupportedResolution`) abort even for
+                            // optional snapshots, matching upstream's
+                            // post-fetch `linkPkg` path which sits
+                            // outside the catch.
+                            tracing::warn!(
+                                target: "pacquet::install",
+                                snapshot = %snapshot_key,
+                                error = %err,
+                                "optional snapshot fetch/extract failed; dropping from install",
+                            );
+                            Ok(Some((*snapshot_key).clone()))
+                        }
+                        Err(err) => Err(CreateVirtualStoreError::InstallPackageBySnapshot(err)),
+                    }
                 })
                 .pipe(future::try_join_all)
                 .await?;
+            fetch_failed.extend(outcomes.into_iter().flatten());
         }
 
         // The writer is owned by the caller now. They drop their
@@ -639,7 +698,11 @@ impl<'a> CreateVirtualStore<'a> {
         // row from both the download path and the WRITE-path
         // upload.
 
-        Ok(CreateVirtualStoreOutput { package_manifests, side_effects_maps_by_snapshot })
+        Ok(CreateVirtualStoreOutput {
+            package_manifests,
+            side_effects_maps_by_snapshot,
+            fetch_failed,
+        })
     }
 }
 
@@ -790,6 +853,36 @@ fn integrity_equal(current: Option<&PackageMetadata>, wanted: Option<&PackageMet
 /// unit-testable; the call site stays in the warm-batch hot path
 /// where setting up a non-empty prefetched-cas test would require a
 /// full lockfile + populated CAFS.
+/// True for the [`InstallPackageBySnapshotError`] variants pacquet
+/// classifies as **fetch-side** — the surface inside upstream's
+/// catch at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L286-L298>.
+/// These are the ones an optional snapshot is allowed to swallow:
+///
+/// - `DownloadTarball` — HTTP fetch, integrity check, gzip decode,
+///   CAS write. Equivalent to `storeController.fetchPackage`
+///   blowing up.
+/// - `GitFetch` — `git` CLI clone / checkout / preparePackage /
+///   packlist / CAS import. Equivalent to upstream's git-fetcher
+///   inside the same `fetchPackage` dispatch.
+///
+/// Excluded (propagate even for optional snapshots, matching
+/// upstream's post-`fetching()` `linkPkg` path that sits outside
+/// the catch):
+///
+/// - `CreateVirtualDir` — local materialization (clone / hardlink /
+///   copy / symlink from CAS into the slot dir).
+/// - `MissingTarballIntegrity`, `UnsupportedResolution` —
+///   config/shape errors; upstream's equivalents `throw` rather
+///   than going through `fetchPackage`.
+fn is_fetch_side_failure(err: &InstallPackageBySnapshotError) -> bool {
+    matches!(
+        err,
+        InstallPackageBySnapshotError::DownloadTarball(_)
+            | InstallPackageBySnapshotError::GitFetch(_),
+    )
+}
+
 fn emit_warm_snapshot_progress<R: Reporter>(package_id: &str, requester: &str) {
     R::emit(&LogEvent::Progress(ProgressLog {
         level: LogLevel::Debug,

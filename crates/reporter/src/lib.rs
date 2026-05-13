@@ -550,16 +550,25 @@ pub struct IgnoredScriptsLog {
 /// `build_failure` / `unsupported_engine` / `unsupported_platform`
 /// all carry `package: { id, name, version }`; `resolution_failure`
 /// carries `package: { name?, version?, bareSpecifier }` with no
-/// `id`. This struct models only the **first** shape — the three
-/// reasons that share `{ id, name, version }`. The
-/// `ResolutionFailure` variant in [`SkippedOptionalReason`] is
-/// declared for forward compatibility on the enum side, but its
-/// distinct `package` shape means a `ResolutionFailure` emit will
-/// require a sibling struct (or a `#[serde(untagged)]` enum
-/// substituting for `SkippedOptionalDependencyLog`) — not just
-/// flipping the `reason` value. Refactoring is deferred until
-/// pacquet actually has a resolver-time emit site to produce that
-/// payload.
+/// `id`. See the canonical definition at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/core/core-loggers/src/skippedOptionalDependencyLogger.ts#L10-L31>.
+///
+/// The `reason` and `package` shapes co-vary upstream. The
+/// `package` field below is therefore a `#[serde(untagged)]` enum
+/// that picks the right shape depending on which variant the emit
+/// site constructs. The pairing is not type-enforced against
+/// `reason` (a `BuildFailure` reason with a
+/// `ResolutionFailure` package is constructible in Rust); emit
+/// sites live in `pacquet-package-manager` (`installability.rs`
+/// for the installability skips, `build_modules.rs` for the
+/// build-failure path) and must keep the pairing correct by hand.
+/// `CreateVirtualStore`'s slice 4 fetch-failure path is silent on
+/// the reporter wire — it only swallows the error, no event is
+/// emitted from there — so it isn't a constructor site for this
+/// log. Tightening the pairing into a closed-set builder API
+/// would constrain a future resolver port without adding much
+/// real safety, so it's left to convention until a site actually
+/// pairs the wrong shapes.
 ///
 /// `parents` is a TODO upstream too (see
 /// `during-install/src/index.ts:227`) and is omitted here.
@@ -574,14 +583,43 @@ pub struct SkippedOptionalDependencyLog {
 }
 
 /// Package identifier carried on a [`SkippedOptionalDependencyLog`].
-/// Matches the upstream "non-resolution-failure" branch of
-/// `SkippedOptionalDependencyMessage` at
-/// <https://github.com/pnpm/pnpm/blob/b4f8f47ac2/core/core-loggers/src/skippedOptionalDependencyLogger.ts#L15-L19>.
+/// Two upstream shapes, depending on `reason`:
+///
+/// - [`SkippedOptionalPackage::Installed`] — `{ id, name, version }`
+///   for `build_failure` / `unsupported_engine` /
+///   `unsupported_platform`. Used by the slice 1 emit site in
+///   `installability.rs` and the build-failure emit in
+///   `build_modules.rs`.
+/// - [`SkippedOptionalPackage::ResolutionFailure`] —
+///   `{ name?, version?, bareSpecifier }` for `resolution_failure`.
+///   Defined for the resolver-side emit upstream has at
+///   <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-resolver/src/resolveDependencies.ts#L1376-L1383>.
+///   Pacquet has no resolver yet so this variant is wire-shape-only
+///   in slice 4 — wired so a future resolver port can land without
+///   re-touching this type.
+///
+/// `#[serde(untagged)]` so each variant serializes as its own object
+/// shape, matching upstream's union of two `package: { ... }` types
+/// at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/core/core-loggers/src/skippedOptionalDependencyLogger.ts#L15-L30>.
 #[derive(Debug, Clone, Serialize)]
-pub struct SkippedOptionalPackage {
-    pub id: String,
-    pub name: String,
-    pub version: String,
+#[serde(untagged)]
+pub enum SkippedOptionalPackage {
+    /// `{ id, name, version }` shape used by every non-resolver
+    /// emit (installability + build-failure).
+    Installed { id: String, name: String, version: String },
+    /// `{ name?, version?, bareSpecifier }` shape used by the
+    /// resolver-side `resolution_failure` emit. `name` and `version`
+    /// are upstream-optional and stay `None` when the resolver fails
+    /// before it could resolve those fields.
+    ResolutionFailure {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
+        #[serde(rename = "bareSpecifier")]
+        bare_specifier: String,
+    },
 }
 
 /// Discriminator on a [`SkippedOptionalDependencyLog`]. Only

@@ -278,7 +278,7 @@ where
         // `host` is built only when needed. The detection path runs
         // `node --version` on the blocking pool so it doesn't stall
         // the reactor thread.
-        let (skipped, host_node) = if needs_installability_check {
+        let (mut skipped, host_node) = if needs_installability_check {
             let mut host = tokio::task::spawn_blocking(InstallabilityHost::detect)
                 .await
                 .unwrap_or_else(|_| InstallabilityHost {
@@ -372,24 +372,40 @@ where
             Some(&allow_build_policy),
         );
 
-        let CreateVirtualStoreOutput { package_manifests, side_effects_maps_by_snapshot } =
-            CreateVirtualStore {
-                http_client,
-                config,
-                packages,
-                snapshots,
-                current_snapshots,
-                current_packages,
-                layout: &layout,
-                logged_methods,
-                requester,
-                store_index_writer: &store_index_writer,
-                allow_build_policy: &allow_build_policy,
-                skipped: &skipped,
-            }
-            .run::<R>()
-            .await
-            .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
+        let CreateVirtualStoreOutput {
+            package_manifests,
+            side_effects_maps_by_snapshot,
+            fetch_failed,
+        } = CreateVirtualStore {
+            http_client,
+            config,
+            packages,
+            snapshots,
+            current_snapshots,
+            current_packages,
+            layout: &layout,
+            logged_methods,
+            requester,
+            store_index_writer: &store_index_writer,
+            allow_build_policy: &allow_build_policy,
+            skipped: &skipped,
+        }
+        .run::<R>()
+        .await
+        .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
+
+        // Fold fetch-failure swallows into the live skip set so
+        // downstream consumers (`SymlinkDirectDependencies`,
+        // `LinkVirtualStoreBins`, `BuildModules`, the hoist pass)
+        // observe the optional fetch-failed snapshots as absent.
+        // Tracked in the `fetch_failed` subset of `SkippedSnapshots`
+        // which is excluded from `.modules.yaml.skipped` serialization
+        // so a subsequent install retries the fetch — matches
+        // upstream's behavior of not updating `opts.skipped` at the
+        // catch site.
+        for key in fetch_failed {
+            skipped.add_fetch_failed(key);
+        }
 
         SymlinkDirectDependencies {
             config,

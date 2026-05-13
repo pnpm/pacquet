@@ -1705,3 +1705,186 @@ async fn frozen_install_preserves_seeded_skipped_across_reinstall() {
 
     drop(dir);
 }
+
+/// Port of upstream's
+/// [`deps-restorer/test/index.ts:340`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/test/index.ts#L340-L360)
+/// `skipping optional dependency if it cannot be fetched`. An
+/// `optional: true` snapshot whose tarball URL is unreachable must
+/// not abort the install — the failure is silently swallowed at
+/// the per-snapshot fetch dispatch in `CreateVirtualStore`, mirroring
+/// upstream's
+/// [`lockfileToDepGraph.ts:294-298`](https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L294-L298)
+/// catch site.
+///
+/// Asserts:
+/// 1. The install resolves `Ok` (no abort).
+/// 2. The broken snapshot's virtual-store slot was NOT created.
+/// 3. The on-disk `.modules.yaml.skipped` does NOT contain the
+///    broken snapshot — fetch failures are transient by upstream's
+///    convention (the catch site never updates `opts.skipped`), so
+///    a subsequent install retries the fetch.
+#[tokio::test]
+async fn frozen_install_silently_swallows_unreachable_optional_tarball() {
+    // Lockfile with one `optional: true` snapshot whose `tarball` URL
+    // dials `127.0.0.1:1` (a reserved port that always refuses) so
+    // the fetch reliably fails without a network round-trip. The
+    // integrity is arbitrary — we never get far enough to verify it.
+    const BROKEN_OPTIONAL_LOCKFILE: &str = text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    optionalDependencies:"
+        "      broken-pkg:"
+        "        specifier: 1.0.0"
+        "        version: 1.0.0"
+        "packages:"
+        "  broken-pkg@1.0.0:"
+        "    resolution: {integrity: sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA, tarball: 'http://127.0.0.1:1/broken.tgz'}"
+        "snapshots:"
+        "  broken-pkg@1.0.0:"
+        "    optional: true"
+    };
+
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let mut manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    // Manifest must match the lockfile importer entry so the
+    // freshness check (#447) doesn't reject the install before we
+    // reach the fetch site.
+    manifest.add_dependency("broken-pkg", "1.0.0", DependencyGroup::Optional).unwrap();
+    manifest.save().unwrap();
+
+    let mut config = Config::new();
+    config.lockfile = false;
+    // Opt out of the GVS layout so the assertion below can stat the
+    // legacy `<virtual_store_dir>/<flat-name>` slot directly. With
+    // GVS on, the slot lives under `<store_dir>/links/...` and the
+    // assertion would always pass regardless of whether the swallow
+    // path actually fired.
+    config.enable_global_virtual_store = false;
+    config.store_dir = store_dir.clone().into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    // Keep retries minimal — 127.0.0.1:1 fails immediately on every
+    // try, but a long retry schedule would dominate the test runtime.
+    config.fetch_retries = 0;
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(BROKEN_OPTIONAL_LOCKFILE)
+        .expect("parse broken-optional fixture lockfile");
+
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
+        frozen_lockfile: true,
+        supported_architectures: None,
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await
+    .expect("install must NOT abort when an optional snapshot fails to fetch");
+
+    // The broken snapshot's virtual-store slot must not have been
+    // created — the cold-batch dispatch failed before extraction.
+    let expected_slot = virtual_store_dir.join("broken-pkg@1.0.0").join("node_modules");
+    assert!(
+        !expected_slot.exists(),
+        "broken optional snapshot's slot must not exist, found {expected_slot:?}",
+    );
+
+    // The fetch-failure entry must NOT have been persisted to
+    // `.modules.yaml.skipped`. Mirrors upstream's silent catch site
+    // that never updates `opts.skipped`, so a future install retries
+    // the fetch (in case the URL becomes reachable again).
+    let written = modules_dir
+        .pipe_as_ref(read_modules_manifest::<RealApi>)
+        .expect("read .modules.yaml")
+        .expect("modules manifest exists");
+    assert!(
+        written.skipped.is_empty(),
+        "fetch-failure entries must not land in .modules.yaml.skipped, got {:?}",
+        written.skipped,
+    );
+
+    drop(dir);
+}
+
+/// The fetch-failure swallow is gated on `snapshot.optional`. A
+/// non-optional snapshot whose tarball is unreachable must still
+/// abort the install — mirrors upstream's `if (pkgSnapshot.optional)
+/// return; throw err;` at
+/// [`lockfileToDepGraph.ts:296-298`](https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L296-L298).
+/// Same fixture as the swallow test but with `optional: true`
+/// removed from the snapshot entry — confirms the polarity is
+/// correct.
+#[tokio::test]
+async fn frozen_install_propagates_non_optional_fetch_failure() {
+    const NON_OPTIONAL_BROKEN_LOCKFILE: &str = text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies:"
+        "      broken-pkg:"
+        "        specifier: 1.0.0"
+        "        version: 1.0.0"
+        "packages:"
+        "  broken-pkg@1.0.0:"
+        "    resolution: {integrity: sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA, tarball: 'http://127.0.0.1:1/broken.tgz'}"
+        "snapshots:"
+        "  broken-pkg@1.0.0: {}"
+    };
+
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let mut manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    manifest.add_dependency("broken-pkg", "1.0.0", DependencyGroup::Prod).unwrap();
+    manifest.save().unwrap();
+
+    let mut config = Config::new();
+    config.lockfile = false;
+    // Match the sister test's GVS-off setup so both swallow tests
+    // route through the same layout — sidesteps any GVS-routing
+    // path divergence affecting where the cold-batch dispatch even
+    // runs.
+    config.enable_global_virtual_store = false;
+    config.store_dir = store_dir.into();
+    config.modules_dir = modules_dir;
+    config.virtual_store_dir = virtual_store_dir;
+    config.fetch_retries = 0;
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(NON_OPTIONAL_BROKEN_LOCKFILE)
+        .expect("parse non-optional broken-fixture lockfile");
+
+    let result = Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        supported_architectures: None,
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await;
+
+    assert!(result.is_err(), "non-optional fetch failure must abort the install, got {result:?}");
+
+    drop(dir);
+}
