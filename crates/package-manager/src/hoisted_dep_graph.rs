@@ -307,7 +307,17 @@ pub fn lockfile_to_hoisted_dep_graph(
     // install's `skipped` is irrelevant — we want the full
     // previous layout to compute orphans against).
     let prev_graph = match current_lockfile {
-        Some(current) if current.packages.is_some() => {
+        // Require a non-empty `packages` map. Upstream's
+        // `currentLockfile?.packages != null` guard only filters
+        // out `null` / `undefined` — but for an empty `packages:
+        // {}` the inner walk produces an empty graph too, which
+        // is observationally equivalent to "no orphans to
+        // consider". Pacquet collapses both null and empty into
+        // `prev_graph: None` so the API contract is unambiguous
+        // and the empty case skips the (no-op) second walk.
+        Some(current)
+            if current.packages.as_ref().is_some_and(|packages| !packages.is_empty()) =>
+        {
             let prev_opts = LockfileToHoistedDepGraphOptions {
                 force: true,
                 skipped: BTreeSet::new(),
@@ -1332,6 +1342,45 @@ mod tests {
             lockfile_to_hoisted_dep_graph(&wanted, Some(&current), &opts).expect("walker succeeds");
 
         assert!(result.prev_graph.is_none(), "current lockfile without packages → no prev_graph");
+    }
+
+    /// A current lockfile with `packages: Some(empty map)` also
+    /// yields `prev_graph: None` — pacquet collapses null and
+    /// empty into the same "no orphans" representation, since
+    /// walking an empty `packages:` would just produce an empty
+    /// graph anyway. Regression for the empty-map case Coderabbit
+    /// flagged on the original 4d patch.
+    #[test]
+    fn prev_graph_none_when_current_lockfile_has_empty_packages() {
+        let mut root_deps = ResolvedDependencyMap::new();
+        root_deps.insert(pkg_name("a"), resolved_dep("1.0.0"));
+
+        let mut packages = HashMap::new();
+        packages.insert(dep_key("a", "1.0.0"), metadata_stub());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(dep_key("a", "1.0.0"), SnapshotEntry::default());
+
+        let wanted = lockfile_with(root_deps, packages, snapshots);
+        let current = Lockfile {
+            lockfile_version: lockfile_version(),
+            settings: Some(LockfileSettings::default()),
+            overrides: None,
+            importers: HashMap::new(),
+            packages: Some(HashMap::new()),
+            snapshots: Some(HashMap::new()),
+        };
+        let opts = LockfileToHoistedDepGraphOptions {
+            lockfile_dir: PathBuf::from("/repo"),
+            ..LockfileToHoistedDepGraphOptions::default()
+        };
+        let result = lockfile_to_hoisted_dep_graph(&wanted, Some(&current), &opts)
+            .expect("walker succeeds");
+
+        assert!(
+            result.prev_graph.is_none(),
+            "current lockfile with empty packages → no prev_graph",
+        );
     }
 
     /// A package present in the current lockfile but absent from
