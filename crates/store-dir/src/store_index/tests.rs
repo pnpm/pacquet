@@ -1,4 +1,7 @@
-use super::{CafsFileInfo, GET_MANY_CHUNK, PackageFilesIndex, StoreIndex, store_index_key};
+use super::{
+    CafsFileInfo, GET_MANY_CHUNK, PackageFilesIndex, StoreIndex, git_hosted_store_index_key,
+    pick_store_index_key, store_index_key,
+};
 use crate::StoreDir;
 use pretty_assertions::assert_eq;
 use std::collections::HashMap;
@@ -31,6 +34,46 @@ fn sample_index() -> PackageFilesIndex {
 #[test]
 fn key_format_is_integrity_tab_pkg_id() {
     assert_eq!(store_index_key("sha512-abc", "lodash@4.17.21"), "sha512-abc\tlodash@4.17.21");
+}
+
+#[test]
+fn git_hosted_key_uses_built_marker() {
+    // Mirrors upstream's `gitHostedStoreIndexKey(pkgId, { built })`.
+    assert_eq!(
+        git_hosted_store_index_key("github.com/foo/bar/abc1234", true),
+        "github.com/foo/bar/abc1234\tbuilt",
+    );
+    assert_eq!(
+        git_hosted_store_index_key("github.com/foo/bar/abc1234", false),
+        "github.com/foo/bar/abc1234\tnot-built",
+    );
+}
+
+#[test]
+fn pick_store_index_key_uses_integrity_for_plain_tarball() {
+    let key = pick_store_index_key(Some("sha512-abc"), false, "foo@1.0.0", true);
+    assert_eq!(key, "sha512-abc\tfoo@1.0.0");
+}
+
+#[test]
+fn pick_store_index_key_uses_git_hosted_for_flagged_tarball() {
+    // Even with integrity present, `git_hosted = true` routes to the
+    // built/not-built key — the built dimension is what disambiguates two
+    // cached variants of the same hosted tarball.
+    let key = pick_store_index_key(Some("sha512-abc"), true, "github.com/foo/bar/abc1234", true);
+    assert_eq!(key, "github.com/foo/bar/abc1234\tbuilt");
+
+    let key = pick_store_index_key(Some("sha512-abc"), true, "github.com/foo/bar/abc1234", false);
+    assert_eq!(key, "github.com/foo/bar/abc1234\tnot-built");
+}
+
+#[test]
+fn pick_store_index_key_uses_git_hosted_for_missing_integrity() {
+    // pnpm falls through to `gitHostedStoreIndexKey` for any resolution
+    // missing integrity — covers bare `type: git` resolutions and old
+    // lockfile entries that predate integrity for tarballs.
+    let key = pick_store_index_key(None, false, "github.com/foo/bar/abc1234", true);
+    assert_eq!(key, "github.com/foo/bar/abc1234\tbuilt");
 }
 
 #[test]
