@@ -25,6 +25,7 @@
 use crate::{GetRegisteredProjectsError, StoreDir, get_registered_projects};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
+use pacquet_fs::read_symlink_dir;
 use std::{
     collections::HashSet,
     fs,
@@ -102,11 +103,22 @@ impl StoreDir {
             projects.len(),
         );
 
+        // Canonicalize the links root once and pass it down. The
+        // mark walk compares every target's canonical form against
+        // this root, and canonicalising inside the per-entry loop
+        // would burn one extra syscall per visited symlink — wasteful
+        // on large trees where the answer is invariant.
+        let canonical_links = dunce::canonicalize(&links_dir).unwrap_or_else(|_| links_dir.clone());
         let mut reachable: HashSet<PathBuf> = HashSet::new();
         let mut visited: HashSet<PathBuf> = HashSet::new();
         for project_dir in &projects {
             for modules_dir in find_all_node_modules_dirs(project_dir) {
-                walk_symlinks_to_store(&modules_dir, &links_dir, &mut reachable, &mut visited);
+                walk_symlinks_to_store(
+                    &modules_dir,
+                    &canonical_links,
+                    &mut reachable,
+                    &mut visited,
+                );
             }
         }
 
@@ -173,11 +185,16 @@ fn find_all_node_modules_dirs(project_dir: &Path) -> Vec<PathBuf> {
 }
 
 /// Recursively follow every symlink under `dir`. When a symlink
-/// resolves to a slot under `links_dir`, record the slot's
+/// resolves to a slot under `canonical_links`, record the slot's
 /// `<scope>/<name>/<version>/<hash>` segment in `reachable` and
 /// recurse into the slot's `node_modules/` for transitive deps.
 /// Mirrors upstream's
 /// [`walkSymlinksToStore`](https://github.com/pnpm/pnpm/blob/94240bc046/store/controller/src/storeController/pruneGlobalVirtualStore.ts#L103-L163).
+///
+/// `canonical_links` must already be the canonicalised links root
+/// — [`StoreDir::prune`] does this once and threads it through, so
+/// the per-entry loop doesn't pay a `canonicalize` syscall for an
+/// invariant value.
 ///
 /// `visited` is the cycle guard, keyed by the canonical (real) path
 /// of `dir`. Upstream uses a sha256-base64url hash of the realpath;
@@ -186,7 +203,7 @@ fn find_all_node_modules_dirs(project_dir: &Path) -> Vec<PathBuf> {
 /// don't.
 fn walk_symlinks_to_store(
     dir: &Path,
-    links_dir: &Path,
+    canonical_links: &Path,
     reachable: &mut HashSet<PathBuf>,
     visited: &mut HashSet<PathBuf>,
 ) {
@@ -211,7 +228,13 @@ fn walk_symlinks_to_store(
         };
 
         if file_type.is_symlink() {
-            let Ok(target) = fs::read_link(&entry_path) else {
+            // `read_symlink_dir` handles Windows junctions (which
+            // `pacquet_fs::symlink_dir` creates for every
+            // `node_modules/<pkg>` entry); plain `fs::read_link`
+            // would EINVAL on them and the mark walk would miss
+            // every direct dep on Windows. See
+            // [`rust-lang/rust#28528`](https://github.com/rust-lang/rust/issues/28528).
+            let Ok(target) = read_symlink_dir(&entry_path) else {
                 continue;
             };
             let absolute_target = if target.is_absolute() {
@@ -219,20 +242,20 @@ fn walk_symlinks_to_store(
             } else {
                 entry_path.parent().map(|p| p.join(&target)).unwrap_or(target)
             };
-            // Canonicalise both sides so a symlink-bearing path
-            // prefix doesn't fool the `starts_with` check.
+            // Canonicalise the target so a symlink-bearing path
+            // prefix doesn't fool the `starts_with` check against
+            // the (already-canonical) links root.
             let canonical_target =
                 dunce::canonicalize(&absolute_target).unwrap_or_else(|_| absolute_target.clone());
-            let canonical_links =
-                dunce::canonicalize(links_dir).unwrap_or_else(|_| links_dir.to_path_buf());
-            if !canonical_target.starts_with(&canonical_links) {
+            if !canonical_target.starts_with(canonical_links) {
                 continue;
             }
-            // Slot path is the segment after `links_dir` up to (but
-            // excluding) the first `node_modules` component. Layout:
+            // Slot path is the segment after `canonical_links` up to
+            // (but excluding) the first `node_modules` component.
+            // Layout:
             //   <links>/<scope>/<name>/<version>/<hash>/node_modules/<pkg>
             // We want `<scope>/<name>/<version>/<hash>`.
-            let Ok(rel) = canonical_target.strip_prefix(&canonical_links) else {
+            let Ok(rel) = canonical_target.strip_prefix(canonical_links) else {
                 continue;
             };
             let parts: Vec<_> = rel.components().collect();
@@ -244,7 +267,7 @@ fn walk_symlinks_to_store(
                 // Recurse into the slot's own node_modules for
                 // transitive deps.
                 let inner_modules = canonical_links.join(&slot).join("node_modules");
-                walk_symlinks_to_store(&inner_modules, links_dir, reachable, visited);
+                walk_symlinks_to_store(&inner_modules, canonical_links, reachable, visited);
             }
         } else if file_type.is_dir() {
             // Skip `.pnpm` — that's the project-local virtual store.
@@ -256,7 +279,7 @@ fn walk_symlinks_to_store(
             if name.to_string_lossy() == ".pnpm" {
                 continue;
             }
-            walk_symlinks_to_store(&entry_path, links_dir, reachable, visited);
+            walk_symlinks_to_store(&entry_path, canonical_links, reachable, visited);
         }
     }
 }

@@ -185,7 +185,7 @@ pub enum GetRegisteredProjectsError {
     #[display("Cannot read project registry entry {link_path:?}: {error}")]
     #[diagnostic(
         code(pacquet_store_dir::get_registered_projects::entry_inaccessible),
-        help("To remove this project from the registry, delete the file at: {link_path:?}")
+        help("To remove this project from the registry, delete the entry at: {link_path:?}")
     )]
     EntryInaccessible {
         link_path: PathBuf,
@@ -202,7 +202,7 @@ pub enum GetRegisteredProjectsError {
     #[display("Cannot access registered project {project_dir:?} (via {link_path:?}): {error}")]
     #[diagnostic(
         code(pacquet_store_dir::get_registered_projects::project_inaccessible),
-        help("To remove this project from the registry, delete the symlink at: {link_path:?}")
+        help("To remove this project from the registry, delete the entry at: {link_path:?}")
     )]
     ProjectInaccessible {
         project_dir: PathBuf,
