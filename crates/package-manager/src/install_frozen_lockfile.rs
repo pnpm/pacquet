@@ -36,6 +36,14 @@ where
     pub importers: &'a HashMap<String, ProjectSnapshot>,
     pub packages: Option<&'a HashMap<PackageKey, PackageMetadata>>,
     pub snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,
+    /// Snapshots from the previous install's `lock.yaml`, if present.
+    /// Threaded through to [`crate::CreateVirtualStore`] to drive the
+    /// per-snapshot skip decision (a snapshot whose wiring and
+    /// integrity haven't changed and whose virtual-store slot still
+    /// exists on disk is dropped from the install graph). `None` on a
+    /// first install — the current-lockfile file doesn't exist yet.
+    pub current_snapshots: Option<&'a HashMap<PackageKey, SnapshotEntry>>,
+    pub current_packages: Option<&'a HashMap<PackageKey, PackageMetadata>>,
     pub dependency_groups: DependencyGroupList,
     /// Install-scoped dedupe state for `pnpm:package-import-method`.
     /// See `link_file::log_method_once`.
@@ -90,6 +98,8 @@ where
             importers,
             packages,
             snapshots,
+            current_snapshots,
+            current_packages,
             dependency_groups,
             logged_methods,
             requester,
@@ -115,6 +125,8 @@ where
                 config,
                 packages,
                 snapshots,
+                current_snapshots,
+                current_packages,
                 logged_methods,
                 requester,
                 store_index_writer: &store_index_writer,

@@ -5,11 +5,11 @@ use pretty_assertions::assert_eq;
 use serde_json::Value;
 
 use crate::{
-    AddedRoot, ContextLog, DependencyType, Envelope, FetchingProgressLog, FetchingProgressMessage,
-    GetHostName, IgnoredScriptsLog, LifecycleLog, LifecycleMessage, LifecycleStdio, LogEvent,
-    LogLevel, PackageImportMethod, PackageImportMethodLog, PackageManifestLog,
-    PackageManifestMessage, ProgressLog, ProgressMessage, RealApi, RemovedRoot, Reporter,
-    RequestRetryError, RequestRetryLog, RootLog, RootMessage, SilentReporter,
+    AddedRoot, BrokenModulesLog, ContextLog, DependencyType, Envelope, FetchingProgressLog,
+    FetchingProgressMessage, GetHostName, IgnoredScriptsLog, LifecycleLog, LifecycleMessage,
+    LifecycleStdio, LogEvent, LogLevel, PackageImportMethod, PackageImportMethodLog,
+    PackageManifestLog, PackageManifestMessage, ProgressLog, ProgressMessage, RealApi, RemovedRoot,
+    Reporter, RequestRetryError, RequestRetryLog, RootLog, RootMessage, SilentReporter,
     SkippedOptionalDependencyLog, SkippedOptionalPackage, SkippedOptionalReason, Stage, StageLog,
     StatsLog, StatsMessage, SummaryLog,
 };
@@ -634,6 +634,27 @@ fn skipped_optional_omits_absent_details() {
         .pipe_as_ref(serde_json::from_str)
         .expect("parse JSON");
     assert!(json.get("details").is_none(), "details must be omitted when absent, got {json:?}");
+}
+
+/// `pnpm:_broken_node_modules` carries a single `missing` field with
+/// the absolute path of the slot that should have been on disk but
+/// wasn't. Mirrors upstream's emit shape at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L258>.
+#[test]
+fn broken_modules_event_matches_pnpm_wire_shape() {
+    let event = LogEvent::BrokenModules(BrokenModulesLog {
+        level: LogLevel::Debug,
+        missing: "/proj/node_modules/.pacquet/react@18.0.0/node_modules/react".to_string(),
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+    assert_eq!(json["name"], "pnpm:_broken_node_modules");
+    assert_eq!(json["level"], "debug");
+    assert_eq!(json["missing"], "/proj/node_modules/.pacquet/react@18.0.0/node_modules/react");
 }
 
 /// All four reason variants serialize as the snake_case strings
