@@ -42,17 +42,21 @@ impl AuthHeaders {
     /// pairs. Caller is responsible for nerf-darting and for choosing
     /// the right scheme (`Bearer ...` or `Basic ...`).
     ///
-    /// The `default_registry_uri` argument is the URI to register
-    /// against the `default` (empty-string) credentials slot, matching
-    /// `createGetAuthHeaderByURI`'s `defaultRegistry` argument and
-    /// applying the same fallback to `//registry.npmjs.org/` when
-    /// nothing is supplied.
-    pub fn from_creds_map<Iter>(headers: Iter, default_registry_uri: Option<&str>) -> Self
+    /// The `default_registry_url` argument is a full registry URL
+    /// (e.g. `"https://registry.npmjs.org/"`, scheme included) that
+    /// the constructor nerf-darts internally to derive the key for the
+    /// empty-string ("default") credentials slot. Mirrors
+    /// `createGetAuthHeaderByURI`'s `defaultRegistry` argument; falls
+    /// back to `"//registry.npmjs.org/"` when `None`. Passing an
+    /// already-nerf-darted `//host/.../` here would re-nerf-dart it to
+    /// the empty string, silently masking default creds — pass the
+    /// raw URL.
+    pub fn from_creds_map<Iter>(headers: Iter, default_registry_url: Option<&str>) -> Self
     where
         Iter: IntoIterator<Item = (String, String)>,
     {
         let registry_default_key =
-            default_registry_uri.map(nerf_dart).unwrap_or_else(|| "//registry.npmjs.org/".into());
+            default_registry_url.map(nerf_dart).unwrap_or_else(|| "//registry.npmjs.org/".into());
         let mut by_uri = HashMap::new();
         for (raw_uri, header_value) in headers {
             let key = if raw_uri.is_empty() { registry_default_key.clone() } else { raw_uri };

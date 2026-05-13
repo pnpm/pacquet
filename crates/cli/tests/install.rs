@@ -254,7 +254,7 @@ fn should_install_circular_dependencies() {
 /// End-to-end coverage for `${VAR}` substitution in `.npmrc`.
 ///
 /// `<RealApi as EnvVar>::var` (the `std::env::var` bridge in
-/// `crates/npmrc/src/api.rs`) is unreachable by every other test
+/// `crates/config/src/api.rs`) is unreachable by every other test
 /// because `add_mocked_registry` writes literal values, so
 /// `env_replace` short-circuits at the no-`$` branch.
 ///

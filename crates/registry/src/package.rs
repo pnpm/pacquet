@@ -33,9 +33,13 @@ impl Package {
         registry: &str,
         auth_headers: &AuthHeaders,
     ) -> Result<Self, RegistryError> {
-        let url = || format!("{registry}{name}"); // TODO: use reqwest URL directly
-        let network_error = |error| NetworkError { error, url: url() };
-        let mut request = http_client.acquire().await.get(url()).header(
+        // Format once. The same string is consumed by the GET, the
+        // per-URL `Authorization` lookup, and the error mapper — using
+        // distinct closures risked the auth lookup and request URL
+        // drifting if the format expression ever changed.
+        let url = format!("{registry}{name}"); // TODO: use reqwest URL directly
+        let network_error = |error| NetworkError { error, url: url.clone() };
+        let mut request = http_client.acquire().await.get(&url).header(
             "accept",
             "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
         );
@@ -43,7 +47,7 @@ impl Package {
         // [`resolving/npm-resolver/src/fetch.ts`](https://github.com/pnpm/pnpm/blob/601317e7a3/resolving/npm-resolver/src/fetch.ts):
         // resolve the per-URL `Authorization` value before issuing the
         // request and attach it when present.
-        if let Some(value) = auth_headers.for_url(&url()) {
+        if let Some(value) = auth_headers.for_url(&url) {
             request = request.header("authorization", value);
         }
         request
