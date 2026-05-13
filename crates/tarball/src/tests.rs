@@ -1398,6 +1398,7 @@ async fn fetch_attaches_authorization_header_when_creds_match_tarball_url() {
         store_path,
         fast_retry_opts(),
         &auth_headers,
+        None,
     )
     .await
     .expect("server should accept the request once the bearer header is attached");
@@ -1451,6 +1452,7 @@ async fn retry_re_attaches_authorization_header_on_each_attempt() {
         store_path,
         fast_retry_opts(),
         &auth_headers,
+        None,
     )
     .await
     .expect("retry attempt should also carry the bearer header");

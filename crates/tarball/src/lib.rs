@@ -244,6 +244,17 @@ pub enum TarballError {
         #[error(source)]
         source: zip::result::ZipError,
     },
+
+    /// Per-entry I/O failure during zip extraction — `try_reserve`
+    /// for the entry's payload, the body read, or any other
+    /// [`std::io::Error`] surfaced from the zip iterator. Kept
+    /// separate from [`TarballError::ReadTarballEntries`] so the
+    /// retry-classification path emits `ERR_PACQUET_ZIP` rather
+    /// than the tar-specific `ERR_PACQUET_TARBALL_TAR`.
+    #[from(ignore)]
+    #[display("Failed to read zip entry: {_0}")]
+    #[diagnostic(code(pacquet_tarball::read_zip_entry))]
+    ReadZipEntries(std::io::Error),
 }
 
 /// Per-package callback that decides whether a given archive entry
@@ -738,19 +749,23 @@ fn extract_zip_entries(
         let prealloc_hint = entry.size().min(MAX_ENTRY_PREALLOC_BYTES) as usize;
         let mut buffer = Vec::new();
         buffer.try_reserve(prealloc_hint).map_err(|err| {
-            TarballError::ReadTarballEntries(std::io::Error::new(
+            TarballError::ReadZipEntries(std::io::Error::new(
                 std::io::ErrorKind::OutOfMemory,
                 format!("failed to reserve {prealloc_hint} bytes for zip entry: {err}"),
             ))
         })?;
-        entry.read_to_end(&mut buffer).map_err(TarballError::ReadTarballEntries)?;
+        entry.read_to_end(&mut buffer).map_err(TarballError::ReadZipEntries)?;
 
         // Central-directory record carries a Unix mode only when
         // the archive was built by a Unix tool; Windows-built
         // archives omit it. Fall back to `0o644` so the executable
         // bit defaults to off — `addFilesFromDir` on pnpm's side
-        // lands at the same mode after `fs.writeFile`.
-        let file_mode = entry.unix_mode().unwrap_or(0o644);
+        // lands at the same mode after `fs.writeFile`. Mask off
+        // the high `st_mode` bits (e.g. `0o100000` for a regular
+        // file) so `CafsFileInfo.mode` stays permission-only,
+        // matching the convention `add_files_from_dir.rs` enforces
+        // for tar / on-disk imports.
+        let file_mode = entry.unix_mode().unwrap_or(0o644) & 0o777;
         let file_is_executable = file_mode::is_executable(file_mode);
 
         let (file_path, file_hash) = store_dir
@@ -1168,7 +1183,14 @@ pub struct DownloadTarballToStore<'a> {
     /// `None` (the default for ordinary npm tarballs) writes every
     /// regular-file entry; `Some(filter)` is what the binary fetcher
     /// uses to strip Node's bundled `npm` / `corepack` from the CAS.
-    pub ignore_file_pattern: Option<&'static IgnoreEntryFilter>,
+    ///
+    /// Stored as `Arc` so the install dispatcher (Slice D) can
+    /// construct one filter per fetch from runtime config — e.g.
+    /// `archiveFilters` keyed by `pkg.name` — without leaking
+    /// memory or pinning the filter to `'static`. Cloning the
+    /// Arc per retry attempt is cheap; the inner trait object
+    /// is shared.
+    pub ignore_file_pattern: Option<Arc<IgnoreEntryFilter>>,
 }
 
 /// Project [`TarballError`] onto pnpm's `requestRetryLogger`'s
@@ -1224,7 +1246,7 @@ fn tarball_error_to_request_retry(err: &TarballError) -> RequestRetryError {
         TarballError::PathTraversal { .. } => {
             out.code = Some("ERR_PACQUET_PATH_TRAVERSAL".to_string());
         }
-        TarballError::ReadZipArchive { .. } => {
+        TarballError::ReadZipArchive { .. } | TarballError::ReadZipEntries(_) => {
             out.code = Some("ERR_PACQUET_ZIP".to_string());
         }
     }
@@ -1284,7 +1306,7 @@ async fn fetch_and_extract_once<R: Reporter>(
     attempt: u32,
     store_dir: &'static StoreDir,
     auth_headers: &AuthHeaders,
-    ignore_file_pattern: Option<&'static IgnoreEntryFilter>,
+    ignore_file_pattern: Option<Arc<IgnoreEntryFilter>>,
 ) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
     let network_error =
         |error| TarballError::FetchTarball(NetworkError { url: package_url.to_string(), error });
@@ -1481,7 +1503,7 @@ async fn fetch_and_extract_once<R: Reporter>(
                 let mut archive = decompress_gzip(&buffer, package_unpacked_size)?
                     .pipe(Cursor::new)
                     .pipe(Archive::new);
-                extract_tarball_entries(&mut archive, store_dir, ignore_file_pattern)?
+                extract_tarball_entries(&mut archive, store_dir, ignore_file_pattern.as_deref())?
             };
             Ok((cas_paths, pkg_files_idx))
         },
@@ -1534,7 +1556,7 @@ async fn fetch_and_extract_with_retry<R: Reporter>(
     store_dir: &'static StoreDir,
     retry_opts: RetryOpts,
     auth_headers: &AuthHeaders,
-    ignore_file_pattern: Option<&'static IgnoreEntryFilter>,
+    ignore_file_pattern: Option<Arc<IgnoreEntryFilter>>,
 ) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
     let mut attempt: u32 = 0;
     loop {
@@ -1547,7 +1569,7 @@ async fn fetch_and_extract_with_retry<R: Reporter>(
             attempt,
             store_dir,
             auth_headers,
-            ignore_file_pattern,
+            ignore_file_pattern.clone(),
         )
         .await;
         match result {
@@ -1732,12 +1754,17 @@ impl<'a> DownloadTarballToStore<'a> {
             prefetched_cas_paths,
             retry_opts,
             auth_headers,
-            ignore_file_pattern,
             ..
         } = self;
         let store_index = self.store_index.clone();
         let store_index_writer = self.store_index_writer.clone();
         let verified_files_cache = Arc::clone(&self.verified_files_cache);
+        // `Option<Arc<IgnoreEntryFilter>>` isn't `Copy`, so it can't
+        // ride along in the deref-destructure above. `.clone()`
+        // here bumps the Arc refcount — cheap, and the trait
+        // object is shared with the install dispatcher that
+        // owns the original.
+        let ignore_file_pattern = self.ignore_file_pattern.clone();
 
         // Before hitting the network, check the SQLite store index: if the
         // tarball is already in the CAFS we can reuse its per-file paths
@@ -1858,6 +1885,9 @@ impl<'a> DownloadTarballToStore<'a> {
 /// temp dir + `addFilesFromDir` round-trip (pacquet's
 /// [`StoreDir::write_cas_file`] is the same content-addressed write
 /// `addFilesFromDir` does on each tempdir file).
+// 8 arguments — over the default clippy threshold, but each is
+// distinct (see the matching note on `fetch_and_extract_zip_with_retry`).
+#[allow(clippy::too_many_arguments)]
 async fn fetch_and_extract_zip_once<R: Reporter>(
     http_client: &ThrottledClient,
     package_url: &str,
@@ -1866,7 +1896,7 @@ async fn fetch_and_extract_zip_once<R: Reporter>(
     attempt: u32,
     store_dir: &'static StoreDir,
     archive_prefix: Option<&str>,
-    ignore_file_pattern: Option<&'static IgnoreEntryFilter>,
+    ignore_file_pattern: Option<Arc<IgnoreEntryFilter>>,
 ) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
     let network_error =
         |error| TarballError::FetchTarball(NetworkError { url: package_url.to_string(), error });
@@ -1973,7 +2003,7 @@ async fn fetch_and_extract_zip_once<R: Reporter>(
                     &package_url_owned,
                     store_dir,
                     archive_prefix_owned.as_deref(),
-                    ignore_file_pattern,
+                    ignore_file_pattern.as_deref(),
                 )?
             };
             Ok((cas_paths, pkg_files_idx))
@@ -2007,7 +2037,7 @@ async fn fetch_and_extract_zip_with_retry<R: Reporter>(
     store_dir: &'static StoreDir,
     retry_opts: RetryOpts,
     archive_prefix: Option<&str>,
-    ignore_file_pattern: Option<&'static IgnoreEntryFilter>,
+    ignore_file_pattern: Option<Arc<IgnoreEntryFilter>>,
 ) -> Result<(HashMap<String, PathBuf>, PackageFilesIndex), TarballError> {
     let mut attempt: u32 = 0;
     loop {
@@ -2019,7 +2049,7 @@ async fn fetch_and_extract_zip_with_retry<R: Reporter>(
             attempt,
             store_dir,
             archive_prefix,
-            ignore_file_pattern,
+            ignore_file_pattern.clone(),
         )
         .await;
         match result {
@@ -2106,7 +2136,9 @@ pub struct DownloadZipArchiveToStore<'a> {
     /// consumers see paths relative to the package root rather than
     /// the runtime-version-stamped wrapper directory.
     pub archive_prefix: Option<&'a str>,
-    pub ignore_file_pattern: Option<&'static IgnoreEntryFilter>,
+    /// See [`DownloadTarballToStore::ignore_file_pattern`] — the
+    /// per-fetch archive filter is shared by both archive types.
+    pub ignore_file_pattern: Option<Arc<IgnoreEntryFilter>>,
 }
 
 impl<'a> DownloadZipArchiveToStore<'a> {
@@ -2129,12 +2161,16 @@ impl<'a> DownloadZipArchiveToStore<'a> {
             prefetched_cas_paths,
             retry_opts,
             archive_prefix,
-            ignore_file_pattern,
             ..
         } = self;
         let store_index = self.store_index.clone();
         let store_index_writer = self.store_index_writer.clone();
         let verified_files_cache = Arc::clone(&self.verified_files_cache);
+        // See the matching note in
+        // [`DownloadTarballToStore::run_without_mem_cache`]: the
+        // Arc-wrapped filter can't ride along in the deref pattern,
+        // so clone it out by hand.
+        let ignore_file_pattern = self.ignore_file_pattern.clone();
 
         let cache_key = store_index_key(&package_integrity.to_string(), package_id);
         if let Some(prefetched) = prefetched_cas_paths
