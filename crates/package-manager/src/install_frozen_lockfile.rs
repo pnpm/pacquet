@@ -1,13 +1,16 @@
 use crate::{
     AllowBuildPolicy, BuildModules, BuildModulesError, CreateVirtualStore, CreateVirtualStoreError,
-    CreateVirtualStoreOutput, InstallabilityHost, LinkVirtualStoreBins, LinkVirtualStoreBinsError,
-    SkippedSnapshots, SymlinkDirectDependencies, SymlinkDirectDependenciesError,
-    VersionPolicyError, VirtualStoreLayout, any_installability_constraint,
-    compute_skipped_snapshots,
+    CreateVirtualStoreOutput, HoistedDependencies, InstallabilityHost, LinkVirtualStoreBins,
+    LinkVirtualStoreBinsError, SkippedSnapshots, SymlinkDirectDependencies,
+    SymlinkDirectDependenciesError, SymlinkPackageError, VersionPolicyError, VirtualStoreLayout,
+    any_installability_constraint, build_direct_deps_by_importer, build_hoist_graph,
+    compute_skipped_snapshots, get_hoisted_dependencies, link_hoisted_bins,
+    symlink_hoisted_dependencies,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_config::Config;
+use pacquet_cmd_shim::LinkBinsError;
+use pacquet_config::{Config, matcher::create_matcher};
 use pacquet_executor::ScriptsPrependNodePath as ExecScriptsPrependNodePath;
 use pacquet_lockfile::{PackageKey, PackageMetadata, ProjectSnapshot, SnapshotEntry};
 use pacquet_network::ThrottledClient;
@@ -17,7 +20,11 @@ use pacquet_patching::{
 };
 use pacquet_reporter::{IgnoredScriptsLog, LogEvent, LogLevel, Reporter, Stage, StageLog};
 use pacquet_store_dir::StoreIndexWriter;
-use std::{collections::HashMap, path::Path, sync::atomic::AtomicU8};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    path::Path,
+    sync::atomic::AtomicU8,
+};
 
 /// This subroutine installs dependencies from a frozen lockfile.
 ///
@@ -102,6 +109,21 @@ pub enum InstallFrozenLockfileError {
     #[diagnostic(transparent)]
     ResolvePatchedDependencies(#[error(source)] ResolvePatchedDependenciesError),
 
+    /// Surfaces a failure to create one of the hoist symlinks
+    /// (`<private_hoisted_modules_dir>/<alias>` or
+    /// `<public_hoisted_modules_dir>/<alias>`). EEXIST is
+    /// already swallowed by [`crate::symlink_package`]; this variant
+    /// only fires on genuine IO failures.
+    #[diagnostic(transparent)]
+    HoistSymlink(#[error(source)] SymlinkPackageError),
+
+    /// Surfaces a failure to link bins of privately-hoisted
+    /// dependencies. Mirrors upstream's `linkAllBins` for the
+    /// `privateHoistedModulesDir` (the public-side bins go through
+    /// the existing direct-deps bin-link pass at the root).
+    #[diagnostic(transparent)]
+    HoistLinkBins(#[error(source)] LinkBinsError),
+
     /// Surfaces upstream's `ERR_PNPM_PATCH_KEY_CONFLICT` when more
     /// than one configured version range matches a snapshot. Mirrors
     /// pnpm's behavior of refusing to silently pick one — the user
@@ -146,7 +168,14 @@ where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
     /// Execute the subroutine.
-    pub async fn run<R: Reporter>(self) -> Result<(), InstallFrozenLockfileError> {
+    ///
+    /// Returns the [`HoistedDependencies`] map produced by the hoist
+    /// pass. The map is empty when both hoist patterns are `None`
+    /// (feature disabled) and otherwise lists every transitive that
+    /// the matchers selected. The caller (`Install::run`) feeds it
+    /// into `.modules.yaml`'s `hoistedDependencies` so a later install
+    /// observes the same hoist decisions.
+    pub async fn run<R: Reporter>(self) -> Result<HoistedDependencies, InstallFrozenLockfileError> {
         let InstallFrozenLockfile {
             http_client,
             config,
@@ -161,6 +190,10 @@ where
             requester,
             supported_architectures,
         } = self;
+        // Cloned so the iterator can be reused below for hoist's
+        // direct-deps map. `Vec<DependencyGroup>` is tiny (≤4 enum
+        // variants) so the clone is essentially free.
+        let dependency_groups: Vec<DependencyGroup> = dependency_groups.into_iter().collect();
 
         // TODO: check if the lockfile is out-of-date
 
@@ -318,7 +351,7 @@ where
             config,
             layout: &layout,
             importers,
-            dependency_groups,
+            dependency_groups: dependency_groups.iter().copied(),
             workspace_root,
             skipped: &skipped,
         }
@@ -344,6 +377,69 @@ where
         }
         .run()
         .map_err(InstallFrozenLockfileError::LinkVirtualStoreBins)?;
+
+        // Hoist transitive deps into `<virtual_store>/node_modules`
+        // (private hoist) and/or `<root>/node_modules` (public hoist).
+        // Mirrors upstream's
+        // [`hoist(...)`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/linking/hoist/src/index.ts#L36)
+        // call site at
+        // [`deps-restorer:471-486`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/index.ts#L471).
+        //
+        // Guard mirrors upstream's `hoistPattern != null || publicHoistPattern != null`
+        // — `Some(empty)` is a valid disabled state for one side but
+        // not the other, so the guard checks `is_some()` on the field
+        // (not `Vec` length). With pacquet's defaults both sides are
+        // `Some(non-empty)`, so the pass runs by default.
+        let hoisted_dependencies = match (snapshots, packages) {
+            (Some(snaps), Some(pkgs))
+                if config.hoist_pattern.is_some() || config.public_hoist_pattern.is_some() =>
+            {
+                let graph = build_hoist_graph(snaps, pkgs);
+                let direct_deps =
+                    build_direct_deps_by_importer(importers, dependency_groups.iter().copied());
+                let private_pattern =
+                    create_matcher(config.hoist_pattern.as_deref().unwrap_or(&[]));
+                let public_pattern =
+                    create_matcher(config.public_hoist_pattern.as_deref().unwrap_or(&[]));
+                // No skipped-snapshot tracking yet (pacquet does not
+                // implement skipped optionals). Empty set is the
+                // upstream default for the no-skip case.
+                let skipped: HashSet<PackageKey> = HashSet::new();
+                let result = get_hoisted_dependencies(&crate::HoistInputs {
+                    graph: &graph,
+                    direct_deps_by_importer: &direct_deps,
+                    skipped: &skipped,
+                    private_pattern,
+                    public_pattern,
+                });
+                if let Some(result) = result {
+                    // Public-hoist target is the project's root
+                    // `node_modules` (= `config.modules_dir`).
+                    // Private-hoist target is `<virtual_store>/node_modules`,
+                    // matching upstream's
+                    // [`privateHoistedModulesDir = path.join(virtualStoreDir, 'node_modules')`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/index.ts#L228-L232).
+                    // (GVS rewires this to `<root>/node_modules/.pnpm/node_modules`;
+                    // pacquet doesn't implement GVS yet — tracked at
+                    // pnpm/pacquet#432.)
+                    let private_dir = config.virtual_store_dir.join("node_modules");
+                    let public_dir = config.modules_dir.clone();
+                    symlink_hoisted_dependencies(
+                        &result.hoisted_dependencies_by_node_id,
+                        &graph,
+                        &config.virtual_store_dir,
+                        &private_dir,
+                        &public_dir,
+                    )
+                    .map_err(InstallFrozenLockfileError::HoistSymlink)?;
+                    link_hoisted_bins(&private_dir, &result.hoisted_aliases_with_bins)
+                        .map_err(InstallFrozenLockfileError::HoistLinkBins)?;
+                    result.hoisted_dependencies
+                } else {
+                    BTreeMap::new()
+                }
+            }
+            _ => BTreeMap::new(),
+        };
 
         // Mirrors upstream `link.ts:167-170`: `importing_done` fires once
         // extraction and symlink linking are complete, before any build
@@ -479,7 +575,7 @@ where
             ),
         }
 
-        Ok(())
+        Ok(hoisted_dependencies)
     }
 }
 

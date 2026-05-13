@@ -231,7 +231,7 @@ impl WorkspaceSettings {
         }
 
         apply! {
-            hoist, hoist_pattern, public_hoist_pattern, shamefully_hoist,
+            hoist, shamefully_hoist,
             node_linker, symlink, package_import_method, modules_cache_max_age,
             lockfile, prefer_frozen_lockfile, lockfile_include_tarball_url,
             auto_install_peers, dedupe_peer_dependents, strict_peer_dependencies,
@@ -241,6 +241,22 @@ impl WorkspaceSettings {
             fetch_retry_mintimeout, fetch_retry_maxtimeout,
             enable_global_virtual_store,
             git_shallow_hosts,
+        }
+
+        // `hoist_pattern` and `public_hoist_pattern` are `Option<Vec<String>>`
+        // on both sides — yaml-side `Some(v)` becomes `config.* = Some(v)`,
+        // wrapping rather than replacing the inner `Vec`. The unwrapped
+        // case (`hoistPattern: null` in yaml) deserializes to `None` here
+        // and is currently treated as "leave the default in place"; an
+        // explicit-null path through yaml is not yet expressible (would
+        // need a tri-state wrapper). Matches the issue's
+        // `is_some() || is_some()` guard semantics — defaults are
+        // always `Some(_)` so the hoist pass runs by default.
+        if let Some(v) = self.hoist_pattern {
+            config.hoist_pattern = Some(v);
+        }
+        if let Some(v) = self.public_hoist_pattern {
+            config.public_hoist_pattern = Some(v);
         }
 
         if let Some(v) = self.modules_dir {
