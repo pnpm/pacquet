@@ -12,8 +12,10 @@
 //! was produced under different settings — re-running the install
 //! with the new settings would silently leave artifacts of the old
 //! shape behind. Pacquet errors out instead of silently doing the
-//! wrong thing; users opt into the rewrite via `--force` (the purge
-//! path tracked in #464 §B is a follow-up).
+//! wrong thing; today the user recovers by removing `node_modules/`
+//! and re-running the install. The automatic purge path (upstream's
+//! `forceNewModules` — `pnpm install --force`) is tracked under
+//! #464 §B; pacquet doesn't expose a `--force` install flag yet.
 //!
 //! Today this module covers section §A of #464 — the **read-and-error**
 //! pipeline. The `forceNewModules` purge path (§B) and the
@@ -66,15 +68,17 @@ pub enum ValidateModulesError {
     /// Recorded `hoistPattern` differs from the current install
     /// options. Mirrors upstream's `HOIST_PATTERN_DIFF` throw at
     /// [`validateModules.ts:88-92`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/validateModules.ts#L88-L92).
-    /// `--force` would purge and rebuild (§B follow-up); today
-    /// pacquet errors so the user opts in.
+    /// Upstream's `--force` would purge and rebuild; pacquet's
+    /// `--force` install flag is tracked under #464 §B and isn't
+    /// exposed yet, so the user-facing help points at the manual
+    /// recovery path.
     #[display(
         "This modules directory was created using a different hoist-pattern value. Run \"pnpm install\" to recreate the modules directory."
     )]
     #[diagnostic(
         code(pacquet_package_manager::hoist_pattern_diff),
         help(
-            "Either run `pacquet install --force` to recreate `node_modules/`, or restore the previous `hoistPattern` in `pnpm-workspace.yaml`."
+            "Restore the previous `hoistPattern` in `pnpm-workspace.yaml`, or remove `node_modules/` and re-run `pacquet install --frozen-lockfile`."
         )
     )]
     HoistPatternDiff,
@@ -88,7 +92,7 @@ pub enum ValidateModulesError {
     #[diagnostic(
         code(pacquet_package_manager::public_hoist_pattern_diff),
         help(
-            "Either run `pacquet install --force` to recreate `node_modules/`, or restore the previous `publicHoistPattern` in `pnpm-workspace.yaml`."
+            "Restore the previous `publicHoistPattern` in `pnpm-workspace.yaml`, or remove `node_modules/` and re-run `pacquet install --frozen-lockfile`."
         )
     )]
     PublicHoistPatternDiff,
@@ -105,7 +109,7 @@ pub enum ValidateModulesError {
     #[diagnostic(
         code(pacquet_package_manager::included_deps_conflict),
         help(
-            "Run `pacquet install --force` to recreate `node_modules/`, or rerun the install with the same dependency groups (`--prod` / default / `--dev`) as before."
+            "Re-run the install with the same dependency groups (`--prod` / default / `--dev`) as before, or remove `node_modules/` and re-run `pacquet install --frozen-lockfile`."
         )
     )]
     IncludedDepsConflict { lockfile_dir: PathBuf, recorded: String, requested: String },
@@ -113,17 +117,21 @@ pub enum ValidateModulesError {
     /// Recorded `virtualStoreDirMaxLength` differs. Mirrors upstream's
     /// `VIRTUAL_STORE_DIR_MAX_LENGTH_DIFF` at
     /// [`validateModules.ts:55-65`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/validateModules.ts#L55-L65).
-    /// Pacquet uses upstream's default (120) so this is mostly
-    /// future-proofing — but a user who pins a different value in
-    /// yaml between two installs would otherwise silently get
-    /// orphaned `.pnpm/<truncated-name>` slots from the old run.
+    /// Pacquet doesn't yet read `virtualStoreDirMaxLength` from
+    /// `pnpm-workspace.yaml` (the loader pins
+    /// [`pacquet_modules_yaml::DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH`]
+    /// = 120 unconditionally), so this variant is reachable today
+    /// only when the on-disk `.modules.yaml` was written by a
+    /// pnpm install with a non-default value. Once pacquet honors
+    /// the yaml key, the help text below should switch to
+    /// "restore the previous value or remove and re-install".
     #[display(
         "This modules directory was created using a different virtual-store-dir-max-length value. Run \"pnpm install\" to recreate the modules directory."
     )]
     #[diagnostic(
         code(pacquet_package_manager::virtual_store_dir_max_length_diff),
         help(
-            "Either run `pacquet install --force` or restore the previous `virtualStoreDirMaxLength` in `pnpm-workspace.yaml`."
+            "Remove `node_modules/` and re-run `pacquet install --frozen-lockfile`. Pacquet doesn't yet read `virtualStoreDirMaxLength` from `pnpm-workspace.yaml`, so the recorded value can only be matched by re-creating the modules directory."
         )
     )]
     VirtualStoreDirMaxLengthDiff,
@@ -140,7 +148,7 @@ pub enum ValidateModulesError {
     #[diagnostic(
         code(pacquet_package_manager::unexpected_store),
         help(
-            "Either run `pacquet install --force` to recreate `node_modules/` against the new store, or set `storeDir` back to the recorded value."
+            "Set `storeDir` back to the recorded value, or remove `node_modules/` and re-run `pacquet install --frozen-lockfile` against the new store."
         )
     )]
     UnexpectedStore { modules_dir: PathBuf, recorded: String, requested: String },
@@ -159,7 +167,7 @@ pub enum ValidateModulesError {
     #[diagnostic(
         code(pacquet_package_manager::unexpected_virtual_store_dir),
         help(
-            "Either run `pacquet install --force` to recreate `node_modules/`, or set `virtualStoreDir` back to the recorded value."
+            "Set `virtualStoreDir` back to the recorded value, or remove `node_modules/` and re-run `pacquet install --frozen-lockfile`."
         )
     )]
     UnexpectedVirtualStoreDir { modules_dir: PathBuf, recorded: String, requested: String },

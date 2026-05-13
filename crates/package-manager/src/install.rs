@@ -137,11 +137,13 @@ pub enum InstallError {
     /// layout-driving axis (`hoistPattern`, `publicHoistPattern`,
     /// `included`, `storeDir`, `virtualStoreDir`,
     /// `virtualStoreDirMaxLength`). Mirrors upstream pnpm's
-    /// `validateModules` + `checkCompatibility` errors. Users
-    /// resolve this by either restoring the previous setting or
-    /// running `pacquet install --force` (the purge path tracked
-    /// in #464 §B is not yet implemented; today the user wipes
-    /// `node_modules/` manually).
+    /// `validateModules` + `checkCompatibility` errors. Today the
+    /// user resolves this by either restoring the previous yaml
+    /// setting or removing `node_modules/` and re-running
+    /// `pacquet install --frozen-lockfile`. The automatic purge
+    /// path (upstream's `--force` / `forceNewModules`) is tracked
+    /// under #464 §B; pacquet doesn't expose a `--force` install
+    /// flag yet.
     #[diagnostic(transparent)]
     ValidateModules(#[error(source)] ValidateModulesError),
 }
@@ -237,11 +239,28 @@ where
         // — no validation. A drift on any layout-affecting axis
         // (hoist patterns, `included`, store paths) errors out so
         // a re-install with new yaml settings doesn't silently leave
-        // the prior layout behind. The `--force` purge path is the
-        // §B follow-up tracked under #464; today the user wipes
-        // `node_modules/` manually after seeing the error.
-        if let Some(modules) = read_modules_manifest::<RealApi>(&config.modules_dir)
-            .map_err(InstallError::ReadModulesManifest)?
+        // the prior layout behind. The recovery-by-purge path
+        // (upstream's `forceNewModules`) is tracked under #464 §B;
+        // today the user wipes `node_modules/` and reinstalls.
+        //
+        // Gated on `frozen_lockfile` because:
+        //
+        // 1. Hoisting (the most user-facing drift axis) is itself
+        //    frozen-lockfile-only in pacquet today
+        //    ([`InstallWithoutLockfile::run`](crate::InstallWithoutLockfile)
+        //    returns an empty `HoistedDependencies` map by design),
+        //    so the without-lockfile path can't drift on
+        //    `hoist_pattern` / `public_hoist_pattern` even when
+        //    `pnpm-workspace.yaml` flips between runs.
+        // 2. The without-lockfile path is a transitional shape
+        //    pacquet keeps for users who haven't generated a
+        //    lockfile yet; piling validation errors onto it would
+        //    surface drift that's irrelevant for that mode.
+        // 3. Matches the PR scope (#464 §A is explicitly the
+        //    frozen-lockfile read-and-error path).
+        if frozen_lockfile
+            && let Some(modules) = read_modules_manifest::<RealApi>(&config.modules_dir)
+                .map_err(InstallError::ReadModulesManifest)?
         {
             validate_modules(&modules, config, included, &workspace_root, &config.modules_dir)
                 .map_err(InstallError::ValidateModules)?;
