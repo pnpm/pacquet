@@ -184,9 +184,71 @@ fn file_mode_from(_meta: &fs::Metadata) -> u32 {
 /// suffix pnpm's CAFS layout uses. Cheaper than reading filesystem
 /// metadata, and matches the write-side encoding in
 /// [`pacquet_store_dir::StoreDir::cas_file_path`].
-#[cfg(unix)]
 fn cas_path_is_executable(path: &Path) -> bool {
     path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with("-exec"))
+}
+
+/// Synthesize the [`PackageFilesIndex::files`](pacquet_store_dir::PackageFilesIndex::files)
+/// payload from an existing `cas_paths` map without re-reading file
+/// bytes. Used by [`crate::GitHostedTarballFetcher`]'s fast path
+/// (mirrors upstream's [`gitHostedTarballFetcher.ts:88-100`](https://github.com/pnpm/pnpm/blob/94240bc046/fetching/tarball-fetcher/src/gitHostedTarballFetcher.ts#L88-L100)),
+/// where the prepared file set is byte-identical to the raw tarball,
+/// so re-hashing every entry into the CAS would be wasted work.
+///
+/// The digest is extracted from the CAS path itself — pnpm v11 lays
+/// CAS files out as `files/XX/<rest>[-exec]`, so concatenating the
+/// shard byte (parent directory name) with the file stem (sans the
+/// optional `-exec` suffix) reconstructs the full hex digest. Mode
+/// reporting follows the read side's
+/// [`cas_file_path_by_mode`](pacquet_store_dir::StoreDir::cas_file_path_by_mode)
+/// rule: any-exec-bit-set ↔ `-exec` suffix, so a synthesized `0o755`
+/// for `-exec` entries and `0o644` otherwise round-trip cleanly.
+/// `size` still requires a `fs::metadata` stat, but that's two syscalls
+/// per file rather than a full read + sha512.
+pub(crate) fn synthesize_files_index(
+    cas_paths: &HashMap<String, PathBuf>,
+) -> Result<HashMap<String, CafsFileInfo>, GitFetcherError> {
+    let mut out = HashMap::with_capacity(cas_paths.len());
+    for (rel, cas_path) in cas_paths {
+        let digest = cas_path_digest(cas_path).ok_or_else(|| {
+            GitFetcherError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "CAS path {cas_path:?} for {rel:?} does not match `files/XX/<rest>[-exec]`",
+                ),
+            ))
+        })?;
+        let executable = cas_path_is_executable(cas_path);
+        // Match the read-side `cas_file_path_by_mode` round-trip rule:
+        // any-exec-bit-set ↔ `-exec` suffix. The exact mode value is
+        // only consulted by `is_executable`, so `0o755` / `0o644` are
+        // canonical representatives — they replay through the same
+        // `-exec` decision the write side made for these blobs.
+        let mode = if executable { 0o755 } else { 0o644 };
+        let metadata = fs::metadata(cas_path).map_err(GitFetcherError::Io)?;
+        let size = metadata.len();
+        out.insert(rel.clone(), CafsFileInfo { digest, mode, size, checked_at: None });
+    }
+    Ok(out)
+}
+
+/// Reconstruct the hex digest of a CAS file from its path. The pnpm
+/// v11 layout puts CAS files at `<store>/v11/files/<XX>/<rest>[-exec]`
+/// where `<XX>` is the first byte of the sha512 hex digest and
+/// `<rest>` is the remaining 126 hex characters. Returns `None` when
+/// the path doesn't match that shape, so callers can surface a clear
+/// error rather than silently producing a malformed digest.
+fn cas_path_digest(path: &Path) -> Option<String> {
+    let file_name = path.file_name()?.to_str()?;
+    let stem = file_name.strip_suffix("-exec").unwrap_or(file_name);
+    let shard = path.parent()?.file_name()?.to_str()?;
+    if shard.len() != 2 || !shard.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    if !stem.bytes().all(|b| b.is_ascii_hexdigit()) || stem.is_empty() {
+        return None;
+    }
+    Some(format!("{shard}{stem}"))
 }
 
 /// Re-wrap a CAFS write failure as a `GitFetcherError::AddFilesFromDir`.
@@ -202,9 +264,15 @@ pub(crate) fn map_write_cas(err: pacquet_store_dir::WriteCasFileError) -> GitFet
 
 #[cfg(test)]
 mod tests {
-    use super::{GitFetcherError, join_checked, materialize_into};
+    use super::{
+        GitFetcherError, cas_path_digest, join_checked, materialize_into, synthesize_files_index,
+    };
     use pacquet_store_dir::StoreDir;
-    use std::{collections::HashMap, io, path::Path};
+    use std::{
+        collections::HashMap,
+        io,
+        path::{Path, PathBuf},
+    };
     use tempfile::tempdir;
 
     fn assert_invalid_input(err: GitFetcherError) {
@@ -248,6 +316,92 @@ mod tests {
         // Even a `..` deep in the path must be refused — otherwise
         // `a/../../escape` would slip through.
         assert_invalid_input(join_checked(Path::new("/root"), "a/../escape").unwrap_err());
+    }
+
+    #[test]
+    fn cas_path_digest_round_trips_through_write_cas_file() {
+        // Anchor the digest-reconstruction logic against the canonical
+        // write side: whatever `write_cas_file` produces, the read
+        // side has to invert. A mismatch would silently corrupt the
+        // `files_index` rows the fast path queues.
+        let cas_root = tempdir().unwrap();
+        let store_dir = StoreDir::from(cas_root.path().to_path_buf());
+
+        let (regular_path, regular_hash) = store_dir.write_cas_file(b"hello", false).unwrap();
+        assert_eq!(
+            cas_path_digest(&regular_path).expect("round-trip non-exec"),
+            format!("{regular_hash:x}"),
+        );
+
+        let (exec_path, exec_hash) = store_dir.write_cas_file(b"#!/bin/sh\n", true).unwrap();
+        let digest = cas_path_digest(&exec_path).expect("round-trip exec");
+        assert_eq!(
+            digest,
+            format!("{exec_hash:x}"),
+            "`-exec` suffix must be stripped before parse",
+        );
+    }
+
+    #[test]
+    fn cas_path_digest_rejects_malformed_paths() {
+        // Wrong shape — too few components.
+        assert!(cas_path_digest(Path::new("/tmp/foo")).is_none());
+        // Non-hex shard.
+        assert!(cas_path_digest(&PathBuf::from("/tmp/zz/abc")).is_none());
+        // Empty stem.
+        assert!(cas_path_digest(&PathBuf::from("/tmp/ab/")).is_none());
+    }
+
+    #[test]
+    fn synthesize_files_index_recovers_digest_size_and_exec_bit() {
+        // The slow path computes `CafsFileInfo` by reading every file,
+        // re-hashing, and stat'ing. The fast path must produce the
+        // same `(digest, mode-class, size)` triple from the CAS path
+        // alone — anything else and the warm prefetch would miss.
+        let store_root = tempdir().unwrap();
+        let store_dir = StoreDir::from(store_root.path().to_path_buf());
+
+        let (regular_path, regular_hash) = store_dir.write_cas_file(b"abc", false).unwrap();
+        let (exec_path, exec_hash) =
+            store_dir.write_cas_file(b"#!/usr/bin/env node\n", true).unwrap();
+
+        let mut cas_paths = HashMap::new();
+        cas_paths.insert("README.md".to_string(), regular_path);
+        cas_paths.insert("bin/run".to_string(), exec_path);
+
+        let index = synthesize_files_index(&cas_paths).unwrap();
+        assert_eq!(index.len(), 2);
+
+        let readme = index.get("README.md").expect("README entry");
+        assert_eq!(readme.digest, format!("{regular_hash:x}"));
+        assert_eq!(readme.size, 3);
+        assert_eq!(readme.mode & 0o111, 0, "regular files have no exec bit");
+        assert_eq!(readme.checked_at, None);
+
+        let bin = index.get("bin/run").expect("bin entry");
+        assert_eq!(bin.digest, format!("{exec_hash:x}"));
+        assert_eq!(bin.size, b"#!/usr/bin/env node\n".len() as u64);
+        assert_eq!(bin.mode & 0o111, 0o111, "exec files keep all exec bits");
+    }
+
+    #[test]
+    fn synthesize_files_index_errors_on_malformed_cas_path() {
+        // A caller handing us paths that don't match the v11 CAS
+        // layout is a programming error — better to surface it as
+        // `InvalidData` than to silently bake a bogus digest into
+        // `index.db`.
+        let mut bad = HashMap::new();
+        // A path that exists but isn't shaped like a CAS file.
+        let tmp = tempdir().unwrap();
+        let scratch = tmp.path().join("scratch.txt");
+        std::fs::write(&scratch, b"x").unwrap();
+        bad.insert("scratch.txt".to_string(), scratch);
+
+        let err = synthesize_files_index(&bad).unwrap_err();
+        match err {
+            GitFetcherError::Io(io_err) => assert_eq!(io_err.kind(), io::ErrorKind::InvalidData),
+            other => panic!("expected Io(InvalidData), got {other:?}"),
+        }
     }
 
     #[test]
