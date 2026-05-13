@@ -82,9 +82,13 @@ pub struct HoisterTree {
     /// hoister moves freely).
     pub peer_names: BTreeSet<String>,
     pub dependency_kind: HoisterDependencyKind,
-    /// Tiebreaker for the hoister's BFS. Pacquet always builds with
-    /// `0`; pnpm and yarn-berry use higher values for packages that
-    /// declare a high `hoistPriority` to bias them toward the root.
+    /// Tiebreaker used upstream when ranking competing hoist
+    /// candidates. Carried through the type for parity with
+    /// `@yarnpkg/nm`'s `HoisterTree.hoistPriority` but currently
+    /// unread by pacquet's algorithm — pacquet builds every node
+    /// with `0` and the popularity-based preference pass that
+    /// would consume it isn't ported yet (see the "popularity-
+    /// based ident preference" gap on `nm_hoist`).
     pub hoist_priority: u32,
     /// Children of this node. Order matches insertion order — the
     /// hoister depends on it.
@@ -173,23 +177,6 @@ pub enum HoistError {
         /// resolve.
         pkg_key: String,
     },
-    /// The caller passed a non-empty `hoisting_limits` map. The
-    /// hoist algorithm doesn't enforce limits yet, so flattening
-    /// would violate the borders the caller asked to keep. Refuse
-    /// upfront.
-    #[display(
-        "hoister cannot yet enforce `hoisting_limits`; the supplied map is non-empty ({len} entries)"
-    )]
-    #[diagnostic(
-        code(ERR_PACQUET_HOIST_UNSUPPORTED_HOISTING_LIMITS),
-        help("the hoister doesn't yet enforce `hoistingLimits`; pass an empty map.")
-    )]
-    UnsupportedHoistingLimits {
-        /// How many entries the caller supplied. Carries no
-        /// semantic value beyond debug; if zero we wouldn't have
-        /// fired.
-        len: usize,
-    },
     /// The lockfile contains more than one importer. The hoist
     /// algorithm doesn't yet support workspace projects (multi-
     /// importer hoist trees with `workspace:` references). Refuse
@@ -261,25 +248,24 @@ impl<T> From<Rc<T>> for RcByPtr<T> {
     }
 }
 
-/// Build the [`HoisterTree`] for `lockfile`'s root importer (plus
-/// any non-root importers as workspace children) and run the
-/// `@yarnpkg/nm` hoister over it. Ports
+/// Build the [`HoisterTree`] for `lockfile`'s root importer and
+/// run the `@yarnpkg/nm` hoister over it. Ports
 /// [`installing/linking/real-hoist/src/index.ts`][upstream].
 ///
-/// The inner hoist algorithm is currently stubbed: it returns the
-/// input tree shape converted to `HoisterResult` without moving
-/// anything. The lockfile-to-tree translation and the
-/// `LockfileMissingDependencyError` surface are what this function
-/// pins today.
+/// The inner hoist is a recursive DFS with multi-round
+/// convergence over the result graph (peer-aware, with
+/// `hoistingLimits` enforced as `Border` decisions). Gaps that
+/// remain — popularity-based ident preference, multi-importer
+/// workspace trees, and `ExternalSoftLink` descendants — are
+/// documented on the private `nm_hoist` driver.
 ///
 /// [upstream]: https://github.com/pnpm/pnpm/blob/94240bc0464196bd52f7006b97f6d9a43df34633/installing/linking/real-hoist/src/index.ts
 pub fn hoist(lockfile: &Lockfile, opts: &HoistOpts) -> Result<HoisterResult, HoistError> {
     // Refuse upfront for inputs the algorithm doesn't yet model.
     // Better an explicit error than a silently-invented layout
-    // pnpm would reject.
-    if !opts.hoisting_limits.is_empty() {
-        return Err(HoistError::UnsupportedHoistingLimits { len: opts.hoisting_limits.len() });
-    }
+    // pnpm would reject. `hoisting_limits` is enforced by the
+    // algorithm itself (see `hoist_into_root`), so no upfront
+    // guard is needed here.
     let extra_importers: Vec<String> = lockfile
         .importers
         .keys()
@@ -566,8 +552,9 @@ fn percent_encode_path(s: &str) -> String {
 
 /// Pacquet's port of the `@yarnpkg/nm` hoist algorithm. Walks the
 /// input tree, deep-copies it into a `HoisterResult` shape, then
-/// pulls eligible descendants up to the root via single-pass BFS
-/// with parent-wins conflict resolution. Models the common case
+/// pulls eligible descendants up to the root via a depth-first
+/// recursion run to a fixed point (see [`hoist_into_root`]) with
+/// parent-wins conflict resolution. Models the common case
 /// of pnpm's `nodeLinker: hoisted` install — every transitive
 /// dependency that doesn't collide with an already-hoisted name
 /// surfaces at the root, just like a flat `node_modules`.
@@ -581,7 +568,7 @@ fn percent_encode_path(s: &str) -> String {
 ///   to one node at root.
 /// * Parent-wins on version conflict: when two distinct deps
 ///   share an alias but resolve to different snapshot keys, the
-///   first one BFS reaches takes the root slot and the other
+///   first one the DFS reaches takes the root slot and the other
 ///   stays under its parent.
 /// * Peer-shadow refusal: a candidate whose `peer_names` would
 ///   resolve against an ancestor's dep with a different ident
@@ -589,30 +576,57 @@ fn percent_encode_path(s: &str) -> String {
 ///   [`would_shadow_peer`] for the ancestor-path walk and how
 ///   pacquet's DAG-preserving model differs from upstream's
 ///   per-path tree clone in rare cross-path mismatch cases.
+/// * Multi-round convergence: when a round refuses a hoist
+///   because of a peer mismatch and a subsequent move shifts the
+///   blocking ident out of the ancestor chain (or into a
+///   compatible root slot), the next round reconsiders the
+///   refused candidate. The outer loop in [`hoist_into_root`]
+///   iterates until a round makes no moves. Bounded by O(N)
+///   rounds since each move is one-way (parent → root).
+///
+/// What this models today (continued):
+///
+/// * `hoistingLimits` borders. Names in
+///   `opts.hoisting_limits[root_locator]` are kept out of the
+///   root's `node_modules` (`AbsorbDecision::Border`). Mirrors
+///   upstream's `isHoistBorder` flag.
+/// * `externalDependencies` placeholders — the wrapper adds them
+///   as zero-children `ExternalSoftLink` nodes at the root, and
+///   strips them from the result post-hoist. Same observable
+///   shape as upstream.
 ///
 /// What this does *not* model yet:
 ///
-/// * Multi-round convergence — re-walking the tree to discover
-///   newly-hoistable deps after the first pass. The BFS handles
-///   deep chains (`root → a → b → c` flattens in one pass), so
-///   the cases requiring true multi-round are limited to
-///   peer-interactions where one hoist decision unblocks
-///   another. Today the algorithm refuses those conservatively.
-/// * `hoistingLimits` / `externalDependencies` runtime
-///   enforcement (the wrapper still refuses non-empty
-///   `hoisting_limits`).
-/// * `dependencyKind` distinctions for workspaces and external
-///   soft links (the `Workspace` guard at the wrapper boundary
-///   still refuses multi-importer lockfiles upfront).
+/// * Popularity-based ident preference (upstream's
+///   `buildPreferenceMap`). When two distinct deps share an
+///   alias, pacquet picks the first-visited; upstream picks the
+///   one with more incoming references. Outcome differs for the
+///   handful of upstream test cases that exercise the tie-break.
+/// * Multi-importer (workspace) hoist trees — pacquet's wrapper
+///   refuses lockfiles with non-root importers upfront via
+///   `UnsupportedWorkspace`. Workspace-aware hoisting requires
+///   per-importer roots and a different output shape.
+/// * `ExternalSoftLink` descendants — pacquet creates soft-links
+///   only as zero-children placeholders, so upstream's
+///   "only-hoist-when-all-descendants-hoist" rule has nothing to
+///   delay today.
 ///
 /// Matches the structural intent of upstream `hoistTo` at
 /// [hoist.ts:329][upstream] for the subset above.
 ///
 /// [upstream]: https://github.com/yarnpkg/berry/blob/4287909fa6a0a1ec976a55776bff606864b31990/packages/yarnpkg-nm/sources/hoist.ts#L329
-fn nm_hoist(tree: &HoisterTree, _opts: &HoistOpts) -> HoisterResult {
+fn nm_hoist(tree: &HoisterTree, opts: &HoistOpts) -> HoisterResult {
+    // Compute the root locator from the input tree, where each
+    // node carries a single unambiguous `reference`. The result
+    // graph collects references into a `BTreeSet` (one
+    // `HoisterResult` can absorb several `HoisterTree` nodes with
+    // the same ident), so deriving the locator from a result
+    // node would mean picking an arbitrary entry from the set;
+    // doing it here keeps the lookup well-defined.
+    let root_locator = format!("{}@{}", tree.ident_name, tree.reference);
     let mut memo: HashMap<*const HoisterTree, Rc<HoisterResult>> = HashMap::new();
     let root = convert(tree, &mut memo);
-    hoist_into_root(&root);
+    hoist_into_root(&root, &root_locator, opts);
     // Returning an owned `HoisterResult` (rather than
     // `Rc<HoisterResult>`) keeps the wrapper's post-hoist
     // `external_dependencies` filter from mutating the shared graph.
@@ -646,26 +660,42 @@ enum AbsorbDecision {
     /// [peer-shadow-root]: https://github.com/yarnpkg/berry/blob/4287909fa6a0a1ec976a55776bff606864b31990/packages/yarnpkg-nm/sources/hoist.ts#L414
     /// [peer-path]: https://github.com/yarnpkg/berry/blob/4287909fa6a0a1ec976a55776bff606864b31990/packages/yarnpkg-nm/sources/hoist.ts#L454-L479
     PeerShadow,
+    /// The candidate's name is in `opts.hoisting_limits` for the
+    /// current root locator. The caller asked us to keep this name
+    /// out of the root's `node_modules`, so the candidate stays
+    /// nested under its parent. Mirrors upstream's `isHoistBorder`
+    /// flag set during `cloneTree` from
+    /// [`hoist.ts:707`][hoist-border].
+    ///
+    /// [hoist-border]: https://github.com/yarnpkg/berry/blob/4287909fa6a0a1ec976a55776bff606864b31990/packages/yarnpkg-nm/sources/hoist.ts#L707
+    Border,
 }
 
 /// Walk the result tree and hoist every eligible descendant of
-/// `root` onto `root` itself.
+/// `root` onto `root` itself, iterating until the graph reaches a
+/// fixed point.
 ///
 /// Maintains a side `HashMap<name, RcByPtr>` mirror of root's
 /// direct deps so the per-edge "is this name taken at root?" check
 /// stays O(1). Without the index a graph with `N` packages all
 /// hoisting freely would do O(N²) `IndexSet` scans.
 ///
-/// Implemented as a recursive depth-first walk (see
-/// [`hoist_subtree`]) so the `ancestor_path` passed into each
-/// recursion reflects the current result-graph position of the
-/// parent. A previous BFS form computed the path at queue time
-/// and used it at dequeue time, which went stale whenever a node
-/// was hoisted to root between those two moments — the peer-
-/// shadow check then walked ex-ancestors and over-refused hoists.
-/// In the DFS form, when we recurse into a freshly-hoisted child,
-/// we pass `[root]` as the path; when we recurse into a child
-/// that stayed nested, we pass the parent's path plus the parent.
+/// Each round is a recursive depth-first walk (see
+/// [`hoist_subtree`]) whose `ancestor_path` reflects the current
+/// result-graph position of each node — a freshly-hoisted child
+/// recurses with `[root]`, a child that stayed nested recurses
+/// with `parent_path + [parent]`. The outer loop re-runs the DFS
+/// whenever a round made at least one move, because that move can
+/// unlock further hoists: a previously-blocking peer ident may
+/// have shifted out of the ancestor chain (a sibling's dep moved
+/// to root), or a previously-empty root slot may now carry a
+/// compatible ident.
+///
+/// Termination is bounded by O(N) rounds since each move is
+/// one-way (parent → root) and the graph has finite size.
+/// Mirrors upstream `hoistTo`'s
+/// `do { hoistGraph(); } while (anotherRoundNeeded)` shape, just
+/// with the DFS-by-round simplification described above.
 ///
 /// For a DAG where the same node is reachable through multiple
 /// paths, only the first-arrived path is consulted; upstream's
@@ -674,27 +704,48 @@ enum AbsorbDecision {
 /// DAG sharing and accepts a more conservative ruling in the
 /// rare cross-path mismatch cases. The cost is layouts that are
 /// sometimes more nested than pnpm's, never less.
-fn hoist_into_root(root: &Rc<HoisterResult>) {
-    let mut visited: HashSet<*const HoisterResult> = HashSet::new();
+fn hoist_into_root(root: &Rc<HoisterResult>, root_locator: &str, opts: &HoistOpts) {
     let mut root_index: HashMap<String, RcByPtr<HoisterResult>> =
         root.dependencies.borrow().iter().map(|d| (d.0.name.clone(), d.clone())).collect();
-    hoist_subtree(root, &[], root, &mut root_index, &mut visited);
+
+    // Look up the names the caller asked us not to hoist to *this*
+    // root. Upstream stores this on each child as `isHoistBorder`
+    // during `cloneTree`; pacquet stays DAG-shaped and looks the
+    // names up by-name at decision time, which is equivalent since
+    // there's only one root locator. An empty fallback set means
+    // the check is effectively a no-op when no limits are configured.
+    let empty_set: BTreeSet<String> = BTreeSet::new();
+    let border_names: &BTreeSet<String> =
+        opts.hoisting_limits.get(root_locator).unwrap_or(&empty_set);
+
+    loop {
+        let mut visited: HashSet<*const HoisterResult> = HashSet::new();
+        let changed = hoist_subtree(root, &[], root, &mut root_index, &mut visited, border_names);
+        if !changed {
+            break;
+        }
+    }
 }
 
 /// Depth-first hoist driver. `ancestor_path` is the path from
 /// `root` down to (but *excluding*) `node`, so for the root
 /// itself it is empty and for a child of root it is `[root]`.
+/// Returns whether this subtree moved at least one node in the
+/// current round — the outer multi-round loop uses that to
+/// decide whether another round can unlock further hoists.
 fn hoist_subtree(
     node: &Rc<HoisterResult>,
     ancestor_path: &[Rc<HoisterResult>],
     root: &Rc<HoisterResult>,
     root_index: &mut HashMap<String, RcByPtr<HoisterResult>>,
     visited: &mut HashSet<*const HoisterResult>,
-) {
+    border_names: &BTreeSet<String>,
+) -> bool {
     let root_ptr = Rc::as_ptr(root);
     if !visited.insert(Rc::as_ptr(node)) {
-        return;
+        return false;
     }
+    let mut changed_in_subtree = false;
 
     // Snapshot the current children so we can mutate
     // `node.dependencies` mid-iteration without invalidating the
@@ -724,6 +775,13 @@ fn hoist_subtree(
             Some(_) => AbsorbDecision::Conflict,
         };
 
+        // Hoisting limits ride on top of the basic decision: even
+        // if the slot is free and no peer would shadow, the caller
+        // may have asked us to keep this name out of the root.
+        if matches!(decision, AbsorbDecision::Free) && border_names.contains(&child.0.name) {
+            decision = AbsorbDecision::Border;
+        }
+
         // Peer-aware refusal layered on top of the basic
         // free / dedup / conflict decision. `Conflict` already
         // leaves the candidate in place and `SameNode` dedups
@@ -737,8 +795,10 @@ fn hoist_subtree(
 
         // Apply the decision, *then* compute the path to pass
         // into recursion based on the child's *new* position.
-        // This is the load-bearing difference from the previous
-        // BFS shape: the recursion path reflects current state.
+        // Computing post-decision is the load-bearing detail:
+        // the recursion path always reflects the child's current
+        // position in the result graph, so peer checks deeper
+        // down see ancestors that are actually ancestors.
         let child_recursion_path: Vec<Rc<HoisterResult>> = if is_root {
             // Root's direct children are already at root — no
             // movement happens, and their ancestor path is
@@ -750,6 +810,7 @@ fn hoist_subtree(
                     node.dependencies.borrow_mut().shift_remove(&child);
                     root.dependencies.borrow_mut().insert(child.clone());
                     root_index.insert(child.0.name.clone(), child.clone());
+                    changed_in_subtree = true;
                     // Child is now a direct dep of root; its
                     // ancestor path collapses to `[root]`.
                     vec![Rc::clone(root)]
@@ -760,21 +821,28 @@ fn hoist_subtree(
                     // the deeper copy disappears. Child's actual
                     // ancestor path is `[root]`.
                     node.dependencies.borrow_mut().shift_remove(&child);
+                    changed_in_subtree = true;
                     vec![Rc::clone(root)]
                 }
-                AbsorbDecision::Conflict | AbsorbDecision::PeerShadow => {
+                AbsorbDecision::Conflict | AbsorbDecision::PeerShadow | AbsorbDecision::Border => {
                     // Stays at the current parent. The version
-                    // already at root wins the slot, or
-                    // hoisting would shadow a peer dependency.
-                    // Child's ancestor path is the path through
-                    // `node`.
+                    // already at root wins the slot, hoisting would
+                    // shadow a peer dependency, or the caller's
+                    // `hoisting_limits` blocked the name. Child's
+                    // ancestor path is the path through `node`; a
+                    // later round may revisit this candidate with a
+                    // different peer / conflict context (limits are
+                    // fixed so the Border verdict won't change).
                     path_for_children.clone()
                 }
             }
         };
 
-        hoist_subtree(&child.0, &child_recursion_path, root, root_index, visited);
+        let child_changed =
+            hoist_subtree(&child.0, &child_recursion_path, root, root_index, visited, border_names);
+        changed_in_subtree |= child_changed;
     }
+    changed_in_subtree
 }
 
 /// Return `true` when hoisting `candidate` onto the root would
@@ -802,7 +870,7 @@ fn hoist_subtree(
 /// Differs from upstream's check in one DAG case: upstream's
 /// [`cloneTree`][clone] duplicates the work tree into a strict
 /// tree per parent path, so each visit has a unique ancestor
-/// chain. Pacquet preserves the DAG, and the BFS records only
+/// chain. Pacquet preserves the DAG, and the DFS records only
 /// the path it actually used to reach the candidate; if the same
 /// candidate could be reached via a peer-compatible alternative
 /// path, we still refuse to hoist. The result is at most
