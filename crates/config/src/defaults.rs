@@ -81,6 +81,17 @@ pub fn default_virtual_store_dir() -> PathBuf {
     env::current_dir().expect("current directory is unavailable").join("node_modules/.pnpm")
 }
 
+/// Default for `enableGlobalVirtualStore`. Mirrors pnpm v11's
+/// [`config/reader/src/index.ts:392-394`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L392-L394),
+/// which sets the value to `true` when unset. The CI auto-detect branch
+/// at [`config/reader/src/index.ts:543-548`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L543-L548)
+/// is intentionally not ported here — it depends on a CI-detection
+/// helper pacquet doesn't have yet and is tracked separately
+/// (pnpm/pacquet#432).
+pub fn default_enable_global_virtual_store() -> bool {
+    true
+}
+
 pub fn default_registry() -> String {
     "https://registry.npmjs.org/".to_string()
 }

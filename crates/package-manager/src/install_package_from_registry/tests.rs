@@ -25,6 +25,8 @@ fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path)
         node_linker: Default::default(),
         symlink: false,
         virtual_store_dir: virtual_store_dir.to_path_buf(),
+        enable_global_virtual_store: false,
+        global_virtual_store_dir: virtual_store_dir.to_path_buf(),
         package_import_method: Default::default(),
         modules_cache_max_age: 0,
         lockfile: false,
