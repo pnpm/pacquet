@@ -9,7 +9,7 @@ use pacquet_executor::ScriptsPrependNodePath as ExecScriptsPrependNodePath;
 use pacquet_git_fetcher::{GitFetchOutput, GitFetcher, GitFetcherError, GitHostedTarballFetcher};
 use pacquet_graph_hasher::{host_arch, host_libc, host_platform};
 use pacquet_lockfile::{
-    BinaryArchive, BinaryResolution, LockfileResolution, PackageKey, PackageMetadata,
+    BinaryArchive, BinaryResolution, BinarySpec, LockfileResolution, PackageKey, PackageMetadata,
     PlatformSelector, SnapshotEntry, select_platform_variant,
 };
 use pacquet_network::ThrottledClient;
@@ -137,6 +137,23 @@ pub enum InstallPackageBySnapshotError {
     )]
     #[diagnostic(code(pacquet_package_manager::variant_has_non_binary_resolution))]
     VariantHasNonBinaryResolution { package_key: String, inner_kind: &'static str },
+
+    /// Serializing the synthesized runtime `package.json` failed.
+    /// The manifest is a small fixed-shape JSON object (`name`,
+    /// `version`, `bin`); `serde_json` rejects this only on a
+    /// numeric or struct value the writer can't render, which can't
+    /// happen for the three string-typed fields we pass it.
+    /// Surfaces as a typed error rather than a panic so a future
+    /// shape change to [`BinarySpec`] doesn't crash an install.
+    #[display(
+        "Failed to serialize the synthesized package.json for runtime entry `{package_key}`: {error}"
+    )]
+    #[diagnostic(code(pacquet_package_manager::synthesize_runtime_manifest))]
+    SynthesizeRuntimeManifest {
+        package_key: String,
+        #[error(source)]
+        error: serde_json::Error,
+    },
 }
 
 impl<'a> InstallPackageBySnapshot<'a> {
@@ -276,7 +293,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
                     store_index_writer,
                     verified_files_cache,
                     prefetched_cas_paths,
-                    &package_id,
+                    package_key,
                     requester,
                     archive_filter_for(package_key),
                 )
@@ -331,7 +348,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
                     store_index_writer,
                     verified_files_cache,
                     prefetched_cas_paths,
-                    &package_id,
+                    package_key,
                     requester,
                     archive_filter_for(package_key),
                 )
@@ -562,11 +579,12 @@ async fn fetch_binary_resolution_to_cas<R: Reporter>(
     store_index_writer: Option<&Arc<StoreIndexWriter>>,
     verified_files_cache: &SharedVerifiedFilesCache,
     prefetched_cas_paths: Option<&PrefetchedCasPaths>,
-    package_id: &str,
+    package_key: &PackageKey,
     requester: &str,
     ignore_file_pattern: Option<Arc<IgnoreEntryFilter>>,
 ) -> Result<HashMap<String, PathBuf>, InstallPackageBySnapshotError> {
-    match binary.archive {
+    let package_id = package_key.without_peer().to_string();
+    let mut cas_paths = match binary.archive {
         BinaryArchive::Tarball => DownloadTarballToStore {
             http_client,
             store_dir: &config.store_dir,
@@ -577,7 +595,7 @@ async fn fetch_binary_resolution_to_cas<R: Reporter>(
             package_integrity: &binary.integrity,
             package_unpacked_size: None,
             package_url: &binary.url,
-            package_id,
+            package_id: &package_id,
             requester,
             prefetched_cas_paths,
             retry_opts: retry_opts_from_config(config),
@@ -586,7 +604,7 @@ async fn fetch_binary_resolution_to_cas<R: Reporter>(
         }
         .run_without_mem_cache::<R>()
         .await
-        .map_err(InstallPackageBySnapshotError::DownloadTarball),
+        .map_err(InstallPackageBySnapshotError::DownloadTarball)?,
         BinaryArchive::Zip => DownloadZipArchiveToStore {
             http_client,
             store_dir: &config.store_dir,
@@ -596,7 +614,7 @@ async fn fetch_binary_resolution_to_cas<R: Reporter>(
             verified_files_cache: Arc::clone(verified_files_cache),
             package_integrity: &binary.integrity,
             package_url: &binary.url,
-            package_id,
+            package_id: &package_id,
             requester,
             prefetched_cas_paths,
             retry_opts: retry_opts_from_config(config),
@@ -606,8 +624,77 @@ async fn fetch_binary_resolution_to_cas<R: Reporter>(
         }
         .run_without_mem_cache::<R>()
         .await
-        .map_err(InstallPackageBySnapshotError::DownloadTarball),
+        .map_err(InstallPackageBySnapshotError::DownloadTarball)?,
+    };
+
+    // Synthesize the package.json for the runtime archive and import
+    // it through the same CAS write path the rest of the archive
+    // takes. Runtime archives don't ship their own `package.json`,
+    // so the existing bin-link step (which reads the manifest off
+    // the slot's `package.json`) has nothing to consume by default.
+    // Mirrors upstream's `appendManifest` flow at
+    // [`binary-fetcher/src/index.ts`](https://github.com/pnpm/pnpm/blob/94240bc046/fetching/binary-fetcher/src/index.ts):
+    // the synthesized object has `name`, `version`, and `bin` — the
+    // three fields pacquet's `link_bins_of_packages` actually looks
+    // at. Writing the bytes through `write_cas_file` keeps the
+    // import path uniform with every other CAS-imported file and
+    // means the bytes are content-addressed (so two runtimes with
+    // the same `(name, version, bin)` share one blob).
+    let manifest_bytes = synthesize_runtime_manifest_bytes(package_key, binary)?;
+    let (cas_path, _hash) =
+        config.store_dir.write_cas_file(&manifest_bytes, false).map_err(|err| {
+            InstallPackageBySnapshotError::DownloadTarball(TarballError::WriteCasFile(err))
+        })?;
+    if let Some(previous) = cas_paths.insert("package.json".to_string(), cas_path) {
+        tracing::warn!(
+            ?previous,
+            ?package_id,
+            "synthesized package.json displaced an existing entry — runtime archives are not expected to ship a package.json",
+        );
     }
+    Ok(cas_paths)
+}
+
+/// Serialize the synthesized runtime `package.json` to bytes. Three
+/// fields, matching the upstream `appendManifest` shape:
+///
+/// - `name` — the package key's display form, scope-aware.
+/// - `version` — the bare semver string from the peer-stripped key.
+/// - `bin` — the lockfile-declared bins ([`BinarySpec`]). `Single`
+///   becomes a JSON string (pnpm's convention: one binary, named
+///   after the package), `Map` becomes a JSON object.
+///
+/// `serde_json::to_vec` writes a single-line UTF-8 blob — same
+/// format upstream's worker thread emits. The bytes go straight
+/// into the CAS, where they're addressed by the SHA-512 of their
+/// content; two runtime archives whose `(name, version, bin)`
+/// triple happens to match share the same blob.
+fn synthesize_runtime_manifest_bytes(
+    package_key: &PackageKey,
+    binary: &BinaryResolution,
+) -> Result<Vec<u8>, InstallPackageBySnapshotError> {
+    let bin_value = match &binary.bin {
+        BinarySpec::Single(path) => serde_json::Value::String(path.clone()),
+        BinarySpec::Map(map) => {
+            let mut obj = serde_json::Map::with_capacity(map.len());
+            for (name, path) in map {
+                obj.insert(name.clone(), serde_json::Value::String(path.clone()));
+            }
+            serde_json::Value::Object(obj)
+        }
+    };
+    let stripped = package_key.without_peer();
+    let manifest = serde_json::json!({
+        "name": stripped.name.to_string(),
+        "version": stripped.suffix.version().to_string(),
+        "bin": bin_value,
+    });
+    serde_json::to_vec(&manifest).map_err(|error| {
+        InstallPackageBySnapshotError::SynthesizeRuntimeManifest {
+            package_key: package_key.to_string(),
+            error,
+        }
+    })
 }
 
 /// Render a variant's target list as a human-readable string for

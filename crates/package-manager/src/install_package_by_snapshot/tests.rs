@@ -1,10 +1,11 @@
 use super::{
     archive_filter_for, emit_progress_resolved, host_platform_selector, node_extras_filter,
-    render_variant_targets,
+    render_variant_targets, synthesize_runtime_manifest_bytes,
 };
 use pacquet_graph_hasher::{host_arch, host_libc, host_platform};
 use pacquet_lockfile::{
-    LockfileResolution, PackageKey, PlatformAssetResolution, PlatformAssetTarget,
+    BinaryArchive, BinaryResolution, BinarySpec, LockfileResolution, PackageKey,
+    PlatformAssetResolution, PlatformAssetTarget,
 };
 use pacquet_reporter::{LogEvent, ProgressMessage, Reporter};
 use pretty_assertions::assert_eq;
@@ -206,4 +207,91 @@ fn archive_filter_for_only_returns_filter_for_unscoped_node() {
         archive_filter_for(&key_bun).is_none(),
         "bun runtime has no bundled-tooling filter upstream (yet); leaving it `None` matches",
     );
+}
+
+/// `synthesize_runtime_manifest_bytes` is the
+/// `appendManifest`-equivalent for the runtime fetcher: it writes a
+/// `name` / `version` / `bin` JSON object into the CAS so the
+/// existing bin-link step (which reads bins off the slot's
+/// `package.json`) has something to consume. Pin the wire shape
+/// for both `BinarySpec` variants (single string + map) so a
+/// regression in either branch can't silently strip the bin field
+/// downstream.
+#[test]
+fn synthesize_runtime_manifest_emits_name_version_and_bin_single() {
+    let key: PackageKey = "node@22.0.0".parse().expect("parse node key");
+    let binary = BinaryResolution {
+        url: "https://nodejs.org/dist/v22.0.0/node-v22.0.0-darwin-arm64.tar.gz".to_string(),
+        integrity: "sha512-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa==".parse().expect("parse integrity"),
+        bin: BinarySpec::Single("bin/node".to_string()),
+        archive: BinaryArchive::Tarball,
+        prefix: None,
+    };
+
+    let bytes = synthesize_runtime_manifest_bytes(&key, &binary)
+        .expect("synth must succeed for a well-formed BinarySpec::Single");
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("synth bytes must round-trip through serde_json");
+
+    dbg!(&parsed);
+    assert_eq!(parsed["name"], "node");
+    assert_eq!(parsed["version"], "22.0.0");
+    // `BinarySpec::Single` lands as a JSON string. pnpm's bin
+    // resolver treats `bin: "bin/node"` as "one binary, named after
+    // the package" — so the shim is `<modules_dir>/.bin/node` →
+    // `<slot>/bin/node`. Preserve that exact shape.
+    assert_eq!(parsed["bin"], "bin/node");
+}
+
+#[test]
+fn synthesize_runtime_manifest_emits_name_version_and_bin_map() {
+    let key: PackageKey = "node@22.0.0".parse().expect("parse node key");
+    let mut bin_map = std::collections::BTreeMap::new();
+    bin_map.insert("node".to_string(), "bin/node".to_string());
+    bin_map.insert("node-mips".to_string(), "bin/node-mips".to_string());
+    let binary = BinaryResolution {
+        url: "https://nodejs.org/dist/v22.0.0/node-v22.0.0-darwin-arm64.tar.gz".to_string(),
+        integrity: "sha512-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa==".parse().expect("parse integrity"),
+        bin: BinarySpec::Map(bin_map),
+        archive: BinaryArchive::Tarball,
+        prefix: None,
+    };
+
+    let bytes = synthesize_runtime_manifest_bytes(&key, &binary)
+        .expect("synth must succeed for a well-formed BinarySpec::Map");
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("synth bytes must round-trip");
+
+    dbg!(&parsed);
+    assert_eq!(parsed["name"], "node");
+    assert_eq!(parsed["version"], "22.0.0");
+    // `BinarySpec::Map` lands as a JSON object. Each entry pins
+    // (bin_name → relative path); pnpm's bin resolver creates one
+    // shim per entry under `<modules_dir>/.bin/<bin_name>`.
+    assert_eq!(parsed["bin"]["node"], "bin/node");
+    assert_eq!(parsed["bin"]["node-mips"], "bin/node-mips");
+}
+
+/// Scoped packages preserve the `@scope/name` form in the
+/// synthesized manifest's `name` field — `PkgName`'s Display
+/// already handles that, and the synth function passes the result
+/// through verbatim. Future runtime entries could conceivably ship
+/// scoped (e.g. `@deno/runtime`) so pin the shape now rather than
+/// catch it later.
+#[test]
+fn synthesize_runtime_manifest_preserves_scoped_name() {
+    let key: PackageKey = "@foo/bar@1.2.3".parse().expect("parse scoped key");
+    let binary = BinaryResolution {
+        url: "https://example.test/foo-bar-1.2.3.tar.gz".to_string(),
+        integrity: "sha512-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa==".parse().expect("parse integrity"),
+        bin: BinarySpec::Single("bin/bar".to_string()),
+        archive: BinaryArchive::Tarball,
+        prefix: None,
+    };
+
+    let bytes = synthesize_runtime_manifest_bytes(&key, &binary).expect("synth must succeed");
+    let parsed: serde_json::Value = serde_json::from_slice(&bytes).expect("round-trip");
+
+    assert_eq!(parsed["name"], "@foo/bar");
+    assert_eq!(parsed["version"], "1.2.3");
 }

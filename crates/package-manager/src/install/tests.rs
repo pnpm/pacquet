@@ -53,6 +53,7 @@ async fn should_install_dependencies() {
         lockfile: None,
         dependency_groups: [DependencyGroup::Prod, DependencyGroup::Dev, DependencyGroup::Optional],
         frozen_lockfile: false,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -106,6 +107,7 @@ async fn should_error_when_frozen_lockfile_is_requested_but_none_exists() {
         lockfile: None,
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -142,6 +144,7 @@ async fn should_error_when_writable_lockfile_mode_is_used() {
         lockfile: None,
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: false,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -207,6 +210,7 @@ async fn frozen_lockfile_flag_overrides_config_lockfile_false() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -265,6 +269,7 @@ async fn npm_alias_dependency_installs_under_alias_key() {
         lockfile: None,
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: false,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -340,6 +345,7 @@ async fn unversioned_npm_alias_defaults_to_latest() {
         lockfile: None,
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: false,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -400,6 +406,7 @@ async fn frozen_lockfile_flag_with_no_lockfile_errors() {
         lockfile: None,
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -480,6 +487,7 @@ async fn install_emits_pnpm_event_sequence() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -617,6 +625,7 @@ async fn install_writes_modules_yaml() {
         // groups to the on-disk `included` field.
         dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -710,6 +719,7 @@ async fn install_optional_failing_postinstall_dep_via_registry_mock_succeeds() {
         lockfile: None,
         dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
         frozen_lockfile: false,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -825,6 +835,7 @@ async fn warm_reinstall_skips_snapshot_when_current_lockfile_matches() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -915,6 +926,7 @@ async fn warm_reinstall_emits_broken_modules_when_dir_is_missing() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -1013,6 +1025,7 @@ async fn context_log_reflects_current_lockfile_after_first_install() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -1055,6 +1068,7 @@ async fn context_log_reflects_current_lockfile_after_first_install() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -1139,6 +1153,7 @@ async fn warm_reinstall_reports_added_zero_and_emits_no_imported_events() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -1225,6 +1240,7 @@ async fn frozen_lockfile_errors_when_manifest_drifts_from_lockfile() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         resolved_packages: &Default::default(),
         supported_architectures: None,
     }
@@ -1275,6 +1291,7 @@ async fn frozen_lockfile_errors_when_lockfile_has_no_root_importer() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         resolved_packages: &Default::default(),
         supported_architectures: None,
     }
@@ -1355,6 +1372,7 @@ async fn frozen_lockfile_under_gvs_registers_project_and_runs_clean() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         resolved_packages: &Default::default(),
         supported_architectures: None,
     }
@@ -1425,6 +1443,7 @@ async fn frozen_lockfile_with_gvs_off_skips_project_registry() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         resolved_packages: &Default::default(),
         supported_architectures: None,
     }
@@ -1501,6 +1520,7 @@ async fn frozen_lockfile_under_gvs_registers_each_workspace_importer() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         resolved_packages: &Default::default(),
         supported_architectures: None,
     }
@@ -1678,6 +1698,7 @@ async fn frozen_install_preserves_seeded_skipped_across_reinstall() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -1787,6 +1808,7 @@ async fn frozen_install_silently_swallows_unreachable_optional_tarball() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -1879,6 +1901,7 @@ async fn frozen_install_propagates_non_optional_fetch_failure() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -1977,6 +2000,7 @@ async fn frozen_install_no_optional_drops_optional_only_snapshots() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -2060,6 +2084,7 @@ async fn frozen_install_optional_included_surfaces_missing_metadata() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }
@@ -2146,6 +2171,7 @@ async fn frozen_install_no_optional_keeps_shared_non_optional_snapshot() {
         // `--no-optional` shape: Optional NOT in the dispatch list.
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
         resolved_packages: &Default::default(),
     }

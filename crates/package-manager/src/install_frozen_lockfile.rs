@@ -90,6 +90,14 @@ where
     /// platform-tagged optional-dependency filter respects user-
     /// supplied architecture overrides.
     pub supported_architectures: Option<&'a pacquet_package_is_installable::SupportedArchitectures>,
+
+    /// When `true`, runtime dependencies (`node@runtime:`,
+    /// `deno@runtime:`, `bun@runtime:`) — i.e. packages whose
+    /// metadata resolution is `Binary` or `Variations` — are
+    /// added to the install-time skip set and the rest of the
+    /// install ignores them. Computed at the CLI layer from
+    /// `config.skip_runtimes || --no-runtime`.
+    pub skip_runtimes: bool,
 }
 
 /// Error type of [`InstallFrozenLockfile`].
@@ -194,6 +202,7 @@ where
             workspace_root,
             requester,
             supported_architectures,
+            skip_runtimes,
         } = self;
         // Cloned so the iterator can be reused below for hoist's
         // direct-deps map. `Vec<DependencyGroup>` is tiny (≤4 enum
@@ -344,6 +353,36 @@ where
         if !include_optional && let Some(snaps) = snapshots {
             for (key, snap) in snaps {
                 if snap.optional {
+                    skipped.add_optional_excluded(key.clone());
+                }
+            }
+        }
+
+        // `--no-runtime` (or `config.skip_runtimes`): exclude every
+        // snapshot whose `packages:` metadata carries a `Binary` or
+        // `Variations` resolution. Mirrors pnpm's
+        // [`skipRuntimes`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/index.ts)
+        // gate, with a wider blast radius: pnpm filters runtimes
+        // out of `dependenciesByProjectId` so transitive runtime
+        // deps (rare) still install, whereas pacquet drops the
+        // snapshot entirely. Practical effect is the same for the
+        // common case — runtimes are top-level deps in nearly every
+        // real-world project — and the simpler shape composes with
+        // the rest of the skip-set plumbing.
+        //
+        // Re-using `add_optional_excluded` keeps the bucket count
+        // (and `.modules.yaml.skipped` semantics) unchanged: like
+        // `--no-optional`, this is a transient user-driven
+        // exclusion that should *not* be persisted into
+        // `.modules.yaml.skipped` — a future install without the
+        // flag must bring the runtime back.
+        if skip_runtimes && let Some(pkgs) = packages {
+            for (key, meta) in pkgs {
+                if matches!(
+                    meta.resolution,
+                    pacquet_lockfile::LockfileResolution::Binary(_)
+                        | pacquet_lockfile::LockfileResolution::Variations(_),
+                ) {
                     skipped.add_optional_excluded(key.clone());
                 }
             }

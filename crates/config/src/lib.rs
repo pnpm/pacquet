@@ -259,6 +259,19 @@ pub struct Config {
     #[default = true]
     pub prefer_frozen_lockfile: bool,
 
+    /// When `true`, runtime dependencies (`node@runtime:`,
+    /// `deno@runtime:`, `bun@runtime:`) are skipped at install
+    /// time — their archives aren't fetched, their slots aren't
+    /// materialized, and their bins aren't linked. The rest of
+    /// the install proceeds normally. Mirrors pnpm's
+    /// [`skipRuntimes`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/index.ts)
+    /// option, exposed via the `--no-runtime` CLI flag.
+    ///
+    /// Defaults to `false`, matching upstream. CI scenarios that
+    /// pre-provision the runtime (or want to install one runtime
+    /// with another pacquet binary) flip this to `true`.
+    pub skip_runtimes: bool,
+
     /// Add the full URL to the package's tarball to every entry in pnpm-lock.yaml.
     pub lockfile_include_tarball_url: bool,
 
