@@ -13,6 +13,7 @@
 //! to flow through without an extra owned-data copy.
 
 use crate::{
+    cas_io::import_into_cas,
     error::{GitFetcherError, PreparePackageError},
     packlist::packlist,
     prepare_package::{PreparePackageOptions, PreparedPackage, prepare_package},
@@ -268,53 +269,9 @@ fn static_operation_label(args: &[&str]) -> &'static str {
     }
 }
 
-/// Copy every file in `files` (relative to `pkg_dir`) into the CAS,
-/// returning the map the caller passes to `CreateVirtualDirBySnapshot`.
-fn import_into_cas(
-    store_dir: &StoreDir,
-    pkg_dir: &Path,
-    files: &[String],
-) -> Result<HashMap<String, PathBuf>, GitFetcherError> {
-    let mut out = HashMap::with_capacity(files.len());
-    for rel in files {
-        let source = pkg_dir.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
-        let bytes = fs::read(&source).map_err(GitFetcherError::Io)?;
-        let executable = is_file_executable(&source);
-        let (cas_path, _hash) =
-            store_dir.write_cas_file(&bytes, executable).map_err(map_write_cas)?;
-        out.insert(rel.clone(), cas_path);
-    }
-    Ok(out)
-}
-
-/// `true` when the user-execute bit is set. POSIX-only; on Windows
-/// every file lands as non-executable, matching pnpm v11's behavior
-/// where the executable mode flag is meaningful only on POSIX.
-fn is_file_executable(path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::metadata(path).map(|m| (m.permissions().mode() & 0o100) != 0).unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        false
-    }
-}
-
-fn map_write_cas(err: pacquet_store_dir::WriteCasFileError) -> GitFetcherError {
-    // Surface the CAFS write failure through the AddFilesFromDir
-    // variant: the only place an `add_files_from_dir`-shaped error
-    // can come from is the same `write_cas_file` path the upstream
-    // CAFS pump uses, and reusing the variant keeps the dispatcher's
-    // miette source chain shape stable when this PR's only-CAS-write
-    // import is later replaced by the full pnpm-aligned implementation.
-    let pacquet_store_dir::WriteCasFileError::WriteFile(inner) = err;
-    GitFetcherError::AddFilesFromDir(pacquet_store_dir::AddFilesFromDirError::WriteCas(
-        pacquet_store_dir::WriteCasFileError::WriteFile(inner),
-    ))
-}
+// `import_into_cas`, `is_file_executable`, and `map_write_cas` live in
+// [`crate::cas_io`] so [`crate::GitHostedTarballFetcher`] can reuse
+// them for the prepare-and-rewrite pass on git-hosted tarballs.
 
 #[cfg(test)]
 mod tests;

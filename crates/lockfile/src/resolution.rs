@@ -23,6 +23,13 @@ pub struct TarballResolution {
     /// at <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/types/src/index.ts#L88-L107>.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_hosted: Option<bool>,
+    /// Sub-directory inside the tarball to pack, mirroring
+    /// `GitResolution.path`. Pnpm's git-hosted tarball fetcher uses it
+    /// to package only one directory of a monorepo's archive. Mirrors
+    /// pnpm's `TarballResolution.path` at
+    /// <https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/types/src/index.ts#L93>.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 /// For standard package specification, with package name and version range.

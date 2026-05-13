@@ -6,7 +6,7 @@ use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_config::Config;
 use pacquet_executor::ScriptsPrependNodePath as ExecScriptsPrependNodePath;
-use pacquet_git_fetcher::{GitFetchOutput, GitFetcher, GitFetcherError};
+use pacquet_git_fetcher::{GitFetchOutput, GitFetcher, GitFetcherError, GitHostedTarballFetcher};
 use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, SnapshotEntry};
 use pacquet_network::ThrottledClient;
 use pacquet_reporter::{LogEvent, LogLevel, ProgressLog, ProgressMessage, Reporter};
@@ -76,8 +76,14 @@ pub enum InstallPackageBySnapshotError {
     #[diagnostic(code(pacquet_package_manager::unsupported_resolution))]
     UnsupportedResolution { package_key: String, resolution_kind: &'static str },
 
-    /// Failure from the git fetcher for a `type: git` resolution
-    /// (clone / checkout / preparePackage / CAS import).
+    /// Failure from either git fetcher: the git-CLI path for
+    /// `type: git` resolutions (clone / checkout / preparePackage /
+    /// CAS import) or the git-hosted-tarball post-pass for
+    /// `TarballResolution { gitHosted: true }` (materialize /
+    /// preparePackage / packlist / re-import). Both share the same
+    /// `GitFetcherError` taxonomy because they share `prepare_package`,
+    /// `packlist`, and the CAS-import helpers; the variant covers
+    /// every fetcher path that exits through `pacquet-git-fetcher`.
     #[diagnostic(transparent)]
     GitFetch(#[error(source)] GitFetcherError),
 }
@@ -104,11 +110,30 @@ impl<'a> InstallPackageBySnapshot<'a> {
         let package_id = package_key.without_peer().to_string();
         emit_progress_resolved::<R>(&package_id, requester);
 
+        // Adapter shared between the `Git` arm below and the
+        // `gitHosted: true` post-pass on tarballs. Named local so
+        // both fetchers can borrow it across their `.await` without
+        // depending on temporary-lifetime extension.
+        //
+        // `AllowBuildPolicy::check` returns `None` when the package
+        // is neither allow-listed nor deny-listed. Default-deny
+        // (`None → false`) matches pnpm v11's policy: build scripts
+        // have to be explicitly opted in to run.
+        let allow_build_closure =
+            |name: &str, version: &str| allow_build_policy.check(name, version).unwrap_or(false);
+        let scripts_prepend_node_path = match config.scripts_prepend_node_path {
+            pacquet_config::ScriptsPrependNodePath::Always => ExecScriptsPrependNodePath::Always,
+            pacquet_config::ScriptsPrependNodePath::Never => ExecScriptsPrependNodePath::Never,
+            pacquet_config::ScriptsPrependNodePath::WarnOnly => {
+                ExecScriptsPrependNodePath::WarnOnly
+            }
+        };
+
         let cas_paths: HashMap<String, PathBuf> = match &metadata.resolution {
             LockfileResolution::Tarball(_) | LockfileResolution::Registry(_) => {
                 let (tarball_url, integrity) =
                     tarball_url_and_integrity(&metadata.resolution, package_key, config)?;
-                DownloadTarballToStore {
+                let raw_cas_paths = DownloadTarballToStore {
                     http_client,
                     store_dir: &config.store_dir,
                     store_index: store_index.cloned(),
@@ -125,7 +150,41 @@ impl<'a> InstallPackageBySnapshot<'a> {
                 }
                 .run_without_mem_cache::<R>()
                 .await
-                .map_err(InstallPackageBySnapshotError::DownloadTarball)?
+                .map_err(InstallPackageBySnapshotError::DownloadTarball)?;
+
+                // Run the git-hosted prepare+packlist pass for
+                // tarballs sourced from a git host. Mirrors pnpm's
+                // dispatch at `fetching/pick-fetcher/src/index.ts`:
+                // a `gitHosted: true` tarball routes through
+                // `gitHostedTarballFetcher` rather than the plain
+                // `remoteTarballFetcher`, because the host's archive
+                // endpoint doesn't run `prepare`/`prepublish*` and
+                // the file set typically needs packlist filtering.
+                if let LockfileResolution::Tarball(t) = &metadata.resolution
+                    && t.git_hosted == Some(true)
+                {
+                    let GitFetchOutput { cas_paths, built: _built } = GitHostedTarballFetcher {
+                        cas_paths: raw_cas_paths,
+                        path: t.path.as_deref(),
+                        allow_build: &allow_build_closure,
+                        ignore_scripts: false,
+                        unsafe_perm: config.unsafe_perm,
+                        user_agent: None,
+                        scripts_prepend_node_path,
+                        script_shell: None,
+                        node_execpath: None,
+                        npm_execpath: None,
+                        store_dir: &config.store_dir,
+                        package_id: &package_id,
+                        requester,
+                    }
+                    .run::<R>()
+                    .await
+                    .map_err(InstallPackageBySnapshotError::GitFetch)?;
+                    cas_paths
+                } else {
+                    raw_cas_paths
+                }
             }
             LockfileResolution::Directory(_) => {
                 return Err(InstallPackageBySnapshotError::UnsupportedResolution {
@@ -134,32 +193,6 @@ impl<'a> InstallPackageBySnapshot<'a> {
                 });
             }
             LockfileResolution::Git(git_resolution) => {
-                // Bind the closure to a named local before borrowing it
-                // into `GitFetcher.allow_build`. `&|...|` would create a
-                // reference to a temporary closure that has to outlive
-                // the `.await` below; routing through a `let` makes the
-                // owning storage explicit and removes any reliance on
-                // temporary-lifetime extension across an await point.
-                //
-                // `AllowBuildPolicy::check` returns `None` when the
-                // package is neither allow-listed nor deny-listed.
-                // Default-deny (`None → false`) matches pnpm v11's
-                // policy: build scripts have to be explicitly opted in
-                // to run.
-                let allow_build_closure = |name: &str, version: &str| {
-                    allow_build_policy.check(name, version).unwrap_or(false)
-                };
-                let scripts_prepend_node_path = match config.scripts_prepend_node_path {
-                    pacquet_config::ScriptsPrependNodePath::Always => {
-                        ExecScriptsPrependNodePath::Always
-                    }
-                    pacquet_config::ScriptsPrependNodePath::Never => {
-                        ExecScriptsPrependNodePath::Never
-                    }
-                    pacquet_config::ScriptsPrependNodePath::WarnOnly => {
-                        ExecScriptsPrependNodePath::WarnOnly
-                    }
-                };
                 let GitFetchOutput { cas_paths, built: _built } = GitFetcher {
                     repo: &git_resolution.repo,
                     commit: &git_resolution.commit,

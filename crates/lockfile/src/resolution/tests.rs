@@ -22,6 +22,7 @@ fn deserialize_tarball_resolution() {
         tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
         integrity: None,
         git_hosted: None,
+        path: None,
     });
     assert_eq!(received, expected);
 
@@ -36,6 +37,7 @@ fn deserialize_tarball_resolution() {
         tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
         integrity: integrity("sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==").into(),
         git_hosted: None,
+        path: None,
     });
     assert_eq!(received, expected);
 }
@@ -53,6 +55,7 @@ fn deserialize_tarball_resolution_with_git_hosted() {
         tarball: "https://codeload.github.com/foo/bar/tar.gz/abc1234".to_string(),
         integrity: None,
         git_hosted: Some(true),
+        path: None,
     });
     assert_eq!(received, expected);
 }
@@ -72,6 +75,7 @@ fn deserialize_tarball_resolution_backfills_git_hosted() {
         tarball: "https://codeload.github.com/foo/bar/tar.gz/abc1234".to_string(),
         integrity: None,
         git_hosted: Some(true),
+        path: None,
     });
     assert_eq!(received, expected);
 
@@ -84,6 +88,7 @@ fn deserialize_tarball_resolution_backfills_git_hosted() {
         tarball: "https://gitlab.com/foo/bar/-/archive/abc1234/bar-abc1234.tar.gz".to_string(),
         integrity: None,
         git_hosted: Some(true),
+        path: None,
     });
     assert_eq!(received, expected);
 
@@ -96,6 +101,7 @@ fn deserialize_tarball_resolution_backfills_git_hosted() {
         tarball: "https://bitbucket.org/foo/bar/get/abc1234.tar.gz".to_string(),
         integrity: None,
         git_hosted: Some(true),
+        path: None,
     });
     assert_eq!(received, expected);
 
@@ -108,6 +114,7 @@ fn deserialize_tarball_resolution_backfills_git_hosted() {
         tarball: "https://registry.npmjs.org/foo/-/foo-1.0.0.tgz".to_string(),
         integrity: None,
         git_hosted: None,
+        path: None,
     });
     assert_eq!(received, expected);
 
@@ -122,6 +129,7 @@ fn deserialize_tarball_resolution_backfills_git_hosted() {
         tarball: "https://codeload.github.com/foo/bar/zip/abc1234".to_string(),
         integrity: None,
         git_hosted: None,
+        path: None,
     });
     assert_eq!(received, expected);
 }
@@ -133,6 +141,7 @@ fn serialize_tarball_resolution() {
         tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
         integrity: None,
         git_hosted: None,
+        path: None,
     });
     let received = serialize_yaml::to_string(&resolution).unwrap();
     let received = received.trim();
@@ -147,6 +156,7 @@ fn serialize_tarball_resolution() {
         tarball: "file:ts-pipe-compose-0.2.1.tgz".to_string(),
         integrity: integrity("sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==").into(),
         git_hosted: None,
+        path: None,
     });
     let received = serialize_yaml::to_string(&resolution).unwrap();
     let received = received.trim();
@@ -159,11 +169,51 @@ fn serialize_tarball_resolution() {
 }
 
 #[test]
+fn deserialize_tarball_resolution_with_path() {
+    // Git-hosted tarballs from monorepos carry an optional sub-path
+    // that points at the directory to pack. Mirrors pnpm's
+    // `TarballResolution.path`.
+    let yaml = text_block! {
+        "tarball: https://codeload.github.com/foo/bar/tar.gz/abc1234"
+        "gitHosted: true"
+        "path: packages/sub"
+    };
+    let received: LockfileResolution = serde_saphyr::from_str(yaml).unwrap();
+    let expected = LockfileResolution::Tarball(TarballResolution {
+        tarball: "https://codeload.github.com/foo/bar/tar.gz/abc1234".to_string(),
+        integrity: None,
+        git_hosted: Some(true),
+        path: Some("packages/sub".to_string()),
+    });
+    assert_eq!(received, expected);
+}
+
+#[test]
+fn serialize_tarball_resolution_with_path() {
+    let resolution = LockfileResolution::Tarball(TarballResolution {
+        tarball: "https://codeload.github.com/foo/bar/tar.gz/abc1234".to_string(),
+        integrity: None,
+        git_hosted: Some(true),
+        path: Some("packages/sub".to_string()),
+    });
+    let received = serialize_yaml::to_string(&resolution).unwrap();
+    let received = received.trim();
+    eprintln!("RECEIVED:\n{received}");
+    let expected = text_block! {
+        "tarball: https://codeload.github.com/foo/bar/tar.gz/abc1234"
+        "gitHosted: true"
+        "path: packages/sub"
+    };
+    assert_eq!(received, expected);
+}
+
+#[test]
 fn serialize_tarball_resolution_with_git_hosted() {
     let resolution = LockfileResolution::Tarball(TarballResolution {
         tarball: "https://codeload.github.com/foo/bar/tar.gz/abc1234".to_string(),
         integrity: integrity("sha512-gf6ZldcfCDyNXPRiW3lQjEP1Z9rrUM/4Cn7BZbv3SdTA82zxWRP8OmLwvGR974uuENhGCFgFdN11z3n1Ofpprg==").into(),
         git_hosted: Some(true),
+        path: None,
     });
     let received = serialize_yaml::to_string(&resolution).unwrap();
     let received = received.trim();
