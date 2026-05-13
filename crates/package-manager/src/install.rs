@@ -280,8 +280,54 @@ where
                         importer_id: Lockfile::ROOT_IMPORTER_KEY.to_string(),
                     }
                 })?;
-                satisfies_package_manifest(importer, manifest, Lockfile::ROOT_IMPORTER_KEY)
-                    .map_err(|reason| InstallError::OutdatedLockfile { reason })?;
+                // Outdated-settings gate (umbrella #434 slice 7): check
+                // `ignoredOptionalDependencies` drift between the
+                // lockfile-recorded set and the current config before
+                // the per-importer specifier check. Mirrors upstream's
+                // [`getOutdatedLockfileSetting`](https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/settings-checker/src/getOutdatedLockfileSetting.ts).
+                // Upstream flips `needsFullResolution` and re-runs the
+                // resolver; pacquet has no resolver, so the matching
+                // action is to abort with `OutdatedLockfile`.
+                pacquet_lockfile::check_lockfile_settings(
+                    lockfile,
+                    config.ignored_optional_dependencies.as_deref(),
+                )
+                .map_err(|reason| InstallError::OutdatedLockfile { reason })?;
+                // Build the `ignoredOptionalDependencies` filter set.
+                // Mirrors upstream's
+                // [`createOptionalDependenciesRemover`](https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts):
+                // the hook iterates `manifest.optionalDependencies`
+                // and deletes matches from BOTH the `optional` and
+                // `dependencies` maps. A name only present in
+                // `dependencies` (not `optionalDependencies`) that
+                // happens to match the pattern is NOT removed —
+                // that's why the predicate is set-based ("name was
+                // in optionalDependencies AND matched") rather than
+                // pure pattern matching. `devDependencies` is
+                // untouched on purpose; the group gate inside
+                // `satisfies_package_manifest` enforces that.
+                let ignored_set: std::collections::HashSet<String> = config
+                    .ignored_optional_dependencies
+                    .as_deref()
+                    .filter(|patterns| !patterns.is_empty())
+                    .map(|patterns| {
+                        let matcher = pacquet_config::matcher::create_matcher(patterns);
+                        manifest
+                            .dependencies([pacquet_package_manifest::DependencyGroup::Optional])
+                            .filter(|(name, _)| matcher.matches(name))
+                            .map(|(name, _)| name.to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let is_ignored_optional: &dyn Fn(&str) -> bool =
+                    &|name: &str| ignored_set.contains(name);
+                satisfies_package_manifest(
+                    importer,
+                    manifest,
+                    Lockfile::ROOT_IMPORTER_KEY,
+                    is_ignored_optional,
+                )
+                .map_err(|reason| InstallError::OutdatedLockfile { reason })?;
 
                 let frozen_result = InstallFrozenLockfile {
                     http_client,

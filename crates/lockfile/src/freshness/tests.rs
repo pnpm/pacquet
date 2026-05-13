@@ -1,4 +1,4 @@
-use super::{StalenessReason, satisfies_package_manifest};
+use super::{StalenessReason, check_lockfile_settings, satisfies_package_manifest};
 use crate::Lockfile;
 use pacquet_package_manifest::PackageManifest;
 use pretty_assertions::assert_eq;
@@ -42,7 +42,7 @@ fn matching_manifest_and_lockfile_satisfies() {
         }
     }"#,
     );
-    assert!(satisfies_package_manifest(importer, &manifest, ".").is_ok());
+    assert!(satisfies_package_manifest(importer, &manifest, ".", &|_: &str| false).is_ok());
 }
 
 /// Manifest lists a dep the lockfile doesn't. Should surface as
@@ -70,7 +70,8 @@ fn manifest_adds_dep_returns_specifier_diff() {
         }
     }"#,
     );
-    let err = satisfies_package_manifest(importer, &manifest, ".").expect_err("should be stale");
+    let err = satisfies_package_manifest(importer, &manifest, ".", &|_: &str| false)
+        .expect_err("should be stale");
     let StalenessReason::SpecifiersDiffer(diff) = err else {
         panic!("expected SpecifiersDiffer, got {err:?}");
     };
@@ -106,7 +107,8 @@ fn manifest_drops_dep_returns_specifier_diff() {
         }
     }"#,
     );
-    let err = satisfies_package_manifest(importer, &manifest, ".").expect_err("should be stale");
+    let err = satisfies_package_manifest(importer, &manifest, ".", &|_: &str| false)
+        .expect_err("should be stale");
     let StalenessReason::SpecifiersDiffer(diff) = err else {
         panic!("expected SpecifiersDiffer, got {err:?}");
     };
@@ -139,7 +141,8 @@ fn manifest_bumps_specifier_returns_specifier_diff() {
         }
     }"#,
     );
-    let err = satisfies_package_manifest(importer, &manifest, ".").expect_err("should be stale");
+    let err = satisfies_package_manifest(importer, &manifest, ".", &|_: &str| false)
+        .expect_err("should be stale");
     let StalenessReason::SpecifiersDiffer(diff) = err else {
         panic!("expected SpecifiersDiffer, got {err:?}");
     };
@@ -181,7 +184,7 @@ fn matching_across_all_three_dep_fields_satisfies() {
         "optionalDependencies": { "fsevents": "^2.0.0" }
     }"#,
     );
-    assert!(satisfies_package_manifest(importer, &manifest, ".").is_ok());
+    assert!(satisfies_package_manifest(importer, &manifest, ".", &|_: &str| false).is_ok());
 }
 
 /// Lockfile has no `importers["."]` entry — even though pacquet's
@@ -228,7 +231,8 @@ fn dep_moves_between_fields_returns_dep_specifier_mismatch() {
         "dependencies": { "typescript": "^5.0.0" }
     }"#,
     );
-    let err = satisfies_package_manifest(importer, &manifest, ".").expect_err("should be stale");
+    let err = satisfies_package_manifest(importer, &manifest, ".", &|_: &str| false)
+        .expect_err("should be stale");
     assert!(
         matches!(err, StalenessReason::DepSpecifierMismatch { .. }),
         "expected DepSpecifierMismatch, got {err:?}",
@@ -289,7 +293,8 @@ fn cross_field_swap_with_same_cardinalities_caught_by_per_field_check() {
         "devDependencies": { "react": "^17.0.2" }
     }"#,
     );
-    let err = satisfies_package_manifest(importer, &manifest, ".").expect_err("should be stale");
+    let err = satisfies_package_manifest(importer, &manifest, ".", &|_: &str| false)
+        .expect_err("should be stale");
     assert!(
         matches!(err, StalenessReason::DepSpecifierMismatch { .. }),
         "expected DepSpecifierMismatch for cross-field swap, got {err:?}",
@@ -321,7 +326,8 @@ fn publish_directory_mismatch_returns_publish_directory_mismatch() {
         "dependencies": { "react": "^17.0.2" }
     }"#,
     );
-    let err = satisfies_package_manifest(importer, &manifest, ".").expect_err("should be stale");
+    let err = satisfies_package_manifest(importer, &manifest, ".", &|_: &str| false)
+        .expect_err("should be stale");
     assert!(
         matches!(err, StalenessReason::PublishDirectoryMismatch { .. }),
         "expected PublishDirectoryMismatch, got {err:?}",
@@ -354,7 +360,8 @@ fn dependencies_meta_mismatch_returns_dependencies_meta_mismatch() {
         "dependencies": { "foo": "^1.0.0" }
     }"#,
     );
-    let err = satisfies_package_manifest(importer, &manifest, ".").expect_err("should be stale");
+    let err = satisfies_package_manifest(importer, &manifest, ".", &|_: &str| false)
+        .expect_err("should be stale");
     assert!(
         matches!(err, StalenessReason::DependenciesMetaMismatch { .. }),
         "expected DependenciesMetaMismatch, got {err:?}",
@@ -418,7 +425,7 @@ fn dependencies_meta_empty_object_equivalent_to_absent() {
         "dependenciesMeta": {}
     }"#,
     );
-    assert!(satisfies_package_manifest(importer, &manifest, ".").is_ok());
+    assert!(satisfies_package_manifest(importer, &manifest, ".", &|_: &str| false).is_ok());
 }
 
 /// `publishDirectory` happy-path: lockfile and manifest agree on the
@@ -446,7 +453,7 @@ fn publish_directory_match_satisfies() {
         "dependencies": { "foo": "1.0.0" }
     }"#,
     );
-    assert!(satisfies_package_manifest(importer, &manifest, ".").is_ok());
+    assert!(satisfies_package_manifest(importer, &manifest, ".", &|_: &str| false).is_ok());
 }
 
 /// Same dep listed in both `dependencies` and `devDependencies` on
@@ -482,7 +489,7 @@ fn same_dep_in_prod_and_dev_counts_under_prod() {
     }"#,
     );
     assert!(
-        satisfies_package_manifest(importer, &manifest, ".").is_ok(),
+        satisfies_package_manifest(importer, &manifest, ".", &|_: &str| false).is_ok(),
         "manifest listing foo in prod+dev must satisfy a lockfile that records it under prod only",
     );
 }
@@ -513,7 +520,7 @@ fn same_dep_in_prod_and_optional_counts_under_optional() {
     }"#,
     );
     assert!(
-        satisfies_package_manifest(importer, &manifest, ".").is_ok(),
+        satisfies_package_manifest(importer, &manifest, ".", &|_: &str| false).is_ok(),
         "manifest listing foo in prod+optional must satisfy a lockfile that records it under optional only",
     );
 }
@@ -544,5 +551,233 @@ fn importer_empty_dev_dependencies_equivalent_to_absent() {
         "dependencies": { "foo": "^1.0.0" }
     }"#,
     );
-    assert!(satisfies_package_manifest(importer, &manifest, ".").is_ok());
+    assert!(satisfies_package_manifest(importer, &manifest, ".", &|_: &str| false).is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// `ignoredOptionalDependencies` — umbrella #434 slice 7
+// ---------------------------------------------------------------------------
+
+/// Sorted equality: both sides empty (`None` and `[]` equivalent).
+/// Mirrors upstream's
+/// [`getOutdatedLockfileSetting.ts:58-60`](https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/settings-checker/src/getOutdatedLockfileSetting.ts#L58-L60).
+#[test]
+fn check_settings_passes_when_both_sides_empty() {
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+    })
+    .expect("parse minimal lockfile");
+    assert!(check_lockfile_settings(&lockfile, None).is_ok());
+    assert!(check_lockfile_settings(&lockfile, Some(&[])).is_ok());
+}
+
+/// Order-insensitive compare — upstream sorts both arrays before
+/// the equality check, so a config that lists patterns in a
+/// different order must still pass.
+#[test]
+fn check_settings_passes_when_sets_match_regardless_of_order() {
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "ignoredOptionalDependencies:"
+        "  - foo"
+        "  - bar"
+    })
+    .expect("parse lockfile with ignoredOptionalDependencies");
+    let config_set = ["bar".to_string(), "foo".to_string()];
+    assert!(check_lockfile_settings(&lockfile, Some(&config_set)).is_ok());
+}
+
+/// Set mismatch surfaces as `IgnoredOptionalDependenciesChanged`.
+#[test]
+fn check_settings_returns_drift_when_sets_differ() {
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "ignoredOptionalDependencies:"
+        "  - foo"
+    })
+    .expect("parse lockfile with ignoredOptionalDependencies");
+    let config_set = ["bar".to_string()];
+    let err = check_lockfile_settings(&lockfile, Some(&config_set))
+        .expect_err("set drift must surface as IgnoredOptionalDependenciesChanged");
+    assert_eq!(
+        err,
+        StalenessReason::IgnoredOptionalDependenciesChanged {
+            lockfile: vec!["foo".to_string()],
+            config: vec!["bar".to_string()],
+        },
+    );
+}
+
+/// Drift in the "lockfile has, config doesn't" direction.
+#[test]
+fn check_settings_returns_drift_when_lockfile_has_set_but_config_does_not() {
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "ignoredOptionalDependencies:"
+        "  - foo"
+    })
+    .expect("parse lockfile with ignoredOptionalDependencies");
+    let err = check_lockfile_settings(&lockfile, None)
+        .expect_err("removing a set in config while lockfile has it must surface drift");
+    let StalenessReason::IgnoredOptionalDependenciesChanged { lockfile: l, config: c } = err else {
+        panic!("expected IgnoredOptionalDependenciesChanged");
+    };
+    assert_eq!(l, vec!["foo".to_string()]);
+    assert!(c.is_empty());
+}
+
+/// Once `check_lockfile_settings` passes, `satisfies_package_manifest`
+/// must apply the same filter on the manifest side so an entry the
+/// user listed in `ignoredOptionalDependencies` doesn't falsely
+/// surface as drift (the lockfile importer correctly doesn't have
+/// it, the manifest still does). Mirrors upstream's
+/// [`createOptionalDependenciesRemover`](https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts)
+/// applied at manifest-read time.
+#[test]
+fn ignored_optional_filtered_out_of_manifest_diff() {
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies:"
+        "      bar:"
+        "        specifier: ^2.0.0"
+        "        version: 2.0.0"
+    })
+    .expect("parse lockfile");
+    let importer = lockfile.root_project().expect("root importer");
+    let (_dir, manifest) = manifest_from_json(
+        r#"{
+        "name": "x",
+        "version": "1.0.0",
+        "dependencies": { "bar": "^2.0.0" },
+        "optionalDependencies": { "foo": "^1.0.0" }
+    }"#,
+    );
+    let is_ignored: &dyn Fn(&str) -> bool = &|name: &str| name == "foo";
+    assert!(satisfies_package_manifest(importer, &manifest, ".", is_ignored).is_ok());
+}
+
+/// Polarity: without the filter the same fixture must fail.
+/// Confirms the filter is what makes the prior test pass — not
+/// some other accidental match.
+#[test]
+fn ignored_optional_without_filter_surfaces_as_drift() {
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies:"
+        "      bar:"
+        "        specifier: ^2.0.0"
+        "        version: 2.0.0"
+    })
+    .expect("parse lockfile");
+    let importer = lockfile.root_project().expect("root importer");
+    let (_dir, manifest) = manifest_from_json(
+        r#"{
+        "name": "x",
+        "version": "1.0.0",
+        "dependencies": { "bar": "^2.0.0" },
+        "optionalDependencies": { "foo": "^1.0.0" }
+    }"#,
+    );
+    let err = satisfies_package_manifest(importer, &manifest, ".", &|_: &str| false)
+        .expect_err("without the filter the manifest's extra `foo` must surface as drift");
+    assert!(
+        matches!(err, StalenessReason::SpecifiersDiffer(_)),
+        "expected SpecifiersDiffer, got {err:?}",
+    );
+}
+
+/// Lockfile serde round-trip: the field is at the top level (not
+/// inside `settings`) and round-trips through yaml verbatim, in
+/// declaration order. Mirrors upstream's
+/// [`LockfileBase.ignoredOptionalDependencies`](https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/types/src/index.ts#L19)
+/// wire shape.
+#[test]
+fn ignored_optional_dependencies_round_trips_through_yaml() {
+    let yaml = text_block! {
+        "lockfileVersion: '9.0'"
+        "ignoredOptionalDependencies:"
+        "  - foo"
+        "  - '@scope/bar'"
+    };
+    let parsed: Lockfile = serde_saphyr::from_str(yaml).expect("parse lockfile");
+    assert_eq!(
+        parsed.ignored_optional_dependencies.as_deref(),
+        Some(&["foo".to_string(), "@scope/bar".to_string()][..]),
+    );
+}
+
+/// `ignoredOptionalDependencies` must **not** apply to
+/// `devDependencies` — upstream's
+/// [`createOptionalDependenciesRemover`](https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts)
+/// iterates `optionalDependencies` keys and deletes from
+/// `optionalDependencies` + `dependencies` only, never touching
+/// `devDependencies`. Regression for CodeRabbit review on PR #507.
+///
+/// Fixture: same name `foo` in both `optionalDependencies` and
+/// `devDependencies` on the manifest; lockfile has `foo` only in
+/// dev (resolver dropped the optional via the hook, kept the dev).
+/// Filter says `foo` is ignored. Without the group gate, the
+/// manifest's dev `foo` would be filtered too → diff would flag
+/// lockfile's dev `foo` as removed → false drift.
+#[test]
+fn ignored_optional_does_not_apply_to_dev_dependencies() {
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    devDependencies:"
+        "      foo:"
+        "        specifier: ^1.0.0"
+        "        version: 1.0.0"
+    })
+    .expect("parse lockfile");
+    let importer = lockfile.root_project().expect("root importer");
+    let (_dir, manifest) = manifest_from_json(
+        r#"{
+        "name": "x",
+        "version": "1.0.0",
+        "optionalDependencies": { "foo": "^1.0.0" },
+        "devDependencies": { "foo": "^1.0.0" }
+    }"#,
+    );
+    let is_ignored: &dyn Fn(&str) -> bool = &|name: &str| name == "foo";
+    assert!(satisfies_package_manifest(importer, &manifest, ".", is_ignored).is_ok());
+}
+
+/// Mirror sanity: if the filter incorrectly applied to dev (the
+/// pre-CodeRabbit-fix behavior), this same fixture without the
+/// group gate would flag drift. Used to pin that the gate exists
+/// — removing the `matches!(... Prod | Optional)` check inside
+/// `satisfies_package_manifest` makes this test fail.
+#[test]
+fn ignored_optional_dev_only_lockfile_entry_kept() {
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    devDependencies:"
+        "      foo:"
+        "        specifier: ^1.0.0"
+        "        version: 1.0.0"
+    })
+    .expect("parse lockfile");
+    let importer = lockfile.root_project().expect("root importer");
+    let (_dir, manifest) = manifest_from_json(
+        r#"{
+        "name": "x",
+        "version": "1.0.0",
+        "devDependencies": { "foo": "^1.0.0" }
+    }"#,
+    );
+    // The manifest doesn't have `foo` in optionalDependencies, so
+    // upstream's hook wouldn't iterate it. Filter says `foo` matches
+    // a pattern — exercising the case "pattern says foo is ignored
+    // but manifest's only entry for foo is in devDependencies".
+    // Should pass (dev entry untouched).
+    let is_ignored: &dyn Fn(&str) -> bool = &|name: &str| name == "foo";
+    assert!(satisfies_package_manifest(importer, &manifest, ".", is_ignored).is_ok());
 }

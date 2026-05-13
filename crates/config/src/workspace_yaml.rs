@@ -196,6 +196,16 @@ pub struct WorkspaceSettings {
     /// happens at the [`pacquet_package_is_installable::check_platform`]
     /// call site where the host triple is in scope).
     pub supported_architectures: Option<SupportedArchitectures>,
+
+    /// `ignoredOptionalDependencies` from `pnpm-workspace.yaml`: a
+    /// list of dep-name patterns whose matching entries get
+    /// stripped from every manifest's `optionalDependencies` (and
+    /// `dependencies`, when a package lists the same name in both)
+    /// before any consumer sees them. Mirrors upstream's
+    /// [`createOptionalDependenciesRemover`](https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts)
+    /// and the lockfile-side drift check at
+    /// [`getOutdatedLockfileSetting.ts:58-60`](https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/settings-checker/src/getOutdatedLockfileSetting.ts#L58-L60).
+    pub ignored_optional_dependencies: Option<Vec<String>>,
 }
 
 /// Basename of the file pnpm reads; exported for test use.
@@ -375,6 +385,9 @@ impl WorkspaceSettings {
         }
         if let Some(v) = self.supported_architectures {
             config.supported_architectures = Some(v);
+        }
+        if let Some(v) = self.ignored_optional_dependencies {
+            config.ignored_optional_dependencies = Some(v);
         }
     }
 }

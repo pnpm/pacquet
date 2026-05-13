@@ -65,6 +65,19 @@ pub struct Lockfile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overrides: Option<HashMap<String, String>>,
 
+    /// `ignoredOptionalDependencies` recorded by the install that
+    /// wrote this lockfile. Top-level in the v9 wire shape —
+    /// **not** inside `settings` — mirroring upstream's
+    /// [`LockfileBase`](https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/types/src/index.ts#L17-L27).
+    /// On a subsequent install, drift between this set and
+    /// `Config::ignored_optional_dependencies` is what
+    /// `satisfies_package_manifest` flags as outdated, matching
+    /// upstream's
+    /// [`getOutdatedLockfileSetting.ts:58-60`](https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/settings-checker/src/getOutdatedLockfileSetting.ts#L58-L60)
+    /// gate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ignored_optional_dependencies: Option<Vec<String>>,
+
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub importers: HashMap<String, ProjectSnapshot>,
 

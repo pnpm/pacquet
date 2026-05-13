@@ -608,3 +608,44 @@ fn hoist_false_disables_private_hoist_pattern() {
     settings.apply_to(&mut config, Path::new("/anywhere"));
     assert_eq!(config.hoist_pattern, None, "hoist:false must override an explicit hoistPattern");
 }
+
+/// `ignoredOptionalDependencies` parses from yaml as a list of
+/// strings and applies onto `Config::ignored_optional_dependencies`
+/// verbatim — order preserved, no sorting at apply time (the
+/// freshness check sorts before comparison, but `Config` holds the
+/// user-supplied order). Mirrors upstream's
+/// [`createOptionalDependenciesRemover`](https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts).
+#[test]
+fn parses_ignored_optional_dependencies_from_yaml_and_applies() {
+    let yaml = r#"
+ignoredOptionalDependencies:
+  - 'foo'
+  - '@scope/bar'
+"#;
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    assert_eq!(
+        settings.ignored_optional_dependencies.as_deref(),
+        Some(&["foo".to_string(), "@scope/bar".to_string()][..]),
+    );
+
+    let mut config = Config::new();
+    assert!(config.ignored_optional_dependencies.is_none(), "default is None");
+    settings.apply_to(&mut config, Path::new("/irrelevant"));
+    assert_eq!(
+        config.ignored_optional_dependencies.as_deref(),
+        Some(&["foo".to_string(), "@scope/bar".to_string()][..]),
+    );
+}
+
+/// Absent `ignoredOptionalDependencies` leaves the config field at
+/// `None` (same convention as `supportedArchitectures`).
+#[test]
+fn omitting_ignored_optional_dependencies_keeps_default() {
+    let yaml = "name: stub\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap_or_default();
+    assert!(settings.ignored_optional_dependencies.is_none());
+
+    let mut config = Config::new();
+    settings.apply_to(&mut config, Path::new("/irrelevant"));
+    assert!(config.ignored_optional_dependencies.is_none());
+}

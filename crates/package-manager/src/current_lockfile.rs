@@ -83,6 +83,12 @@ pub fn filter_lockfile_for_current(
         lockfile_version: lockfile.lockfile_version,
         settings: lockfile.settings.clone(),
         overrides: lockfile.overrides.clone(),
+        // Preserve the wanted lockfile's `ignored_optional_dependencies`
+        // verbatim — the current lockfile is a filtered view of the
+        // wanted one, and a future drift check between this recorded
+        // set and the next install's `Config` value relies on the
+        // round-trip. Slice 7 wire-up.
+        ignored_optional_dependencies: lockfile.ignored_optional_dependencies.clone(),
         importers,
         packages,
         snapshots,
