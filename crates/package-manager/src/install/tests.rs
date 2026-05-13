@@ -783,6 +783,15 @@ async fn warm_reinstall_skips_snapshot_when_current_lockfile_matches() {
     manifest.save().unwrap();
 
     let mut config = Config::new();
+    // Opt out of the (now-default) global virtual store: the
+    // `seed_placeholder_virtual_store_slot` helper writes the legacy
+    // `<virtual_store_dir>/<flat-name>` shape, which only matches the
+    // skip-probe path when `VirtualStoreLayout` is in legacy mode.
+    // The partial-install behaviour under test (skip when the
+    // current lockfile matches + slot exists) is independent of the
+    // GVS layout; the GVS-on equivalent is exercised by the
+    // `frozen_lockfile_under_gvs_*` tests below.
+    config.enable_global_virtual_store = false;
     config.store_dir = store_dir.into();
     config.modules_dir = modules_dir.clone();
     config.virtual_store_dir = virtual_store_dir.clone();
@@ -856,6 +865,12 @@ async fn warm_reinstall_emits_broken_modules_when_dir_is_missing() {
     manifest.save().unwrap();
 
     let mut config = Config::new();
+    // Opt out of the GVS layout — see the rationale on
+    // [`warm_reinstall_skips_snapshot_when_current_lockfile_matches`].
+    // The pre-seeded `<virtual_store_dir>/<flat-name>` slot is the
+    // legacy shape the probe matches; the BrokenModules emit fires
+    // identically under either layout once the slot is missing.
+    config.enable_global_virtual_store = false;
     config.store_dir = store_dir.into();
     config.modules_dir = modules_dir.clone();
     config.virtual_store_dir = virtual_store_dir.clone();
@@ -1084,6 +1099,11 @@ async fn warm_reinstall_reports_added_zero_and_emits_no_imported_events() {
     manifest.save().unwrap();
 
     let mut config = Config::new();
+    // Opt out of the GVS layout — the pre-seeded
+    // `<virtual_store_dir>/<flat-name>` slot is the legacy shape the
+    // skip probe matches under
+    // [`warm_reinstall_skips_snapshot_when_current_lockfile_matches`].
+    config.enable_global_virtual_store = false;
     config.store_dir = store_dir.into();
     config.modules_dir = modules_dir.clone();
     config.virtual_store_dir = virtual_store_dir.clone();

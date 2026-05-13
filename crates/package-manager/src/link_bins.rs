@@ -174,8 +174,7 @@ impl<'a> LinkVirtualStoreBins<'a> {
             + FsSetExecutable
             + FsEnsureExecutableBits,
     {
-        let LinkVirtualStoreBins { layout, snapshots, packages, package_manifests, skipped } =
-            self;
+        let LinkVirtualStoreBins { layout, snapshots, packages, package_manifests, skipped } = self;
         if let Some(snapshots) = snapshots {
             let has_bin_set = build_has_bin_set(packages);
             run_lockfile_driven::<Api>(

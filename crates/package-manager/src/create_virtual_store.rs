@@ -294,7 +294,15 @@ impl<'a> CreateVirtualStore<'a> {
         // Run this *before* deriving cache keys so unchanged
         // directory-backed snapshots aren't tripped by
         // `snapshot_cache_key`'s `UnsupportedResolution`.
-        let virtual_store_dir = &config.virtual_store_dir;
+        //
+        // Route the slot-existence probe through `layout.slot_dir` so
+        // GVS-on installs check the correct path. The probe used to
+        // hard-code `<config.virtual_store_dir>/<flat-name>`, which is
+        // the legacy layout — under GVS, slots live at
+        // `<global_virtual_store_dir>/<scope>/<name>/<ver>/<hash>` and
+        // the legacy path is empty, so the skip gate would
+        // incorrectly mark every warm slot as "broken" and emit
+        // `BrokenModules` for the wrong path.
         let survivors: Vec<(&PackageKey, &SnapshotEntry)> = snapshots
             .iter()
             // Reason 1: installability skip. Drop entirely.
@@ -315,8 +323,8 @@ impl<'a> CreateVirtualStore<'a> {
                 if !integrity_equal(current_metadata, wanted_metadata) {
                     return true;
                 }
-                let dir = virtual_store_dir
-                    .join(snapshot_key.to_virtual_store_name())
+                let dir = layout
+                    .slot_dir(snapshot_key)
                     .join("node_modules")
                     .join(snapshot_key.name.to_string());
                 if dir.is_dir() {

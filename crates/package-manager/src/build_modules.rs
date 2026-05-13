@@ -727,14 +727,21 @@ fn build_one_snapshot<R: Reporter>(
 
 /// Compute the package directory inside the virtual store for a snapshot key.
 ///
-/// Uses `without_peer()` to strip any peer-dependency suffix before
-/// computing the path, so keys like
-/// `/@pnpm.e2e/foo@1.0.0(@pnpm.e2e/bar@2.0.0)` resolve correctly.
+/// Routes the slot-dir lookup through the install-scoped
+/// [`crate::VirtualStoreLayout`], which precomputes
+/// `<scope>/<name>/<version>/<hash>` suffixes per *full* snapshot key
+/// (with the peer-dependency suffix preserved) when GVS is enabled.
+/// Peer-resolved snapshots therefore have to look up by the full key
+/// — `slot_dir(key)` — or the GVS lookup misses, falls through to the
+/// legacy flat-name path, and points at a directory that
+/// [`crate::CreateVirtualDirBySnapshot`] never created.
+/// `slot_dir(key.without_peer())` was the pre-#432 spelling and
+/// silently dropped lifecycle scripts for peer-resolved snapshots
+/// — never use it here.
 ///
-/// Threads through the install-scoped [`crate::VirtualStoreLayout`] so
-/// the call works under both the legacy flat-name layout and the
-/// GVS-shaped `<scope>/<name>/<version>/<hash>` layout — the layout's
-/// `slot_dir` is the single switchpoint.
+/// The package-name segment still comes from the peer-stripped key,
+/// because the slot's `node_modules/<pkg>` is keyed by the bare
+/// package name regardless of peer context.
 fn virtual_store_dir_for_key(layout: &crate::VirtualStoreLayout, key: &PackageKey) -> PathBuf {
     let bare_key = key.without_peer();
     let key_str = bare_key.to_string();
@@ -743,7 +750,7 @@ fn virtual_store_dir_for_key(layout: &crate::VirtualStoreLayout, key: &PackageKe
     let at_idx = name_version.rfind('@').unwrap_or(name_version.len());
     let name = &name_version[..at_idx];
 
-    layout.slot_dir(&bare_key).join("node_modules").join(name)
+    layout.slot_dir(key).join("node_modules").join(name)
 }
 
 /// Parse `name` and `version` from a lockfile snapshot key like
