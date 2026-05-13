@@ -16,7 +16,7 @@ use miette::Diagnostic;
 use pacquet_lockfile::{Lockfile, PkgName, PkgNameVerPeer, ProjectSnapshot, SnapshotEntry};
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     rc::Rc,
 };
 
@@ -105,12 +105,25 @@ pub struct HoisterTree {
 ///
 /// Mirrors `HoisterResult` at the [yarn source][yarn-result].
 ///
+/// Pacquet extends upstream's `HoisterResult` with a `peer_names`
+/// field copied through from [`HoisterTree::peer_names`]. The hoist
+/// algorithm reads it while deciding whether a candidate can hoist
+/// past parents that supply the peer; upstream resolves the same
+/// information against its `HoisterWorkTree` instead, but since
+/// pacquet runs the algorithm directly on `HoisterResult` (no
+/// intermediate work tree), the peer set has to ride along.
+///
 /// [yarn-result]: https://github.com/yarnpkg/berry/blob/4287909fa6a0a1ec976a55776bff606864b31990/packages/yarnpkg-nm/sources/hoist.ts#L20-L23
 #[derive(Debug, Clone)]
 pub struct HoisterResult {
     pub name: String,
     pub ident_name: String,
     pub references: RefCell<BTreeSet<String>>,
+    /// Peer-dependency names the upstream `HoisterTree` node
+    /// declared. Read by the hoist algorithm to refuse hoists that
+    /// would shadow a peer the candidate's ancestors satisfy with a
+    /// different ident.
+    pub peer_names: BTreeSet<String>,
     pub dependencies: RefCell<IndexSet<RcByPtr<HoisterResult>>>,
 }
 
@@ -159,27 +172,6 @@ pub enum HoistError {
         /// The depPath (snapshot key) the lockfile failed to
         /// resolve.
         pkg_key: String,
-    },
-    /// A package in the lockfile declares peer dependencies (or
-    /// transitive peer dependencies). The hoist algorithm doesn't
-    /// model peer-dependency constraints yet, so it would freely
-    /// hoist this node past parents that supply the peer — a
-    /// silent shadowing pnpm would reject. Refuse upfront rather
-    /// than emit a wrong layout.
-    #[display("hoister cannot yet model peer dependencies (package {ident}, peers: {peers:?})")]
-    #[diagnostic(
-        code(ERR_PACQUET_HOIST_UNSUPPORTED_PEER),
-        help(
-            "the hoister doesn't yet model peer-dependency constraints; \
-             pass a lockfile whose packages declare no `peerDependencies` \
-             (and whose snapshots carry no `transitivePeerDependencies`)."
-        )
-    )]
-    UnsupportedPeerDependency {
-        /// The snapshot key of the offending package.
-        ident: String,
-        /// The peer / transitive-peer names that block the hoist.
-        peers: BTreeSet<String>,
     },
     /// The caller passed a non-empty `hoisting_limits` map. The
     /// hoist algorithm doesn't enforce limits yet, so flattening
@@ -363,15 +355,6 @@ pub fn hoist(lockfile: &Lockfile, opts: &HoistOpts) -> Result<HoisterResult, Hoi
         hoist_priority: 0,
         dependencies: RefCell::new(root_children),
     });
-
-    // Scan the constructed tree for peer-constrained packages.
-    // `peer_names` only gets populated when the lockfile's
-    // `packages` map declares `peerDependencies` (or
-    // `transitive_peer_dependencies` on a snapshot), so a peer-
-    // free lockfile passes the guard unchanged.
-    if let Some(err) = find_first_peer_constrained(&root_node) {
-        return Err(err);
-    }
 
     let result = nm_hoist(&root_node, opts);
 
@@ -581,29 +564,6 @@ fn percent_encode_path(s: &str) -> String {
     out
 }
 
-/// Walk the constructed tree and return the first node whose
-/// `peer_names` is non-empty as an `UnsupportedPeerDependency`
-/// error. Returns `None` when the tree is peer-free.
-fn find_first_peer_constrained(root: &Rc<HoisterTree>) -> Option<HoistError> {
-    let mut visited: HashSet<*const HoisterTree> = HashSet::new();
-    let mut stack: Vec<Rc<HoisterTree>> = vec![Rc::clone(root)];
-    while let Some(node) = stack.pop() {
-        if !visited.insert(Rc::as_ptr(&node)) {
-            continue;
-        }
-        if !node.peer_names.is_empty() {
-            return Some(HoistError::UnsupportedPeerDependency {
-                ident: node.reference.clone(),
-                peers: node.peer_names.clone(),
-            });
-        }
-        for dep in node.dependencies.borrow().iter() {
-            stack.push(Rc::clone(&dep.0));
-        }
-    }
-    None
-}
-
 /// Pacquet's port of the `@yarnpkg/nm` hoist algorithm. Walks the
 /// input tree, deep-copies it into a `HoisterResult` shape, then
 /// pulls eligible descendants up to the root via single-pass BFS
@@ -623,23 +583,27 @@ fn find_first_peer_constrained(root: &Rc<HoisterTree>) -> Option<HoistError> {
 ///   share an alias but resolve to different snapshot keys, the
 ///   first one BFS reaches takes the root slot and the other
 ///   stays under its parent.
+/// * Peer-shadow refusal: a candidate whose `peer_names` would
+///   resolve against an ancestor's dep with a different ident
+///   than the root carries stays nested under its parent. See
+///   [`would_shadow_peer`] for the ancestor-path walk and how
+///   pacquet's DAG-preserving model differs from upstream's
+///   per-path tree clone in rare cross-path mismatch cases.
 ///
-/// What this does *not* model yet (each gated on later work
-/// because they require additional graph structure and tests):
+/// What this does *not* model yet:
 ///
-/// * Peer-dependency constraints (`peer_names`) — packages that
-///   refuse to hoist past parents declaring them as peers. The
-///   wrapper refuses lockfiles that contain any peer-constrained
-///   nodes via `HoistError::UnsupportedPeerDependency`, so this
-///   function only ever sees peer-free input today.
 /// * Multi-round convergence — re-walking the tree to discover
-///   newly-hoistable deps after the first pass. The BFS does
-///   handle deep chains (`root → a → b → c` flattens in one
-///   pass), so the cases requiring true multi-round are limited
-///   to peer interactions.
-/// * `hoistingLimits` / `externalDependencies` knobs.
+///   newly-hoistable deps after the first pass. The BFS handles
+///   deep chains (`root → a → b → c` flattens in one pass), so
+///   the cases requiring true multi-round are limited to
+///   peer-interactions where one hoist decision unblocks
+///   another. Today the algorithm refuses those conservatively.
+/// * `hoistingLimits` / `externalDependencies` runtime
+///   enforcement (the wrapper still refuses non-empty
+///   `hoisting_limits`).
 /// * `dependencyKind` distinctions for workspaces and external
-///   soft links.
+///   soft links (the `Workspace` guard at the wrapper boundary
+///   still refuses multi-importer lockfiles upfront).
 ///
 /// Matches the structural intent of upstream `hoistTo` at
 /// [hoist.ts:329][upstream] for the subset above.
@@ -671,82 +635,250 @@ enum AbsorbDecision {
     /// Root's name slot is taken by a different `Rc` — a version
     /// conflict. The child stays under its current parent.
     Conflict,
+    /// Hoisting would shadow a peer dependency one of the
+    /// candidate's ancestors satisfies with a different ident than
+    /// what the root provides. The child stays under its parent so
+    /// the ancestor's peer resolution still finds the intended
+    /// version. Mirrors upstream's `getNodeHoistInfo` peer checks
+    /// at [hoist.ts:414][peer-shadow-root] and
+    /// [hoist.ts:454-479][peer-path].
+    ///
+    /// [peer-shadow-root]: https://github.com/yarnpkg/berry/blob/4287909fa6a0a1ec976a55776bff606864b31990/packages/yarnpkg-nm/sources/hoist.ts#L414
+    /// [peer-path]: https://github.com/yarnpkg/berry/blob/4287909fa6a0a1ec976a55776bff606864b31990/packages/yarnpkg-nm/sources/hoist.ts#L454-L479
+    PeerShadow,
 }
 
-/// Walk the result tree breadth-first and hoist every eligible
-/// descendant of `root` onto `root` itself. Single-pass: each node
-/// is visited once, and a descendant's children become hoist
-/// candidates as soon as the descendant itself is queued.
+/// Walk the result tree and hoist every eligible descendant of
+/// `root` onto `root` itself.
 ///
 /// Maintains a side `HashMap<name, RcByPtr>` mirror of root's
 /// direct deps so the per-edge "is this name taken at root?" check
 /// stays O(1). Without the index a graph with `N` packages all
 /// hoisting freely would do O(N²) `IndexSet` scans.
+///
+/// Implemented as a recursive depth-first walk (see
+/// [`hoist_subtree`]) so the `ancestor_path` passed into each
+/// recursion reflects the current result-graph position of the
+/// parent. A previous BFS form computed the path at queue time
+/// and used it at dequeue time, which went stale whenever a node
+/// was hoisted to root between those two moments — the peer-
+/// shadow check then walked ex-ancestors and over-refused hoists.
+/// In the DFS form, when we recurse into a freshly-hoisted child,
+/// we pass `[root]` as the path; when we recurse into a child
+/// that stayed nested, we pass the parent's path plus the parent.
+///
+/// For a DAG where the same node is reachable through multiple
+/// paths, only the first-arrived path is consulted; upstream's
+/// `cloneTree` produces a strict tree (per-path duplication) and
+/// gets a per-path peer decision for free, but pacquet preserves
+/// DAG sharing and accepts a more conservative ruling in the
+/// rare cross-path mismatch cases. The cost is layouts that are
+/// sometimes more nested than pnpm's, never less.
 fn hoist_into_root(root: &Rc<HoisterResult>) {
-    let root_ptr = Rc::as_ptr(root);
     let mut visited: HashSet<*const HoisterResult> = HashSet::new();
-    let mut queue: VecDeque<Rc<HoisterResult>> = VecDeque::new();
-    queue.push_back(Rc::clone(root));
-
     let mut root_index: HashMap<String, RcByPtr<HoisterResult>> =
         root.dependencies.borrow().iter().map(|d| (d.0.name.clone(), d.clone())).collect();
+    hoist_subtree(root, &[], root, &mut root_index, &mut visited);
+}
 
-    while let Some(node) = queue.pop_front() {
-        let node_ptr = Rc::as_ptr(&node);
-        if !visited.insert(node_ptr) {
+/// Depth-first hoist driver. `ancestor_path` is the path from
+/// `root` down to (but *excluding*) `node`, so for the root
+/// itself it is empty and for a child of root it is `[root]`.
+fn hoist_subtree(
+    node: &Rc<HoisterResult>,
+    ancestor_path: &[Rc<HoisterResult>],
+    root: &Rc<HoisterResult>,
+    root_index: &mut HashMap<String, RcByPtr<HoisterResult>>,
+    visited: &mut HashSet<*const HoisterResult>,
+) {
+    let root_ptr = Rc::as_ptr(root);
+    if !visited.insert(Rc::as_ptr(node)) {
+        return;
+    }
+
+    // Snapshot the current children so we can mutate
+    // `node.dependencies` mid-iteration without invalidating the
+    // borrow. `RcByPtr::clone` just bumps refcounts.
+    let children: Vec<RcByPtr<HoisterResult>> =
+        node.dependencies.borrow().iter().cloned().collect();
+
+    let is_root = Rc::ptr_eq(node, root);
+
+    // Path from root down to and including `node` — i.e. the
+    // ancestor path for `node`'s direct children. Used both for
+    // peer-shadow checks (children) and as the starting point
+    // for the path passed into recursion when a child stays
+    // nested.
+    let mut path_for_children: Vec<Rc<HoisterResult>> = ancestor_path.to_vec();
+    path_for_children.push(Rc::clone(node));
+
+    for child in children {
+        if Rc::as_ptr(&child.0) == root_ptr {
+            // Back-edge to root via a cycle. Nothing to hoist.
             continue;
         }
 
-        // Snapshot the current children so we can mutate
-        // `node.dependencies` mid-iteration without invalidating the
-        // borrow. `RcByPtr::clone` just bumps refcounts.
-        let children: Vec<RcByPtr<HoisterResult>> =
-            node.dependencies.borrow().iter().cloned().collect();
+        let mut decision = match root_index.get(&child.0.name) {
+            None => AbsorbDecision::Free,
+            Some(existing) if Rc::ptr_eq(&existing.0, &child.0) => AbsorbDecision::SameNode,
+            Some(_) => AbsorbDecision::Conflict,
+        };
 
-        let is_root_parent = Rc::ptr_eq(&node, root);
+        // Peer-aware refusal layered on top of the basic
+        // free / dedup / conflict decision. `Conflict` already
+        // leaves the candidate in place and `SameNode` dedups
+        // an already-hoisted shared `Rc`, so the peer check
+        // only matters when we'd otherwise hoist.
+        if matches!(decision, AbsorbDecision::Free)
+            && would_shadow_peer(&child.0, &path_for_children, root, root_index)
+        {
+            decision = AbsorbDecision::PeerShadow;
+        }
 
-        for child in children {
-            let child_ptr = Rc::as_ptr(&child.0);
-            if child_ptr == root_ptr {
-                // Back-edge to root via a cycle. Nothing to hoist.
-                continue;
-            }
-
-            let decision = match root_index.get(&child.0.name) {
-                None => AbsorbDecision::Free,
-                Some(existing) if Rc::ptr_eq(&existing.0, &child.0) => AbsorbDecision::SameNode,
-                Some(_) => AbsorbDecision::Conflict,
-            };
-
-            if !is_root_parent {
-                match decision {
-                    AbsorbDecision::Free => {
-                        node.dependencies.borrow_mut().shift_remove(&child);
-                        root.dependencies.borrow_mut().insert(child.clone());
-                        root_index.insert(child.0.name.clone(), child.clone());
-                    }
-                    AbsorbDecision::SameNode => {
-                        // The shared `Rc` is already at root; just
-                        // strip the duplicate reference at this
-                        // parent so the deeper copy disappears.
-                        node.dependencies.borrow_mut().shift_remove(&child);
-                    }
-                    AbsorbDecision::Conflict => {
-                        // Stays at the current parent. The version
-                        // already at root wins the slot.
-                    }
+        // Apply the decision, *then* compute the path to pass
+        // into recursion based on the child's *new* position.
+        // This is the load-bearing difference from the previous
+        // BFS shape: the recursion path reflects current state.
+        let child_recursion_path: Vec<Rc<HoisterResult>> = if is_root {
+            // Root's direct children are already at root — no
+            // movement happens, and their ancestor path is
+            // simply `[root]`.
+            path_for_children.clone()
+        } else {
+            match decision {
+                AbsorbDecision::Free => {
+                    node.dependencies.borrow_mut().shift_remove(&child);
+                    root.dependencies.borrow_mut().insert(child.clone());
+                    root_index.insert(child.0.name.clone(), child.clone());
+                    // Child is now a direct dep of root; its
+                    // ancestor path collapses to `[root]`.
+                    vec![Rc::clone(root)]
+                }
+                AbsorbDecision::SameNode => {
+                    // The shared `Rc` is already at root; strip
+                    // the duplicate reference at this parent so
+                    // the deeper copy disappears. Child's actual
+                    // ancestor path is `[root]`.
+                    node.dependencies.borrow_mut().shift_remove(&child);
+                    vec![Rc::clone(root)]
+                }
+                AbsorbDecision::Conflict | AbsorbDecision::PeerShadow => {
+                    // Stays at the current parent. The version
+                    // already at root wins the slot, or
+                    // hoisting would shadow a peer dependency.
+                    // Child's ancestor path is the path through
+                    // `node`.
+                    path_for_children.clone()
                 }
             }
+        };
 
-            // Queue the child so its own descendants get a chance.
-            // This is what lets deep chains (`root → a → b → c`)
-            // flatten in a single BFS pass: by the time `b` is
-            // dequeued it's already a direct child of root, so
-            // `c` is evaluated against root's slot, not against
-            // `a`'s slot.
-            queue.push_back(Rc::clone(&child.0));
-        }
+        hoist_subtree(&child.0, &child_recursion_path, root, root_index, visited);
     }
+}
+
+/// Return `true` when hoisting `candidate` onto the root would
+/// shadow a peer dependency one of its ancestors already
+/// satisfies with a different ident.
+///
+/// Implements two of the three peer guards upstream's
+/// `getNodeHoistInfo` runs:
+///
+/// * **Root-shadow** — the candidate's own name appears in
+///   `root.peer_names`. The root expects to *receive* this name as
+///   a peer from its own parent, so promoting the candidate into
+///   the root's name slot would change peer resolution for
+///   anything that sees the root.
+/// * **Ancestor-path mismatch** — for each peer name `P` in
+///   `candidate.peer_names`, walk the candidate's ancestors from
+///   deepest (immediate parent) toward the root. The first
+///   ancestor that has a direct dep named `P` (and doesn't itself
+///   peer-pass `P` through) is the one whose ident the candidate
+///   resolves at runtime. If the root provides a *different*
+///   ident for `P` (or none at all), promoting the candidate
+///   would silently re-resolve its peer to the wrong package, so
+///   we leave it nested.
+///
+/// Differs from upstream's check in one DAG case: upstream's
+/// [`cloneTree`][clone] duplicates the work tree into a strict
+/// tree per parent path, so each visit has a unique ancestor
+/// chain. Pacquet preserves the DAG, and the BFS records only
+/// the path it actually used to reach the candidate; if the same
+/// candidate could be reached via a peer-compatible alternative
+/// path, we still refuse to hoist. The result is at most
+/// over-nested layouts, never under-nested ones.
+///
+/// [clone]: https://github.com/yarnpkg/berry/blob/4287909fa6a0a1ec976a55776bff606864b31990/packages/yarnpkg-nm/sources/hoist.ts#L670
+fn would_shadow_peer(
+    candidate: &HoisterResult,
+    ancestor_path: &[Rc<HoisterResult>],
+    root: &Rc<HoisterResult>,
+    root_index: &HashMap<String, RcByPtr<HoisterResult>>,
+) -> bool {
+    // Root-shadow guard. Pacquet's wrapper builds the `.` root with
+    // empty `peer_names` (it's a `Workspace`-kind node), so in
+    // practice this check never fires today — kept for parity with
+    // upstream and to stay correct if a future caller hands in a
+    // root with declared peers.
+    if root.peer_names.contains(&candidate.name) {
+        return true;
+    }
+
+    'peer_loop: for peer_name in &candidate.peer_names {
+        // Walk ancestors deepest-first so the closest provider
+        // wins. An ancestor whose own `peer_names` includes this
+        // name *and* doesn't carry it as a direct dep is just
+        // passing the peer through — keep walking past it.
+        for ancestor in ancestor_path.iter().rev() {
+            // Clone before dropping the borrow so the Rc outlives
+            // the `Ref` we'd otherwise hold.
+            let provider_rc = ancestor
+                .dependencies
+                .borrow()
+                .iter()
+                .find(|d| d.0.name == *peer_name)
+                .map(|d| d.0.clone());
+
+            match provider_rc {
+                Some(provider) => {
+                    // Found a concrete provider in the ancestor
+                    // chain. Compare its identity against root's
+                    // current slot for the same name.
+                    match root_index.get(peer_name) {
+                        Some(at_root) if Rc::ptr_eq(&at_root.0, &provider) => {
+                            // Root already carries this exact
+                            // provider — promoting the candidate
+                            // doesn't change resolution. Move to
+                            // the next peer.
+                            continue 'peer_loop;
+                        }
+                        _ => {
+                            // Root either has a different ident
+                            // for this peer or doesn't have one
+                            // at all. Either way, hoisting would
+                            // shadow.
+                            return true;
+                        }
+                    }
+                }
+                None => {
+                    // This ancestor doesn't supply the peer.
+                    // Walk further up — the actual provider may
+                    // be a parent of this ancestor (the common
+                    // shape is `ancestor` peer-passes the name
+                    // through to its own parent). If we exhaust
+                    // the path without finding any provider,
+                    // there's no ancestor-bound peer to shadow
+                    // and the candidate may hoist freely for
+                    // this peer.
+                }
+            }
+        }
+        // No ancestor (excluding root) provides the peer; the
+        // candidate either resolves it at root or leaves it
+        // unsatisfied. Either case is "no shadow" — keep going.
+    }
+    false
 }
 
 fn convert(
@@ -768,6 +900,7 @@ fn convert(
         name: tree.name.clone(),
         ident_name: tree.ident_name.clone(),
         references: RefCell::new(refs),
+        peer_names: tree.peer_names.clone(),
         dependencies: RefCell::new(IndexSet::new()),
     });
     memo.insert(ptr, Rc::clone(&node));
