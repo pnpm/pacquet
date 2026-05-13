@@ -8,11 +8,15 @@
 //! The walker [`lockfile_to_hoisted_dep_graph`] takes a lockfile
 //! and runs `pacquet_real_hoist::hoist` to get the directory shape,
 //! then assembles a [`LockfileToDepGraphResult`] keyed by the
-//! computed absolute directory of every node. Store I/O
-//! (`fetching` / `files_index_file`), the installability check,
-//! and the `prev_graph` diff still land in follow-ups; this walker
-//! produces a correct graph topology for the eventual store
-//! integration to layer fetch results onto.
+//! computed absolute directory of every node. Optional packages
+//! whose `cpu` / `os` / `libc` / `engines` don't fit the current
+//! host are added to `result.skipped` rather than emitted into the
+//! graph; required incompatible packages proceed with a (yet-to-be-
+//! wired) warning, matching upstream `package_is_installable`'s
+//! `null | true | false` shape. Store I/O (`fetching` /
+//! `files_index_file`) and the `prev_graph` diff still land in
+//! follow-ups; this walker produces a correct graph topology for
+//! the eventual store integration to layer fetch results onto.
 //!
 //! Unlike the depPath-keyed [`crate::deps_graph`] module (which is
 //! a hashing-side adapter for the build cache), the graph defined
@@ -27,6 +31,10 @@ use indexmap::IndexSet;
 use miette::Diagnostic;
 use pacquet_lockfile::{Lockfile, LockfileResolution, PackageKey, ParsePkgNameVerPeerError};
 use pacquet_modules_yaml::DepPath;
+use pacquet_package_is_installable::{
+    InstallabilityError, InstallabilityOptions, InstallabilityVerdict,
+    PackageInstallabilityManifest, SupportedArchitectures, WantedEngine, package_is_installable,
+};
 use pacquet_patching::PatchInfo;
 use pacquet_real_hoist::{HoistError, HoistOpts, HoisterResult, RcByPtr, hoist};
 use std::{
@@ -152,6 +160,14 @@ pub struct LockfileToDepGraphResult {
     /// at
     /// [lockfileToHoistedDepGraph.ts:286](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/lockfileToHoistedDepGraph.ts#L286-L292).
     pub injection_targets_by_dep_path: BTreeMap<String, Vec<PathBuf>>,
+    /// Packages the walker decided to skip — the input
+    /// `opts.skipped` extended with any depPaths whose
+    /// installability check failed (optional + unsupported
+    /// platform/engine). Upstream mutates the input `Set<string>`
+    /// in place; pacquet returns the augmented set on the result
+    /// so the caller can persist it into `.modules.yaml.skipped`
+    /// without sharing mutable state.
+    pub skipped: BTreeSet<String>,
 }
 
 /// Inputs the walker reads from. Mirrors the subset of upstream's
@@ -179,6 +195,34 @@ pub struct LockfileToHoistedDepGraphOptions {
     /// options — pacquet matches the hoisted-specific typing
     /// here), so the wrapper here is `BTreeSet<String>`.
     pub skipped: BTreeSet<String>,
+    /// When true, suppress the installability check and emit every
+    /// dep into the graph regardless of cpu / os / libc / engines.
+    /// Used by the `prev_graph` walk (Slice 4d) where the previous
+    /// lockfile is replayed wholesale to compute orphans — upstream
+    /// passes `force: true, skipped: new Set()` to that call so
+    /// the diff catches packages that previously installed but
+    /// would now be filtered. Mirrors upstream's `force` at
+    /// [lockfileToHoistedDepGraph.ts:73](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/lockfileToHoistedDepGraph.ts#L73-L76).
+    pub force: bool,
+    /// `engineStrict` from config. When true, an engine mismatch on
+    /// a *required* (non-optional) package becomes a hard error
+    /// instead of a warning.
+    pub engine_strict: bool,
+    /// Current host's node version, used as the `engines.node`
+    /// satisfiability target. See `InstallabilityOptions::current_node_version`.
+    pub current_node_version: String,
+    /// Current host's OS (`linux`, `darwin`, `win32`, ...).
+    pub current_os: String,
+    /// Current host's CPU architecture (`x64`, `arm64`, ...).
+    pub current_cpu: String,
+    /// Current host's libc variant (`glibc`, `musl`, or empty when
+    /// the host is not Linux).
+    pub current_libc: String,
+    /// `supportedArchitectures` override from `pnpm-workspace.yaml`,
+    /// widening the host-derived axes so a Linux host can prepare
+    /// node_modules for a Windows / macOS target. `None` means use
+    /// only the current-host axes.
+    pub supported_architectures: Option<SupportedArchitectures>,
 }
 
 /// Failure modes of [`lockfile_to_hoisted_dep_graph`]. Marked
@@ -206,6 +250,24 @@ pub enum HoistedDepGraphError {
         #[error(source)]
         source: ParsePkgNameVerPeerError,
     },
+    /// A required (non-optional) package failed the
+    /// installability check. Mirrors upstream's `throw` path
+    /// where `engineStrict` + an engine mismatch surfaces as
+    /// `ERR_PNPM_UNSUPPORTED_ENGINE`; the inner
+    /// `InstallabilityError` is propagated transparently so
+    /// callers see the same diagnostic code
+    /// (`ERR_PNPM_UNSUPPORTED_ENGINE` /
+    /// `ERR_PNPM_UNSUPPORTED_PLATFORM` /
+    /// `ERR_PNPM_INVALID_NODE_VERSION`) as upstream, and the
+    /// inner error already carries the package id for context.
+    ///
+    /// Optional packages on incompatible platforms do *not* take
+    /// this path — they are added to `result.skipped` and
+    /// silently skipped, matching upstream's
+    /// `pnpm:skipped-optional-dependency` semantics.
+    #[display("{_0}")]
+    #[diagnostic(transparent)]
+    Installability(#[error(source)] Box<InstallabilityError>),
 }
 
 /// Build a directory-keyed [`LockfileToDepGraphResult`] from a
@@ -234,7 +296,8 @@ pub fn lockfile_to_hoisted_dep_graph(
     let mut state = WalkState {
         lockfile,
         lockfile_dir: &opts.lockfile_dir,
-        skipped: &opts.skipped,
+        opts,
+        skipped: opts.skipped.clone(),
         graph: DependenciesGraph::new(),
         pkg_locations_by_dep_path: BTreeMap::new(),
         hoisted_locations: BTreeMap::new(),
@@ -263,6 +326,7 @@ pub fn lockfile_to_hoisted_dep_graph(
         pkg_locations_by_dep_path,
         hoisted_locations,
         injection_targets_by_dep_path,
+        skipped,
         lockfile,
         ..
     } = state;
@@ -294,6 +358,7 @@ pub fn lockfile_to_hoisted_dep_graph(
         symlinked_direct_dependencies_by_importer_id: DirectDependenciesByImporterId::new(),
         prev_graph: None,
         injection_targets_by_dep_path,
+        skipped,
     })
 }
 
@@ -324,12 +389,15 @@ fn fill_children(
 }
 
 /// Mutable scratch space the recursive walker threads through
-/// every level. Borrowing the lockfile + lockfile_dir + skipped
-/// up front avoids passing five separate arguments.
+/// every level. Borrowing the lockfile + lockfile_dir + opts up
+/// front avoids passing four separate arguments. `skipped` is
+/// owned (cloned from `opts.skipped`) because the walker mutates
+/// it — every dep that fails the installability check gets added.
 struct WalkState<'a> {
     lockfile: &'a Lockfile,
     lockfile_dir: &'a Path,
-    skipped: &'a BTreeSet<String>,
+    opts: &'a LockfileToHoistedDepGraphOptions,
+    skipped: BTreeSet<String>,
     graph: DependenciesGraph,
     /// Records every directory each depPath landed in, in visit
     /// order. The first entry wins for parent → child wiring (see
@@ -385,6 +453,38 @@ fn walk_deps(
         };
         let snapshot =
             state.lockfile.snapshots.as_ref().and_then(|snapshots| snapshots.get(&pkg_key));
+
+        // Installability filter. Mirrors upstream's
+        // `if (!opts.force && packageIsInstallable(...) === false)`
+        // at [lockfileToHoistedDepGraph.ts:200](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/lockfileToHoistedDepGraph.ts#L200-L210).
+        // `optional` comes from the snapshot — an optional dep on
+        // an unsupported platform is silently added to `skipped`;
+        // a required dep takes the error path.
+        if !state.opts.force {
+            let manifest = manifest_for_installability(metadata);
+            let optional = snapshot.map(|s| s.optional).unwrap_or(false);
+            let install_opts = InstallabilityOptions {
+                engine_strict: state.opts.engine_strict,
+                optional,
+                current_node_version: &state.opts.current_node_version,
+                pnpm_version: None,
+                current_os: &state.opts.current_os,
+                current_cpu: &state.opts.current_cpu,
+                current_libc: &state.opts.current_libc,
+                supported_architectures: state.opts.supported_architectures.as_ref(),
+            };
+            match package_is_installable(&pkg_key.to_string(), &manifest, &install_opts) {
+                Ok(InstallabilityVerdict::Installable)
+                | Ok(InstallabilityVerdict::ProceedWithWarning { .. }) => {}
+                Ok(InstallabilityVerdict::SkipOptional { .. }) => {
+                    state.skipped.insert(reference.clone());
+                    continue;
+                }
+                Err(source) => {
+                    return Err(HoistedDepGraphError::Installability(source));
+                }
+            }
+        }
 
         let dir = modules.join(&dep.0.name);
         let dep_location = path_relative_to_lockfile_dir(&dir, state.lockfile_dir);
@@ -454,6 +554,27 @@ fn lookup_package_metadata<'a>(
     key: &PackageKey,
 ) -> Option<&'a pacquet_lockfile::PackageMetadata> {
     lockfile.packages.as_ref()?.get(key)
+}
+
+/// Project the platform / engines axes from a `PackageMetadata`
+/// onto the [`PackageInstallabilityManifest`] shape
+/// [`package_is_installable`] consumes. Upstream builds this
+/// inline at
+/// [lockfileToHoistedDepGraph.ts:192-199](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/lockfileToHoistedDepGraph.ts#L192-L199);
+/// extracted here so the walker body stays small.
+fn manifest_for_installability(
+    metadata: &pacquet_lockfile::PackageMetadata,
+) -> PackageInstallabilityManifest {
+    let engines = metadata.engines.as_ref().map(|engines| WantedEngine {
+        node: engines.get("node").cloned(),
+        pnpm: engines.get("pnpm").cloned(),
+    });
+    PackageInstallabilityManifest {
+        engines,
+        cpu: metadata.cpu.clone(),
+        os: metadata.os.clone(),
+        libc: metadata.libc.clone(),
+    }
 }
 
 /// Lockfile-relative path string, matching upstream's
@@ -544,6 +665,7 @@ mod tests {
         assert!(actual.symlinked_direct_dependencies_by_importer_id.is_empty());
         assert!(actual.prev_graph.is_none());
         assert!(actual.injection_targets_by_dep_path.is_empty());
+        assert!(actual.skipped.is_empty());
     }
 
     /// A `DependenciesGraphNode` can be constructed and inserted
@@ -611,11 +733,15 @@ mod tests {
         assert_eq!(opts.lockfile_dir, PathBuf::new());
         assert!(!opts.auto_install_peers);
         assert!(opts.skipped.is_empty());
+        assert!(!opts.force);
+        assert!(!opts.engine_strict);
+        assert!(opts.current_node_version.is_empty());
+        assert!(opts.supported_architectures.is_none());
     }
 
     // --- Walker tests ----------------------------------------------------
 
-    use super::lockfile_to_hoisted_dep_graph;
+    use super::{HoistedDepGraphError, InstallabilityError, lockfile_to_hoisted_dep_graph};
     use pacquet_lockfile::{
         ComVer, Lockfile, LockfileSettings, LockfileVersion, PackageKey, PackageMetadata, PkgName,
         PkgNameVerPeer, PkgVerPeer, ProjectSnapshot, ResolvedDependencyMap, ResolvedDependencySpec,
@@ -884,13 +1010,17 @@ mod tests {
         skipped.insert("a@1.0.0".to_string());
         let opts = LockfileToHoistedDepGraphOptions {
             lockfile_dir: PathBuf::from("/repo"),
-            auto_install_peers: false,
             skipped,
+            ..LockfileToHoistedDepGraphOptions::default()
         };
         let result = lockfile_to_hoisted_dep_graph(&lockfile, &opts).expect("walker succeeds");
 
         assert!(result.graph.is_empty(), "skipped dep not emitted");
         assert!(result.hoisted_locations.is_empty());
+        assert!(
+            result.skipped.contains("a@1.0.0"),
+            "pre-skipped dep is still in the output skipped set",
+        );
     }
 
     /// A `directory:` resolution gets recorded in
@@ -922,5 +1052,170 @@ mod tests {
             result.injection_targets_by_dep_path["a@1.0.0"],
             vec![lockfile_dir.join("node_modules").join("a")],
         );
+    }
+
+    // --- Installability tests --------------------------------------------
+
+    fn host_aware_opts() -> LockfileToHoistedDepGraphOptions {
+        // Concrete platform values so the installability check has
+        // something to compare against. The specific host doesn't
+        // matter — tests assert relative behavior (compatible vs
+        // incompatible) by setting metadata that targets *this*
+        // value or its opposite.
+        LockfileToHoistedDepGraphOptions {
+            lockfile_dir: PathBuf::from("/repo"),
+            current_node_version: "20.0.0".to_string(),
+            current_os: "linux".to_string(),
+            current_cpu: "x64".to_string(),
+            current_libc: "glibc".to_string(),
+            ..LockfileToHoistedDepGraphOptions::default()
+        }
+    }
+
+    fn metadata_with_os(os: &str) -> PackageMetadata {
+        PackageMetadata { os: Some(vec![os.to_string()]), ..metadata_stub() }
+    }
+
+    /// Optional package whose `os` constraint excludes the current
+    /// host is added to `result.skipped` and never emitted into the
+    /// graph. Mirrors upstream's
+    /// `if (!opts.force && packageIsInstallable(...) === false) {
+    /// opts.skipped.add(depPath); return; }`.
+    #[test]
+    fn walker_skips_optional_dep_on_unsupported_platform() {
+        let mut root_deps = ResolvedDependencyMap::new();
+        root_deps.insert(pkg_name("a"), resolved_dep("1.0.0"));
+
+        let mut packages = HashMap::new();
+        // Linux host, package targets darwin only → unsupported.
+        packages.insert(dep_key("a", "1.0.0"), metadata_with_os("darwin"));
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            dep_key("a", "1.0.0"),
+            SnapshotEntry { optional: true, ..SnapshotEntry::default() },
+        );
+
+        let lockfile = lockfile_with(root_deps, packages, snapshots);
+        let result =
+            lockfile_to_hoisted_dep_graph(&lockfile, &host_aware_opts()).expect("walker succeeds");
+
+        assert!(result.graph.is_empty(), "optional incompatible dep not emitted");
+        assert!(
+            result.skipped.contains("a@1.0.0"),
+            "incompatible optional dep added to skipped: {:?}",
+            result.skipped,
+        );
+        assert!(result.hoisted_locations.is_empty(), "no location recorded for skipped dep");
+    }
+
+    /// Required (non-optional) package on an unsupported platform
+    /// proceeds with a warning rather than erroring — mirrors
+    /// upstream `package_is_installable`'s `true` return for the
+    /// required-incompatible case (only `engineStrict + engine
+    /// mismatch` and `InvalidNodeVersion` actually throw). The
+    /// warning log emit is out of scope here; the walker proceeds
+    /// silently for now.
+    #[test]
+    fn walker_emits_required_dep_with_unsupported_platform_as_warning() {
+        let mut root_deps = ResolvedDependencyMap::new();
+        root_deps.insert(pkg_name("a"), resolved_dep("1.0.0"));
+
+        let mut packages = HashMap::new();
+        packages.insert(dep_key("a", "1.0.0"), metadata_with_os("darwin"));
+
+        let mut snapshots = HashMap::new();
+        // optional: false — upstream's `packageIsInstallable`
+        // returns `true` (warn but proceed) rather than `false`.
+        snapshots.insert(dep_key("a", "1.0.0"), SnapshotEntry::default());
+
+        let lockfile = lockfile_with(root_deps, packages, snapshots);
+        let result =
+            lockfile_to_hoisted_dep_graph(&lockfile, &host_aware_opts()).expect("walker proceeds");
+
+        assert_eq!(result.graph.len(), 1, "required incompatible dep emitted as warning");
+        assert!(result.skipped.is_empty(), "required dep not added to skipped");
+    }
+
+    /// `engineStrict = true` + engine mismatch surfaces as
+    /// `HoistedDepGraphError::Installability`. Mirrors upstream's
+    /// `throw warn` path in `packageIsInstallable` when
+    /// `engineStrict && warn instanceof UnsupportedEngineError`.
+    #[test]
+    fn walker_errors_on_engine_strict_mismatch() {
+        let mut root_deps = ResolvedDependencyMap::new();
+        root_deps.insert(pkg_name("a"), resolved_dep("1.0.0"));
+
+        let mut engines = HashMap::new();
+        engines.insert("node".to_string(), ">=99.0.0".to_string());
+        let mut packages = HashMap::new();
+        packages.insert(
+            dep_key("a", "1.0.0"),
+            PackageMetadata { engines: Some(engines), ..metadata_stub() },
+        );
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(dep_key("a", "1.0.0"), SnapshotEntry::default());
+
+        let lockfile = lockfile_with(root_deps, packages, snapshots);
+        let opts = LockfileToHoistedDepGraphOptions { engine_strict: true, ..host_aware_opts() };
+        let err = lockfile_to_hoisted_dep_graph(&lockfile, &opts)
+            .expect_err("engine_strict + engine mismatch should error");
+        match err {
+            HoistedDepGraphError::Installability(inner) => match *inner {
+                InstallabilityError::Engine(engine_err) => {
+                    assert_eq!(engine_err.package_id, "a@1.0.0");
+                }
+                other => panic!("expected Engine variant, got {other:?}"),
+            },
+            other => panic!("expected Installability error, got {other:?}"),
+        }
+    }
+
+    /// `opts.force = true` bypasses the installability check
+    /// entirely — even a required dep on an unsupported platform
+    /// passes through. Used by the `prev_graph` walk so the diff
+    /// against the previous lockfile catches packages that
+    /// previously installed but would now be filtered.
+    #[test]
+    fn walker_force_bypasses_installability_check() {
+        let mut root_deps = ResolvedDependencyMap::new();
+        root_deps.insert(pkg_name("a"), resolved_dep("1.0.0"));
+
+        let mut packages = HashMap::new();
+        packages.insert(dep_key("a", "1.0.0"), metadata_with_os("darwin"));
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(dep_key("a", "1.0.0"), SnapshotEntry::default());
+
+        let lockfile = lockfile_with(root_deps, packages, snapshots);
+        let opts = LockfileToHoistedDepGraphOptions { force: true, ..host_aware_opts() };
+        let result = lockfile_to_hoisted_dep_graph(&lockfile, &opts).expect("force bypasses check");
+
+        assert_eq!(result.graph.len(), 1, "force=true emits the dep regardless of platform");
+        assert!(result.skipped.is_empty(), "force=true doesn't add to skipped");
+    }
+
+    /// Compatible host: a package with metadata targeting the
+    /// current host is emitted normally. Sanity check that the
+    /// installability path doesn't drop packages it shouldn't.
+    #[test]
+    fn walker_emits_compatible_dep() {
+        let mut root_deps = ResolvedDependencyMap::new();
+        root_deps.insert(pkg_name("a"), resolved_dep("1.0.0"));
+
+        let mut packages = HashMap::new();
+        // Linux host, package targets linux → compatible.
+        packages.insert(dep_key("a", "1.0.0"), metadata_with_os("linux"));
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(dep_key("a", "1.0.0"), SnapshotEntry::default());
+
+        let lockfile = lockfile_with(root_deps, packages, snapshots);
+        let result =
+            lockfile_to_hoisted_dep_graph(&lockfile, &host_aware_opts()).expect("walker succeeds");
+
+        assert_eq!(result.graph.len(), 1);
+        assert!(result.skipped.is_empty());
     }
 }
