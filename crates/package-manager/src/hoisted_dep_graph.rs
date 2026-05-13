@@ -459,10 +459,20 @@ fn lookup_package_metadata<'a>(
 /// Lockfile-relative path string, matching upstream's
 /// `path.relative(lockfileDir, dir)`. Returns an empty string when
 /// `dir == lockfile_dir`.
+///
+/// Backslashes are normalized to forward slashes so the value is
+/// portable across platforms — `.modules.yaml.hoistedLocations`
+/// is read on whatever OS the next install runs on, and pnpm's
+/// `pnpm-lock.yaml` already uses forward slashes for the same
+/// reason. Upstream's `path.relative` produces OS-native
+/// separators (so `.modules.yaml` written on Windows technically
+/// holds backslashes), but pacquet normalizes here for
+/// cross-platform consistency with the rest of pnpm's serialised
+/// formats.
 fn path_relative_to_lockfile_dir(dir: &Path, lockfile_dir: &Path) -> String {
     dir.strip_prefix(lockfile_dir)
-        .map(|rel| rel.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| dir.to_string_lossy().into_owned())
+        .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| dir.to_string_lossy().replace('\\', "/"))
 }
 
 /// Compute the `children: alias → dir` map for a node. Mirrors
