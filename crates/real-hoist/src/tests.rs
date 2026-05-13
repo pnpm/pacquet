@@ -454,6 +454,7 @@ fn peer_dependency_in_lockfile_surfaces_unsupported() {
                 tarball: "https://example.invalid/widget-1.0.0.tgz".to_string(),
                 integrity: None,
                 git_hosted: None,
+                path: None,
             }),
             engines: None,
             cpu: None,
