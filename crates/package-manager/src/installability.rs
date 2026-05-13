@@ -52,6 +52,23 @@ impl SkippedSnapshots {
         Self { set }
     }
 
+    /// Seed the set with snapshot keys recorded as skipped by a
+    /// previous install (read from `.modules.yaml.skipped`).
+    /// Unparsable strings are silently dropped — upstream tolerates
+    /// the same shape mismatch at
+    /// <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L194>
+    /// (the seed is only consulted by `Set.has(depPath)`; a
+    /// nonsense string never matches any current snapshot, so the
+    /// orphan is harmless).
+    pub fn from_strings<I>(iter: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        let set = iter.into_iter().filter_map(|s| s.as_ref().parse::<PackageKey>().ok()).collect();
+        Self { set }
+    }
+
     pub fn contains(&self, key: &PackageKey) -> bool {
         self.set.contains(key)
     }
@@ -146,6 +163,7 @@ pub fn compute_skipped_snapshots<R: Reporter>(
     packages: &HashMap<PackageKey, PackageMetadata>,
     host: &InstallabilityHost,
     prefix: &str,
+    seed: SkippedSnapshots,
 ) -> Result<SkippedSnapshots, Box<InstallabilityError>> {
     // Fast path: if no package in the lockfile declares any
     // installability constraint, every snapshot is trivially
@@ -157,6 +175,12 @@ pub fn compute_skipped_snapshots<R: Reporter>(
     // decomposing each metadata row only to find no constraints to
     // evaluate.
     //
+    // The `seed` is returned as-is on the fast path so previously
+    // skipped snapshots survive across reinstalls even when the
+    // lockfile's per-snapshot constraints have since been removed.
+    // Mirrors upstream's early-return behavior at
+    // <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L194>.
+    //
     // Concretely on the integrated benchmark (1352 packages with no
     // platform / engine constraints): drops ~1352 `String` and
     // `PackageKey` allocations and the matching number of
@@ -165,10 +189,10 @@ pub fn compute_skipped_snapshots<R: Reporter>(
     // `Option::is_some` checks per row and short-circuits on the
     // first declared constraint.
     if !any_installability_constraint(packages) {
-        return Ok(SkippedSnapshots::new());
+        return Ok(seed);
     }
 
-    let mut skipped = SkippedSnapshots::new();
+    let mut skipped = seed;
     let mut seen_emit: HashSet<PackageKey> = HashSet::new();
 
     // Build the host-derived part of the options once. Only the
@@ -206,6 +230,18 @@ pub fn compute_skipped_snapshots<R: Reporter>(
     let mut check_cache: HashMap<PackageKey, Option<InstallabilityError>> = HashMap::new();
 
     for (snapshot_key, snapshot) in snapshots {
+        // Seeded entries short-circuit the per-snapshot re-check.
+        // Mirrors upstream's `if (opts.skipped.has(depPath)) return`
+        // at
+        // <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L194>:
+        // a snapshot recorded as skipped on the previous install is
+        // not re-evaluated and emits no
+        // `pnpm:skipped-optional-dependency` event, so the user is
+        // not re-notified of a known skip on every reinstall.
+        if skipped.contains(snapshot_key) {
+            continue;
+        }
+
         let metadata_key = snapshot_key.without_peer();
         let Some(metadata) = packages.get(&metadata_key) else { continue };
 

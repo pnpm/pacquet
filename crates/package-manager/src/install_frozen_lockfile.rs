@@ -13,6 +13,7 @@ use pacquet_cmd_shim::LinkBinsError;
 use pacquet_config::{Config, matcher::create_matcher};
 use pacquet_executor::ScriptsPrependNodePath as ExecScriptsPrependNodePath;
 use pacquet_lockfile::{PackageKey, PackageMetadata, ProjectSnapshot, SnapshotEntry};
+use pacquet_modules_yaml::{RealApi, read_modules_manifest};
 use pacquet_network::ThrottledClient;
 use pacquet_package_manifest::DependencyGroup;
 use pacquet_patching::{
@@ -169,13 +170,17 @@ where
 {
     /// Execute the subroutine.
     ///
-    /// Returns the [`HoistedDependencies`] map produced by the hoist
-    /// pass. The map is empty when both hoist patterns are `None`
-    /// (feature disabled) and otherwise lists every transitive that
-    /// the matchers selected. The caller (`Install::run`) feeds it
-    /// into `.modules.yaml`'s `hoistedDependencies` so a later install
-    /// observes the same hoist decisions.
-    pub async fn run<R: Reporter>(self) -> Result<HoistedDependencies, InstallFrozenLockfileError> {
+    /// Returns an [`InstallFrozenLockfileOutput`] carrying the
+    /// `HoistedDependencies` map produced by the hoist pass plus
+    /// the install-time `SkippedSnapshots` set. The caller
+    /// (`Install::run`) feeds both into `.modules.yaml` —
+    /// `hoistedDependencies` lets a later install observe the same
+    /// hoist decisions, and `skipped` lets the next install seed
+    /// the installability re-check against the previously skipped
+    /// snapshots.
+    pub async fn run<R: Reporter>(
+        self,
+    ) -> Result<InstallFrozenLockfileOutput, InstallFrozenLockfileError> {
         let InstallFrozenLockfile {
             http_client,
             config,
@@ -235,6 +240,34 @@ where
             _ => false,
         };
 
+        // Seed the skip set from the previous install's
+        // `.modules.yaml.skipped`. Each entry there is a depPath
+        // string a previous run wrote out; on this run we treat each
+        // one as already-skipped so its per-snapshot installability
+        // check is short-circuited and no
+        // `pnpm:skipped-optional-dependency` event is re-emitted for
+        // a known-skipped package. Mirrors upstream's seed-from-
+        // `modules.skipped` at
+        // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/read-projects-context/src/index.ts#L79>
+        // and the early-return at
+        // <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L194>.
+        //
+        // A read error (corrupt yaml, permissions) is degraded to
+        // an empty seed — `.modules.yaml` is a cache artifact, not
+        // an authoritative source. Missing file → empty seed.
+        let seed = match read_modules_manifest::<RealApi>(&config.modules_dir) {
+            Ok(Some(manifest)) => SkippedSnapshots::from_strings(&manifest.skipped),
+            Ok(None) => SkippedSnapshots::new(),
+            Err(error) => {
+                tracing::warn!(
+                    target: "pacquet::install",
+                    ?error,
+                    "failed to read .modules.yaml for skipped seed; starting from empty",
+                );
+                SkippedSnapshots::new()
+            }
+        };
+
         // Build the per-install [`SkippedSnapshots`] set. For every
         // lockfile snapshot, run the installability check against
         // the host triple; optional+incompatible entries land in
@@ -271,6 +304,7 @@ where
                 packages.expect("guarded by needs_installability_check"),
                 &host,
                 requester,
+                seed,
             )
             .map_err(InstallFrozenLockfileError::Installability)?;
             // Preserve `node_detected` + `node_version` for the
@@ -278,7 +312,11 @@ where
             // host struct frees the allocations early.
             (s, Some((host.node_detected, host.node_version)))
         } else {
-            (SkippedSnapshots::new(), None)
+            // Constraint-free lockfile: keep the seed verbatim so a
+            // snapshot recorded as skipped on the previous install
+            // survives the constraint having been removed from the
+            // lockfile.
+            (seed, None)
         };
 
         // Compute `engine_name` *before* `CreateVirtualStore::run`
@@ -650,8 +688,27 @@ where
             ),
         }
 
-        Ok(hoisted_dependencies)
+        Ok(InstallFrozenLockfileOutput { hoisted_dependencies, skipped })
     }
+}
+
+/// Two-field bundle returned by [`InstallFrozenLockfile::run`] so
+/// the caller can write both `.modules.yaml.hoistedDependencies`
+/// (slice tracked at pnpm/pacquet#435) and `.modules.yaml.skipped`
+/// (umbrella slice 3) from a single call. Defined as a `struct`
+/// rather than a tuple so future fields (the in-flight current
+/// lockfile in umbrella slice 6, etc.) can land without churning
+/// every call site.
+#[derive(Debug)]
+pub struct InstallFrozenLockfileOutput {
+    /// Hoisted-dependencies map produced by the hoist pass — empty
+    /// when both hoist patterns are `None`.
+    pub hoisted_dependencies: HoistedDependencies,
+    /// Install-time skip set produced by `compute_skipped_snapshots`,
+    /// seeded from the previous install's `.modules.yaml.skipped`
+    /// and augmented with snapshots that newly failed the
+    /// installability check.
+    pub skipped: SkippedSnapshots,
 }
 
 /// Pull the leading major-version digits out of a semver string like

@@ -1528,3 +1528,79 @@ async fn frozen_lockfile_under_gvs_registers_each_workspace_importer() {
 
     drop(dir);
 }
+
+/// `build_modules_manifest` serializes the install-time
+/// [`SkippedSnapshots`] into `.modules.yaml.skipped` as a list of
+/// depPath strings. Mirrors upstream's
+/// `skipped: Array.from(ctx.skipped)` literal at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/index.ts#L1625>:
+/// each entry is the snapshot's [`PackageKey`] `Display` form
+/// (`name@version(peers)`), and ordering is handled by
+/// `write_modules_manifest`'s sort-on-write.
+///
+/// An empty set produces an empty list — covers the fresh-install
+/// case while pinning that the field is no longer
+/// `..Default::default()`'d away from the manifest.
+///
+/// [`SkippedSnapshots`]: super::super::SkippedSnapshots
+/// [`PackageKey`]: pacquet_lockfile::PackageKey
+#[test]
+fn build_modules_manifest_serializes_skipped_set() {
+    use crate::SkippedSnapshots;
+    use pacquet_lockfile::PackageKey;
+    use pacquet_modules_yaml::IncludedDependencies;
+    use std::collections::HashSet;
+
+    let dir = tempdir().unwrap();
+    let mut config = Config::new();
+    config.store_dir = dir.path().join("store").into();
+    config.modules_dir = dir.path().join("node_modules");
+    config.virtual_store_dir = dir.path().join("node_modules/.pacquet");
+    let config = config.leak();
+
+    let key1: PackageKey = "darwin-only-pkg@1.0.0".parse().unwrap();
+    let key2: PackageKey = "@scope/linux-only@2.3.4".parse().unwrap();
+    let mut set = HashSet::new();
+    set.insert(key1.clone());
+    set.insert(key2.clone());
+    let skipped = SkippedSnapshots::from_set(set);
+
+    let included = IncludedDependencies {
+        dependencies: true,
+        dev_dependencies: false,
+        optional_dependencies: true,
+    };
+    let manifest = super::build_modules_manifest(config, included, Default::default(), &skipped);
+
+    // Set the manifest's `skipped` matches the depPath `Display`
+    // form. Order check happens in the read-back loop below — the
+    // function itself doesn't sort (that's `write_modules_manifest`).
+    let actual: HashSet<String> = manifest.skipped.iter().cloned().collect();
+    let expected: HashSet<String> = [key1.to_string(), key2.to_string()].into_iter().collect();
+    assert_eq!(actual, expected);
+}
+
+/// Empty `SkippedSnapshots` produces an empty `Modules.skipped`. The
+/// common case — most installs have no platform-mismatched optional
+/// deps — must keep the field present-but-empty so the on-disk
+/// shape stays uniform.
+#[test]
+fn build_modules_manifest_skipped_is_empty_on_empty_set() {
+    use crate::SkippedSnapshots;
+    use pacquet_modules_yaml::IncludedDependencies;
+
+    let dir = tempdir().unwrap();
+    let mut config = Config::new();
+    config.store_dir = dir.path().join("store").into();
+    config.modules_dir = dir.path().join("node_modules");
+    config.virtual_store_dir = dir.path().join("node_modules/.pacquet");
+    let config = config.leak();
+
+    let manifest = super::build_modules_manifest(
+        config,
+        IncludedDependencies::default(),
+        Default::default(),
+        &SkippedSnapshots::new(),
+    );
+    assert!(manifest.skipped.is_empty());
+}
