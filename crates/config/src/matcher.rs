@@ -91,10 +91,16 @@ enum MatcherImpl {
     /// Many-pattern path with no include rules. Matches `Some(0)`
     /// unless any ignore matches.
     AllIgnore(Arc<[CompiledPattern]>),
-    /// Mixed includes and ignores. Walk in declaration order: an
-    /// include sets the sticky index; a later ignore wipes it. A
-    /// subsequent include does not re-take the sticky slot — see
-    /// upstream's `matchInputWithMatchersArray`.
+    /// Mixed includes and ignores. Walk in declaration order: a
+    /// matching include claims the sticky slot when it's empty; a
+    /// matching ignore clears it. Once cleared, a later matching
+    /// include can re-take the slot — net result is "first include
+    /// after the last matching ignore wins". Mirrors upstream's
+    /// `matchInputWithMatchersArray` and the
+    /// `eslint-*`, `!eslint-plugin-*`, `eslint-plugin-bar` test
+    /// case where `eslint-plugin-bar` matches via index 2 even
+    /// though earlier `eslint-*` (index 0) was wiped by
+    /// `!eslint-plugin-*`.
     Mixed(Arc<[CompiledPattern]>),
 }
 

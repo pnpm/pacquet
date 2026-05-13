@@ -112,7 +112,7 @@ pub enum InstallFrozenLockfileError {
     /// Surfaces a failure to create one of the hoist symlinks
     /// (`<private_hoisted_modules_dir>/<alias>` or
     /// `<public_hoisted_modules_dir>/<alias>`). EEXIST is
-    /// already swallowed by [`crate::symlink_package`]; this variant
+    /// already swallowed by [`crate::symlink_package()`]; this variant
     /// only fires on genuine IO failures.
     #[diagnostic(transparent)]
     HoistSymlink(#[error(source)] SymlinkPackageError),
@@ -395,8 +395,20 @@ where
                 if config.hoist_pattern.is_some() || config.public_hoist_pattern.is_some() =>
             {
                 let graph = build_hoist_graph(snaps, pkgs);
+                // Restrict the hoist input to the same importer set
+                // pacquet actually installs / links — currently just
+                // the root importer. Pulling every importer's direct
+                // deps from a workspace lockfile would hoist
+                // transitives of non-root importers (which pacquet
+                // does NOT install today) into the root project's
+                // `node_modules`. Workspace install (pnpm/pacquet#431)
+                // will widen this to the install's importer set
+                // without touching `build_direct_deps_by_importer`'s
+                // signature.
+                let root_importer =
+                    importers.get_key_value(pacquet_lockfile::Lockfile::ROOT_IMPORTER_KEY);
                 let direct_deps =
-                    build_direct_deps_by_importer(importers, dependency_groups.iter().copied());
+                    build_direct_deps_by_importer(root_importer, dependency_groups.iter().copied());
                 let private_pattern =
                     create_matcher(config.hoist_pattern.as_deref().unwrap_or(&[]));
                 let public_pattern =

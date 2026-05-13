@@ -11,8 +11,11 @@
 //! `.modules.yaml` and uses to drive symlink creation + bin linking.
 //!
 //! This module ports `getHoistedDependencies` and `symlinkHoistedDependencies`.
-//! Bin linking is delegated to [`crate::link_bins::link_bins_of_packages`]
-//! through [`link_hoisted_bins`] below.
+//! Bin linking for hoisted aliases is handled at the call site
+//! ([`crate::InstallFrozenLockfile::run`]) by re-using
+//! [`crate::link_direct_dep_bins`] against the private and public
+//! hoisted modules dirs — the hoist pass itself only computes the
+//! alias-list inputs that pass needs.
 
 use crate::symlink_package;
 use pacquet_config::matcher::Matcher;
@@ -112,11 +115,22 @@ pub type DirectDepsByImporter = HashMap<String, HashMap<String, PackageKey>>;
 /// dep-groups-included-in-install. Peer is filtered upfront because
 /// upstream doesn't include peer-only entries in the direct-deps map
 /// either (peers materialize through their host).
-pub fn build_direct_deps_by_importer(
-    importers: &HashMap<String, ProjectSnapshot>,
+/// Accepts an iterator over `(importer_id, &ProjectSnapshot)` pairs
+/// rather than the lockfile's full `&HashMap` so the caller can
+/// restrict the input to the importer set actually being installed.
+/// Pacquet currently only installs the root importer (`"."`); the
+/// frozen-lockfile call site filters down to that one entry to avoid
+/// hoisting transitives of non-root workspace projects into the root
+/// `node_modules`. Workspace install (pnpm/pacquet#431) will widen
+/// the call site without touching this function's signature.
+pub fn build_direct_deps_by_importer<'a, I>(
+    importers: I,
     dependency_groups: impl IntoIterator<Item = pacquet_package_manifest::DependencyGroup> + Clone,
-) -> DirectDepsByImporter {
-    let mut result: DirectDepsByImporter = HashMap::with_capacity(importers.len());
+) -> DirectDepsByImporter
+where
+    I: IntoIterator<Item = (&'a String, &'a ProjectSnapshot)>,
+{
+    let mut result: DirectDepsByImporter = HashMap::new();
     for (importer_id, project_snapshot) in importers {
         let mut deps: HashMap<String, PackageKey> = HashMap::new();
         for group in dependency_groups.clone() {

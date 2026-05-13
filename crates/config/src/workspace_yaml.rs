@@ -72,11 +72,19 @@ where
 pub struct WorkspaceSettings {
     pub hoist: Option<bool>,
 
-    /// Tri-state `hoistPattern`. See [`deserialize_double_option`]
-    /// for the `None` / `Some(None)` / `Some(Some(_))` semantics —
-    /// pacquet must distinguish "key absent" (defaults stay) from
-    /// "explicit null" (hoist disabled) to mirror upstream's
-    /// `!= null` guard.
+    /// Tri-state `hoistPattern`. The deserializer wraps a plain
+    /// `Option<Vec<String>>` in an extra `Some` so the three yaml
+    /// states are distinguishable:
+    ///
+    /// - `None` — key absent in yaml → `apply_to` skips the field
+    ///   (defaults stay).
+    /// - `Some(None)` — explicit `hoistPattern: null` → `apply_to`
+    ///   writes `Config.hoist_pattern = None`, disabling private
+    ///   hoisting and contributing to the install-time
+    ///   `is_some() || is_some()` short-circuit guard. Mirrors
+    ///   upstream's `hoistPattern != null` semantics.
+    /// - `Some(Some(vec))` — explicit list → `apply_to` writes
+    ///   `Config.hoist_pattern = Some(vec)`.
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub hoist_pattern: Option<Option<Vec<String>>>,
 
