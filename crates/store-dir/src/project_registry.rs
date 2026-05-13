@@ -100,7 +100,10 @@ pub fn register_project(
     store_dir: &StoreDir,
     project_dir: &Path,
 ) -> Result<(), RegisterProjectError> {
-    if is_subdir(project_dir, store_dir.root()) {
+    // Upstream's `isSubdir(projectDir, storeDir)` is `(parent, child)`
+    // — the npm `is-subdir` package signature. Skip when the store
+    // root lives at or under the project dir.
+    if path_contains(project_dir, store_dir.root()) {
         return Ok(());
     }
 
@@ -156,17 +159,21 @@ pub fn register_project(
     }
 }
 
-/// Port of npm `is-subdir`: returns `true` when `child` is `parent`
-/// itself or any descendant of it. Both paths are compared by their
-/// canonical (resolved) form so symlinks don't fool the check. When
-/// either path can't be canonicalized (typically the store dir hasn't
-/// been created yet), fall back to a lexical comparison so the test
-/// stays defensive against the legacy "store inside the project"
-/// case.
-fn is_subdir(parent: &Path, child: &Path) -> bool {
-    let parent_canonical = dunce::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
-    let child_canonical = dunce::canonicalize(child).unwrap_or_else(|_| child.to_path_buf());
-    child_canonical.starts_with(&parent_canonical)
+/// Port of npm `is-subdir`: returns `true` when `inner` is `outer`
+/// itself or any descendant of it. Renamed from upstream's
+/// `isSubdir(parent, child)` because the bare name reads ambiguously
+/// at the call site — `path_contains(outer, inner)` reads
+/// unambiguously as "does `outer` contain `inner`".
+///
+/// Both paths are compared by their canonical (resolved) form so
+/// symlinks don't fool the check. When either path can't be
+/// canonicalized (typically the store dir hasn't been created yet),
+/// fall back to a lexical comparison so the guard stays defensive
+/// against the legacy "store inside the project" case.
+fn path_contains(outer: &Path, inner: &Path) -> bool {
+    let outer_canonical = dunce::canonicalize(outer).unwrap_or_else(|_| outer.to_path_buf());
+    let inner_canonical = dunce::canonicalize(inner).unwrap_or_else(|_| inner.to_path_buf());
+    inner_canonical.starts_with(&outer_canonical)
 }
 
 /// Best-effort canonicalization for a symlink target: if the target is

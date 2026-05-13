@@ -67,10 +67,8 @@ impl VirtualStoreLayout {
     /// [`Config::enable_global_virtual_store`] to decide whether to
     /// precompute GVS slot names, then iterates the lockfile's
     /// `snapshots` (the per-peer-context entries) and computes each
-    /// snapshot's
-    /// [`format_global_virtual_store_path`](pacquet_graph_hasher::format_global_virtual_store_path)-shaped
-    /// suffix via
-    /// [`calc_graph_node_hash`](pacquet_graph_hasher::calc_graph_node_hash).
+    /// snapshot's [`format_global_virtual_store_path`]-shaped suffix
+    /// via [`calc_graph_node_hash`].
     ///
     /// Returns a layout that's safe to pass by reference across rayon
     /// workers: every field is `Send + Sync` once constructed (the
@@ -116,9 +114,9 @@ impl VirtualStoreLayout {
     /// Root of the layout — the directory that contains every per-
     /// snapshot subdirectory. Exposed so callers that need to pass a
     /// path to existing helpers (e.g. the
-    /// [`pacquet_modules_yaml::Modules`](pacquet_modules_yaml::Modules)
-    /// writer, which still records the legacy
-    /// [`Config::virtual_store_dir`] string) have one source of truth.
+    /// [`pacquet_modules_yaml::Modules`] writer, which still records
+    /// the legacy [`Config::virtual_store_dir`] string) have one
+    /// source of truth.
     pub fn package_store_dir(&self) -> &Path {
         &self.package_store_dir
     }
