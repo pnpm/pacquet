@@ -2,7 +2,9 @@ use crate::{Lockfile, serialize_yaml};
 use derive_more::{Display, Error};
 use pacquet_diagnostics::miette::{self, Diagnostic};
 use std::{
-    env, fs, io,
+    env,
+    fs::{self, OpenOptions},
+    io::{self, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -102,25 +104,73 @@ impl Lockfile {
 /// Write `content` to `target` via a temp file in the same directory
 /// followed by `rename`. The rename is atomic on Unix and replaces
 /// in-place on Windows, so an observer never sees a torn file.
+///
+/// The temp file is opened with `O_CREAT | O_EXCL` (`create_new(true)`)
+/// rather than `create + truncate`, so we never follow a symlink or
+/// truncate a file an attacker (or a crashed prior install) pre-seeded
+/// at our predicted temp path. On `AlreadyExists` we advance the
+/// counter and try again, up to `MAX_TEMP_ATTEMPTS` times — matching
+/// the hardening already in `pacquet_fs::ensure_file::write_atomic`
+/// (per-call review on #442).
 fn write_atomic(target: &Path, content: &[u8]) -> Result<(), SaveLockfileError> {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let pid = std::process::id();
+    /// Sixteen fresh counter values is plenty — under benign
+    /// conditions we never collide; under shared-store-across-
+    /// containers the chance of 16 consecutive same-pid same-counter
+    /// collisions is negligible.
+    const MAX_TEMP_ATTEMPTS: usize = 16;
 
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let pid = std::process::id();
     let parent = target.parent().unwrap_or_else(|| Path::new("."));
     let file_name = target
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| String::from("lock.yaml"));
-    let tmp = parent.join(format!(".{file_name}.{pid}.{counter}.tmp"));
 
-    fs::write(&tmp, content).map_err(SaveLockfileError::WriteFile)?;
-    fs::rename(&tmp, target).map_err(|error| {
-        // Best-effort cleanup so a failed rename doesn't leak temp
-        // files in the virtual store.
-        let _ = fs::remove_file(&tmp);
-        SaveLockfileError::RenameFile { tmp, target: target.to_path_buf(), error }
-    })
+    let mut last_already_exists: Option<io::Error> = None;
+    for _ in 0..MAX_TEMP_ATTEMPTS {
+        let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let tmp = parent.join(format!(".{file_name}.{pid}.{counter}.tmp"));
+
+        let mut file = match OpenOptions::new().write(true).create_new(true).open(&tmp) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                // Stale temp file or adversarial / concurrent pre-seed
+                // at the colliding path. Don't touch whatever is there;
+                // retry with a fresh counter.
+                last_already_exists = Some(error);
+                continue;
+            }
+            Err(error) => return Err(SaveLockfileError::WriteFile(error)),
+        };
+
+        if let Err(error) = file.write_all(content) {
+            drop(file);
+            let _ = fs::remove_file(&tmp);
+            return Err(SaveLockfileError::WriteFile(error));
+        }
+        // Close the handle before `rename`. Windows `MoveFileEx` over
+        // an open source file can fail with sharing-violation; on Unix
+        // an early `close` lets the kernel commit dirty buffers before
+        // the rename commits the dirent change.
+        drop(file);
+
+        return fs::rename(&tmp, target).map_err(|error| {
+            // Best-effort cleanup so a failed rename doesn't leak temp
+            // files in the virtual store.
+            let _ = fs::remove_file(&tmp);
+            SaveLockfileError::RenameFile { tmp, target: target.to_path_buf(), error }
+        });
+    }
+
+    // Ran out of temp-name attempts. Surface the last `AlreadyExists`
+    // so the operator can see what happened.
+    Err(SaveLockfileError::WriteFile(last_already_exists.unwrap_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "exhausted temp-path attempts for atomic lockfile write",
+        )
+    })))
 }
 
 #[cfg(test)]

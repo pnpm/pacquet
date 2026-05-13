@@ -139,10 +139,12 @@ where
         // install actually materialized in `<virtual_store_dir>/lock.yaml`.
         // The frozen-lockfile path diffs each wanted snapshot against
         // this on a per-`PackageKey` basis to decide whether the
-        // already-installed slot is still usable. `None` on a first
-        // install (the file doesn't exist yet); also `None` if the
-        // file is corrupted in a way the parser surfaces — see
-        // `current_lockfile_load_error` below for the propagation.
+        // already-installed slot is still usable. `Ok(None)` on a
+        // first install (the file doesn't exist yet). A corrupted /
+        // version-incompatible file surfaces as `LoadCurrentLockfile`
+        // and fails the install — matching upstream's
+        // `ignoreIncompatible: false` posture at the deps-restorer
+        // call site rather than silently dropping the optimization.
         //
         // Mirrors upstream's `readCurrentLockfile` call at
         // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/index.ts#L226-L227>.
@@ -241,21 +243,6 @@ where
         // progress display has closed. Mirrors upstream's emit point in
         // <https://github.com/pnpm/pnpm/blob/80037699fb/installing/deps-installer/src/install/link.ts#L167>.
 
-        // Write `<virtual_store_dir>/lock.yaml`. Mirrors upstream's
-        // `writeCurrentLockfile` call at
-        // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/index.ts#L1597>:
-        // captures what was actually materialized so the next install
-        // can diff each snapshot against it and skip the unchanged
-        // slots. Today pacquet writes the wanted lockfile unchanged
-        // because there's only one importer to filter to; once
-        // workspace install (#431) lands this needs to narrow to the
-        // *filtered* lockfile (selected importers × engine filter).
-        if frozen_lockfile && let Some(lockfile) = lockfile {
-            lockfile
-                .save_current_to_virtual_store_dir(&config.virtual_store_dir)
-                .map_err(InstallError::SaveCurrentLockfile)?;
-        }
-
         // Write `node_modules/.modules.yaml`. Mirrors upstream's
         // `writeModulesManifest` call at
         // <https://github.com/pnpm/pnpm/blob/086c5e91e8/installing/deps-installer/src/install/index.ts#L1608-L1630>,
@@ -269,6 +256,26 @@ where
             build_modules_manifest(config, included),
         )
         .map_err(InstallError::WriteModules)?;
+
+        // Write `<virtual_store_dir>/lock.yaml`. Mirrors upstream's
+        // `writeCurrentLockfile` call at
+        // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/index.ts#L1597>:
+        // captures what was actually materialized so the next install
+        // can diff each snapshot against it and skip the unchanged
+        // slots. Persist *after* `write_modules_manifest` succeeds so
+        // a manifest failure can't leave a fresh current-lockfile
+        // pointing at incomplete install state — the next frozen
+        // reinstall would otherwise diff against a graph that never
+        // finished committing (review on #442). Today pacquet writes
+        // the wanted lockfile unchanged because there's only one
+        // importer to filter to; once workspace install (#431) lands
+        // this needs to narrow to the *filtered* lockfile (selected
+        // importers × engine filter).
+        if frozen_lockfile && let Some(lockfile) = lockfile {
+            lockfile
+                .save_current_to_virtual_store_dir(&config.virtual_store_dir)
+                .map_err(InstallError::SaveCurrentLockfile)?;
+        }
 
         // `pnpm:summary` closes the install and lets the reporter render
         // the accumulated `pnpm:root` events as a "+N -M" block. Must

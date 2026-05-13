@@ -241,21 +241,6 @@ impl<'a> CreateVirtualStore<'a> {
         // Sort + dedup the prefetch input so `prefetch_cas_paths`
         // doesn't redo identical SELECT + integrity-check work for
         // every peer variant.
-        // Validate every snapshot upfront so a malformed lockfile
-        // (missing metadata, missing tarball integrity, currently-
-        // unsupported directory / git resolution) errors out *before*
-        // we start the warm batch. Previously we collapsed those
-        // cases into `None` and let them fall through to the cold
-        // batch, which meant the warm rayon batch ran to completion
-        // (~6 s on `alot7`) before the actual error fired.
-        type SnapshotWithCacheKey<'a> = (&'a PackageKey, &'a SnapshotEntry, Option<String>);
-        let all_snapshot_entries: Vec<SnapshotWithCacheKey<'_>> = snapshots
-            .iter()
-            .map(|(snapshot_key, snapshot)| {
-                snapshot_cache_key(snapshot_key, packages).map(|key| (snapshot_key, snapshot, key))
-            })
-            .collect::<Result<_, _>>()?;
-
         // Per-snapshot skip pass: for every snapshot the previous
         // install also installed (`current_snapshots`) with the same
         // dependency wiring + integrity, *and* whose virtual-store
@@ -270,12 +255,20 @@ impl<'a> CreateVirtualStore<'a> {
         // ran `rm -rf node_modules/.pnpm/...`, antivirus quarantine,
         // etc.) we emit the `_broken_node_modules` debug event and
         // fall through to the full install path for that snapshot.
+        //
+        // Run this *before* deriving cache keys so unchanged
+        // directory-backed snapshots aren't tripped by
+        // `snapshot_cache_key`'s `UnsupportedResolution`. Once
+        // directory / git resolutions land they'll still survive the
+        // skip (their slot existing on disk is all the check needs)
+        // and the cache-key step won't see them either (review on
+        // #442).
         let virtual_store_dir = &config.virtual_store_dir;
-        let snapshot_entries: Vec<SnapshotWithCacheKey<'_>> = all_snapshot_entries
-            .into_iter()
-            .filter(|(snapshot_key, snapshot, _)| {
+        let survivors: Vec<(&PackageKey, &SnapshotEntry)> = snapshots
+            .iter()
+            .filter(|(snapshot_key, snapshot)| {
                 let Some(current_snapshots) = current_snapshots else { return true };
-                let Some(current_snapshot) = current_snapshots.get(snapshot_key) else {
+                let Some(current_snapshot) = current_snapshots.get(*snapshot_key) else {
                     return true;
                 };
                 if !snapshot_deps_equal(current_snapshot, snapshot) {
@@ -302,6 +295,21 @@ impl<'a> CreateVirtualStore<'a> {
                 }
             })
             .collect();
+
+        // Validate every surviving snapshot upfront so a malformed
+        // lockfile (missing metadata, missing tarball integrity,
+        // currently-unsupported directory / git resolution) errors
+        // out *before* we start the warm batch. Previously we
+        // collapsed those cases into `None` and let them fall through
+        // to the cold batch, which meant the warm rayon batch ran to
+        // completion (~6 s on `alot7`) before the actual error fired.
+        type SnapshotWithCacheKey<'a> = (&'a PackageKey, &'a SnapshotEntry, Option<String>);
+        let snapshot_entries: Vec<SnapshotWithCacheKey<'_>> = survivors
+            .into_iter()
+            .map(|(snapshot_key, snapshot)| {
+                snapshot_cache_key(snapshot_key, packages).map(|key| (snapshot_key, snapshot, key))
+            })
+            .collect::<Result<_, _>>()?;
         // `pnpm:stats added` mirrors pnpm's emit at
         // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/link.ts#L363>:
         // one event per project once the orchestrator has decided

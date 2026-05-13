@@ -938,20 +938,28 @@ async fn context_log_reflects_current_lockfile_after_first_install() {
     config.virtual_store_dir = virtual_store_dir.clone();
     let config = config.leak();
 
-    // Empty lockfile keeps the install cheap and avoids needing the
-    // mock registry. `is_empty` is false here because we explicitly
-    // record an importer with deps — the test focuses on the
-    // read-after-write loop, not on the file-deletion edge case
-    // (covered in the lockfile crate's own tests).
+    // Non-empty lockfile with no snapshots: the root importer lists
+    // one dependency so `Lockfile::is_empty` returns `false` (and
+    // the end-of-install write persists the file rather than
+    // deleting it), but the empty `snapshots:` map means
+    // `CreateVirtualStore::run` has no fetches to attempt. The
+    // dangling symlink that `SymlinkDirectDependencies` creates is
+    // fine — `link_direct_dep_bins` swallows `NotFound` on the
+    // target's `package.json`. This keeps the test off the mock
+    // registry while still driving the read-after-write loop.
     let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
         "lockfileVersion: '9.0'"
         "importers:"
         "  .:"
-        "    dependencies: {}"
+        "    dependencies:"
+        "      placeholder:"
+        "        specifier: 1.0.0"
+        "        version: 1.0.0"
         "packages: {}"
         "snapshots: {}"
     })
     .expect("parse minimal v9 lockfile");
+    assert!(!lockfile.is_empty(), "fixture must be non-empty so the write path persists it");
 
     // First install: `lock.yaml` does not exist yet.
     EVENTS.lock().unwrap().clear();
@@ -980,30 +988,35 @@ async fn context_log_reflects_current_lockfile_after_first_install() {
         .expect("first install emitted a context event");
     assert!(!first_context.current_lockfile_exists);
 
-    // The empty lockfile causes the end-of-install write to *delete*
-    // any stale `lock.yaml`. To exercise the read-after-write loop
-    // we need a non-empty wanted lockfile — swap to the partial-
-    // install fixture, pre-seed the matching directory so the install
-    // skips the fetch, and run a second install.
-    let partial: Lockfile = serde_saphyr::from_str(PARTIAL_INSTALL_LOCKFILE)
-        .expect("parse partial-install fixture lockfile");
-    seed_placeholder_virtual_store_slot(&virtual_store_dir);
-    partial.save_current_to_virtual_store_dir(&virtual_store_dir).expect("seed current lockfile");
+    // The first install must have persisted the lockfile under the
+    // virtual store. If `save_current_to_virtual_store_dir` regressed
+    // for non-empty lockfiles, this check fails — and so does the
+    // false→true assertion below, which is the whole point of pinning
+    // the read-after-write loop.
+    let lock_yaml = virtual_store_dir.join(Lockfile::CURRENT_FILE_NAME);
+    assert!(
+        lock_yaml.is_file(),
+        "non-empty wanted lockfile must be persisted under <virtual_store_dir>/lock.yaml; found nothing at {lock_yaml:?}",
+    );
 
+    // Second install: identical inputs. The skip filter has nothing
+    // to skip (no snapshots), but the read-after-write loop still
+    // fires `current_lockfile_exists: true` because the first
+    // install's `lock.yaml` is now on disk.
     EVENTS.lock().unwrap().clear();
     Install {
         tarball_mem_cache: &Default::default(),
         http_client: &Default::default(),
         config,
         manifest: &manifest,
-        lockfile: Some(&partial),
+        lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
         resolved_packages: &Default::default(),
     }
     .run::<RecordingReporter>()
     .await
-    .expect("second install should succeed via the skip path");
+    .expect("second install should succeed");
 
     let second_context = EVENTS
         .lock()
@@ -1018,6 +1031,65 @@ async fn context_log_reflects_current_lockfile_after_first_install() {
         second_context.current_lockfile_exists,
         "context.currentLockfileExists must flip to true once lock.yaml is on disk",
     );
+
+    drop(dir);
+}
+
+/// The skip path drops the snapshot from both the warm and cold
+/// batches, so a warm reinstall must report `added: 0` and emit
+/// zero `pnpm:progress imported` events. Pre-seeds `lock.yaml` and
+/// the virtual-store slot manually here — the
+/// [`context_log_reflects_current_lockfile_after_first_install`]
+/// test covers the read-after-write loop on its own, so this one
+/// can focus on the skip's reporter-visible effect.
+#[tokio::test]
+async fn warm_reinstall_reports_added_zero_and_emits_no_imported_events() {
+    static EVENTS: Mutex<Vec<LogEvent>> = Mutex::new(Vec::new());
+    EVENTS.lock().unwrap().clear();
+
+    struct RecordingReporter;
+    impl Reporter for RecordingReporter {
+        fn emit(event: &LogEvent) {
+            EVENTS.lock().unwrap().push(event.clone());
+        }
+    }
+
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+    let mut config = Config::new();
+    config.store_dir = store_dir.into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(PARTIAL_INSTALL_LOCKFILE)
+        .expect("parse partial-install fixture lockfile");
+
+    std::fs::create_dir_all(&virtual_store_dir).unwrap();
+    lockfile.save_current_to_virtual_store_dir(&virtual_store_dir).expect("seed current lockfile");
+    seed_placeholder_virtual_store_slot(&virtual_store_dir);
+
+    EVENTS.lock().unwrap().clear();
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        resolved_packages: &Default::default(),
+    }
+    .run::<RecordingReporter>()
+    .await
+    .expect("warm reinstall should succeed via the skip path");
 
     // Stats reports `added: 0` — the only snapshot is the one that
     // got skipped.
@@ -1034,9 +1106,8 @@ async fn context_log_reflects_current_lockfile_after_first_install() {
         .collect();
     assert_eq!(added, vec![0], "warm reinstall must report added: 0; got {added:?}");
 
-    // The warm install must not emit any per-snapshot `imported`
-    // progress event — the skip path removes the snapshot from both
-    // warm and cold batches.
+    // No per-snapshot `imported` progress event — the skip path
+    // removes the snapshot from both warm and cold batches.
     let imported_count = EVENTS
         .lock()
         .unwrap()
