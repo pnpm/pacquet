@@ -1,4 +1,5 @@
 use crate::State;
+use crate::cli_args::supported_architectures::SupportedArchitecturesArgs;
 use clap::Args;
 use miette::Context;
 use pacquet_package_manager::Add;
@@ -71,6 +72,12 @@ pub struct AddArgs {
     /// --save-prod, --save-dev, --save-optional, --save-peer
     #[clap(flatten)]
     pub dependency_options: AddDependencyOptions,
+    /// `--cpu` / `--os` / `--libc` overrides for the optional-dep
+    /// platform filter. Mirrors upstream pnpm's CLI flags; merges
+    /// per-axis into `supportedArchitectures` loaded from
+    /// `pnpm-workspace.yaml`.
+    #[clap(flatten)]
+    pub supported_architectures: SupportedArchitecturesArgs,
     /// Saved dependencies will be configured with an exact version rather than using
     /// the default semver range operator.
     #[clap(short = 'E', long = "save-exact")]
@@ -89,6 +96,14 @@ impl AddArgs {
         let State { tarball_mem_cache, http_client, config, manifest, lockfile, resolved_packages } =
             &mut state;
 
+        // Merge CLI overrides with the yaml-derived value before
+        // handing off to the install pipeline. See
+        // `cli_args::install.rs` for the parallel comment — the
+        // pattern is identical (clone from `&'static Config`, merge,
+        // pass merged value through).
+        let supported_architectures =
+            self.supported_architectures.apply_to(config.supported_architectures.clone());
+
         Add {
             tarball_mem_cache,
             http_client,
@@ -99,6 +114,7 @@ impl AddArgs {
             package_name: &self.package_name,
             save_exact: self.save_exact,
             resolved_packages,
+            supported_architectures,
         }
         .run::<R>()
         .await

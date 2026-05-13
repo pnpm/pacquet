@@ -76,6 +76,12 @@ where
     ///
     /// [`workspace_root`]: Self::workspace_root
     pub requester: &'a str,
+    /// CLI-merged `supportedArchitectures` from
+    /// `pnpm-workspace.yaml` plus `--cpu` / `--os` / `--libc`
+    /// overrides. Threaded into [`InstallabilityHost`] so the
+    /// platform-tagged optional-dependency filter respects user-
+    /// supplied architecture overrides.
+    pub supported_architectures: Option<&'a pacquet_package_is_installable::SupportedArchitectures>,
 }
 
 /// Error type of [`InstallFrozenLockfile`].
@@ -153,6 +159,7 @@ where
             logged_methods,
             workspace_root,
             requester,
+            supported_architectures,
         } = self;
 
         // TODO: check if the lockfile is out-of-date
@@ -206,7 +213,7 @@ where
         // `node --version` on the blocking pool so it doesn't stall
         // the reactor thread.
         let (skipped, host_node) = if needs_installability_check {
-            let host = tokio::task::spawn_blocking(InstallabilityHost::detect)
+            let mut host = tokio::task::spawn_blocking(InstallabilityHost::detect)
                 .await
                 .unwrap_or_else(|_| InstallabilityHost {
                     node_version: "99999.0.0".to_string(),
@@ -217,6 +224,15 @@ where
                     supported_architectures: None,
                     engine_strict: false,
                 });
+            // Plant the CLI-merged `supportedArchitectures` (yaml +
+            // `--cpu`/`--os`/`--libc`) onto the host context so
+            // `check_platform`'s `dedupe_current` substitution picks
+            // up user-supplied OS/CPU/libc accept lists instead of
+            // only the host triple. Clone is cheap (three short
+            // `Option<Vec<String>>`).
+            if let Some(supp) = supported_architectures {
+                host.supported_architectures = Some(supp.clone());
+            }
             let s = compute_skipped_snapshots::<R>(
                 snapshots.expect("guarded by needs_installability_check"),
                 packages.expect("guarded by needs_installability_check"),

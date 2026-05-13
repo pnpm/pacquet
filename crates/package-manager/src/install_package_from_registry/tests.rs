@@ -52,6 +52,7 @@ fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path)
         unsafe_perm: true,
         child_concurrency: 1,
         git_shallow_hosts: pacquet_config::default_git_shallow_hosts(),
+        supported_architectures: None,
     }
 }
 

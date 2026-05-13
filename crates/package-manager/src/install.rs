@@ -36,6 +36,22 @@ where
     pub lockfile: Option<&'a Lockfile>,
     pub dependency_groups: DependencyGroupList,
     pub frozen_lockfile: bool,
+    /// `supportedArchitectures` after merging
+    /// `Config::supported_architectures` from `pnpm-workspace.yaml`
+    /// with the CLI per-axis overrides (`--cpu` / `--os` / `--libc`).
+    /// Threaded into `InstallabilityHost` in the frozen-lockfile
+    /// path so optional platform-tagged dependencies for the listed
+    /// triples are kept even when they don't match the host. `None`
+    /// means "host triple is the sole accept set" — same as
+    /// upstream's behavior when neither yaml nor CLI sets a value.
+    ///
+    /// Computed at the CLI layer (see
+    /// `pacquet_cli::cli_args::supported_architectures::SupportedArchitecturesArgs`)
+    /// instead of being read from `config` directly, because
+    /// `State.config` is a shared `&'static Config` — the CLI
+    /// override merge happens in the caller and lands here as a
+    /// fully-resolved value.
+    pub supported_architectures: Option<pacquet_package_is_installable::SupportedArchitectures>,
 }
 
 /// Error type of [`Install`].
@@ -123,6 +139,7 @@ where
             lockfile,
             dependency_groups,
             frozen_lockfile,
+            supported_architectures,
         } = self;
 
         // Collect once so the same set drives both the install dispatch
@@ -266,6 +283,7 @@ where
                 logged_methods: &logged_methods,
                 workspace_root: &workspace_root,
                 requester: &prefix,
+                supported_architectures: supported_architectures.as_ref(),
             }
             .run::<R>()
             .await

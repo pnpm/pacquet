@@ -455,3 +455,61 @@ gitShallowHosts:
 
     assert_eq!(config.git_shallow_hosts, vec!["corp-git.example.com".to_string()]);
 }
+
+/// `supportedArchitectures` from `pnpm-workspace.yaml`. Optional
+/// `os` / `cpu` / `libc` lists; absent fields stay `None`. Threaded
+/// into [`pacquet_package_is_installable::check_platform`] via
+/// [`Config::supported_architectures`] at install time.
+#[test]
+fn parses_supported_architectures_from_yaml_and_applies() {
+    let yaml = r#"
+supportedArchitectures:
+  os: [darwin, linux]
+  cpu: [arm64, x64]
+  libc: [glibc]
+"#;
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    let raw = settings.supported_architectures.clone().expect("field present");
+    assert_eq!(raw.os.as_deref(), Some(&["darwin".to_string(), "linux".to_string()][..]));
+    assert_eq!(raw.cpu.as_deref(), Some(&["arm64".to_string(), "x64".to_string()][..]));
+    assert_eq!(raw.libc.as_deref(), Some(&["glibc".to_string()][..]));
+
+    let mut config = Config::new();
+    assert!(config.supported_architectures.is_none(), "default is None");
+    settings.apply_to(&mut config, Path::new("/irrelevant"));
+    let applied = config.supported_architectures.expect("set after apply_to");
+    assert_eq!(applied.os.as_deref(), Some(&["darwin".to_string(), "linux".to_string()][..]));
+    assert_eq!(applied.cpu.as_deref(), Some(&["arm64".to_string(), "x64".to_string()][..]));
+    assert_eq!(applied.libc.as_deref(), Some(&["glibc".to_string()][..]));
+}
+
+/// Absent `supportedArchitectures` leaves the config field at
+/// `None`. Same shape as upstream: yaml-side absence translates to
+/// `targetConfig.supportedArchitectures` staying `undefined` so the
+/// per-axis check falls back to the host triple.
+#[test]
+fn omitting_supported_architectures_keeps_default() {
+    let yaml = "name: stub\n";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap_or_default();
+    assert!(settings.supported_architectures.is_none());
+
+    let mut config = Config::new();
+    settings.apply_to(&mut config, Path::new("/irrelevant"));
+    assert!(config.supported_architectures.is_none());
+}
+
+/// Partial `supportedArchitectures` (only one axis set) round-trips
+/// with the other axes as `None`. Matches upstream where each axis
+/// is independently overridable.
+#[test]
+fn partial_supported_architectures_only_sets_listed_axes() {
+    let yaml = r#"
+supportedArchitectures:
+  os: [darwin]
+"#;
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    let raw = settings.supported_architectures.clone().expect("field present");
+    assert_eq!(raw.os.as_deref(), Some(&["darwin".to_string()][..]));
+    assert!(raw.cpu.is_none());
+    assert!(raw.libc.is_none());
+}
