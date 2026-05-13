@@ -122,6 +122,14 @@ pub struct LockfileToDepGraphResult {
     /// Per-depPath list of lockfile-relative directory paths
     /// where the package landed. Round-trips through
     /// [`pacquet_modules_yaml::Modules::hoisted_locations`].
+    ///
+    /// Upstream literally types the values as `Record<string,
+    /// string[]>` (not `Record<DepPath, string[]>`), even though
+    /// the strings are populated from depPaths internally —
+    /// mirrored here to keep the on-disk shape identical. The
+    /// same choice was made for the `Modules` schema field this
+    /// round-trips through (see its doc-comment in
+    /// `pacquet-modules-yaml`).
     pub hoisted_locations: BTreeMap<String, Vec<String>>,
     pub symlinked_direct_dependencies_by_importer_id: DirectDependenciesByImporterId,
     /// Diffed against `graph` by the linker's orphan-removal pass
@@ -131,8 +139,10 @@ pub struct LockfileToDepGraphResult {
     pub prev_graph: Option<DependenciesGraph>,
     /// Per-depPath list of directories where the package is
     /// expected to live as an *injected* workspace package. Used
-    /// by the post-install re-mirror step. Mirrors upstream's
-    /// `injectionTargetsByDepPath` at
+    /// by the post-install re-mirror step. Upstream is
+    /// `Map<string, string[]>` (keys typed as raw `string`, not
+    /// `DepPath`); mirrored here. See `injectionTargetsByDepPath`
+    /// at
     /// [lockfileToHoistedDepGraph.ts:286](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/lockfileToHoistedDepGraph.ts#L286-L292).
     pub injection_targets_by_dep_path: BTreeMap<String, Vec<PathBuf>>,
 }
@@ -156,7 +166,11 @@ pub struct LockfileToHoistedDepGraphOptions {
     /// Packages the previous install decided not to fetch
     /// (installability check failed; the package was added here).
     /// The walker skips any depPath in this set without consulting
-    /// the snapshot. Cloned + extended on the way out.
+    /// the snapshot. Cloned + extended on the way out. Upstream's
+    /// `LockfileToHoistedDepGraphOptions.skipped` is `Set<string>`
+    /// (note: `Set<DepPath>` in the isolated-graph builder's
+    /// options — pacquet matches the hoisted-specific typing
+    /// here), so the wrapper here is `BTreeSet<String>`.
     pub skipped: BTreeSet<String>,
 }
 
@@ -177,6 +191,12 @@ mod tests {
     fn sample_resolution() -> LockfileResolution {
         DirectoryResolution { directory: "../local-pkg".to_string() }.into()
     }
+
+    /// Sample v9 depPath. v9 lockfiles use `name@version[(peers)]`
+    /// (see `PkgNameVerPeer` in `pacquet-lockfile`); the v5-era
+    /// `/name/version` shape is only kept for legacy
+    /// `hoistedAliases` read-side compatibility.
+    const ACCEPTS_DEP_PATH: &str = "accepts@1.3.7";
 
     /// `LockfileToDepGraphResult::default()` returns the empty
     /// graph the walker should emit when the lockfile has no
@@ -204,8 +224,8 @@ mod tests {
         let modules = PathBuf::from("/repo/node_modules");
         let node = DependenciesGraphNode {
             alias: Some("accepts".to_string()),
-            dep_path: DepPath::from("/accepts/1.3.7".to_string()),
-            pkg_id_with_patch_hash: "/accepts/1.3.7".to_string(),
+            dep_path: DepPath::from(ACCEPTS_DEP_PATH.to_string()),
+            pkg_id_with_patch_hash: ACCEPTS_DEP_PATH.to_string(),
             dir: dir.clone(),
             modules,
             children: BTreeMap::new(),
