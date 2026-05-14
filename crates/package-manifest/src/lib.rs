@@ -97,7 +97,17 @@ impl PackageManifest {
 
     fn read_from_file(path: &Path) -> Result<Value, PackageManifestError> {
         let contents = fs::read_to_string(path)?;
-        serde_json::from_str(&contents).map_err(PackageManifestError::from)
+        let mut value: Value = serde_json::from_str(&contents)?;
+        // Mirror upstream pnpm's `convertManifestAfterRead` at
+        // <https://github.com/pnpm/pnpm/blob/9cad8274fd/workspace/project-manifest-reader/src/index.ts#L227-L231>:
+        // declarations under `devEngines.runtime` / `engines.runtime`
+        // with `onFail: "download"` are reified into the matching
+        // dependencies bucket so the lockfile entry the resolver writes
+        // (e.g. `node@runtime:24.6.0`) lines up with the manifest's
+        // flat-record view during the frozen-lockfile staleness check.
+        convert_engines_runtime_to_dependencies(&mut value, "devEngines", "devDependencies");
+        convert_engines_runtime_to_dependencies(&mut value, "engines", "dependencies");
+        Ok(value)
     }
 
     pub fn init(path: &Path) -> Result<(), PackageManifestError> {
@@ -233,6 +243,86 @@ impl PackageManifest {
         }
 
         if if_present { Ok(None) } else { Err(PackageManifestError::NoScript(command.to_string())) }
+    }
+}
+
+/// Runtime aliases recognised by pnpm's `devEngines.runtime` /
+/// `engines.runtime` reification. Matches upstream's
+/// [`RUNTIME_NAMES`](https://github.com/pnpm/pnpm/blob/9cad8274fd/pkg-manifest/utils/src/convertEnginesRuntimeToDependencies.ts#L8).
+const RUNTIME_NAMES: [&str; 3] = ["node", "deno", "bun"];
+
+/// Reify `devEngines.runtime` / `engines.runtime` entries with
+/// `onFail: "download"` into the matching `devDependencies` /
+/// `dependencies` slot as `runtime:<version>` specifiers.
+///
+/// Ports upstream's
+/// [`convertEnginesRuntimeToDependencies`](https://github.com/pnpm/pnpm/blob/9cad8274fd/pkg-manifest/utils/src/convertEnginesRuntimeToDependencies.ts#L10-L45)
+/// so the lockfile entry the resolver writes
+/// (`node@runtime:24.6.0`, etc.) is visible to the
+/// `satisfies_package_manifest` flat-record diff under the manifest's
+/// own dependency map. Without this step a manifest that declares its
+/// runtime exclusively through `devEngines.runtime` fails the frozen-
+/// lockfile staleness check as a spurious "dependency was removed".
+///
+/// Runtime entries are skipped when:
+/// - the target dependency slot already has an explicit entry (the
+///   user-declared specifier wins),
+/// - the runtime is declared with `onFail` other than `"download"` (the
+///   download is opt-in upstream), or
+/// - no `version` is set (upstream warns and skips; pacquet skips
+///   silently — the staleness check still surfaces the gap downstream).
+///
+/// WebContainer's "no runtime download" branch upstream is intentionally
+/// omitted: pacquet does not run in WebContainer.
+pub fn convert_engines_runtime_to_dependencies(
+    manifest: &mut Value,
+    engines_field: &str,
+    deps_field: &str,
+) {
+    // Collect first, mutate after — avoids a simultaneous shared+mutable
+    // borrow of the manifest while reading `engines_field` and writing
+    // `deps_field`.
+    let mut to_insert: Vec<(&'static str, String)> = Vec::new();
+    let Some(runtime_entry) =
+        manifest.get(engines_field).and_then(|engines| engines.get("runtime"))
+    else {
+        return;
+    };
+    for runtime_name in RUNTIME_NAMES {
+        if manifest.get(deps_field).and_then(|deps| deps.get(runtime_name)).is_some() {
+            continue;
+        }
+        let runtimes: &[Value] = match runtime_entry {
+            Value::Array(arr) => arr.as_slice(),
+            single @ Value::Object(_) => std::slice::from_ref(single),
+            _ => continue,
+        };
+        let Some(runtime) =
+            runtimes.iter().find(|r| r.get("name").and_then(Value::as_str) == Some(runtime_name))
+        else {
+            continue;
+        };
+        if runtime.get("onFail").and_then(Value::as_str) != Some("download") {
+            continue;
+        }
+        let Some(version) = runtime.get("version").and_then(Value::as_str) else {
+            continue;
+        };
+        to_insert.push((runtime_name, format!("runtime:{version}")));
+    }
+    if to_insert.is_empty() {
+        return;
+    }
+    let Some(manifest_obj) = manifest.as_object_mut() else {
+        return;
+    };
+    let deps =
+        manifest_obj.entry(deps_field.to_string()).or_insert_with(|| Value::Object(Map::new()));
+    let Some(deps_obj) = deps.as_object_mut() else {
+        return;
+    };
+    for (name, spec) in to_insert {
+        deps_obj.insert(name.to_string(), Value::String(spec));
     }
 }
 

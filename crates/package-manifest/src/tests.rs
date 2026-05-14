@@ -5,8 +5,9 @@ use pipe_trait::Pipe;
 use pretty_assertions::assert_eq;
 use tempfile::{NamedTempFile, tempdir};
 
-use super::{BundleDependencies, PackageManifest};
+use super::{BundleDependencies, PackageManifest, convert_engines_runtime_to_dependencies};
 use crate::DependencyGroup;
+use serde_json::json;
 use std::io::Write;
 
 #[test]
@@ -193,4 +194,163 @@ fn resolve_registry_dependency_picks_last_at_for_alias() {
         PackageManifest::resolve_registry_dependency("foo-rc", "npm:@scope/foo@1.0.0-rc.1",),
         ("@scope/foo", "1.0.0-rc.1"),
     );
+}
+
+/// `devEngines.runtime` with `onFail: "download"` and an explicit
+/// version is reified into `devDependencies` as `runtime:<version>`.
+/// This is the v11 install path: a manifest that declares its node
+/// version through `devEngines.runtime` must produce the same flat-
+/// record specifier set as the lockfile entry the resolver wrote.
+#[test]
+fn convert_engines_runtime_lifts_devengines_runtime_into_devdependencies() {
+    let mut manifest = json!({
+        "devEngines": {
+            "runtime": {
+                "name": "node",
+                "version": "24.6.0",
+                "onFail": "download",
+            },
+        },
+    });
+    convert_engines_runtime_to_dependencies(&mut manifest, "devEngines", "devDependencies");
+    assert_eq!(
+        manifest.get("devDependencies").and_then(|d| d.get("node")).and_then(|v| v.as_str()),
+        Some("runtime:24.6.0"),
+    );
+}
+
+/// Skip when no `version` is set. Upstream warns and skips; pacquet
+/// skips silently. The staleness check still surfaces the gap.
+/// Mirrors upstream's
+/// [`convertEnginesRuntimeToDependencies() skips runtime entries without a version`](https://github.com/pnpm/pnpm/blob/9cad8274fd/pkg-manifest/utils/test/convertEnginesRuntimeToDependencies.test.ts#L8-L21).
+#[test]
+fn convert_engines_runtime_skips_entries_without_a_version() {
+    let mut manifest = json!({
+        "devEngines": {
+            "runtime": {
+                "name": "node",
+                "onFail": "download",
+            },
+        },
+    });
+    convert_engines_runtime_to_dependencies(&mut manifest, "devEngines", "devDependencies");
+    assert!(manifest.get("devDependencies").is_none(), "manifest: {manifest}");
+}
+
+/// Skip when `onFail` is anything other than `"download"` (or absent).
+/// Upstream gates the runtime reification on that flag, so an `error`
+/// or `warn` setup must not silently morph into a `runtime:` dep.
+#[test]
+fn convert_engines_runtime_only_reifies_onfail_download() {
+    for on_fail in ["warn", "error", "ignore"] {
+        let mut manifest = json!({
+            "devEngines": {
+                "runtime": {
+                    "name": "node",
+                    "version": "24.6.0",
+                    "onFail": on_fail,
+                },
+            },
+        });
+        convert_engines_runtime_to_dependencies(&mut manifest, "devEngines", "devDependencies");
+        assert!(
+            manifest.get("devDependencies").is_none(),
+            "onFail={on_fail} should not reify; manifest: {manifest}",
+        );
+    }
+}
+
+/// An explicit user-declared entry in the target dependencies bucket
+/// wins over the reified runtime, matching upstream's
+/// [`manifest[dependenciesFieldName]?.[runtimeName]`](https://github.com/pnpm/pnpm/blob/9cad8274fd/pkg-manifest/utils/src/convertEnginesRuntimeToDependencies.ts#L17)
+/// short-circuit.
+#[test]
+fn convert_engines_runtime_preserves_explicit_user_dep() {
+    let mut manifest = json!({
+        "devDependencies": {
+            "node": "23.0.0",
+        },
+        "devEngines": {
+            "runtime": {
+                "name": "node",
+                "version": "24.6.0",
+                "onFail": "download",
+            },
+        },
+    });
+    convert_engines_runtime_to_dependencies(&mut manifest, "devEngines", "devDependencies");
+    assert_eq!(
+        manifest.get("devDependencies").and_then(|d| d.get("node")).and_then(|v| v.as_str()),
+        Some("23.0.0"),
+    );
+}
+
+/// `devEngines.runtime` accepts an array of entries (one per runtime
+/// alias). Each `RUNTIME_NAMES` entry is matched by `name` and reified
+/// independently — `node` and `bun` together is a valid declaration.
+#[test]
+fn convert_engines_runtime_handles_array_form_with_multiple_runtimes() {
+    let mut manifest = json!({
+        "devEngines": {
+            "runtime": [
+                { "name": "node", "version": "24.6.0", "onFail": "download" },
+                { "name": "bun", "version": "1.1.40", "onFail": "download" },
+            ],
+        },
+    });
+    convert_engines_runtime_to_dependencies(&mut manifest, "devEngines", "devDependencies");
+    let dev = manifest.get("devDependencies").expect("devDependencies inserted");
+    assert_eq!(dev.get("node").and_then(|v| v.as_str()), Some("runtime:24.6.0"));
+    assert_eq!(dev.get("bun").and_then(|v| v.as_str()), Some("runtime:1.1.40"));
+}
+
+/// `engines.runtime` (rather than `devEngines.runtime`) targets
+/// `dependencies` — upstream calls
+/// `convertEnginesRuntimeToDependencies(manifest, 'engines', 'dependencies')`
+/// alongside the `devEngines` pass.
+#[test]
+fn convert_engines_runtime_targets_dependencies_for_engines_field() {
+    let mut manifest = json!({
+        "engines": {
+            "runtime": {
+                "name": "node",
+                "version": "22.0.0",
+                "onFail": "download",
+            },
+        },
+    });
+    convert_engines_runtime_to_dependencies(&mut manifest, "engines", "dependencies");
+    assert_eq!(
+        manifest.get("dependencies").and_then(|d| d.get("node")).and_then(|v| v.as_str()),
+        Some("runtime:22.0.0"),
+    );
+}
+
+/// Reading a manifest with `devEngines.runtime` set must apply the
+/// reification automatically — that's the hook upstream wires into
+/// `convertManifestAfterRead`. Verifies the `from_path` end of the
+/// pipeline, not just the standalone function.
+#[test]
+fn from_path_applies_convert_engines_runtime() {
+    let dir = tempdir().unwrap();
+    let manifest_path = dir.path().join("package.json");
+    let raw = json!({
+        "name": "fixture",
+        "devEngines": {
+            "runtime": {
+                "name": "node",
+                "version": "24.6.0",
+                "onFail": "download",
+            },
+        },
+    });
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&raw).unwrap()).unwrap();
+
+    let manifest = PackageManifest::from_path(manifest_path).unwrap();
+    let node_spec = manifest
+        .value()
+        .get("devDependencies")
+        .and_then(|d| d.get("node"))
+        .and_then(|v| v.as_str());
+    assert_eq!(node_spec, Some("runtime:24.6.0"));
 }
