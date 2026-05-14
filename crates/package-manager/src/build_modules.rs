@@ -260,6 +260,31 @@ pub struct BuildModules<'a> {
     /// disk. Mirrors pnpm's `lockfileToDepGraph` flow where skipped
     /// snapshots never enter the build graph.
     pub skipped: &'a SkippedSnapshots,
+
+    /// Per-snapshot `pkgRoot` override, populated by the hoisted
+    /// linker with the slice 4 walker's
+    /// [`crate::DependenciesGraphNode::dir`] values. When `Some`,
+    /// every `pkgRoot` lookup goes through this map instead of the
+    /// virtual-store-layout slot computation; a missing entry means
+    /// the snapshot didn't make it into the hoisted graph (skipped
+    /// optional, etc.) and the build phase silently passes over it.
+    /// `None` for the isolated linker — its slot directories are
+    /// recovered from [`crate::VirtualStoreLayout::slot_dir`].
+    /// Mirrors upstream's two-mode `pkgRoots` selection at
+    /// [`building/after-install/src/index.ts`](https://github.com/pnpm/pnpm/blob/94240bc046/building/after-install/src/index.ts#L340-L350).
+    pub pkg_root_by_key: Option<&'a HashMap<PackageKey, PathBuf>>,
+
+    /// When `true`, compute per-snapshot `extra_bin_paths` via
+    /// `bin_dirs_in_all_parent_dirs` (private helper in this module)
+    /// so lifecycle scripts can resolve binaries from every ancestor `node_modules/.bin`
+    /// up to [`Self::lockfile_dir`]. Mirrors upstream's hoisted
+    /// branch at
+    /// [`after-install:357`](https://github.com/pnpm/pnpm/blob/94240bc046/building/after-install/src/index.ts#L357).
+    /// Always `false` under the isolated linker — its bins live in
+    /// the slot's own `<slot>/node_modules/.bin`, populated up-
+    /// front by [`crate::LinkVirtualStoreBins`], and the script
+    /// executor adds that path itself.
+    pub gather_ancestor_bin_paths: bool,
 }
 
 impl<'a> BuildModules<'a> {
@@ -289,12 +314,13 @@ impl<'a> BuildModules<'a> {
             unsafe_perm,
             child_concurrency,
             skipped,
+            pkg_root_by_key,
+            gather_ancestor_bin_paths,
         } = self;
 
         let Some(snapshots) = snapshots else { return Ok(Vec::new()) };
 
         let extra_env = HashMap::new();
-        let extra_bin_paths: Vec<PathBuf> = vec![];
 
         // Compute requires_build per snapshot from each extracted package
         // directory. Mirrors upstream where the worker computes
@@ -313,8 +339,16 @@ impl<'a> BuildModules<'a> {
             // optional fan-out.
             .filter(|key| !skipped.contains(key))
             .map(|key| {
-                let pkg_dir = virtual_store_dir_for_key(layout, key);
-                (key.clone(), pkg_requires_build(&pkg_dir))
+                // Hoisted snapshots without a recorded `pkgRoot` (the
+                // walker dropped them) get `requires_build = false`
+                // so they fall through both the script-runner and the
+                // patch-apply gates without a syscall, matching the
+                // isolated path's `pkg_dir.exists() == false` skip.
+                let requires = pkg_root_for_key(layout, pkg_root_by_key, key)
+                    .as_deref()
+                    .map(pkg_requires_build)
+                    .unwrap_or(false);
+                (key.clone(), requires)
             })
             .collect();
 
@@ -423,9 +457,10 @@ impl<'a> BuildModules<'a> {
                         &deps_state_cache,
                         &ignored_builds,
                         layout,
+                        pkg_root_by_key,
+                        gather_ancestor_bin_paths,
                         modules_dir,
                         lockfile_dir,
-                        &extra_bin_paths,
                         &extra_env,
                         scripts_prepend_node_path,
                         unsafe_perm,
@@ -469,9 +504,10 @@ fn build_one_snapshot<R: Reporter>(
     deps_state_cache: &Mutex<pacquet_graph_hasher::DepsStateCache<PackageKey>>,
     ignored_builds: &Mutex<BTreeSet<String>>,
     layout: &crate::VirtualStoreLayout,
+    pkg_root_by_key: Option<&HashMap<PackageKey, PathBuf>>,
+    gather_ancestor_bin_paths: bool,
     modules_dir: &Path,
     lockfile_dir: &Path,
-    extra_bin_paths: &[PathBuf],
     extra_env: &HashMap<String, String>,
     scripts_prepend_node_path: ScriptsPrependNodePath,
     unsafe_perm: bool,
@@ -597,10 +633,25 @@ fn build_one_snapshot<R: Reporter>(
         return Ok(());
     }
 
-    let pkg_dir = virtual_store_dir_for_key(layout, snapshot_key);
+    // Hoisted snapshots without a recorded `pkgRoot` (the walker
+    // dropped them — pre-skipped, optional skip, etc.) take the
+    // same exit as the isolated path's `!pkg_dir.exists()` skip.
+    let Some(pkg_dir) = pkg_root_for_key(layout, pkg_root_by_key, snapshot_key) else {
+        return Ok(());
+    };
     if !pkg_dir.exists() {
         return Ok(());
     }
+
+    // Per-snapshot `extra_bin_paths`. Isolated leaves it empty;
+    // hoisted gathers every ancestor's `node_modules/.bin` up to
+    // `lockfile_dir` so a lifecycle script invoked at a nested
+    // hoisted location can resolve bins added by parents.
+    let extra_bin_paths: Vec<PathBuf> = if gather_ancestor_bin_paths {
+        bin_dirs_in_all_parent_dirs(&pkg_dir, lockfile_dir)
+    } else {
+        Vec::new()
+    };
 
     let optional = snapshots.get(snapshot_key).is_some_and(|entry| entry.optional);
 
@@ -632,7 +683,7 @@ fn build_one_snapshot<R: Reporter>(
             pkg_root: &pkg_dir,
             root_modules_dir: modules_dir,
             init_cwd: lockfile_dir,
-            extra_bin_paths,
+            extra_bin_paths: &extra_bin_paths,
             extra_env,
             node_execpath: None,
             npm_execpath: None,
@@ -751,6 +802,70 @@ fn virtual_store_dir_for_key(layout: &crate::VirtualStoreLayout, key: &PackageKe
     let name = &name_version[..at_idx];
 
     layout.slot_dir(key).join("node_modules").join(name)
+}
+
+/// Resolve the on-disk package directory for a snapshot.
+///
+/// Two-mode lookup mirroring upstream's
+/// [`pkgRoots`](https://github.com/pnpm/pnpm/blob/94240bc046/building/after-install/src/index.ts#L340-L350)
+/// computation:
+///
+/// - **Isolated** (`pkg_root_by_key.is_none()`) — fall through to
+///   [`virtual_store_dir_for_key`], which routes through the
+///   install-scoped [`crate::VirtualStoreLayout`].
+/// - **Hoisted** (`pkg_root_by_key.is_some()`) — look the snapshot up
+///   in the per-key map populated from the slice 4 walker's
+///   [`crate::DependenciesGraphNode::dir`] values. `None` here means
+///   the snapshot is absent from the hoisted graph (pre-skipped, or
+///   the walker decided not to record it); the caller should treat
+///   that the same as the isolated `pkg_dir.exists() == false` skip.
+fn pkg_root_for_key(
+    layout: &crate::VirtualStoreLayout,
+    pkg_root_by_key: Option<&HashMap<PackageKey, PathBuf>>,
+    key: &PackageKey,
+) -> Option<PathBuf> {
+    match pkg_root_by_key {
+        Some(map) => map.get(key).cloned(),
+        None => Some(virtual_store_dir_for_key(layout, key)),
+    }
+}
+
+/// Mirrors upstream's
+/// [`binDirsInAllParentDirs`](https://github.com/pnpm/pnpm/blob/94240bc046/building/after-install/src/index.ts#L476-L487)
+/// — walk every ancestor `node_modules/.bin` from `pkg_root` up to
+/// (and including) `lockfile_dir`. Used as the per-snapshot
+/// `extra_bin_paths` under `nodeLinker: hoisted` so a lifecycle
+/// script invoked at a nested location can resolve bins added by
+/// any ancestor's `node_modules/.bin` — npm-style ancestor-chain
+/// resolution that the isolated layout doesn't need (every slot's
+/// children sit in its own `node_modules`, and bin-link writes are
+/// per-slot).
+///
+/// The `path.dirname(dir)[0] === '@'` check upstream skips
+/// pushing when `dir`'s parent path string starts with `@` — a
+/// guard for relative-path code paths in the upstream codebase.
+/// Mirrored here against the parent's path-string first character
+/// for byte-for-byte parity with upstream's output.
+///
+/// Non-existent ancestor `.bin` directories are harmless: they
+/// just don't contribute anything to lifecycle-script PATH lookup.
+fn bin_dirs_in_all_parent_dirs(pkg_root: &Path, lockfile_dir: &Path) -> Vec<PathBuf> {
+    let mut bin_dirs: Vec<PathBuf> = Vec::new();
+    let mut dir: PathBuf = pkg_root.to_path_buf();
+    loop {
+        let parent = dir.parent().unwrap_or(Path::new(""));
+        let parent_starts_with_at =
+            parent.to_str().and_then(|s| s.chars().next()).is_some_and(|c| c == '@');
+        if !parent_starts_with_at {
+            bin_dirs.push(dir.join("node_modules").join(".bin"));
+        }
+        dir = parent.to_path_buf();
+        if dir == *lockfile_dir || dir.as_os_str().is_empty() {
+            break;
+        }
+    }
+    bin_dirs.push(lockfile_dir.join("node_modules").join(".bin"));
+    bin_dirs
 }
 
 /// Parse `name` and `version` from a lockfile snapshot key like
