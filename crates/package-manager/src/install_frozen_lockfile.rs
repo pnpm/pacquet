@@ -6,8 +6,9 @@ use crate::{
     SymlinkDirectDependencies, SymlinkDirectDependenciesError, SymlinkPackageError,
     VersionPolicyError, VirtualStoreLayout, any_installability_constraint,
     build_direct_deps_by_importer, build_hoist_graph, compute_skipped_snapshots,
-    get_hoisted_dependencies, link_direct_dep_bins, link_hoisted_modules,
-    lockfile_to_hoisted_dep_graph, symlink_hoisted_dependencies,
+    direct_dep_names_for_importer, get_hoisted_dependencies, link_direct_dep_bins,
+    link_hoisted_modules, link_top_level_bins, lockfile_to_hoisted_dep_graph,
+    symlink_direct_dependencies::importer_root_dir, symlink_hoisted_dependencies,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
@@ -25,6 +26,7 @@ use pacquet_reporter::{IgnoredScriptsLog, LogEvent, LogLevel, Reporter, Stage, S
 use pacquet_store_dir::StoreIndexWriter;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    ffi::OsStr,
     path::Path,
     sync::atomic::AtomicU8,
 };
@@ -170,6 +172,17 @@ pub enum InstallFrozenLockfileError {
     /// the existing direct-deps bin-link pass at the root).
     #[diagnostic(transparent)]
     HoistLinkBins(#[error(source)] LinkBinsError),
+
+    /// Surfaces a failure from the post-`BuildModules` per-importer
+    /// top-level bin link. This pass mixes direct + publicly-hoisted
+    /// candidates so `pacquet_cmd_shim::pick_winner` (private)'s
+    /// [`pacquet_cmd_shim::BinOrigin::Direct`] tier resolves
+    /// conflicts in a single call (pnpm/pacquet#342). Distinct from
+    /// [`Self::HoistLinkBins`] because the failure surface is the
+    /// project-tree top-level `<importer>/node_modules/.bin` rather
+    /// than the virtual store's private-hoisted dir.
+    #[diagnostic(transparent)]
+    TopLevelBinLink(#[error(source)] LinkBinsError),
 
     /// Surfaces upstream's `ERR_PNPM_PATCH_KEY_CONFLICT` when more
     /// than one configured version range matches a snapshot. Mirrors
@@ -793,6 +806,20 @@ where
         // not the other, so the guard checks `is_some()` on the field
         // (not `Vec` length). With pacquet's defaults both sides are
         // `Some(non-empty)`, so the pass runs by default.
+        // Stashed across the hoist pass for the post-`BuildModules`
+        // top-level bin link. Isolated-linker public-hoist promotes
+        // a transitive dep alias to `<root>/node_modules/<alias>`
+        // where it competes for the same `<root>/node_modules/.bin`
+        // slot as the root importer's direct deps. Per
+        // pnpm/pacquet#342 / upstream's
+        // [`preferDirectCmds`](https://github.com/pnpm/pnpm/blob/4750fd370c/bins/linker/src/index.ts#L92)
+        // the direct dep's bin must win. The post-build pass below
+        // takes both direct + hoisted candidate lists so
+        // `pacquet_cmd_shim::pick_winner` (private)'s [`BinOrigin`] tier
+        // resolves the conflict in one call. Empty means there's
+        // no public-hoist (no patterns set, hoisted linker, or
+        // `Some(empty)`-vs-`None` short-circuit).
+        let mut publicly_hoisted_for_post_build: Vec<String> = Vec::new();
         // Isolated-linker hoist pass: shamefully-hoist + private
         // hoist into the virtual store. Skipped under hoisted —
         // the hoisted linker materialized the project tree above
@@ -917,11 +944,21 @@ where
                         // `link_bins_of_packages` layer), so re-linking
                         // direct-dep aliases that match a public-hoist
                         // pattern is safe.
-                        link_direct_dep_bins(
-                            &public_dir,
-                            &result.publicly_hoisted_aliases_with_bins,
-                        )
-                        .map_err(InstallFrozenLockfileError::HoistLinkBins)?;
+                        // Stash the public-hoist alias list for
+                        // the post-`BuildModules` top-level bin
+                        // link. The previous in-place
+                        // `link_direct_dep_bins(&public_dir, ...)`
+                        // pass would have written shims with no
+                        // knowledge of direct-dep candidates, so a
+                        // hoisted bin could shadow a direct one
+                        // when the hoisted package's name was
+                        // lexically smaller. The post-build pass
+                        // re-links with the [`BinOrigin`] tier so
+                        // direct wins outright. Mirrors upstream's
+                        // [`linkBinsOfImporter`](https://github.com/pnpm/pnpm/blob/4750fd370c/installing/deps-installer/src/install/index.ts#L1539)
+                        // which runs after `buildModules`.
+                        publicly_hoisted_for_post_build =
+                            result.publicly_hoisted_aliases_with_bins.clone();
                         result.hoisted_dependencies
                     } else {
                         BTreeMap::new()
@@ -1069,6 +1106,67 @@ where
             level: LogLevel::Debug,
             package_names: ignored_builds,
         }));
+
+        // Post-`BuildModules` per-importer top-level bin link
+        // (pnpm/pacquet#342). Two behaviors:
+        //
+        // 1. **Direct over Hoisted precedence.** The earlier
+        //    [`SymlinkDirectDependencies`] + isolated public-hoist
+        //    bin passes wrote shims separately, so a publicly-hoisted
+        //    bin could shadow a direct dep's bin with the same name
+        //    when the hoisted package's name was lexically smaller.
+        //    This pass collects both candidate lists into one
+        //    [`link_top_level_bins`] call so
+        //    `pacquet_cmd_shim::pick_winner` (private)'s
+        //    [`pacquet_cmd_shim::BinOrigin::Direct`] tier resolves
+        //    the conflict the way upstream's
+        //    [`preferDirectCmds`](https://github.com/pnpm/pnpm/blob/4750fd370c/bins/linker/src/index.ts#L92)
+        //    does.
+        // 2. **Lifecycle-script-created bins.** A package's
+        //    `postinstall` may write a binary file that didn't
+        //    exist at extract time (the `@pnpm.e2e/generated-bins`
+        //    fixture upstream uses to test this). Re-running the
+        //    bin link after [`BuildModules`] re-reads each
+        //    direct dep's `package.json` and shims any newly-found
+        //    bin entries that point at now-existing files. Mirrors
+        //    upstream's [`linkBinsOfImporter`](https://github.com/pnpm/pnpm/blob/4750fd370c/installing/deps-installer/src/install/index.ts#L1539)
+        //    pass that runs after `buildModules`.
+        //
+        // Idempotent for unchanged shims (the
+        // `is_shim_pointing_at` marker check skips writes when the
+        // existing shim already targets the same bin), so the
+        // double-pass overhead is bounded by the already-modest
+        // per-package manifest read cost.
+        let modules_dir_basename: &OsStr =
+            config.modules_dir.file_name().unwrap_or_else(|| OsStr::new("node_modules"));
+        for (importer_id, importer_snapshot) in importers {
+            let project_dir = importer_root_dir(workspace_root, importer_id);
+            let modules_dir = project_dir.join(modules_dir_basename);
+            // Same filter the symlink phase used so the post-build
+            // pass sees the same candidate set (skipping
+            // installability-skipped deps avoids dangling shims at
+            // a slot that was never extracted).
+            let direct_names = direct_dep_names_for_importer(
+                importer_snapshot,
+                dependency_groups.iter().copied(),
+                &skipped,
+                false,
+            );
+            // Public-hoist promotes transitives into the workspace
+            // root's `<root>/node_modules/<alias>`, so only the
+            // root importer's `<root>/node_modules/.bin` sees
+            // `BinOrigin::Hoisted` candidates. Non-root importers
+            // get `<importer>/node_modules/.bin` populated only
+            // from their own direct deps.
+            let hoisted_names: &[String] =
+                if importer_id == pacquet_lockfile::Lockfile::ROOT_IMPORTER_KEY {
+                    &publicly_hoisted_for_post_build
+                } else {
+                    &[]
+                };
+            link_top_level_bins(&modules_dir, &direct_names, hoisted_names)
+                .map_err(InstallFrozenLockfileError::TopLevelBinLink)?;
+        }
 
         // Drop the orchestrator's clone of the writer so the channel
         // closes once every per-snapshot clone has also been dropped;

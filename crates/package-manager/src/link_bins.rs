@@ -2,8 +2,8 @@ use crate::{PackageManifests, SkippedSnapshots};
 use derive_more::{Display, Error};
 use miette::Diagnostic;
 use pacquet_cmd_shim::{
-    FsCreateDirAll, FsEnsureExecutableBits, FsReadDir, FsReadFile, FsReadHead, FsReadString,
-    FsSetExecutable, FsWalkFiles, FsWrite, LinkBinsError, PackageBinSource, RealApi,
+    BinOrigin, FsCreateDirAll, FsEnsureExecutableBits, FsReadDir, FsReadFile, FsReadHead,
+    FsReadString, FsSetExecutable, FsWalkFiles, FsWrite, LinkBinsError, PackageBinSource, RealApi,
     link_bins_of_packages,
 };
 use pacquet_lockfile::{LockfileResolution, PackageKey, PackageMetadata, PkgName, SnapshotEntry};
@@ -55,13 +55,104 @@ pub fn link_direct_dep_bins(modules_dir: &Path, dep_names: &[String]) -> Result<
                     return Some(Err(LinkBinsError::ParseManifest { path: manifest_path, error }));
                 }
             };
-            Some(Ok(PackageBinSource { location: location.clone(), manifest: Arc::new(manifest) }))
+            Some(Ok(PackageBinSource::new(location.clone(), Arc::new(manifest))))
         })
         .collect::<Result<_, _>>()?;
     if bin_sources.is_empty() {
         return Ok(());
     }
     link_bins_of_packages::<RealApi>(&bin_sources, &modules_dir.join(".bin"))
+}
+
+/// Top-level bin link that mixes direct-dep candidates and hoisted
+/// (`publicly_hoisted_aliases_with_bins`) candidates in a single
+/// [`link_bins_of_packages`] call so `pacquet_cmd_shim::pick_winner` (private)
+/// can apply [`BinOrigin::Direct`] precedence over
+/// [`BinOrigin::Hoisted`]. Mirrors upstream's
+/// [`linkBinsOfImporter`](https://github.com/pnpm/pnpm/blob/4750fd370c/installing/deps-installer/src/install/index.ts#L1539)
+/// and [`preferDirectCmds`](https://github.com/pnpm/pnpm/blob/4750fd370c/bins/linker/src/index.ts#L92)
+/// — a hoisted (transitive) dep's bin must never shadow a direct
+/// dep's bin with the same name.
+///
+/// Two-list shape (rather than a single tagged list) keeps the call
+/// site cheap: callers already have these names in separate
+/// collections — direct deps come from the importer's
+/// `dependencies` / `devDependencies` / `optionalDependencies`,
+/// hoisted aliases come from the hoist-result's
+/// `publicly_hoisted_aliases_with_bins`. Joining them upthread
+/// would force every caller to allocate a tagged `Vec`.
+///
+/// Ports of upstream pnpm's flow that lifecycle-script-created
+/// bins should pick up the post-install state of `package.json`
+/// (a `postinstall` script can write a binary that didn't exist at
+/// extract time and pacquet must shim it). The caller schedules
+/// this pass *after* `BuildModules` runs so the manifests-on-disk
+/// reflect the post-script state.
+pub fn link_top_level_bins(
+    modules_dir: &Path,
+    direct_dep_names: &[String],
+    hoisted_dep_names: &[String],
+) -> Result<(), LinkBinsError> {
+    let mut bin_sources: Vec<PackageBinSource> = Vec::new();
+    // Tag direct deps as `Direct` and hoisted as `Hoisted` so the
+    // single downstream `pick_winner` call resolves conflicts via
+    // the new [`BinOrigin`] tier.
+    for source in read_bin_sources(modules_dir, direct_dep_names)? {
+        bin_sources.push(source.with_origin(BinOrigin::Direct));
+    }
+    // Skip hoisted aliases that already appear under a direct
+    // name. Reading the same `package.json` twice wouldn't change
+    // the outcome — `pick_winner` would pick the Direct copy
+    // anyway — but the work is wasted, and de-duplicating here
+    // mirrors upstream's
+    // [`preferDirectCmds`](https://github.com/pnpm/pnpm/blob/4750fd370c/bins/linker/src/index.ts#L92)
+    // partition shape (filter out hoisted candidates whose name
+    // already appears in the direct set).
+    let direct_set: HashSet<&str> = direct_dep_names.iter().map(String::as_str).collect();
+    let hoisted_only: Vec<String> = hoisted_dep_names
+        .iter()
+        .filter(|name| !direct_set.contains(name.as_str()))
+        .cloned()
+        .collect();
+    for source in read_bin_sources(modules_dir, &hoisted_only)? {
+        bin_sources.push(source.with_origin(BinOrigin::Hoisted));
+    }
+    if bin_sources.is_empty() {
+        return Ok(());
+    }
+    link_bins_of_packages::<RealApi>(&bin_sources, &modules_dir.join(".bin"))
+}
+
+/// Read each `<modules_dir>/<name>/package.json` and assemble the
+/// list of [`PackageBinSource`]s. Same `NotFound`-tolerant /
+/// other-IO-fatal policy as [`link_direct_dep_bins`]; factored out
+/// so [`link_top_level_bins`] can reuse the read pass for both
+/// direct and hoisted candidate lists.
+fn read_bin_sources(
+    modules_dir: &Path,
+    dep_names: &[String],
+) -> Result<Vec<PackageBinSource>, LinkBinsError> {
+    let locations: Vec<PathBuf> = dep_names.iter().map(|name| modules_dir.join(name)).collect();
+    locations
+        .par_iter()
+        .filter_map(|location| {
+            let manifest_path = location.join("package.json");
+            let bytes = match fs::read(&manifest_path) {
+                Ok(bytes) => bytes,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
+                Err(error) => {
+                    return Some(Err(LinkBinsError::ReadManifest { path: manifest_path, error }));
+                }
+            };
+            let manifest: serde_json::Value = match serde_json::from_slice(&bytes) {
+                Ok(manifest) => manifest,
+                Err(error) => {
+                    return Some(Err(LinkBinsError::ParseManifest { path: manifest_path, error }));
+                }
+            };
+            Some(Ok(PackageBinSource::new(location.clone(), Arc::new(manifest))))
+        })
+        .collect()
 }
 
 /// Error type of [`LinkVirtualStoreBins`].
@@ -342,10 +433,7 @@ where
                 // `slots × children`-sized clone fan-out that
                 // dominated the previous version of this path on
                 // warm-cache installs.
-                bin_sources.push(PackageBinSource {
-                    location: child_location,
-                    manifest: Arc::clone(manifest),
-                });
+                bin_sources.push(PackageBinSource::new(child_location, Arc::clone(manifest)));
             } else {
                 // Cold-batch fallback: package was downloaded
                 // earlier in the run, so its row isn't in the
@@ -581,7 +669,7 @@ fn read_package<Api: FsReadFile>(
     };
     let manifest: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|error| LinkBinsError::ParseManifest { path: manifest_path, error })?;
-    Ok(Some(PackageBinSource { location: location.to_path_buf(), manifest: Arc::new(manifest) }))
+    Ok(Some(PackageBinSource::new(location.to_path_buf(), Arc::new(manifest))))
 }
 
 fn paths_eq(a: &Path, b: &Path) -> bool {

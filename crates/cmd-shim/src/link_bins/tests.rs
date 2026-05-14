@@ -1,4 +1,4 @@
-use super::{LinkBinsError, PackageBinSource, link_bins, link_bins_of_packages};
+use super::{BinOrigin, LinkBinsError, PackageBinSource, link_bins, link_bins_of_packages};
 use crate::{
     capabilities::{
         FsCreateDirAll, FsEnsureExecutableBits, FsReadDir, FsReadFile, FsReadHead, FsReadString,
@@ -38,7 +38,7 @@ fn writes_all_three_shim_flavors_per_bin() {
     let manifest_value: Value =
         serde_json::from_slice(&read_file(pkg_dir.join("package.json")).unwrap()).unwrap();
     link_bins_of_packages::<RealApi>(
-        &[PackageBinSource { location: pkg_dir.clone(), manifest: Arc::new(manifest_value) }],
+        &[PackageBinSource::new(pkg_dir.clone(), Arc::new(manifest_value))],
         &bins_dir,
     )
     .unwrap();
@@ -78,7 +78,7 @@ fn writes_shim_for_bin_string() {
     let manifest_value: Value =
         serde_json::from_slice(&read_file(pkg_dir.join("package.json")).unwrap()).unwrap();
     link_bins_of_packages::<RealApi>(
-        &[PackageBinSource { location: pkg_dir.clone(), manifest: Arc::new(manifest_value) }],
+        &[PackageBinSource::new(pkg_dir.clone(), Arc::new(manifest_value))],
         &bins_dir,
     )
     .unwrap();
@@ -159,11 +159,8 @@ fn link_bins_of_packages_no_op_when_no_bins() {
     let bins = tmp.path().join(".bin");
     let manifest: Value =
         serde_json::from_slice(&read_file(pkg.join("package.json")).unwrap()).unwrap();
-    link_bins_of_packages::<RealApi>(
-        &[PackageBinSource { location: pkg, manifest: Arc::new(manifest) }],
-        &bins,
-    )
-    .unwrap();
+    link_bins_of_packages::<RealApi>(&[PackageBinSource::new(pkg, Arc::new(manifest))], &bins)
+        .unwrap();
     assert!(!bins.exists(), "bins dir must not be created when nothing to link");
 }
 
@@ -200,8 +197,8 @@ fn lexical_compare_breaks_tie_when_neither_owns() {
     // discovery order.
     link_bins_of_packages::<RealApi>(
         &[
-            PackageBinSource { location: beta.clone(), manifest: Arc::new(manifest_beta) },
-            PackageBinSource { location: alpha.clone(), manifest: Arc::new(manifest_alpha) },
+            PackageBinSource::new(beta.clone(), Arc::new(manifest_beta)),
+            PackageBinSource::new(alpha.clone(), Arc::new(manifest_alpha)),
         ],
         &bins,
     )
@@ -352,7 +349,7 @@ fn link_bins_propagates_create_bin_dir_error_via_di() {
     create_dir_all(&pkg).unwrap();
     write_file(pkg.join("cli.js"), "#!/usr/bin/env node\n").unwrap();
     let err = link_bins_of_packages::<FailingCreateDir>(
-        &[PackageBinSource { location: pkg, manifest: Arc::new(manifest) }],
+        &[PackageBinSource::new(pkg, Arc::new(manifest))],
         Path::new("/anything"),
     )
     .expect_err("create_dir_all error must propagate");
@@ -422,7 +419,7 @@ fn link_bins_propagates_write_shim_error_via_di() {
     create_dir_all(&pkg).unwrap();
     write_file(pkg.join("cli.js"), "").unwrap();
     let err = link_bins_of_packages::<FailingWrite>(
-        &[PackageBinSource { location: pkg, manifest: Arc::new(manifest) }],
+        &[PackageBinSource::new(pkg, Arc::new(manifest))],
         &tmp.path().join(".bin"),
     )
     .expect_err("write error must propagate");
@@ -489,7 +486,7 @@ fn link_bins_propagates_chmod_error_via_di() {
     create_dir_all(&pkg).unwrap();
     write_file(pkg.join("cli.js"), "").unwrap();
     let err = link_bins_of_packages::<FailingChmod>(
-        &[PackageBinSource { location: pkg, manifest: Arc::new(manifest) }],
+        &[PackageBinSource::new(pkg, Arc::new(manifest))],
         &tmp.path().join(".bin"),
     )
     .expect_err("chmod error must propagate");
@@ -564,7 +561,7 @@ fn link_bins_propagates_target_chmod_error_via_di() {
     create_dir_all(&pkg).unwrap();
     write_file(pkg.join("cli.js"), "").unwrap();
     let err = link_bins_of_packages::<FailingTargetChmod>(
-        &[PackageBinSource { location: pkg, manifest: Arc::new(manifest) }],
+        &[PackageBinSource::new(pkg, Arc::new(manifest))],
         &tmp.path().join(".bin"),
     )
     .expect_err("non-NotFound target chmod error must propagate as Chmod");
@@ -635,7 +632,7 @@ fn link_bins_swallows_target_chmod_not_found_via_di() {
     create_dir_all(&pkg).unwrap();
     write_file(pkg.join("cli.js"), "").unwrap();
     link_bins_of_packages::<NotFoundTargetChmod>(
-        &[PackageBinSource { location: pkg, manifest: Arc::new(manifest) }],
+        &[PackageBinSource::new(pkg, Arc::new(manifest))],
         &tmp.path().join(".bin"),
     )
     .expect("NotFound on target chmod must be swallowed silently");
@@ -704,7 +701,7 @@ fn link_bins_propagates_probe_shim_source_error_via_di() {
     let pkg = tmp.path().join("foo");
     create_dir_all(&pkg).unwrap();
     let err = link_bins_of_packages::<FailingProbe>(
-        &[PackageBinSource { location: pkg, manifest: Arc::new(manifest) }],
+        &[PackageBinSource::new(pkg, Arc::new(manifest))],
         &tmp.path().join(".bin"),
     )
     .expect_err("probe error must propagate");
@@ -809,8 +806,8 @@ fn ownership_breaks_bin_conflicts_when_existing_owns() {
     let bins = tmp.path().join(".bin");
     link_bins_of_packages::<RealApi>(
         &[
-            PackageBinSource { location: npm.clone(), manifest: Arc::new(manifest_npm) },
-            PackageBinSource { location: aaa_other.clone(), manifest: Arc::new(manifest_other) },
+            PackageBinSource::new(npm.clone(), Arc::new(manifest_npm)),
+            PackageBinSource::new(aaa_other.clone(), Arc::new(manifest_other)),
         ],
         &bins,
     )
@@ -915,8 +912,8 @@ fn ownership_breaks_bin_conflicts() {
     let bins = tmp.path().join(".bin");
     link_bins_of_packages::<RealApi>(
         &[
-            PackageBinSource { location: aaa_other.clone(), manifest: Arc::new(manifest_other) },
-            PackageBinSource { location: npm.clone(), manifest: Arc::new(manifest_npm) },
+            PackageBinSource::new(aaa_other.clone(), Arc::new(manifest_other)),
+            PackageBinSource::new(npm.clone(), Arc::new(manifest_npm)),
         ],
         &bins,
     )
@@ -927,5 +924,113 @@ fn ownership_breaks_bin_conflicts() {
     assert!(
         body.contains("/npm/npx") || is_shim_pointing_at(&body, &npm.join("npx")),
         "ownership-aware resolution should pick npm's npx, body:\n{body}",
+    );
+}
+
+/// `BinOrigin::Direct` wins outright over [`BinOrigin::Hoisted`]
+/// regardless of ownership / lexical order. Pins the new top tier
+/// in [`super::pick_winner`] that mirrors upstream's
+/// [`preferDirectCmds`](https://github.com/pnpm/pnpm/blob/4750fd370c/bins/linker/src/index.ts#L92):
+/// a hoisted (transitive) dep's bin must never shadow a direct
+/// dep's bin with the same name, even when the hoisted package's
+/// own name is lexically smaller (which would have won under the
+/// pre-#342 lexical fallback).
+#[test]
+fn direct_origin_wins_over_hoisted_regardless_of_lexical() {
+    let tmp = tempdir().unwrap();
+    // Hoisted's package name `alpha` is lexically smaller than
+    // direct's `zeta`, so the lexical-only rule would pick alpha.
+    // The Direct/Hoisted tier must override that.
+    let hoisted = tmp.path().join("alpha");
+    let direct = tmp.path().join("zeta");
+    for d in [&hoisted, &direct] {
+        create_dir_all(d).unwrap();
+        write_file(d.join("cmd.js"), "#!/usr/bin/env node\n").unwrap();
+    }
+    write_file(
+        hoisted.join("package.json"),
+        json!({"name": "alpha", "bin": {"shared": "cmd.js"}}).to_string(),
+    )
+    .unwrap();
+    write_file(
+        direct.join("package.json"),
+        json!({"name": "zeta", "bin": {"shared": "cmd.js"}}).to_string(),
+    )
+    .unwrap();
+
+    let manifest_hoisted: Value =
+        serde_json::from_slice(&read_file(hoisted.join("package.json")).unwrap()).unwrap();
+    let manifest_direct: Value =
+        serde_json::from_slice(&read_file(direct.join("package.json")).unwrap()).unwrap();
+
+    let bins = tmp.path().join(".bin");
+    link_bins_of_packages::<RealApi>(
+        &[
+            PackageBinSource::new(hoisted.clone(), Arc::new(manifest_hoisted))
+                .with_origin(BinOrigin::Hoisted),
+            PackageBinSource::new(direct.clone(), Arc::new(manifest_direct))
+                .with_origin(BinOrigin::Direct),
+        ],
+        &bins,
+    )
+    .unwrap();
+
+    let body = read_to_string(bins.join("shared")).unwrap();
+    assert!(
+        body.contains("/zeta/cmd.js"),
+        "Direct origin must win over Hoisted regardless of lexical order, got body:\n{body}",
+    );
+}
+
+/// Inverse direction: `BinOrigin::Hoisted` candidate must lose to
+/// the existing [`BinOrigin::Direct`] incumbent. Pins both arms of
+/// the new tier so a future refactor can't accidentally collapse
+/// the precedence to one-sided.
+#[test]
+fn hoisted_origin_loses_to_existing_direct() {
+    let tmp = tempdir().unwrap();
+    // Direct's name is lexically larger than hoisted's; lexical
+    // fallback would replace it with hoisted, but the origin tier
+    // shuts that out.
+    let direct = tmp.path().join("zeta");
+    let hoisted = tmp.path().join("alpha");
+    for d in [&direct, &hoisted] {
+        create_dir_all(d).unwrap();
+        write_file(d.join("cmd.js"), "#!/usr/bin/env node\n").unwrap();
+    }
+    write_file(
+        direct.join("package.json"),
+        json!({"name": "zeta", "bin": {"shared": "cmd.js"}}).to_string(),
+    )
+    .unwrap();
+    write_file(
+        hoisted.join("package.json"),
+        json!({"name": "alpha", "bin": {"shared": "cmd.js"}}).to_string(),
+    )
+    .unwrap();
+
+    let manifest_direct: Value =
+        serde_json::from_slice(&read_file(direct.join("package.json")).unwrap()).unwrap();
+    let manifest_hoisted: Value =
+        serde_json::from_slice(&read_file(hoisted.join("package.json")).unwrap()).unwrap();
+
+    let bins = tmp.path().join(".bin");
+    // Direct goes first so it's the incumbent when the Hoisted
+    // candidate is processed second.
+    link_bins_of_packages::<RealApi>(
+        &[
+            PackageBinSource::new(direct.clone(), Arc::new(manifest_direct))
+                .with_origin(BinOrigin::Direct),
+            PackageBinSource::new(hoisted.clone(), Arc::new(manifest_hoisted))
+                .with_origin(BinOrigin::Hoisted),
+        ],
+        &bins,
+    )
+    .unwrap();
+
+    let body = read_to_string(bins.join("shared")).unwrap();
+    assert!(
+        body.contains("/zeta/cmd.js"),
+        "Direct incumbent must shut out Hoisted candidate, got body:\n{body}",
     );
 }
