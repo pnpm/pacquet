@@ -61,6 +61,7 @@ async fn run_emits_imported_event_after_import_indexed_dir() {
     // `.run()` directly here. The function itself is sync — only
     // the caller's runtime flavor matters.
     let layout = crate::VirtualStoreLayout::legacy(virtual_store_dir.clone());
+    let skipped = crate::SkippedSnapshots::default();
     CreateVirtualDirBySnapshot {
         layout: &layout,
         cas_paths: &cas_paths,
@@ -70,6 +71,7 @@ async fn run_emits_imported_event_after_import_indexed_dir() {
         package_id: "react@18.0.0",
         package_key: &package_key,
         snapshot: &snapshot,
+        skipped: &skipped,
     }
     .run::<RecordingReporter>()
     .expect("empty-cas-paths run should succeed");
