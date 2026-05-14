@@ -2392,4 +2392,194 @@ async fn hoisted_node_linker_does_not_create_virtual_store_root() {
         !virtual_store_dir.exists(),
         "hoisted install must not materialize the virtual-store root at {virtual_store_dir:?}",
     );
+
+    drop(dir);
+}
+
+/// Frozen-lockfile install with a `VariationsResolution` whose
+/// variants only target a platform pacquet CI never runs on
+/// (`aix/ppc64`) must surface
+/// [`crate::InstallPackageBySnapshotError::NoMatchingPlatformVariant`]
+/// from the cold-batch dispatcher. Variant selection happens
+/// before any network fetch, so the bogus URL on the variant is
+/// never read — the test stays hermetic.
+///
+/// Closes the variant-mismatch checkbox of #437 slice F.
+#[tokio::test]
+async fn frozen_lockfile_install_errors_when_no_variant_matches_host() {
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let mut manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    manifest.add_dependency("node", "runtime:22.0.0", DependencyGroup::Prod).unwrap();
+    manifest.save().unwrap();
+
+    let mut config = Config::new();
+    config.store_dir = store_dir.into();
+    config.modules_dir = modules_dir.to_path_buf();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    let config = config.leak();
+
+    // Lockfile with a runtime entry whose variants only target a
+    // platform we're not running on. `runtime:22.0.0` is preserved
+    // through `PkgVerPeer`'s `Prefix::Runtime` (#511 / #512); the
+    // depPath round-trips correctly through pacquet's parser.
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies:"
+        "      node:"
+        "        specifier: 'runtime:22.0.0'"
+        "        version: 'runtime:22.0.0'"
+        "packages:"
+        "  'node@runtime:22.0.0':"
+        "    hasBin: true"
+        "    resolution:"
+        "      type: variations"
+        "      variants:"
+        "        - resolution:"
+        "            type: binary"
+        "            url: 'https://example.test/node-aix-ppc64.tar.gz'"
+        "            integrity: 'sha512-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=='"
+        "            bin: 'bin/node'"
+        "            archive: tarball"
+        "          targets:"
+        "            - os: aix"
+        "              cpu: ppc64"
+        "snapshots:"
+        "  'node@runtime:22.0.0': {}"
+    })
+    .expect("parse variant-mismatch fixture lockfile");
+
+    let err = Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
+        frozen_lockfile: true,
+        skip_runtimes: false,
+        supported_architectures: None,
+        resolved_packages: &Default::default(),
+        node_linker: pacquet_config::NodeLinker::default(),
+    }
+    .run::<SilentReporter>()
+    .await
+    .expect_err("variant-mismatch lockfile must surface a typed error");
+
+    let rendered = format!("{err:?}");
+    eprintln!("ERROR DEBUG:\n{rendered}");
+    assert!(
+        rendered.contains("NoMatchingPlatformVariant"),
+        "expected NoMatchingPlatformVariant in the error chain, got: {rendered}",
+    );
+    let displayed = err.to_string();
+    assert!(!displayed.is_empty(), "Display impl should produce a non-empty user-facing message");
+
+    drop(dir);
+}
+
+/// Same lockfile + manifest shape as
+/// [`frozen_lockfile_install_errors_when_no_variant_matches_host`],
+/// but with `skip_runtimes: true`. The `--no-runtime` filter
+/// iterates importer-direct deps, builds `node@runtime:22.0.0`
+/// from `(alias, version)`, sees the `@runtime:` substring, and
+/// adds the snapshot to the skip set — so variant selection
+/// never runs and the unmatchable-platform variant doesn't fail
+/// the install.
+///
+/// Closes the `--no-runtime` checkbox of #437 slice F.
+#[tokio::test]
+async fn frozen_lockfile_install_skips_runtime_when_skip_runtimes_set() {
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let mut manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    manifest.add_dependency("node", "runtime:22.0.0", DependencyGroup::Prod).unwrap();
+    manifest.save().unwrap();
+
+    let mut config = Config::new();
+    config.store_dir = store_dir.into();
+    config.modules_dir = modules_dir.to_path_buf();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies:"
+        "      node:"
+        "        specifier: 'runtime:22.0.0'"
+        "        version: 'runtime:22.0.0'"
+        "packages:"
+        "  'node@runtime:22.0.0':"
+        "    hasBin: true"
+        "    resolution:"
+        "      type: variations"
+        "      variants:"
+        "        - resolution:"
+        "            type: binary"
+        "            url: 'https://example.test/node-aix-ppc64.tar.gz'"
+        "            integrity: 'sha512-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=='"
+        "            bin: 'bin/node'"
+        "            archive: tarball"
+        "          targets:"
+        "            - os: aix"
+        "              cpu: ppc64"
+        "snapshots:"
+        "  'node@runtime:22.0.0': {}"
+    })
+    .expect("parse --no-runtime fixture lockfile");
+
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
+        frozen_lockfile: true,
+        skip_runtimes: true,
+        supported_architectures: None,
+        resolved_packages: &Default::default(),
+        node_linker: pacquet_config::NodeLinker::default(),
+    }
+    .run::<SilentReporter>()
+    .await
+    .expect("--no-runtime should skip the unmatchable runtime entry and let the rest of the install succeed");
+
+    // The runtime slot must NOT exist under the virtual store —
+    // the snapshot was filtered out by the skip set.
+    //
+    // Use `symlink_metadata` rather than `Path::exists()` so a
+    // *dangling* symlink fails the assertion too: `exists()`
+    // follows symlinks and reports `false` for a broken one, but
+    // a broken symlink at `<modules_dir>/node` would still mean
+    // the install created an entry the skip set was supposed to
+    // suppress.
+    let runtime_slot = virtual_store_dir.join("node@runtime:22.0.0");
+    assert!(
+        std::fs::symlink_metadata(&runtime_slot).is_err(),
+        "runtime slot should not be materialized under --no-runtime, got {runtime_slot:?}",
+    );
+    // Neither should the direct-dep symlink under the project's
+    // `node_modules/`. Same `symlink_metadata` rationale.
+    let direct_dep = modules_dir.join("node");
+    assert!(
+        std::fs::symlink_metadata(&direct_dep).is_err(),
+        "direct-dep symlink for node should not be created under --no-runtime, got {direct_dep:?}",
+    );
+
+    drop(dir);
 }
