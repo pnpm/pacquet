@@ -130,11 +130,10 @@ fn filter_importer(
 /// siblings) survive — they don't live in the snapshot graph.
 fn retain_reachable(map: &mut ResolvedDependencyMap, reachable: &HashSet<PackageKey>) {
     map.retain(|name, spec| {
-        let Some(ver_peer) = spec.version.as_regular() else {
+        let Some(key) = spec.version.resolved_key(name) else {
             // Workspace `link:<path>` — no snapshot to check.
             return true;
         };
-        let key = PackageKey::new(name.clone(), ver_peer.clone());
         reachable.contains(&key)
     });
 }
@@ -172,8 +171,7 @@ fn collect_reachable(
         .flatten()
         {
             for (name, spec) in map {
-                let Some(ver_peer) = spec.version.as_regular() else { continue };
-                let key = PackageKey::new(name.clone(), ver_peer.clone());
+                let Some(key) = spec.version.resolved_key(name) else { continue };
                 if skipped.contains(&key) {
                     continue;
                 }

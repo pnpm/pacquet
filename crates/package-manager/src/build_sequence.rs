@@ -145,10 +145,11 @@ fn collect_root_dep_paths(
                 // `if (depPath.startsWith('link:')) continue` at
                 // build-time in
                 // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/index.ts>.
-                let Some(ver_peer) = spec.version.as_regular() else {
+                // For aliased deps, the snapshot key uses the alias's
+                // own (name, suffix), not the importer-map key.
+                let Some(key) = spec.version.resolved_key(name) else {
                     continue;
                 };
-                let key = PackageKey::new(name.clone(), ver_peer.clone());
                 if !snapshots.contains_key(&key) {
                     continue;
                 }

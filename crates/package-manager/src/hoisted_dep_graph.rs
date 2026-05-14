@@ -483,9 +483,11 @@ fn build_dep_graph(
         ] {
             let Some(dep_map) = dep_map else { continue };
             for (alias, spec) in dep_map {
-                let Some(ver_peer) = spec.version.as_regular() else { continue };
-                let dep_key =
-                    pacquet_lockfile::PkgNameVerPeer::new(alias.clone(), ver_peer.clone());
+                // For an aliased dep the snapshot key uses the
+                // alias's own (name, suffix); for a regular dep it's
+                // `(alias, version)`. `link:` deps are skipped — they
+                // don't live in the virtual store.
+                let Some(dep_key) = spec.version.resolved_key(alias) else { continue };
                 let dep_path = dep_key.to_string();
                 if let Some(locations) = pkg_locations_by_dep_path.get(&dep_path)
                     && let Some(first) = locations.first()
