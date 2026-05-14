@@ -254,6 +254,51 @@ fn validate_importer_id(importer_id: &str) -> Result<(), SymlinkDirectDependenci
     Ok(())
 }
 
+/// Collect the direct-dependency *names* for `snapshot`, applying
+/// the same first-wins / skipped / link-vs-regular filters that
+/// `link_one_importer` (private to this module) uses to drive the
+/// symlink + bin-link pass. Public so the post-`BuildModules`
+/// top-level bin pass in [`crate::InstallFrozenLockfile::run`]
+/// can run with the same per-importer name set the symlink phase
+/// saw, without re-implementing the filter logic in two places.
+///
+/// `link_only` mirrors the [`SymlinkDirectDependencies::link_only`]
+/// flag — when `true`, only `link:` workspace siblings survive the
+/// filter (used by the hoisted-linker re-link pass; the regular
+/// deps live as real directories under
+/// `<importer>/node_modules/<alias>` already and don't need the
+/// symlink-targeted filter).
+pub fn direct_dep_names_for_importer<I>(
+    snapshot: &ProjectSnapshot,
+    dependency_groups: I,
+    skipped: &SkippedSnapshots,
+    link_only: bool,
+) -> Vec<String>
+where
+    I: IntoIterator<Item = DependencyGroup>,
+{
+    let mut seen: HashSet<&PkgName> = HashSet::new();
+    dependency_groups
+        .into_iter()
+        .filter(|group| !matches!(group, DependencyGroup::Peer))
+        .flat_map(|group| snapshot.get_map_by_group(group).into_iter().flatten())
+        .filter(|(name, _)| seen.insert(*name))
+        .filter(|(name, spec)| match &spec.version {
+            ImporterDepVersion::Regular(ver) => {
+                let resolved = PkgNameVerPeer::new(PkgName::clone(name), ver.clone());
+                !skipped.contains(&resolved)
+            }
+            ImporterDepVersion::Link(_) => true,
+        })
+        .filter(
+            |(_, spec)| {
+                if link_only { matches!(spec.version, ImporterDepVersion::Link(_)) } else { true }
+            },
+        )
+        .map(|(name, _)| name.to_string())
+        .collect()
+}
+
 /// Resolve `importer_id` (a lockfile key) against the workspace root.
 ///
 /// Pnpm's lockfile spec uses `"."` for the root importer and

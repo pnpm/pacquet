@@ -35,6 +35,66 @@ use std::{
 pub struct PackageBinSource {
     pub location: PathBuf,
     pub manifest: Arc<Value>,
+    /// Where this candidate came from. Mirrors upstream's
+    /// `isDirectDependency: boolean` flag at
+    /// <https://github.com/pnpm/pnpm/blob/4750fd370c/bins/linker/src/index.ts#L92>:
+    /// when a hoisted (transitive) dep and a direct dep both
+    /// declare the same bin name, the direct dep must win so a
+    /// project never gets its own tooling silently shadowed by a
+    /// transitive's bin. Defaults to [`BinOrigin::Direct`] —
+    /// constructions via [`PackageBinSource::new`] don't have to
+    /// supply the field, and existing call sites that don't yet
+    /// distinguish keep the pre-#342 ownership/lexical-only
+    /// behavior. Pacquet's hoist + hoisted-linker passes use
+    /// [`PackageBinSource::with_origin`] to tag transitive
+    /// candidates as [`BinOrigin::Hoisted`].
+    pub origin: BinOrigin,
+}
+
+impl PackageBinSource {
+    /// Construct a [`PackageBinSource`] tagged as
+    /// [`BinOrigin::Direct`]. Use this for direct-dependency
+    /// candidates and for any call site that doesn't need to
+    /// distinguish direct from hoisted (per-slot bin linking,
+    /// most tests).
+    pub fn new(location: PathBuf, manifest: Arc<Value>) -> Self {
+        Self { location, manifest, origin: BinOrigin::Direct }
+    }
+
+    /// Tag this source with the given [`BinOrigin`]. Builder-style
+    /// helper so call sites that need to mark candidates as
+    /// [`BinOrigin::Hoisted`] don't have to spell out the struct
+    /// literal.
+    pub fn with_origin(mut self, origin: BinOrigin) -> Self {
+        self.origin = origin;
+        self
+    }
+}
+
+/// Whether a [`PackageBinSource`] came from a project's direct
+/// dependencies or from a transitive dep that the hoister lifted to
+/// `node_modules/<name>` / `node_modules/.pnpm/node_modules/<name>`.
+///
+/// Used by `pick_winner` (private) as the highest-precedence tier
+/// in the conflict-resolution rule: a direct dep's bin always wins
+/// over a hoisted dep's bin with the same name. Mirrors upstream's
+/// `preferDirectCmds` partition at
+/// <https://github.com/pnpm/pnpm/blob/4750fd370c/bins/linker/src/index.ts#L92>
+/// where direct candidates are kept and hoisted candidates with a
+/// name collision are dropped.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BinOrigin {
+    /// The candidate is a direct dependency of the importer
+    /// installing it. Direct deps come from the per-importer
+    /// `dependencies` / `devDependencies` / `optionalDependencies`
+    /// maps in the lockfile / manifest.
+    #[default]
+    Direct,
+    /// The candidate is a transitive dependency that the hoister
+    /// lifted to a top-level (or per-`node_modules`) slot. Bins
+    /// from these candidates are dropped when a same-named
+    /// [`Self::Direct`] candidate is also present.
+    Hoisted,
 }
 
 /// Error type for [`link_bins_of_packages`].
@@ -193,7 +253,7 @@ fn read_package<Api: FsReadFile>(
     };
     let manifest: Value = serde_json::from_slice(&bytes)
         .map_err(|error| LinkBinsError::ParseManifest { path: manifest_path, error })?;
-    Ok(Some(PackageBinSource { location: location.to_path_buf(), manifest: Arc::new(manifest) }))
+    Ok(Some(PackageBinSource::new(location.to_path_buf(), Arc::new(manifest))))
 }
 
 /// Link every bin declared by `packages` into `bins_dir`, applying the same
@@ -201,9 +261,14 @@ fn read_package<Api: FsReadFile>(
 ///
 /// Conflict resolution mirrors `resolveCommandConflicts`:
 ///
-/// 1. Ownership wins. If exactly one package owns the bin name (via
+/// 1. **Direct wins over Hoisted.** If exactly one candidate is
+///    [`BinOrigin::Direct`], it wins outright — a direct dep's bin
+///    must never be shadowed by a transitive's bin with the same
+///    name. Mirrors upstream's `preferDirectCmds` partition at
+///    <https://github.com/pnpm/pnpm/blob/4750fd370c/bins/linker/src/index.ts#L92>.
+/// 2. Ownership wins. If exactly one package owns the bin name (via
 ///    [`pkg_owns_bin`]), it wins outright.
-/// 2. Otherwise lexical comparison on the package name, lower wins. Stable
+/// 3. Otherwise lexical comparison on the package name, lower wins. Stable
 ///    and deterministic regardless of the order packages were discovered.
 ///
 /// Pacquet's first iteration does not resolve same-package multi-version
@@ -236,7 +301,13 @@ where
                 Some((_, existing)) => {
                     let existing_name =
                         existing.manifest.get("name").and_then(Value::as_str).unwrap_or("");
-                    if pick_winner(&command.name, existing_name, pkg_name) {
+                    if pick_winner(
+                        &command.name,
+                        existing_name,
+                        existing.origin,
+                        pkg_name,
+                        pkg.origin,
+                    ) {
                         chosen.insert(command.name.clone(), (command, pkg));
                     }
                 }
@@ -263,9 +334,27 @@ where
 }
 
 /// Return `true` when `candidate` should replace `existing` for `bin_name`.
-/// Matches the two-step ownership-then-lexical-compare in upstream's
-/// `resolveCommandConflicts`.
-fn pick_winner(bin_name: &str, existing: &str, candidate: &str) -> bool {
+/// Matches the three-step direct-then-ownership-then-lexical-compare in
+/// upstream's `preferDirectCmds` + `resolveCommandConflicts`.
+fn pick_winner(
+    bin_name: &str,
+    existing: &str,
+    existing_origin: BinOrigin,
+    candidate: &str,
+    candidate_origin: BinOrigin,
+) -> bool {
+    // Highest tier: a Direct candidate beats a Hoisted incumbent and
+    // a Direct incumbent shuts out a Hoisted candidate. When both
+    // sides agree (both Direct or both Hoisted), fall through to the
+    // ownership / lexical rules so the existing tier behavior is
+    // unchanged inside each origin bucket. Mirrors upstream's
+    // `preferDirectCmds` partition at
+    // <https://github.com/pnpm/pnpm/blob/4750fd370c/bins/linker/src/index.ts#L92>.
+    match (existing_origin, candidate_origin) {
+        (BinOrigin::Hoisted, BinOrigin::Direct) => return true,
+        (BinOrigin::Direct, BinOrigin::Hoisted) => return false,
+        _ => {}
+    }
     let existing_owns = pkg_owns_bin(bin_name, existing);
     let candidate_owns = pkg_owns_bin(bin_name, candidate);
     match (existing_owns, candidate_owns) {
