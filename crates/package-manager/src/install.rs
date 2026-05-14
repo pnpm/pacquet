@@ -269,158 +269,176 @@ where
         //    normally generate / update a lockfile, which pacquet
         //    doesn't support yet → `UnsupportedLockfileMode`. `false`
         //    means "lockfile disabled, resolve from registry".
-        let (hoisted_dependencies, frozen_skipped): (HoistedDependencies, crate::SkippedSnapshots) =
-            if frozen_lockfile {
-                let Some(lockfile) = lockfile else {
-                    return Err(InstallError::NoLockfile);
-                };
-                let Lockfile { lockfile_version, importers, packages, snapshots, .. } = lockfile;
-                assert_eq!(lockfile_version.major, 9); // compatibility check already happens at serde, but this still helps preventing programmer mistakes.
-
-                // Freshness check: verify the on-disk `package.json`
-                // still matches the lockfile's importer entry before we
-                // commit to materializing `node_modules` from it. Mirrors
-                // upstream's `satisfiesPackageManifest` gate at
-                // <https://github.com/pnpm/pnpm/blob/94240bc046/pkg-manager/core/src/install/index.ts#L808-L832>.
-                // Pacquet has only one importer today (#431 tracks
-                // workspaces), so the root project is the only thing to
-                // verify; once workspaces land this becomes a per-project
-                // loop over `importers`.
-                let importer = importers.get(Lockfile::ROOT_IMPORTER_KEY).ok_or_else(|| {
-                    InstallError::NoImporter {
-                        importer_id: Lockfile::ROOT_IMPORTER_KEY.to_string(),
-                    }
-                })?;
-                // Outdated-settings gate (umbrella #434 slice 7): check
-                // `ignoredOptionalDependencies` drift between the
-                // lockfile-recorded set and the current config before
-                // the per-importer specifier check. Mirrors upstream's
-                // [`getOutdatedLockfileSetting`](https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/settings-checker/src/getOutdatedLockfileSetting.ts).
-                // Upstream flips `needsFullResolution` and re-runs the
-                // resolver; pacquet has no resolver, so the matching
-                // action is to abort with `OutdatedLockfile`.
-                pacquet_lockfile::check_lockfile_settings(
-                    lockfile,
-                    config.ignored_optional_dependencies.as_deref(),
-                )
-                .map_err(|reason| InstallError::OutdatedLockfile { reason })?;
-                // Build the `ignoredOptionalDependencies` filter set.
-                // Mirrors upstream's
-                // [`createOptionalDependenciesRemover`](https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts):
-                // the hook iterates `manifest.optionalDependencies`
-                // and deletes matches from BOTH the `optional` and
-                // `dependencies` maps. A name only present in
-                // `dependencies` (not `optionalDependencies`) that
-                // happens to match the pattern is NOT removed —
-                // that's why the predicate is set-based ("name was
-                // in optionalDependencies AND matched") rather than
-                // pure pattern matching. `devDependencies` is
-                // untouched on purpose; the group gate inside
-                // `satisfies_package_manifest` enforces that.
-                let ignored_set: std::collections::HashSet<String> = config
-                    .ignored_optional_dependencies
-                    .as_deref()
-                    .filter(|patterns| !patterns.is_empty())
-                    .map(|patterns| {
-                        let matcher = pacquet_config::matcher::create_matcher(patterns);
-                        manifest
-                            .dependencies([pacquet_package_manifest::DependencyGroup::Optional])
-                            .filter(|(name, _)| matcher.matches(name))
-                            .map(|(name, _)| name.to_string())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let is_ignored_optional: &dyn Fn(&str) -> bool =
-                    &|name: &str| ignored_set.contains(name);
-                satisfies_package_manifest(
-                    importer,
-                    manifest,
-                    Lockfile::ROOT_IMPORTER_KEY,
-                    is_ignored_optional,
-                )
-                .map_err(|reason| InstallError::OutdatedLockfile { reason })?;
-
-                let frozen_result = InstallFrozenLockfile {
-                    http_client,
-                    config,
-                    importers,
-                    packages: packages.as_ref(),
-                    snapshots: snapshots.as_ref(),
-                    current_snapshots: current_lockfile.as_ref().and_then(|l| l.snapshots.as_ref()),
-                    current_packages: current_lockfile.as_ref().and_then(|l| l.packages.as_ref()),
-                    dependency_groups,
-                    logged_methods: &logged_methods,
-                    workspace_root: &workspace_root,
-                    requester: &prefix,
-                    supported_architectures: supported_architectures.as_ref(),
-                    skip_runtimes,
-                }
-                .run::<R>()
-                .await
-                .map_err(InstallError::FrozenLockfile)?;
-
-                // Register every importer against the shared store now
-                // that the install has materialized their `node_modules/`.
-                // Mirrors upstream's call into `@pnpm/store.controller`'s
-                // [`registerProject`](https://github.com/pnpm/pnpm/blob/94240bc046/store/controller/src/storeController/projectRegistry.ts),
-                // which runs once per importer — a workspace ends up with
-                // one symlink in `<store_dir>/projects/` per package, so
-                // `pacquet store prune` (tracked separately) can find
-                // every reachable consumer of `<store_dir>/links/...`.
-                //
-                // Gated on `frozen_lockfile && enable_global_virtual_store`:
-                // `InstallWithoutLockfile` keeps the project-local virtual
-                // store via `VirtualStoreLayout::legacy`, and a registry
-                // entry for it would point at a project that never
-                // touches the shared store.
-                //
-                // Best-effort: a registry write failure shouldn't fail
-                // the install. Surface as `tracing::warn!` so the failure
-                // is diagnosable but the install carries on. Validation
-                // of importer keys is done by
-                // [`crate::SymlinkDirectDependencies::run`] before we get
-                // here, so by this point every key is known-safe.
-                if config.enable_global_virtual_store {
-                    for importer_id in importers.keys() {
-                        let project_dir = crate::symlink_direct_dependencies::importer_root_dir(
-                            &workspace_root,
-                            importer_id,
-                        );
-                        if let Err(error) =
-                            pacquet_store_dir::register_project(&config.store_dir, &project_dir)
-                        {
-                            tracing::warn!(
-                                target: "pacquet::install",
-                                ?error,
-                                importer_id = %importer_id,
-                                "Failed to register importer in the global-virtual-store registry; install continues",
-                            );
-                        }
-                    }
-                }
-
-                (frozen_result.hoisted_dependencies, frozen_result.skipped)
-            } else if config.lockfile {
-                return Err(InstallError::UnsupportedLockfileMode);
-            } else {
-                // The no-lockfile path has no installability check (no
-                // `packages:` metadata to evaluate constraints against),
-                // so its skip set is empty by construction.
-                let hd = InstallWithoutLockfile {
-                    tarball_mem_cache,
-                    resolved_packages,
-                    http_client,
-                    config,
-                    manifest,
-                    dependency_groups,
-                    logged_methods: &logged_methods,
-                    requester: &prefix,
-                }
-                .run::<R>()
-                .await
-                .map_err(InstallError::WithoutLockfile)?;
-                (hd, crate::SkippedSnapshots::new())
+        // The third tuple element is `hoisted_locations`: the
+        // per-depPath list of lockfile-relative directories the
+        // hoisted linker placed each package at. Empty under the
+        // isolated linker (and under the no-lockfile path); non-
+        // empty only when the frozen-lockfile install runs with
+        // `nodeLinker: hoisted`. Threaded into
+        // `build_modules_manifest` so the field is persisted into
+        // `.modules.yaml.hoisted_locations` for the next install
+        // and for the rebuild path (which throws
+        // `MISSING_HOISTED_LOCATIONS` when this field is gone).
+        let (hoisted_dependencies, hoisted_locations, frozen_skipped): (
+            HoistedDependencies,
+            BTreeMap<String, Vec<String>>,
+            crate::SkippedSnapshots,
+        ) = if frozen_lockfile {
+            let Some(lockfile) = lockfile else {
+                return Err(InstallError::NoLockfile);
             };
+            let Lockfile { lockfile_version, importers, packages, snapshots, .. } = lockfile;
+            assert_eq!(lockfile_version.major, 9); // compatibility check already happens at serde, but this still helps preventing programmer mistakes.
+
+            // Freshness check: verify the on-disk `package.json`
+            // still matches the lockfile's importer entry before we
+            // commit to materializing `node_modules` from it. Mirrors
+            // upstream's `satisfiesPackageManifest` gate at
+            // <https://github.com/pnpm/pnpm/blob/94240bc046/pkg-manager/core/src/install/index.ts#L808-L832>.
+            // Pacquet has only one importer today (#431 tracks
+            // workspaces), so the root project is the only thing to
+            // verify; once workspaces land this becomes a per-project
+            // loop over `importers`.
+            let importer = importers.get(Lockfile::ROOT_IMPORTER_KEY).ok_or_else(|| {
+                InstallError::NoImporter { importer_id: Lockfile::ROOT_IMPORTER_KEY.to_string() }
+            })?;
+            // Outdated-settings gate (umbrella #434 slice 7): check
+            // `ignoredOptionalDependencies` drift between the
+            // lockfile-recorded set and the current config before
+            // the per-importer specifier check. Mirrors upstream's
+            // [`getOutdatedLockfileSetting`](https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/settings-checker/src/getOutdatedLockfileSetting.ts).
+            // Upstream flips `needsFullResolution` and re-runs the
+            // resolver; pacquet has no resolver, so the matching
+            // action is to abort with `OutdatedLockfile`.
+            pacquet_lockfile::check_lockfile_settings(
+                lockfile,
+                config.ignored_optional_dependencies.as_deref(),
+            )
+            .map_err(|reason| InstallError::OutdatedLockfile { reason })?;
+            // Build the `ignoredOptionalDependencies` filter set.
+            // Mirrors upstream's
+            // [`createOptionalDependenciesRemover`](https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts):
+            // the hook iterates `manifest.optionalDependencies`
+            // and deletes matches from BOTH the `optional` and
+            // `dependencies` maps. A name only present in
+            // `dependencies` (not `optionalDependencies`) that
+            // happens to match the pattern is NOT removed —
+            // that's why the predicate is set-based ("name was
+            // in optionalDependencies AND matched") rather than
+            // pure pattern matching. `devDependencies` is
+            // untouched on purpose; the group gate inside
+            // `satisfies_package_manifest` enforces that.
+            let ignored_set: std::collections::HashSet<String> = config
+                .ignored_optional_dependencies
+                .as_deref()
+                .filter(|patterns| !patterns.is_empty())
+                .map(|patterns| {
+                    let matcher = pacquet_config::matcher::create_matcher(patterns);
+                    manifest
+                        .dependencies([pacquet_package_manifest::DependencyGroup::Optional])
+                        .filter(|(name, _)| matcher.matches(name))
+                        .map(|(name, _)| name.to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let is_ignored_optional: &dyn Fn(&str) -> bool =
+                &|name: &str| ignored_set.contains(name);
+            satisfies_package_manifest(
+                importer,
+                manifest,
+                Lockfile::ROOT_IMPORTER_KEY,
+                is_ignored_optional,
+            )
+            .map_err(|reason| InstallError::OutdatedLockfile { reason })?;
+
+            let frozen_result = InstallFrozenLockfile {
+                http_client,
+                config,
+                importers,
+                packages: packages.as_ref(),
+                snapshots: snapshots.as_ref(),
+                lockfile,
+                current_lockfile: current_lockfile.as_ref(),
+                current_snapshots: current_lockfile.as_ref().and_then(|l| l.snapshots.as_ref()),
+                current_packages: current_lockfile.as_ref().and_then(|l| l.packages.as_ref()),
+                dependency_groups,
+                logged_methods: &logged_methods,
+                workspace_root: &workspace_root,
+                requester: &prefix,
+                supported_architectures: supported_architectures.as_ref(),
+                skip_runtimes,
+                node_linker,
+            }
+            .run::<R>()
+            .await
+            .map_err(InstallError::FrozenLockfile)?;
+
+            // Register every importer against the shared store now
+            // that the install has materialized their `node_modules/`.
+            // Mirrors upstream's call into `@pnpm/store.controller`'s
+            // [`registerProject`](https://github.com/pnpm/pnpm/blob/94240bc046/store/controller/src/storeController/projectRegistry.ts),
+            // which runs once per importer — a workspace ends up with
+            // one symlink in `<store_dir>/projects/` per package, so
+            // `pacquet store prune` (tracked separately) can find
+            // every reachable consumer of `<store_dir>/links/...`.
+            //
+            // Gated on `frozen_lockfile && enable_global_virtual_store`:
+            // `InstallWithoutLockfile` keeps the project-local virtual
+            // store via `VirtualStoreLayout::legacy`, and a registry
+            // entry for it would point at a project that never
+            // touches the shared store.
+            //
+            // Best-effort: a registry write failure shouldn't fail
+            // the install. Surface as `tracing::warn!` so the failure
+            // is diagnosable but the install carries on. Validation
+            // of importer keys is done by
+            // [`crate::SymlinkDirectDependencies::run`] before we get
+            // here, so by this point every key is known-safe.
+            if config.enable_global_virtual_store {
+                for importer_id in importers.keys() {
+                    let project_dir = crate::symlink_direct_dependencies::importer_root_dir(
+                        &workspace_root,
+                        importer_id,
+                    );
+                    if let Err(error) =
+                        pacquet_store_dir::register_project(&config.store_dir, &project_dir)
+                    {
+                        tracing::warn!(
+                            target: "pacquet::install",
+                            ?error,
+                            importer_id = %importer_id,
+                            "Failed to register importer in the global-virtual-store registry; install continues",
+                        );
+                    }
+                }
+            }
+
+            (
+                frozen_result.hoisted_dependencies,
+                frozen_result.hoisted_locations,
+                frozen_result.skipped,
+            )
+        } else if config.lockfile {
+            return Err(InstallError::UnsupportedLockfileMode);
+        } else {
+            // The no-lockfile path has no installability check (no
+            // `packages:` metadata to evaluate constraints against),
+            // so its skip set is empty by construction.
+            let hd = InstallWithoutLockfile {
+                tarball_mem_cache,
+                resolved_packages,
+                http_client,
+                config,
+                manifest,
+                dependency_groups,
+                logged_methods: &logged_methods,
+                requester: &prefix,
+            }
+            .run::<R>()
+            .await
+            .map_err(InstallError::WithoutLockfile)?;
+            (hd, BTreeMap::new(), crate::SkippedSnapshots::new())
+        };
 
         tracing::info!(target: "pacquet::install", "Complete all");
 
@@ -446,6 +464,7 @@ where
                 node_linker,
                 included,
                 hoisted_dependencies,
+                hoisted_locations,
                 &frozen_skipped,
             ),
         )
@@ -515,13 +534,25 @@ fn map_node_linker(linker: &NodeLinker) -> ModulesNodeLinker {
 /// `injectedDeps`, `ignoredBuilds`, `allowBuilds`) default to empty
 /// / unset.
 ///
-/// `hoistedDependencies` is produced by the hoist pass in
-/// `InstallFrozenLockfile::run` and threaded in here — empty for the
-/// no-lockfile path and for installs where both hoist patterns are
-/// `None`. Persisting it lets a subsequent install detect a hoist
-/// pattern change and re-hoist appropriately (the partial-install
-/// path tracked at pnpm/pacquet#433 will consume it; today every
-/// install does the full hoist anyway).
+/// `hoistedDependencies` is produced by the isolated-linker hoist
+/// pass in [`crate::InstallFrozenLockfile::run`] and threaded in
+/// here — empty for the no-lockfile path, for installs where both
+/// hoist patterns are `None`, and under `nodeLinker: hoisted` (the
+/// hoisted linker uses `hoisted_locations` instead). Persisting it
+/// lets a subsequent install detect a hoist pattern change and
+/// re-hoist appropriately (the partial-install path tracked at
+/// pnpm/pacquet#433 will consume it; today every install does the
+/// full hoist anyway).
+///
+/// `hoisted_locations` is the per-depPath list of lockfile-relative
+/// directory paths the hoisted linker placed each package at. Empty
+/// for the isolated linker (the field is hoisted-only on disk and
+/// only meaningful when `nodeLinker: hoisted`). Persisted into
+/// [`Modules::hoisted_locations`] when non-empty so the next
+/// install's walker can short-circuit re-fetching packages already
+/// present on disk and the rebuild path can locate every hoisted
+/// directory; absent persistence is what surfaces upstream's
+/// `MISSING_HOISTED_LOCATIONS` error during rebuild.
 ///
 /// `skipped` is the depPath list pnpm writes at
 /// <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/index.ts#L1625>:
@@ -538,11 +569,17 @@ fn build_modules_manifest(
     node_linker: NodeLinker,
     included: IncludedDependencies,
     hoisted_dependencies: HoistedDependencies,
+    hoisted_locations: BTreeMap<String, Vec<String>>,
     skipped: &crate::SkippedSnapshots,
 ) -> Modules {
     Modules {
         hoist_pattern: config.hoist_pattern.clone(),
         hoisted_dependencies,
+        // `Some(empty)` would round-trip on disk as
+        // `hoistedLocations: {}`, which differs from upstream's
+        // unset-when-empty behavior. Drop the field when empty so
+        // an isolated install doesn't produce a hoisted-only key.
+        hoisted_locations: (!hoisted_locations.is_empty()).then_some(hoisted_locations),
         included,
         layout_version: Some(LayoutVersion),
         node_linker: Some(map_node_linker(&node_linker)),
