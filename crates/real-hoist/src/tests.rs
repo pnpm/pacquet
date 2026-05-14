@@ -69,10 +69,8 @@ fn hoist_throws_on_broken_lockfile() {
     };
 
     let err = hoist(&lockfile, &HoistOpts::default()).expect_err("missing snapshot should error");
-    match err {
-        HoistError::LockfileMissingDependency { pkg_key } => assert_eq!(pkg_key, "foo@1.0.0"),
-        other => panic!("expected LockfileMissingDependency, got {other:?}"),
-    }
+    let HoistError::LockfileMissingDependency { pkg_key } = err;
+    assert_eq!(pkg_key, "foo@1.0.0");
 }
 
 /// An empty lockfile (no importers at all) hoists to an empty
@@ -998,11 +996,15 @@ fn basic_cyclic_dependency_terminates() {
     assert!(b.dependencies.borrow().is_empty(), "b's back-edge to a stripped: {b:#?}");
 }
 
-/// A lockfile with importers beyond `.` (a workspace) surfaces
-/// `UnsupportedWorkspace`. Multi-importer hoisting requires
-/// workspace-aware traversal and a different output shape.
+/// A lockfile with importers beyond `.` (a workspace) is now
+/// accepted: each non-root importer becomes a `Workspace`-kind
+/// child of the virtual `.` root. Mirrors upstream's
+/// [`installing/linking/real-hoist/src/index.ts:51-66`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/linking/real-hoist/src/index.ts#L51-L66)
+/// where `hoistWorkspacePackages` (default true) drives the same
+/// transformation. The walker (slice 4) and linker (slice 5) then
+/// fan out per-importer.
 #[test]
-fn multi_importer_lockfile_surfaces_unsupported_workspace() {
+fn multi_importer_lockfile_emits_workspace_children() {
     let mut importers = HashMap::new();
     importers.insert(Lockfile::ROOT_IMPORTER_KEY.to_string(), ProjectSnapshot::default());
     importers.insert("packages/foo".to_string(), ProjectSnapshot::default());
@@ -1018,12 +1020,51 @@ fn multi_importer_lockfile_surfaces_unsupported_workspace() {
         snapshots: None,
     };
 
-    let err = hoist(&lockfile, &HoistOpts::default()).expect_err("workspace should bail");
-    match err {
-        HoistError::UnsupportedWorkspace { mut extra_importers } => {
-            extra_importers.sort();
-            assert_eq!(extra_importers, vec!["packages/bar", "packages/foo"]);
-        }
-        other => panic!("expected UnsupportedWorkspace, got {other:?}"),
-    }
+    let result = hoist(&lockfile, &HoistOpts::default()).expect("workspace hoist succeeds");
+    let mut children: Vec<(String, String)> = result
+        .dependencies
+        .borrow()
+        .iter()
+        .map(|c| {
+            (c.0.name.clone(), c.0.references.borrow().iter().next().cloned().unwrap_or_default())
+        })
+        .collect();
+    children.sort();
+    assert_eq!(
+        children,
+        vec![
+            ("packages%2Fbar".to_string(), "workspace:packages/bar".to_string()),
+            ("packages%2Ffoo".to_string(), "workspace:packages/foo".to_string()),
+        ],
+        "non-root importers are encoded as Workspace children",
+    );
+}
+
+/// `hoist_workspace_packages: false` opts out of including non-root
+/// importers in the shared tree. The hoister output then carries
+/// only the root importer's deps (empty in this fixture). Pacquet
+/// exposes this via [`pacquet_config::Config::hoist_workspace_packages`].
+#[test]
+fn hoist_workspace_packages_false_omits_workspace_children() {
+    let mut importers = HashMap::new();
+    importers.insert(Lockfile::ROOT_IMPORTER_KEY.to_string(), ProjectSnapshot::default());
+    importers.insert("packages/foo".to_string(), ProjectSnapshot::default());
+
+    let lockfile = Lockfile {
+        lockfile_version: lockfile_version(),
+        settings: None,
+        overrides: None,
+        ignored_optional_dependencies: None,
+        importers,
+        packages: None,
+        snapshots: None,
+    };
+
+    let opts = HoistOpts { hoist_workspace_packages: false, ..HoistOpts::default() };
+    let result = hoist(&lockfile, &opts).expect("hoist succeeds");
+    assert!(
+        result.dependencies.borrow().is_empty(),
+        "non-root importers omitted: {:?}",
+        result.dependencies.borrow().iter().map(|c| c.0.name.clone()).collect::<Vec<_>>(),
+    );
 }

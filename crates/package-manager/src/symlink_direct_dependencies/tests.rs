@@ -87,6 +87,7 @@ fn emits_pnpm_root_added_per_direct_dependency() {
         dependency_groups: [DependencyGroup::Prod, DependencyGroup::Dev],
         workspace_root: &project_root,
         skipped: &SkippedSnapshots::default(),
+        link_only: false,
     }
     .run::<RecordingReporter>()
     .expect("symlink should succeed");
@@ -207,6 +208,7 @@ fn duplicate_dep_across_groups_collapses_to_one_entry() {
         dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
         workspace_root: &project_root,
         skipped: &SkippedSnapshots::default(),
+        link_only: false,
     }
     .run::<RecordingReporter>()
     .expect("symlink should succeed");
@@ -286,6 +288,7 @@ fn cross_importer_link_dep_symlinks_to_sibling_rootdir() {
         dependency_groups: [DependencyGroup::Prod],
         workspace_root: &workspace_root,
         skipped: &SkippedSnapshots::default(),
+        link_only: false,
     }
     .run::<RecordingReporter>()
     .expect("symlink should succeed");
@@ -347,6 +350,7 @@ fn empty_importers_is_a_no_op() {
         dependency_groups: [DependencyGroup::Prod],
         workspace_root: &project_root,
         skipped: &SkippedSnapshots::default(),
+        link_only: false,
     }
     .run::<SilentReporter>();
 
@@ -422,6 +426,7 @@ fn per_importer_prefix_in_pnpm_root_events() {
         dependency_groups: [DependencyGroup::Prod],
         workspace_root: &workspace_root,
         skipped: &SkippedSnapshots::default(),
+        link_only: false,
     }
     .run::<RecordingReporter>()
     .unwrap();
@@ -486,6 +491,7 @@ fn unsafe_importer_keys_error_before_filesystem_writes() {
             dependency_groups: [DependencyGroup::Prod],
             workspace_root: &workspace_root,
             skipped: &SkippedSnapshots::default(),
+            link_only: false,
         }
         .run::<SilentReporter>();
 
@@ -560,6 +566,7 @@ fn custom_modules_dir_propagates_to_each_importer() {
         dependency_groups: [DependencyGroup::Prod],
         workspace_root: &workspace_root,
         skipped: &SkippedSnapshots::default(),
+        link_only: false,
     }
     .run::<SilentReporter>()
     .expect("symlink should succeed");

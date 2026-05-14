@@ -347,6 +347,22 @@ pub struct Config {
     #[default = true]
     pub auto_install_peers: bool,
 
+    /// Under `nodeLinker: hoisted`, controls whether non-root
+    /// workspace importers are added as children of the virtual
+    /// `.` root in the hoist tree. Default `true` matches pnpm —
+    /// the whole workspace shares one hoist plan so conflicting
+    /// versions across projects dedupe.
+    ///
+    /// Setting this to `false` opts each project into independent
+    /// hoisting (its own subtree, no cross-project dedupe). Niche;
+    /// pnpm exposes this knob for the Bit CLI (which lays out its
+    /// own root) and for tests. Mirrors upstream's
+    /// [`hoistWorkspacePackages`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/linking/real-hoist/src/index.ts#L51-L66).
+    /// No effect under `nodeLinker: isolated` — that linker keeps
+    /// per-importer subtrees by construction.
+    #[default = true]
+    pub hoist_workspace_packages: bool,
+
     /// When this setting is set to true, packages with peer dependencies will be deduplicated after peers resolution.
     #[default = true]
     pub dedupe_peer_dependents: bool,
