@@ -647,6 +647,7 @@ impl<'a> CreateVirtualStore<'a> {
                         package_id: &package_id,
                         package_key: snapshot_key,
                         snapshot,
+                        skipped,
                     }
                     .run::<R>()
                     .map_err(|e| {
@@ -725,6 +726,7 @@ impl<'a> CreateVirtualStore<'a> {
                         metadata,
                         snapshot,
                         allow_build_policy,
+                        skipped,
                         node_linker,
                     }
                     .run::<R>()

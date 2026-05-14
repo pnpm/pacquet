@@ -68,6 +68,13 @@ pub struct InstallPackageBySnapshot<'a> {
     /// [`crate::InstallFrozenLockfile::run`] and threaded through
     /// [`crate::CreateVirtualStore`].
     pub allow_build_policy: &'a AllowBuildPolicy,
+    /// Snapshots whose slots were not materialized on this host —
+    /// threaded into [`CreateVirtualDirBySnapshot`] so the per-slot
+    /// `create_symlink_layout` step can skip optional siblings whose
+    /// target slot is absent (platform mismatch, `--no-optional`
+    /// exclusion, or swallowed optional fetch failure). See
+    /// [`crate::SkippedSnapshots`] for how it is built.
+    pub skipped: &'a crate::SkippedSnapshots,
     /// Selects between the isolated and hoisted install layouts.
     /// `Isolated` runs [`CreateVirtualDirBySnapshot`] at the end of
     /// the per-snapshot fetch to populate the virtual-store slot;
@@ -200,6 +207,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             metadata,
             snapshot,
             allow_build_policy,
+            skipped,
             node_linker,
         } = self;
 
@@ -434,6 +442,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
                 package_id: &package_id,
                 package_key,
                 snapshot,
+                skipped,
             }
             .run::<R>()
             .map_err(InstallPackageBySnapshotError::CreateVirtualDir)?;

@@ -1,6 +1,6 @@
 use crate::{
-    ImportIndexedDirError, ImportIndexedDirOpts, SymlinkPackageError, VirtualStoreLayout,
-    create_symlink_layout, import_indexed_dir,
+    ImportIndexedDirError, ImportIndexedDirOpts, SkippedSnapshots, SymlinkPackageError,
+    VirtualStoreLayout, create_symlink_layout, import_indexed_dir,
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
@@ -47,6 +47,14 @@ pub struct CreateVirtualDirBySnapshot<'a> {
     pub package_id: &'a str,
     pub package_key: &'a PackageKey,
     pub snapshot: &'a SnapshotEntry,
+    /// Snapshots whose slots were not materialized on this host —
+    /// platform-mismatched optionals, `--no-optional` exclusions, and
+    /// swallowed optional fetch failures. `create_symlink_layout`
+    /// uses this to skip dangling symlinks to absent slots. Mirrors
+    /// upstream's `!pkg.installable && pkg.optional` short-circuit in
+    /// `linkAllModules` at
+    /// <https://github.com/pnpm/pnpm/blob/f2981a316/installing/deps-installer/src/install/link.ts#L540>.
+    pub skipped: &'a SkippedSnapshots,
 }
 
 /// Error type of [`CreateVirtualDirBySnapshot`].
@@ -79,6 +87,7 @@ impl<'a> CreateVirtualDirBySnapshot<'a> {
             package_id: _package_id,
             package_key,
             snapshot,
+            skipped,
         } = self;
 
         let virtual_node_modules_dir = layout.slot_dir(package_key).join("node_modules");
@@ -109,12 +118,16 @@ impl<'a> CreateVirtualDirBySnapshot<'a> {
                 )
                 .map_err(CreateVirtualDirError::ImportIndexedDir)
             },
-            || match snapshot.dependencies.as_ref() {
-                Some(dependencies) => {
-                    create_symlink_layout(dependencies, layout, &virtual_node_modules_dir)
-                        .map_err(CreateVirtualDirError::SymlinkPackage)
-                }
-                None => Ok(()),
+            || {
+                create_symlink_layout(
+                    snapshot.dependencies.as_ref(),
+                    snapshot.optional_dependencies.as_ref(),
+                    &package_key.name,
+                    skipped,
+                    layout,
+                    &virtual_node_modules_dir,
+                )
+                .map_err(CreateVirtualDirError::SymlinkPackage)
             },
         );
         cas_result?;
