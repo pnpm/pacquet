@@ -16,6 +16,7 @@ mod save_lockfile;
 mod serialize_yaml;
 mod snapshot_dep_ref;
 mod snapshot_entry;
+mod yaml_documents;
 
 pub use comver::*;
 pub use freshness::*;
@@ -34,6 +35,7 @@ pub use resolved_dependency::*;
 pub use save_lockfile::*;
 pub use snapshot_dep_ref::*;
 pub use snapshot_entry::*;
+pub use yaml_documents::*;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

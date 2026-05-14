@@ -1,4 +1,4 @@
-use crate::Lockfile;
+use crate::{Lockfile, extract_main_document};
 use derive_more::{Display, Error};
 use pacquet_diagnostics::miette::{self, Diagnostic};
 use pipe_trait::Pipe;
@@ -59,6 +59,18 @@ impl Lockfile {
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
             Err(error) => return error.pipe(LoadLockfileError::ReadFile).pipe(Err),
         };
-        content.pipe_as_ref(serde_saphyr::from_str).map_err(LoadLockfileError::ParseYaml)
+        // Skip the env lockfile document if present (first document in
+        // pnpm v11's combined format). Mirrors upstream `_read` at
+        // <https://github.com/pnpm/pnpm/blob/31858c544b/lockfile/fs/src/read.ts#L103-L110>:
+        // an empty main document (env-only file) is treated as if the
+        // lockfile is absent.
+        let main = extract_main_document(&content);
+        if main.trim().is_empty() {
+            return Ok(None);
+        }
+        serde_saphyr::from_str(main).map(Some).map_err(LoadLockfileError::ParseYaml)
     }
 }
+
+#[cfg(test)]
+mod tests;
