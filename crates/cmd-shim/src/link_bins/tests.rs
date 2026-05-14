@@ -1,8 +1,8 @@
 use super::{LinkBinsError, PackageBinSource, link_bins, link_bins_of_packages};
 use crate::{
     capabilities::{
-        FsCreateDirAll, FsEnsureExecutableBits, FsReadDir, FsReadFile, FsReadHead, FsReadString,
-        FsSetExecutable, FsWalkFiles, FsWrite, RealApi,
+        FsCreateDirAll, FsEnsureExecutableBits, FsReadDir, FsReadFile, FsReadHead, FsReadToString,
+        FsSetExecutable, FsWalkFiles, FsWrite, Host,
     },
     shim::is_shim_pointing_at,
 };
@@ -37,7 +37,7 @@ fn writes_all_three_shim_flavors_per_bin() {
     let bins_dir = tmp.path().join("node_modules/.bin");
     let manifest_value: Value =
         serde_json::from_slice(&read_file(pkg_dir.join("package.json")).unwrap()).unwrap();
-    link_bins_of_packages::<RealApi>(
+    link_bins_of_packages::<Host>(
         &[PackageBinSource { location: pkg_dir.clone(), manifest: Arc::new(manifest_value) }],
         &bins_dir,
     )
@@ -77,7 +77,7 @@ fn writes_shim_for_bin_string() {
     let bins_dir = tmp.path().join("node_modules/.bin");
     let manifest_value: Value =
         serde_json::from_slice(&read_file(pkg_dir.join("package.json")).unwrap()).unwrap();
-    link_bins_of_packages::<RealApi>(
+    link_bins_of_packages::<Host>(
         &[PackageBinSource { location: pkg_dir.clone(), manifest: Arc::new(manifest_value) }],
         &bins_dir,
     )
@@ -105,7 +105,7 @@ fn writes_shim_for_bin_string() {
     }
 }
 
-/// [`link_bins::<RealApi>`](link_bins) walks every package and its scoped
+/// [`link_bins::<Host>`](link_bins) walks every package and its scoped
 /// children. Both regular and `@scope/...` packages must contribute their
 /// bins.
 #[test]
@@ -129,7 +129,7 @@ fn link_bins_walks_modules_and_scopes() {
     create_dir_all(modules.join("not-a-package")).unwrap();
 
     let bins = modules.join(".bin");
-    link_bins::<RealApi>(&modules, &bins).unwrap();
+    link_bins::<Host>(&modules, &bins).unwrap();
 
     assert!(bins.join("foo").exists(), "foo shim must exist");
     assert!(bins.join("bar").exists(), "scoped @s/bar shim must use bare name `bar`");
@@ -142,8 +142,7 @@ fn link_bins_walks_modules_and_scopes() {
 fn link_bins_handles_missing_modules_dir() {
     let tmp = tempdir().unwrap();
     let bins_dir = tmp.path().join(".bin");
-    link_bins::<RealApi>(&tmp.path().join("missing"), &bins_dir)
-        .expect("missing modules dir is Ok");
+    link_bins::<Host>(&tmp.path().join("missing"), &bins_dir).expect("missing modules dir is Ok");
     assert!(!bins_dir.exists(), "no shims means no bin dir created");
 }
 
@@ -159,7 +158,7 @@ fn link_bins_of_packages_no_op_when_no_bins() {
     let bins = tmp.path().join(".bin");
     let manifest: Value =
         serde_json::from_slice(&read_file(pkg.join("package.json")).unwrap()).unwrap();
-    link_bins_of_packages::<RealApi>(
+    link_bins_of_packages::<Host>(
         &[PackageBinSource { location: pkg, manifest: Arc::new(manifest) }],
         &bins,
     )
@@ -198,7 +197,7 @@ fn lexical_compare_breaks_tie_when_neither_owns() {
     let bins = tmp.path().join(".bin");
     // Order beta-then-alpha to verify the choice doesn't depend on
     // discovery order.
-    link_bins_of_packages::<RealApi>(
+    link_bins_of_packages::<Host>(
         &[
             PackageBinSource { location: beta.clone(), manifest: Arc::new(manifest_beta) },
             PackageBinSource { location: alpha.clone(), manifest: Arc::new(manifest_alpha) },
@@ -224,7 +223,7 @@ fn link_bins_propagates_parse_manifest_error() {
     write_file(modules.join("broken/package.json"), "{ this is not json").unwrap();
 
     let bins = modules.join(".bin");
-    let err = link_bins::<RealApi>(&modules, &bins).expect_err("invalid manifest must surface");
+    let err = link_bins::<Host>(&modules, &bins).expect_err("invalid manifest must surface");
     assert!(
         matches!(err, LinkBinsError::ParseManifest { .. }),
         "expected ParseManifest, got {err:?}",
@@ -246,14 +245,14 @@ fn link_bins_skips_existing_shim_with_matching_marker() {
     write_file(modules.join("foo/f.js"), "#!/usr/bin/env node\n").unwrap();
 
     let bins = modules.join(".bin");
-    link_bins::<RealApi>(&modules, &bins).unwrap();
+    link_bins::<Host>(&modules, &bins).unwrap();
     let original = read_to_string(bins.join("foo")).unwrap();
     // Append a sentinel. If the second pass rewrites the shim, the
     // sentinel disappears.
     let sentinel = format!("{original}\n# SENTINEL");
     write_file(bins.join("foo"), &sentinel).unwrap();
 
-    link_bins::<RealApi>(&modules, &bins).unwrap();
+    link_bins::<Host>(&modules, &bins).unwrap();
     assert_eq!(read_to_string(bins.join("foo")).unwrap(), sentinel);
 }
 
@@ -273,7 +272,7 @@ fn link_bins_rewrites_when_only_sh_flavor_exists() {
     write_file(modules.join("foo/f.js"), "#!/usr/bin/env node\n").unwrap();
 
     let bins = modules.join(".bin");
-    link_bins::<RealApi>(&modules, &bins).unwrap();
+    link_bins::<Host>(&modules, &bins).unwrap();
 
     // Simulate the partial-write / older-pacquet state: delete the
     // .cmd and .ps1 siblings, leaving only the `.sh` shim with its
@@ -281,7 +280,7 @@ fn link_bins_rewrites_when_only_sh_flavor_exists() {
     remove_file(bins.join("foo.cmd")).unwrap();
     remove_file(bins.join("foo.ps1")).unwrap();
 
-    link_bins::<RealApi>(&modules, &bins).unwrap();
+    link_bins::<Host>(&modules, &bins).unwrap();
 
     assert!(bins.join("foo").exists(), ".sh shim must remain");
     assert!(bins.join("foo.cmd").exists(), ".cmd sibling must be re-created on second pass");
@@ -289,7 +288,7 @@ fn link_bins_rewrites_when_only_sh_flavor_exists() {
 }
 
 /// [`link_bins_of_packages`] propagates a non-`NotFound` `read_dir`
-/// error from the calling context. Use a fake `Api` that fails the
+/// error from the calling context. Use a fake `Sys` that fails the
 /// initial `create_dir_all` to cover the [`LinkBinsError::CreateBinDir`]
 /// error variant that real fs can't trigger portably.
 #[test]
@@ -307,7 +306,7 @@ fn link_bins_propagates_create_bin_dir_error_via_di() {
             unreachable!("not called when chosen is empty")
         }
     }
-    impl FsReadString for FailingCreateDir {
+    impl FsReadToString for FailingCreateDir {
         fn read_to_string(_: &Path) -> io::Result<String> {
             unreachable!()
         }
@@ -376,7 +375,7 @@ fn link_bins_propagates_write_shim_error_via_di() {
             unreachable!()
         }
     }
-    impl FsReadString for FailingWrite {
+    impl FsReadToString for FailingWrite {
         fn read_to_string(_: &Path) -> io::Result<String> {
             // Pretend no existing shim, forcing the writer path.
             Err(io::Error::from(io::ErrorKind::NotFound))
@@ -445,7 +444,7 @@ fn link_bins_propagates_chmod_error_via_di() {
             unreachable!()
         }
     }
-    impl FsReadString for FailingChmod {
+    impl FsReadToString for FailingChmod {
         fn read_to_string(_: &Path) -> io::Result<String> {
             Err(io::Error::from(io::ErrorKind::NotFound))
         }
@@ -517,7 +516,7 @@ fn link_bins_propagates_target_chmod_error_via_di() {
             unreachable!()
         }
     }
-    impl FsReadString for FailingTargetChmod {
+    impl FsReadToString for FailingTargetChmod {
         fn read_to_string(_: &Path) -> io::Result<String> {
             Err(io::Error::from(io::ErrorKind::NotFound))
         }
@@ -591,7 +590,7 @@ fn link_bins_swallows_target_chmod_not_found_via_di() {
             unreachable!()
         }
     }
-    impl FsReadString for NotFoundTargetChmod {
+    impl FsReadToString for NotFoundTargetChmod {
         fn read_to_string(_: &Path) -> io::Result<String> {
             Err(io::Error::from(io::ErrorKind::NotFound))
         }
@@ -661,7 +660,7 @@ fn link_bins_propagates_probe_shim_source_error_via_di() {
             unreachable!()
         }
     }
-    impl FsReadString for FailingProbe {
+    impl FsReadToString for FailingProbe {
         fn read_to_string(_: &Path) -> io::Result<String> {
             unreachable!()
         }
@@ -730,7 +729,7 @@ fn link_bins_propagates_read_manifest_error_via_di() {
             Err(io::Error::from(io::ErrorKind::PermissionDenied))
         }
     }
-    impl FsReadString for DenyManifestRead {
+    impl FsReadToString for DenyManifestRead {
         fn read_to_string(_: &Path) -> io::Result<String> {
             unreachable!()
         }
@@ -807,7 +806,7 @@ fn ownership_breaks_bin_conflicts_when_existing_owns() {
     // Order npm-first; this exercises the (true, false) arm because
     // `npm` (existing) owns and `aaa-other` (candidate) doesn't.
     let bins = tmp.path().join(".bin");
-    link_bins_of_packages::<RealApi>(
+    link_bins_of_packages::<Host>(
         &[
             PackageBinSource { location: npm.clone(), manifest: Arc::new(manifest_npm) },
             PackageBinSource { location: aaa_other.clone(), manifest: Arc::new(manifest_other) },
@@ -838,7 +837,7 @@ fn link_bins_propagates_modules_dir_read_error_via_di() {
             unreachable!()
         }
     }
-    impl FsReadString for FailingModulesRead {
+    impl FsReadToString for FailingModulesRead {
         fn read_to_string(_: &Path) -> io::Result<String> {
             unreachable!()
         }
@@ -913,7 +912,7 @@ fn ownership_breaks_bin_conflicts() {
         serde_json::from_slice(&read_file(aaa_other.join("package.json")).unwrap()).unwrap();
 
     let bins = tmp.path().join(".bin");
-    link_bins_of_packages::<RealApi>(
+    link_bins_of_packages::<Host>(
         &[
             PackageBinSource { location: aaa_other.clone(), manifest: Arc::new(manifest_other) },
             PackageBinSource { location: npm.clone(), manifest: Arc::new(manifest_npm) },

@@ -21,7 +21,7 @@
 //!   pnpm's behaviour even though plain shell `${VAR:-default}` would
 //!   also use the default for the empty case.
 //!
-//! Production callers thread `RealApi` (which delegates to
+//! Production callers thread `Host` (which delegates to
 //! `std::env::var`) through the turbofish slot. Tests provide their
 //! own per-test unit struct, per the DI pattern from
 //! [pnpm/pacquet#339](https://github.com/pnpm/pacquet/issues/339).
@@ -51,12 +51,12 @@ impl fmt::Display for EnvReplaceError {
 impl std::error::Error for EnvReplaceError {}
 
 /// Replace every `${VAR}` (or `${VAR:-default}`) placeholder in `text`
-/// with the value [`Api::var`] returns. Returns an error on the first
+/// with the value [`Sys::var`] returns. Returns an error on the first
 /// unresolvable placeholder so the caller can warn and skip the line,
 /// matching pnpm's `substituteEnv`.
 ///
-/// [`Api::var`]: EnvVar::var
-pub(crate) fn env_replace<Api: EnvVar>(text: &str) -> Result<String, EnvReplaceError> {
+/// [`Sys::var`]: EnvVar::var
+pub(crate) fn env_replace<Sys: EnvVar>(text: &str) -> Result<String, EnvReplaceError> {
     let bytes = text.as_bytes();
     let mut output = String::with_capacity(text.len());
     let mut index = 0;
@@ -103,7 +103,7 @@ pub(crate) fn env_replace<Api: EnvVar>(text: &str) -> Result<String, EnvReplaceE
                 Some(separator) => (&inside[..separator], Some(&inside[separator + 2..])),
                 None => (inside, None),
             };
-            let value = Api::var(var_name).filter(|value| !value.is_empty());
+            let value = Sys::var(var_name).filter(|value| !value.is_empty());
             match (value, default) {
                 (Some(value), _) => output.push_str(&value),
                 (None, Some(default)) => output.push_str(default),

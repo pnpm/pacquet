@@ -48,6 +48,13 @@ Before writing code for a feature, bug fix, or behavior change:
    [Reporter / log events](./CODE_STYLE_GUIDE.md#reporter--log-events)
    in the style guide for the convention (channel mapping, threading
    `R: Reporter`, emit-site placement, recording-fake tests).
+7. **Side-effecting code uses the dependency-injection seam.** Any
+   new code that touches the filesystem, environment variables,
+   network, time, or process state goes through a capability trait
+   on the `Host` provider, threaded as `Sys: <Bounds>` through the
+   call site. See [Dependency injection for tests](./CODE_STYLE_GUIDE.md#dependency-injection-for-tests)
+   in the style guide for the eight principles, the worked example,
+   and the guidance on when a real fixture is simpler than a fake.
 
 If the upstream behavior is unclear or looks wrong, stop and ask the user
 rather than guessing.
