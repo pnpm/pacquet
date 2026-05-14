@@ -98,6 +98,38 @@ pub struct InstallArgs {
     /// `node_modules/` layout, `pnp` selects Plug'n'Play.
     #[clap(long = "node-linker", value_enum)]
     pub node_linker: Option<NodeLinkerArg>,
+
+    /// Refuse network tarball / zip-archive fetches on a cache miss.
+    /// When the warm prefetch and the `index.db` lookup both miss
+    /// for a package, pacquet fails with
+    /// `ERR_PACQUET_NO_OFFLINE_TARBALL` rather than hitting the
+    /// registry. Mirrors pnpm's
+    /// [`--offline`](https://github.com/pnpm/pnpm/blob/94240bc046/resolving/npm-resolver/src/pickPackage.ts)
+    /// in spirit; upstream's flag gates the metadata-fetch path
+    /// (`ERR_PNPM_NO_OFFLINE_META`), which pacquet doesn't have on
+    /// the frozen-install flow (the lockfile pins every
+    /// resolution), so this flag is currently scoped to artifact
+    /// fetches. Stage 2's resolver will extend the gate to the
+    /// metadata path, matching upstream byte-for-byte.
+    ///
+    /// Overrides `offline` from `pnpm-workspace.yaml`: any
+    /// `--offline` upgrades a yaml `false` to `true`, but cannot
+    /// turn an explicit yaml `true` back off.
+    #[clap(long)]
+    pub offline: bool,
+
+    /// Prefer cached artifacts over network fetches when both have
+    /// what's needed. Mirrors pnpm's
+    /// [`--prefer-offline`](https://github.com/pnpm/pnpm/blob/94240bc046/resolving/npm-resolver/src/pickPackage.ts)
+    /// in spirit; upstream's flag biases the metadata resolver to
+    /// the cached copy past the freshness window. Pacquet's
+    /// frozen-install path already prefers the local store via the
+    /// warm prefetch + `index.db` lookups, so the flag is a no-op
+    /// for artifact fetches today. Field exists so yaml / CLI parse
+    /// cleanly; Stage 2's resolver will honor it on the metadata
+    /// path the way upstream does.
+    #[clap(long)]
+    pub prefer_offline: bool,
 }
 
 impl InstallArgs {
@@ -110,6 +142,8 @@ impl InstallArgs {
             frozen_lockfile,
             no_runtime,
             node_linker,
+            offline: _,
+            prefer_offline: _,
         } = self;
 
         // Merge CLI overrides with the yaml-derived value before
