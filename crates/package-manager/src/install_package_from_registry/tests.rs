@@ -38,6 +38,8 @@ fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path)
         registry: "https://registry.npmjs.com/".to_string(),
         auto_install_peers: false,
         hoist_workspace_packages: true,
+        hoisting_limits: Default::default(),
+        external_dependencies: Default::default(),
         dedupe_peer_dependents: false,
         strict_peer_dependencies: false,
         resolve_peers_from_workspace_root: false,
