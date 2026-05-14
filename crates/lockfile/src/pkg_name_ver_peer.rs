@@ -22,14 +22,18 @@ impl PkgNameVerPeer {
     ///
     /// This converts a v9 snapshot key (e.g. `react-dom@17.0.2(react@17.0.2)`)
     /// into the corresponding `packages:` key (e.g. `react-dom@17.0.2`), which
-    /// identifies the package version independent of peer context.
+    /// identifies the package version independent of peer context. The
+    /// scheme prefix (e.g. `runtime:` for pnpm v11 runtime entries) is
+    /// preserved so a runtime snapshot key like
+    /// `node@runtime:22.0.0(some@peer)` resolves to the matching
+    /// `packages:` entry `node@runtime:22.0.0` rather than the
+    /// non-existent `node@22.0.0`.
     pub fn without_peer(&self) -> PkgNameVerPeer {
-        let bare = self
-            .suffix
-            .version()
-            .to_string()
+        let prefix = self.suffix.prefix();
+        let bare_input = format!("{}{}", prefix, self.suffix.version());
+        let bare = bare_input
             .parse::<PkgVerPeer>()
-            .expect("a bare semver version is always a valid PkgVerPeer");
+            .expect("a prefix + bare semver version is always a valid PkgVerPeer");
         PkgNameVerPeer::new(self.name.clone(), bare)
     }
 }
