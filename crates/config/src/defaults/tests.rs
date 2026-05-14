@@ -2,8 +2,8 @@ use super::{
     default_child_concurrency_with_parallelism, default_store_dir, default_unsafe_perm,
     is_unsafe_perm_posix, resolve_child_concurrency, resolve_child_concurrency_with_parallelism,
 };
-use crate::test_env_guard::EnvGuard;
 use pacquet_store_dir::StoreDir;
+use pacquet_testing_utils::env_guard::EnvGuard;
 use pretty_assertions::assert_eq;
 use std::env;
 

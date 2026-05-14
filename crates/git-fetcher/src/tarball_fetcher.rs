@@ -13,22 +13,23 @@
 //!
 //! Differences from upstream worth flagging:
 //!
-//! - **No "raw" vs "built" two-slot CAS today.** Upstream stores the
-//!   raw download at `${filesIndexFile}\traw` and the prepared output
-//!   at `filesIndexFile`, and on the fast path promotes the raw entry
-//!   to the final key in place. Pacquet currently doesn't expose the
-//!   "filesIndexFile" hook at this layer (the install dispatcher
-//!   feeds the result straight into `CreateVirtualDirBySnapshot`), so
-//!   we always re-import. Hash-deduplication means duplicate work but
-//!   not duplicate storage; the optimization is a follow-up
-//!   alongside warm-prefetch for git-hosted slots.
+//! - **No two-slot store-index row.** Upstream writes a `\traw` row
+//!   from the tarball download and copies it to the prepared key on
+//!   the fast path. Pacquet's tarball download path doesn't write a
+//!   raw row at this key, so on the fast path we synthesize the
+//!   prepared row directly from the input `cas_paths` (no fs::read,
+//!   no re-hash). When fast-path triggers and `should_be_built` is
+//!   false, the synthesized row lands at the final key — matches the
+//!   shape upstream's "copy raw→prepared" produces. The skipped
+//!   re-import is the perf win; the orphan raw row (if pacquet-tarball
+//!   ever starts writing one) is a separate cleanup follow-up.
 //! - **`globalWarn` becomes `tracing::warn!`.** When `ignore_scripts`
 //!   suppresses a needed build, both upstream and pacquet log a
 //!   warning — we route through `tracing` since pacquet's reporter
 //!   model doesn't have a `globalWarn` equivalent.
 
 use crate::{
-    cas_io::{ImportedFiles, import_into_cas, materialize_into},
+    cas_io::{ImportedFiles, import_into_cas, materialize_into, synthesize_files_index},
     error::GitFetcherError,
     fetcher::GitFetchOutput,
     packlist::packlist,
@@ -151,12 +152,56 @@ impl<'a> GitHostedTarballFetcher<'a> {
             .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
         let files = packlist(&pkg_dir, &manifest).map_err(GitFetcherError::Packlist)?;
 
-        // Step 4: Re-import the filtered file set back into CAS and
-        // hand the resulting map to the install dispatcher.
+        // Step 4: Fast path — when nothing got filtered out AND
+        // prepare didn't mutate the tree (no build needed, or scripts
+        // ignored), the materialized files are byte-identical to the
+        // CAS source. Re-hashing every entry through `import_into_cas`
+        // would land them at the same CAS paths via hash-dedup, so the
+        // work is wasted. Mirrors upstream's [`gitHostedTarballFetcher.ts:88-100`](https://github.com/pnpm/pnpm/blob/94240bc046/fetching/tarball-fetcher/src/gitHostedTarballFetcher.ts#L88-L100).
+        //
+        // `path.is_none()` is required because a sub-path means
+        // `cas_paths` covers the whole monorepo while `files` covers
+        // only the sub-package — the count match is a coincidence
+        // there, not equivalence.
+        let fast_path_eligible = self.path.is_none() && files.len() == self.cas_paths.len();
+        if fast_path_eligible && !should_be_built {
+            // Upstream copies the raw row to the final key here. We
+            // synthesize it from `cas_paths` instead: pacquet's tarball
+            // download doesn't write a `\traw` row at the same key, so
+            // there's nothing to copy — but the CAS files themselves
+            // are already in place, which is what `cas_paths` points at.
+            if let Some(writer) = self.store_index_writer {
+                let files_index = synthesize_files_index(&self.cas_paths)?;
+                writer.queue(
+                    self.files_index_file.to_string(),
+                    PackageFilesIndex {
+                        manifest: None,
+                        requires_build: Some(false),
+                        algo: "sha512".to_string(),
+                        files: files_index,
+                        side_effects: None,
+                    },
+                );
+            }
+            return Ok(GitFetchOutput { cas_paths: self.cas_paths, built: false });
+        }
+        if fast_path_eligible && self.ignore_scripts {
+            // `should_be_built && ignore_scripts`: prepare skipped the
+            // scripts (warning already logged above), so the
+            // materialized tree is still byte-identical to the source.
+            // Upstream returns the raw filesMap *without* writing a
+            // final-key row, so subsequent installs re-check the build
+            // gate. Matching that behavior keeps `--ignore-scripts`
+            // installs idempotent.
+            return Ok(GitFetchOutput { cas_paths: self.cas_paths, built: should_be_built });
+        }
+
+        // Step 5: Slow path — re-import the filtered file set back
+        // into CAS and hand the resulting map to the install dispatcher.
         let ImportedFiles { cas_paths, files_index } =
             import_into_cas(self.store_dir, &pkg_dir, &files)?;
 
-        // Step 5: Queue a `PackageFilesIndex` row so a future install's
+        // Step 6: Queue a `PackageFilesIndex` row so a future install's
         // warm prefetch skips the materialize+prepare+packlist+re-import
         // pass entirely. Upstream writes the final row at
         // `gitHostedStoreIndexKey(pkgId, { built: shouldBeBuilt })` in

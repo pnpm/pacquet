@@ -3,8 +3,6 @@ mod defaults;
 mod env_replace;
 pub mod matcher;
 mod npmrc_auth;
-#[cfg(test)]
-mod test_env_guard;
 mod workspace_yaml;
 
 pub use crate::api::{EnvVar, Host};
@@ -31,7 +29,7 @@ pub use workspace_yaml::{
     LoadWorkspaceYamlError, WORKSPACE_MANIFEST_FILENAME, WorkspaceSettings, workspace_root_or,
 };
 
-#[derive(Debug, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum NodeLinker {
     /// dependencies are symlinked from a virtual store at node_modules/.pnpm.
@@ -209,13 +207,16 @@ pub struct Config {
     /// the machine: packages live under `<store_dir>/links/...` and each
     /// project registers itself at `<store_dir>/projects/<short-hash>`.
     /// When `false`, each project keeps its own virtual store at
-    /// `<project>/node_modules/.pnpm`. Default `true`, mirroring upstream's
-    /// [`config/reader/src/index.ts:392-394`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L392-L394).
+    /// `<project>/node_modules/.pnpm`.
     ///
-    /// CI auto-detect ([`config/reader/src/index.ts:543-548`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L543-L548))
-    /// is intentionally not ported here yet — it requires a CI-detection
-    /// helper pacquet doesn't have. Tracked as a follow-up of
-    /// pnpm/pacquet#432.
+    /// Default `false` — matches pnpm v11's effective default for
+    /// non-`--global` installs. The `true` assignment at
+    /// [`config/reader/src/index.ts:392-394`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L392-L394)
+    /// applies only inside upstream's `if (cliOptions['global'])`
+    /// block (see `default_enable_global_virtual_store` in
+    /// `crates/config/src/defaults.rs` for the full reasoning).
+    /// Pacquet has no `--global` flow, so the only applicable
+    /// upstream default is `false`.
     #[default(_code = "default_enable_global_virtual_store()")]
     pub enable_global_virtual_store: bool,
 
@@ -258,12 +259,89 @@ pub struct Config {
     #[default = true]
     pub prefer_frozen_lockfile: bool,
 
+    /// When `true`, runtime dependencies (`node@runtime:`,
+    /// `deno@runtime:`, `bun@runtime:`) are skipped at install
+    /// time — their archives aren't fetched, their slots aren't
+    /// materialized, and their bins aren't linked. The rest of
+    /// the install proceeds normally. Mirrors pnpm's
+    /// [`skipRuntimes`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/index.ts)
+    /// option, exposed via the `--no-runtime` CLI flag.
+    ///
+    /// Defaults to `false`, matching upstream. CI scenarios that
+    /// pre-provision the runtime (or want to install one runtime
+    /// with another pacquet binary) flip this to `true`.
+    pub skip_runtimes: bool,
+
+    /// Refuse network requests during install. Mirrors pnpm's
+    /// [`offline`](https://github.com/pnpm/pnpm/blob/94240bc046/resolving/npm-resolver/src/pickPackage.ts)
+    /// flag — upstream gates the metadata-fetch path with
+    /// `ERR_PNPM_NO_OFFLINE_META` when no cached metadata exists for a
+    /// spec. Pacquet doesn't have a metadata-fetch path yet (no
+    /// resolver until Stage 2), so the same flag instead gates
+    /// pacquet's tarball-fetch fall-through: when both the warm
+    /// prefetch and the SQLite `index.db` lookup miss, the tarball
+    /// fetcher fails fast with `ERR_PACQUET_NO_OFFLINE_TARBALL`
+    /// rather than hitting the registry. The frozen-lockfile install
+    /// path needs no metadata, so the surface area collapses to
+    /// "every snapshot must already be in the local store".
+    ///
+    /// Pacquet's tarball-side gate has no exact upstream counterpart
+    /// (pnpm doesn't gate the tarball fetcher on `offline`), but it's
+    /// the most useful interpretation of the flag for a frozen
+    /// installer: surface a clear `offline` error rather than letting
+    /// the underlying `connection refused` / DNS error propagate.
+    /// The Stage 2 resolver will additionally honor the flag on the
+    /// metadata path.
+    pub offline: bool,
+
+    /// Prefer the local store on read, fall back to the network on a
+    /// cache miss. Mirrors pnpm's
+    /// [`preferOffline`](https://github.com/pnpm/pnpm/blob/94240bc046/resolving/npm-resolver/src/pickPackage.ts)
+    /// flag, which biases the resolver to use cached metadata when
+    /// available even past the freshness window.
+    ///
+    /// Pacquet's frozen-install path already prefers the local store
+    /// — the warm prefetch + SQLite-cache lookups always run before
+    /// any network fetch — so `prefer_offline` is effectively a no-op
+    /// today. The field exists so `.npmrc` / yaml / CLI all parse the
+    /// flag cleanly; Stage 2's resolver will honor it the same way
+    /// upstream does.
+    pub prefer_offline: bool,
+
     /// Add the full URL to the package's tarball to every entry in pnpm-lock.yaml.
     pub lockfile_include_tarball_url: bool,
 
     /// The base URL of the npm package registry (trailing slash included).
     #[default(_code = "default_registry()")]
     pub registry: String, // TODO: use Url type (compatible with reqwest)
+
+    /// Resolved proxy configuration — `https-proxy`, `http-proxy`, and
+    /// `no-proxy` (plus the legacy `proxy` key and env-var fallbacks),
+    /// all from `.npmrc` and the process environment. The type lives
+    /// in `pacquet-network` (where it is consumed by
+    /// `ThrottledClient::for_installs`) because `pacquet-config`
+    /// already depends on `pacquet-network` for auth-headers plumbing.
+    /// Default is empty (`None` for every field) — i.e. no proxy.
+    pub proxy: pacquet_network::ProxyConfig,
+
+    /// Resolved TLS + `local-address` configuration — `ca`, `cafile`,
+    /// `cert`, `key`, `strict-ssl`, `local-address` from `.npmrc`. The
+    /// type lives in `pacquet-network` for the same reason as
+    /// [`Self::proxy`]. `strict_ssl: None` here means "unset"; the
+    /// `true` default is applied at client-build time by
+    /// `ThrottledClient::for_installs`, mirroring pnpm's per-emit-site
+    /// `strictSsl ?? true` default.
+    pub tls: pacquet_network::TlsConfig,
+
+    /// Per-registry TLS overrides — `//host[:port]/path/:ca`,
+    /// `:cafile`, `:cert`, `:certfile`, `:key`, `:keyfile` from
+    /// `.npmrc`. Lookup uses pnpm's 5-step nerf-darted fallback
+    /// chain (exact > nerf-dart > no-port > shorter path prefix >
+    /// recursive no-port retry). Per-registry fields override
+    /// [`Self::tls`] field-by-field at request time, matching
+    /// pnpm's [`{ ...opts, ...sslConfig }`](https://github.com/pnpm/pnpm/blob/94240bc046/network/fetch/src/dispatcher.ts#L143)
+    /// spread.
+    pub tls_by_uri: pacquet_network::PerRegistryTls,
 
     /// When true, any missing non-optional peer dependencies are automatically installed.
     #[default = true]
@@ -470,6 +548,23 @@ pub struct Config {
     /// value).
     pub supported_architectures: Option<pacquet_package_is_installable::SupportedArchitectures>,
 
+    /// `ignoredOptionalDependencies` from `pnpm-workspace.yaml`. A
+    /// list of dep-name patterns the user wants entirely excluded
+    /// from resolution + install. At manifest read time each
+    /// matching key is dropped from `optionalDependencies` AND from
+    /// `dependencies` (a package may list the same dep under both
+    /// to make it optional only for some installers). Mirrors
+    /// upstream's
+    /// [`createOptionalDependenciesRemover`](https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts).
+    ///
+    /// The resolved set is also recorded on the lockfile so a
+    /// subsequent install can detect drift between
+    /// `pnpm-workspace.yaml` and the lockfile-recorded set —
+    /// mismatch triggers `OutdatedLockfile`. Mirrors upstream's
+    /// drift check at
+    /// [`getOutdatedLockfileSetting.ts:58-60`](https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/settings-checker/src/getOutdatedLockfileSetting.ts#L58-L60).
+    pub ignored_optional_dependencies: Option<Vec<String>>,
+
     /// Per-registry `Authorization` header lookup, populated from
     /// `.npmrc` auth keys (`_auth`, `_authToken`, `username`/`_password`,
     /// scoped variants). Threaded through the network and tarball
@@ -595,12 +690,17 @@ impl Config {
     ///    (cwd, falling back to home), then
     /// 3. the nearest `pnpm-workspace.yaml` walking up from cwd.
     ///
-    /// Pacquet currently only applies `registry` from `.npmrc`. Other
-    /// `.npmrc` entries — pnpm's TLS / npm-auth / proxy / scoped-registry
-    /// keys, plus project-structural settings like `storeDir`, `lockfile`
-    /// and `hoist-pattern` — are silently ignored here. The first group
-    /// is tracked for future auth / proxy / TLS work; the second must
-    /// come from `pnpm-workspace.yaml` or CLI flags, matching pnpm 11.
+    /// Pacquet currently applies `registry`, npm-auth credentials, the
+    /// proxy keys (`https-proxy`, `http-proxy`, `proxy`, `no-proxy` /
+    /// `noproxy`), and the TLS + local-address keys (`ca`, `cafile`,
+    /// `cert`, `key`, `strict-ssl`, `local-address`) from `.npmrc`.
+    /// Other `.npmrc` entries — pnpm's scoped-registry keys and
+    /// per-registry TLS overrides (`//host:cafile=`, `//host:ca=`,
+    /// `//host:cert=`, `//host:key=`), plus project-structural
+    /// settings like `storeDir`, `lockfile` and `hoist-pattern` — are
+    /// silently ignored here. The first group is tracked for future
+    /// per-registry-TLS work; the second must come from
+    /// `pnpm-workspace.yaml` or CLI flags, matching pnpm 11.
     ///
     /// The yaml wins over `.npmrc` on any key it sets.
     ///
@@ -655,6 +755,20 @@ impl Config {
             .map(|text| crate::npmrc_auth::NpmrcAuth::from_ini::<Sys>(&text))
             .unwrap_or_default();
         npmrc_auth.apply_registry_and_warn(&mut config);
+        // Proxy cascade fires unconditionally — even when no `.npmrc`
+        // is found — because the env-var fallback in pnpm's
+        // [`config/reader/src/index.ts:591-600`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L591-L600)
+        // is a normalization step on the resolved config, not a
+        // function of `.npmrc` presence.
+        npmrc_auth.apply_proxy_cascade::<Sys>(&mut config);
+        // TLS + local-address are sourced from `.npmrc` only — pnpm
+        // does not honor env vars (`NODE_EXTRA_CA_CERTS`,
+        // `NODE_TLS_REJECT_UNAUTHORIZED`, etc.) for these keys
+        // (Node's runtime does, but pnpm's reader does not). When
+        // there is no `.npmrc`, `npmrc_auth` is the default value and
+        // this is a no-op write of `TlsConfig::default()` onto the
+        // already-default `config.tls`.
+        npmrc_auth.apply_tls_and_local_address(&mut config);
 
         // Layer pnpm-workspace.yaml overrides on top. A missing file is
         // silent. Read or parse failures propagate to the caller.
@@ -780,8 +894,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{Config, Host, NodeLinker, PackageImportMethod, fs};
-    use crate::{defaults::default_store_dir, test_env_guard::EnvGuard};
+    use crate::defaults::default_store_dir;
     use pacquet_store_dir::StoreDir;
+    use pacquet_testing_utils::env_guard::EnvGuard;
     use pipe_trait::Pipe;
 
     fn display_store_dir(store_dir: &StoreDir) -> String {
@@ -983,17 +1098,21 @@ mod tests {
         assert!(!config.symlink);
     }
 
-    /// `enableGlobalVirtualStore` defaults to `true`. The derivation
-    /// fires automatically from [`Config::current`] after yaml has
-    /// been applied, writing `<store_dir>/links` into
+    /// `enableGlobalVirtualStore` defaults to `false` — matches pnpm
+    /// v11's effective default for regular installs (the `true`
+    /// assignment lives only inside the `--global` install branch;
+    /// see [`Config::enable_global_virtual_store`]). The derivation
+    /// still fires automatically from [`Config::current`] after yaml
+    /// has been applied, writing `<store_dir>/links` into
     /// `global_virtual_store_dir` while leaving `virtual_store_dir`
-    /// at its project-local default — pacquet's split-field variant
-    /// of upstream's
-    /// [`extendInstallOptions.ts:343-355`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/extendInstallOptions.ts#L343-L355).
-    /// See [`Config::apply_global_virtual_store_derivation`] for why
-    /// pacquet keeps the two fields separate.
+    /// at its project-local default — both fields stay valid so the
+    /// downstream code can read either one without first checking
+    /// the toggle. Pacquet's split-field variant of upstream's
+    /// [`extendInstallOptions.ts:343-355`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/extendInstallOptions.ts#L343-L355);
+    /// see [`Config::apply_global_virtual_store_derivation`] for why
+    /// pacquet keeps them separate.
     #[test]
-    pub fn gvs_default_writes_links_into_global_virtual_store_dir() {
+    pub fn gvs_default_is_off_and_paths_derive_cleanly() {
         let tmp = tempdir().unwrap();
         let config = Config::current::<Host, _, _, _, _>(
             || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
@@ -1001,7 +1120,10 @@ mod tests {
             Config::new,
         )
         .expect("workspace yaml absent => no error");
-        assert!(config.enable_global_virtual_store, "GVS defaults to true");
+        assert!(
+            !config.enable_global_virtual_store,
+            "GVS defaults to false (matches pnpm v11 for non-global installs)",
+        );
         // `virtual_store_dir` stays project-local. The
         // `<cwd>/node_modules/.pnpm` default has been re-anchored to
         // `tmp` by `Config::current` (see the cwd fixup block).
@@ -1031,7 +1153,7 @@ mod tests {
         assert_eq!(config.global_virtual_store_dir, config.store_dir.links());
     }
 
-    /// When the user pins `virtualStoreDir` *and* GVS is on,
+    /// When the user pins `virtualStoreDir` *and* opts into GVS,
     /// `globalVirtualStoreDir` mirrors that path — the user gets to
     /// pick where the shared store lives. `virtual_store_dir` itself
     /// still holds the pinned value (it's the same field the user
@@ -1042,7 +1164,7 @@ mod tests {
         let user_path = tmp.path().join("custom-links");
         fs::write(
             tmp.path().join("pnpm-workspace.yaml"),
-            format!("virtualStoreDir: {}\n", user_path.display()),
+            format!("enableGlobalVirtualStore: true\nvirtualStoreDir: {}\n", user_path.display()),
         )
         .expect("write to pnpm-workspace.yaml");
         let config = Config::current::<Host, _, _, _, _>(
@@ -1065,13 +1187,22 @@ mod tests {
     /// the same resolve-relative-to-workspace semantics. Without this
     /// preservation the value parses from yaml and then gets
     /// silently overwritten by the derivation.
+    ///
+    /// The fixture also enables GVS explicitly. Pacquet's default
+    /// is `enableGlobalVirtualStore: false` (matches pnpm v11 for
+    /// non-`--global` installs), so without the explicit opt-in the
+    /// GVS-on derivation path wouldn't run at all and the test
+    /// would say nothing about that path's behaviour.
     #[test]
     pub fn yaml_global_virtual_store_dir_wins_over_derivation() {
         let tmp = tempdir().unwrap();
         let yaml_gvs = tmp.path().join("my-shared-store");
         fs::write(
             tmp.path().join("pnpm-workspace.yaml"),
-            format!("globalVirtualStoreDir: {}\n", yaml_gvs.display()),
+            format!(
+                "enableGlobalVirtualStore: true\nglobalVirtualStoreDir: {}\n",
+                yaml_gvs.display(),
+            ),
         )
         .expect("write to pnpm-workspace.yaml");
         let config = Config::current::<Host, _, _, _, _>(
@@ -1080,7 +1211,7 @@ mod tests {
             Config::new,
         )
         .expect("yaml is valid");
-        assert!(config.enable_global_virtual_store, "GVS defaults to true");
+        assert!(config.enable_global_virtual_store);
         // `virtual_store_dir` stays at the project-local default,
         // because the user didn't pin `virtualStoreDir`.
         assert_eq!(config.virtual_store_dir, tmp.path().join("node_modules/.pnpm"));
@@ -1088,6 +1219,60 @@ mod tests {
         // `<store_dir>/links` fallback nor any mirroring of
         // `virtual_store_dir` clobbers it.
         assert_eq!(config.global_virtual_store_dir, yaml_gvs);
+    }
+
+    /// Real-process-environment smoke test for the proxy env-var
+    /// fallback through `Config::current`. The injected-`EnvVar` tests
+    /// in `npmrc_auth/tests.rs` cover the cascade branches
+    /// exhaustively; this one only proves the wiring through
+    /// `Host::var` reaches `std::env::var` and that the cascade
+    /// fires even with no `.npmrc` present.
+    #[test]
+    pub fn proxy_env_fallback_applies_through_current() {
+        // Snapshot every proxy var the cascade might read so peer tests
+        // can't observe our mutations and so the env restores cleanly.
+        let _g = EnvGuard::snapshot([
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "PROXY",
+            "proxy",
+            "NO_PROXY",
+            "no_proxy",
+            "NPM_CONFIG_WORKSPACE_DIR",
+            "npm_config_workspace_dir",
+        ]);
+        let tmp = tempdir().unwrap();
+        // SAFETY: EnvGuard above serializes the test against other
+        // env-mutating tests in this process; no other thread reads
+        // these vars concurrently. The other proxy vars are removed so
+        // a host-set value can't leak in and skew the assertion.
+        unsafe {
+            env::remove_var("HTTPS_PROXY");
+            env::remove_var("https_proxy");
+            env::remove_var("HTTP_PROXY");
+            env::remove_var("http_proxy");
+            env::remove_var("PROXY");
+            env::remove_var("proxy");
+            env::remove_var("NO_PROXY");
+            env::remove_var("no_proxy");
+            env::remove_var("NPM_CONFIG_WORKSPACE_DIR");
+            env::remove_var("npm_config_workspace_dir");
+            env::set_var("HTTPS_PROXY", "http://env.example:8080");
+        }
+        let config = Config::current::<Host, _, _, _, _>(
+            || tmp.path().to_path_buf().pipe(Ok::<_, ()>),
+            || None,
+            Config::new,
+        )
+        .expect("workspace yaml absent => no error");
+        assert_eq!(config.proxy.https_proxy.as_deref(), Some("http://env.example:8080"));
+        assert_eq!(
+            config.proxy.http_proxy.as_deref(),
+            Some("http://env.example:8080"),
+            "http side cascades through resolved https",
+        );
     }
 
     /// Pnpm's
@@ -1156,10 +1341,7 @@ mod tests {
         // Even though this test doesn't `set_var`, hold the env
         // guard so a *concurrent* `NPM_CONFIG_WORKSPACE_DIR` test
         // can't make this one fall into the env-var override path.
-        let _guard = crate::test_env_guard::EnvGuard::snapshot([
-            "NPM_CONFIG_WORKSPACE_DIR",
-            "npm_config_workspace_dir",
-        ]);
+        let _guard = EnvGuard::snapshot(["NPM_CONFIG_WORKSPACE_DIR", "npm_config_workspace_dir"]);
         // SAFETY: lock held by `_guard`. Two removes are fine on
         // both POSIX (case-sensitive: two distinct vars) and Windows
         // (case-insensitive: the second remove is a no-op on an
@@ -1189,10 +1371,7 @@ mod tests {
     /// during PR #443 review.
     #[test]
     pub fn npm_config_workspace_dir_re_anchors_modules() {
-        let _guard = crate::test_env_guard::EnvGuard::snapshot([
-            "NPM_CONFIG_WORKSPACE_DIR",
-            "npm_config_workspace_dir",
-        ]);
+        let _guard = EnvGuard::snapshot(["NPM_CONFIG_WORKSPACE_DIR", "npm_config_workspace_dir"]);
 
         let env_workspace = tempdir().unwrap();
         let cwd_dir = tempdir().unwrap();
@@ -1237,10 +1416,7 @@ mod tests {
     /// `empty_env_var_is_treated_as_unset`.
     #[test]
     pub fn empty_npm_config_workspace_dir_falls_through() {
-        let _guard = crate::test_env_guard::EnvGuard::snapshot([
-            "NPM_CONFIG_WORKSPACE_DIR",
-            "npm_config_workspace_dir",
-        ]);
+        let _guard = EnvGuard::snapshot(["NPM_CONFIG_WORKSPACE_DIR", "npm_config_workspace_dir"]);
         // SAFETY: lock held by `_guard`. Setting *both* names to
         // empty handles both platforms: on POSIX they're distinct
         // vars (clear each); on Windows they're aliases for the

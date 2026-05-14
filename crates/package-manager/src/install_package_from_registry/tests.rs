@@ -31,6 +31,9 @@ fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path)
         modules_cache_max_age: 0,
         lockfile: false,
         prefer_frozen_lockfile: false,
+        skip_runtimes: false,
+        offline: false,
+        prefer_offline: false,
         lockfile_include_tarball_url: false,
         registry: "https://registry.npmjs.com/".to_string(),
         auto_install_peers: false,
@@ -53,7 +56,11 @@ fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path)
         child_concurrency: 1,
         git_shallow_hosts: pacquet_config::default_git_shallow_hosts(),
         supported_architectures: None,
+        ignored_optional_dependencies: None,
         auth_headers: Default::default(),
+        proxy: Default::default(),
+        tls: Default::default(),
+        tls_by_uri: Default::default(),
     }
 }
 

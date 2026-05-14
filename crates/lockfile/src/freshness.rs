@@ -15,7 +15,7 @@
 //! lockfile dispatcher surfaces this as `ERR_PNPM_OUTDATED_LOCKFILE`,
 //! matching upstream's CI-correctness contract.
 
-use crate::ProjectSnapshot;
+use crate::{Lockfile, ProjectSnapshot};
 use derive_more::{Display, Error};
 use pacquet_package_manifest::{DependencyGroup, PackageManifest};
 use std::collections::{BTreeMap, BTreeSet};
@@ -71,6 +71,20 @@ pub enum StalenessReason {
         "importer {field}.{name} specifier {lockfile:?} doesn't match package manifest specifier ({manifest:?})"
     )]
     DepSpecifierMismatch { field: &'static str, name: String, lockfile: String, manifest: String },
+
+    /// The lockfile's `ignoredOptionalDependencies` (sorted) differs
+    /// from the current install's `Config::ignored_optional_dependencies`
+    /// (sorted). Mirrors upstream's
+    /// [`getOutdatedLockfileSetting.ts:58-60`](https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/settings-checker/src/getOutdatedLockfileSetting.ts#L58-L60):
+    /// upstream returns `'ignoredOptionalDependencies'` from the
+    /// settings checker and `needsFullResolution` flips on. Pacquet
+    /// has no resolver, so the matching action is to surface this as
+    /// `OutdatedLockfile`. Both values are returned sorted so the
+    /// error message reads stably in CI logs.
+    #[display(
+        "`ignoredOptionalDependencies` in the lockfile ({lockfile:?}) doesn't match the current config ({config:?})"
+    )]
+    IgnoredOptionalDependenciesChanged { lockfile: Vec<String>, config: Vec<String> },
 }
 
 /// Per-bucket diff against the manifest's flat union of deps.
@@ -146,6 +160,40 @@ impl SpecDiff {
     }
 }
 
+/// Verify that lockfile-level settings the install pipeline reads
+/// from `pnpm-workspace.yaml` haven't drifted since the lockfile
+/// was written. Today this is just `ignoredOptionalDependencies`
+/// (umbrella #434 slice 7); the variants below will grow as more
+/// upstream settings land (`catalogs`, `patchedDependencies`,
+/// `pnpmfileChecksum`, etc.).
+///
+/// Mirrors upstream's
+/// [`getOutdatedLockfileSetting`](https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/settings-checker/src/getOutdatedLockfileSetting.ts).
+/// Upstream uses the return value to flip `needsFullResolution`;
+/// pacquet has no resolver, so the matching action is to abort the
+/// frozen install with `OutdatedLockfile`.
+pub fn check_lockfile_settings(
+    lockfile: &Lockfile,
+    ignored_optional_dependencies: Option<&[String]>,
+) -> Result<(), StalenessReason> {
+    // Comparison is order-insensitive — upstream sorts both sides
+    // before calling Ramda's `equals`. Empty `None` and empty `[]`
+    // are equivalent (matches upstream's `?? []` default on both
+    // sides).
+    let mut lockfile_set: Vec<String> =
+        lockfile.ignored_optional_dependencies.clone().unwrap_or_default();
+    let mut config_set: Vec<String> = ignored_optional_dependencies.unwrap_or(&[]).to_vec();
+    lockfile_set.sort();
+    config_set.sort();
+    if lockfile_set != config_set {
+        return Err(StalenessReason::IgnoredOptionalDependenciesChanged {
+            lockfile: lockfile_set,
+            config: config_set,
+        });
+    }
+    Ok(())
+}
+
 /// Verify the on-disk `package.json` is still satisfied by the
 /// lockfile's importer entry for the same project. Returns `Ok(())`
 /// when the lockfile is up-to-date; returns `Err(StalenessReason)`
@@ -178,6 +226,7 @@ pub fn satisfies_package_manifest(
     importer: &ProjectSnapshot,
     manifest: &PackageManifest,
     importer_id: &str,
+    is_ignored_optional: &dyn Fn(&str) -> bool,
 ) -> Result<(), StalenessReason> {
     let _ = importer_id; // reserved for the multi-importer path once #431 lands.
 
@@ -186,7 +235,7 @@ pub fn satisfies_package_manifest(
     // `_satisfiesPackageManifest(importer, manifest).satisfies` gate
     // that compares `importer.specifiers` to `existingDeps` (devs +
     // prod + optional flattened together).
-    let manifest_specs = flat_manifest_specs(manifest);
+    let manifest_specs = flat_manifest_specs(manifest, is_ignored_optional);
     let importer_specs = flat_importer_specs(importer);
     let diff = diff_flat_records(&importer_specs, &manifest_specs);
     if !diff.is_empty() {
@@ -242,14 +291,32 @@ pub fn satisfies_package_manifest(
     // Without this, a manifest with the same dep in both `deps` and
     // `devDeps` would fail the `devDeps` check even though the
     // lockfile records it under `deps` only.
-    let manifest_prod: BTreeMap<&str, &str> =
-        manifest.dependencies([DependencyGroup::Prod]).collect();
-    let manifest_optional: BTreeMap<&str, &str> =
-        manifest.dependencies([DependencyGroup::Optional]).collect();
+    let manifest_prod: BTreeMap<&str, &str> = manifest
+        .dependencies([DependencyGroup::Prod])
+        .filter(|(name, _)| !is_ignored_optional(name))
+        .collect();
+    let manifest_optional: BTreeMap<&str, &str> = manifest
+        .dependencies([DependencyGroup::Optional])
+        .filter(|(name, _)| !is_ignored_optional(name))
+        .collect();
     for field in [DependencyGroup::Prod, DependencyGroup::Dev, DependencyGroup::Optional] {
         let field_name = <&'static str>::from(field);
         let manifest_field: BTreeMap<&str, &str> = manifest
             .dependencies([field])
+            // `ignoredOptionalDependencies` (umbrella #434 slice 7):
+            // upstream's read-package-hook strips matching entries
+            // from `optionalDependencies` AND `dependencies` before
+            // the resolver sees the manifest, so the lockfile never
+            // carries them. `devDependencies` is intentionally
+            // untouched by the hook — see
+            // <https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts>:
+            // the hook iterates `optionalDependencies` keys and
+            // deletes from `optionalDependencies` plus
+            // `dependencies` only.
+            .filter(|(name, _)| {
+                !matches!(field, DependencyGroup::Prod | DependencyGroup::Optional)
+                    || !is_ignored_optional(name)
+            })
             .filter(|(name, _)| match field {
                 // `dev` deps are dropped if also listed in `prod` or
                 // `optional`. `prod` deps are dropped if also in
@@ -344,10 +411,27 @@ fn dependencies_meta_equal(
 /// specifier anyway — if two fields list the same name with different
 /// specifiers the manifest is invalid and pacquet would have rejected
 /// it earlier.
-fn flat_manifest_specs(manifest: &PackageManifest) -> BTreeMap<String, String> {
+fn flat_manifest_specs(
+    manifest: &PackageManifest,
+    is_ignored_optional: &dyn Fn(&str) -> bool,
+) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for group in [DependencyGroup::Dev, DependencyGroup::Prod, DependencyGroup::Optional] {
         for (name, spec) in manifest.dependencies([group]) {
+            // `ignoredOptionalDependencies` filter — only applies to
+            // `Prod` and `Optional`, matching upstream's
+            // [`createOptionalDependenciesRemover`](https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts).
+            // The hook iterates `optionalDependencies` and deletes
+            // matches from there AND from `dependencies`, but
+            // leaves `devDependencies` untouched. Mirroring that
+            // exactly: the same name listed in `devDependencies`
+            // is kept here so the lockfile-side dev entry doesn't
+            // falsely surface as drift.
+            if matches!(group, DependencyGroup::Prod | DependencyGroup::Optional)
+                && is_ignored_optional(name)
+            {
+                continue;
+            }
             out.insert(name.to_string(), spec.to_string());
         }
     }

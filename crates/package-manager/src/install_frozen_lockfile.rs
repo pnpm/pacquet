@@ -90,6 +90,14 @@ where
     /// platform-tagged optional-dependency filter respects user-
     /// supplied architecture overrides.
     pub supported_architectures: Option<&'a pacquet_package_is_installable::SupportedArchitectures>,
+
+    /// When `true`, runtime dependencies (`node@runtime:`,
+    /// `deno@runtime:`, `bun@runtime:`) — i.e. packages whose
+    /// metadata resolution is `Binary` or `Variations` — are
+    /// added to the install-time skip set and the rest of the
+    /// install ignores them. Computed at the CLI layer from
+    /// `config.skip_runtimes || --no-runtime`.
+    pub skip_runtimes: bool,
 }
 
 /// Error type of [`InstallFrozenLockfile`].
@@ -194,6 +202,7 @@ where
             workspace_root,
             requester,
             supported_architectures,
+            skip_runtimes,
         } = self;
         // Cloned so the iterator can be reused below for hoist's
         // direct-deps map. `Vec<DependencyGroup>` is tiny (≤4 enum
@@ -278,7 +287,7 @@ where
         // `host` is built only when needed. The detection path runs
         // `node --version` on the blocking pool so it doesn't stall
         // the reactor thread.
-        let (skipped, host_node) = if needs_installability_check {
+        let (mut skipped, host_node) = if needs_installability_check {
             let mut host = tokio::task::spawn_blocking(InstallabilityHost::detect)
                 .await
                 .unwrap_or_else(|_| InstallabilityHost {
@@ -319,41 +328,148 @@ where
             (seed, None)
         };
 
-        // Compute `engine_name` *before* `CreateVirtualStore::run`
-        // because the GVS-aware `VirtualStoreLayout` needs it to
-        // produce the per-snapshot
-        // `<scope>/<name>/<version>/<hash>` suffix that `pnpm` writes
-        // under `<store_dir>/links`. Same value also feeds
-        // `BuildModules`'s side-effects-cache key prefix.
+        // `--no-optional` enforcement (umbrella slice 5). Mirrors
+        // upstream's depNode filter at
+        // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/link.ts#L109-L111>:
+        // when `include.optionalDependencies` is false, every
+        // snapshot whose `optional` flag is true gets dropped from
+        // the install graph. The lockfile's
+        // [`SnapshotEntry::optional`] is set by the resolver when
+        // the snapshot is reachable **only** through optional
+        // edges; a snapshot reachable through any non-optional
+        // edge carries `optional: false` and survives the filter
+        // (covers
+        // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/test/install/optionalDependencies.ts#L712>
+        // — `dependency that is both optional and non-optional is
+        // installed`). The exclusions land in the transient
+        // `optional_excluded` subset of [`SkippedSnapshots`] so
+        // they propagate to every downstream filter
+        // (`CreateVirtualStore`, `SymlinkDirectDependencies`,
+        // `BuildModules`, hoist) through the same gate
+        // installability skips use — and stay out of
+        // `.modules.yaml.skipped` so a future install without
+        // `--no-optional` brings them back.
+        let include_optional = dependency_groups.contains(&DependencyGroup::Optional);
+        if !include_optional && let Some(snaps) = snapshots {
+            for (key, snap) in snaps {
+                if snap.optional {
+                    skipped.add_optional_excluded(key.clone());
+                }
+            }
+        }
+
+        // `--no-runtime` (or `config.skip_runtimes`): exclude
+        // every project-direct runtime dependency. Mirrors
+        // pnpm's `skipRuntimes` filter at
+        // [`installing/deps-installer/src/install/index.ts`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/index.ts#L1374-L1387)
+        // exactly — iterate each importer's direct deps and add
+        // the runtime ones to the skip set; transitive runtime
+        // entries (which would be unusual but possible) stay in
+        // the install. Upstream's discriminator is the
+        // `depPath.includes('@runtime:')` substring check on the
+        // resolved depPath; pacquet's lockfile preserves the
+        // `@runtime:` substring in the snapshot key, so the same
+        // string-test works here.
         //
-        // Two paths:
-        // - We already detected the host for the installability
-        //   check (constraint-bearing lockfile): reuse the cached
-        //   version. The synthetic-fallback case (`node_detected =
-        //   false`) yields `None` so a bogus `99999.0.0`-derived key
-        //   can't poison either the cache or the GVS hash.
-        // - We skipped the installability check (constraint-free
-        //   lockfile, the common case): no cached version. Fall
-        //   back to the legacy `detect_node_major` spawn. This used
-        //   to sit *after* `CreateVirtualStore::run` to overlap the
-        //   `node --version` cost with the install I/O, but the GVS
-        //   path now needs it earlier — the trade-off is a one-time
-        //   `node --version` spawn synchronous with install setup,
-        //   which is still tens of ms on the critical path. Users
-        //   who want the old overlap can opt out via
-        //   `enable_global_virtual_store: false`.
-        let engine_name: Option<String> = match &host_node {
-            Some((true, ver)) => parse_major_from_version(ver)
-                .map(|major| pacquet_graph_hasher::engine_name(major, None, None)),
-            Some((false, _)) => None,
-            None => tokio::task::spawn_blocking(|| {
-                pacquet_graph_hasher::detect_node_major()
-                    .map(|major| pacquet_graph_hasher::engine_name(major, None, None))
-            })
-            .await
-            .ok()
-            .flatten(),
+        // Re-using `add_optional_excluded` keeps the bucket count
+        // (and `.modules.yaml.skipped` semantics) unchanged: like
+        // `--no-optional`, this is a transient user-driven
+        // exclusion that should *not* be persisted into
+        // `.modules.yaml.skipped` — a future install without the
+        // flag must bring the runtime back.
+        if skip_runtimes && let Some(pkgs) = packages {
+            for importer in importers.values() {
+                for dep_map in [
+                    importer.dependencies.as_ref(),
+                    importer.dev_dependencies.as_ref(),
+                    importer.optional_dependencies.as_ref(),
+                ] {
+                    let Some(dep_map) = dep_map else { continue };
+                    for (alias, spec) in dep_map {
+                        let Some(version) = spec.version.as_regular() else { continue };
+                        // Build the candidate snapshot key from
+                        // (alias, version). For non-aliased deps
+                        // this is the depPath verbatim; aliased
+                        // runtime deps (unusual) won't match
+                        // `packages` here, matching pnpm's lookup
+                        // by depPath rather than by alias.
+                        let candidate = format!("{alias}@{version}");
+                        if !candidate.contains("@runtime:") {
+                            continue;
+                        }
+                        let Ok(key) = candidate.parse::<pacquet_lockfile::PackageKey>() else {
+                            continue;
+                        };
+                        if let Some(meta) = pkgs.get(&key)
+                            && matches!(
+                                &meta.resolution,
+                                pacquet_lockfile::LockfileResolution::Binary(_)
+                                    | pacquet_lockfile::LockfileResolution::Variations(_),
+                            )
+                        {
+                            skipped.add_optional_excluded(key);
+                        }
+                    }
+                }
+            }
+        }
+
+        // `engine_name` feeds two sites:
+        //
+        // - The GVS-aware `VirtualStoreLayout` needs it *before*
+        //   `CreateVirtualStore::run` to produce per-snapshot
+        //   `<scope>/<name>/<version>/<hash>` suffixes under
+        //   `<store_dir>/links`. Only matters when GVS is on.
+        // - `BuildModules` uses it for the side-effects-cache key
+        //   prefix. Read by both the cache read-gate and the
+        //   write-gate (see `build_modules.rs:346-350`); when
+        //   `None`, both gates close and the cache is bypassed.
+        //
+        // Three paths:
+        // - Already detected the host for the installability check
+        //   (constraint-bearing lockfile): reuse the cached version
+        //   synchronously. Synthetic-fallback (`node_detected = false`)
+        //   yields `None` so a bogus `99999.0.0`-derived key can't
+        //   poison either the cache or the GVS hash.
+        // - GVS on, no host yet: spawn `node --version` synchronously
+        //   — layout construction below needs the result.
+        // - GVS off, no host yet: spawn into the blocking pool and
+        //   keep the join handle. The spawn runs concurrently with
+        //   `CreateVirtualStore::run`'s I/O, so the `node --version`
+        //   cost (~tens of ms) is hidden under the install. The
+        //   handle is awaited right before `BuildModules` —
+        //   `VirtualStoreLayout` is built with `None` here, which
+        //   is fine because GVS is off and the layout ignores the
+        //   field in that path.
+        let (initial_engine_name, deferred_engine_handle): (
+            Option<String>,
+            Option<tokio::task::JoinHandle<Option<String>>>,
+        ) = match &host_node {
+            Some((true, ver)) => (
+                parse_major_from_version(ver)
+                    .map(|major| pacquet_graph_hasher::engine_name(major, None, None)),
+                None,
+            ),
+            Some((false, _)) => (None, None),
+            None if config.enable_global_virtual_store => (
+                tokio::task::spawn_blocking(|| {
+                    pacquet_graph_hasher::detect_node_major()
+                        .map(|major| pacquet_graph_hasher::engine_name(major, None, None))
+                })
+                .await
+                .ok()
+                .flatten(),
+                None,
+            ),
+            None => (
+                None,
+                Some(tokio::task::spawn_blocking(|| {
+                    pacquet_graph_hasher::detect_node_major()
+                        .map(|major| pacquet_graph_hasher::engine_name(major, None, None))
+                })),
+            ),
         };
+        let engine_name = initial_engine_name;
 
         // Build the install-scoped slot-directory layout. When
         // `enable_global_virtual_store` is on the layout precomputes
@@ -372,24 +488,40 @@ where
             Some(&allow_build_policy),
         );
 
-        let CreateVirtualStoreOutput { package_manifests, side_effects_maps_by_snapshot } =
-            CreateVirtualStore {
-                http_client,
-                config,
-                packages,
-                snapshots,
-                current_snapshots,
-                current_packages,
-                layout: &layout,
-                logged_methods,
-                requester,
-                store_index_writer: &store_index_writer,
-                allow_build_policy: &allow_build_policy,
-                skipped: &skipped,
-            }
-            .run::<R>()
-            .await
-            .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
+        let CreateVirtualStoreOutput {
+            package_manifests,
+            side_effects_maps_by_snapshot,
+            fetch_failed,
+        } = CreateVirtualStore {
+            http_client,
+            config,
+            packages,
+            snapshots,
+            current_snapshots,
+            current_packages,
+            layout: &layout,
+            logged_methods,
+            requester,
+            store_index_writer: &store_index_writer,
+            allow_build_policy: &allow_build_policy,
+            skipped: &skipped,
+        }
+        .run::<R>()
+        .await
+        .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
+
+        // Fold fetch-failure swallows into the live skip set so
+        // downstream consumers (`SymlinkDirectDependencies`,
+        // `LinkVirtualStoreBins`, `BuildModules`, the hoist pass)
+        // observe the optional fetch-failed snapshots as absent.
+        // Tracked in the `fetch_failed` subset of `SkippedSnapshots`
+        // which is excluded from `.modules.yaml.skipped` serialization
+        // so a subsequent install retries the fetch — matches
+        // upstream's behavior of not updating `opts.skipped` at the
+        // catch site.
+        for key in fetch_failed {
+            skipped.add_fetch_failed(key);
+        }
 
         SymlinkDirectDependencies {
             config,
@@ -524,6 +656,7 @@ where
                             &layout,
                             &private_dir,
                             &public_dir,
+                            &hoist_skipped,
                         )
                         .map_err(InstallFrozenLockfileError::HoistSymlink)?;
                         // Private-side bins → `<vs>/node_modules/.bin`.
@@ -639,6 +772,17 @@ where
             pacquet_config::ScriptsPrependNodePath::WarnOnly => {
                 ExecScriptsPrependNodePath::WarnOnly
             }
+        };
+
+        // Resolve the deferred `node --version` detection from the
+        // GVS-off path, if any. The handle was spawned before
+        // `CreateVirtualStore::run` so the `node` startup cost
+        // overlapped with install I/O. Falls back to the synchronous
+        // value when the spawn was never deferred (GVS on, or host
+        // already detected for the installability check).
+        let engine_name = match deferred_engine_handle {
+            Some(handle) => handle.await.ok().flatten(),
+            None => engine_name,
         };
 
         let ignored_builds = BuildModules {

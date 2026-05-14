@@ -36,6 +36,14 @@ where
     pub lockfile: Option<&'a Lockfile>,
     pub dependency_groups: DependencyGroupList,
     pub frozen_lockfile: bool,
+    /// When `true`, runtime dependencies (`node@runtime:` /
+    /// `deno@runtime:` / `bun@runtime:`) are skipped — their
+    /// archives aren't fetched, their slots aren't materialized,
+    /// and their bins aren't linked. Computed at the CLI layer
+    /// from `config.skip_runtimes || --no-runtime`. The rest of
+    /// the install proceeds normally. See
+    /// `pacquet_config::Config::skip_runtimes`.
+    pub skip_runtimes: bool,
     /// `supportedArchitectures` after merging
     /// `Config::supported_architectures` from `pnpm-workspace.yaml`
     /// with the CLI per-axis overrides (`--cpu` / `--os` / `--libc`).
@@ -52,6 +60,16 @@ where
     /// override merge happens in the caller and lands here as a
     /// fully-resolved value.
     pub supported_architectures: Option<pacquet_package_is_installable::SupportedArchitectures>,
+    /// `nodeLinker` value to honor for *this* invocation. The CLI
+    /// layer applies any `--node-linker` override here; absent a
+    /// flag, this equals `config.node_linker`. Threaded as a
+    /// separate field for the same reason
+    /// [`Self::supported_architectures`] is: `state.config` is a
+    /// shared `&'static Config`, so the CLI override merge happens
+    /// in the caller and lands here as a fully-resolved value.
+    /// Used today for the `.modules.yaml.nodeLinker` write and
+    /// (in Slice 6) for the install-pipeline branch.
+    pub node_linker: pacquet_config::NodeLinker,
 }
 
 /// Error type of [`Install`].
@@ -139,7 +157,9 @@ where
             lockfile,
             dependency_groups,
             frozen_lockfile,
+            skip_runtimes,
             supported_architectures,
+            node_linker,
         } = self;
 
         // Collect once so the same set drives both the install dispatch
@@ -271,8 +291,54 @@ where
                         importer_id: Lockfile::ROOT_IMPORTER_KEY.to_string(),
                     }
                 })?;
-                satisfies_package_manifest(importer, manifest, Lockfile::ROOT_IMPORTER_KEY)
-                    .map_err(|reason| InstallError::OutdatedLockfile { reason })?;
+                // Outdated-settings gate (umbrella #434 slice 7): check
+                // `ignoredOptionalDependencies` drift between the
+                // lockfile-recorded set and the current config before
+                // the per-importer specifier check. Mirrors upstream's
+                // [`getOutdatedLockfileSetting`](https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/settings-checker/src/getOutdatedLockfileSetting.ts).
+                // Upstream flips `needsFullResolution` and re-runs the
+                // resolver; pacquet has no resolver, so the matching
+                // action is to abort with `OutdatedLockfile`.
+                pacquet_lockfile::check_lockfile_settings(
+                    lockfile,
+                    config.ignored_optional_dependencies.as_deref(),
+                )
+                .map_err(|reason| InstallError::OutdatedLockfile { reason })?;
+                // Build the `ignoredOptionalDependencies` filter set.
+                // Mirrors upstream's
+                // [`createOptionalDependenciesRemover`](https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts):
+                // the hook iterates `manifest.optionalDependencies`
+                // and deletes matches from BOTH the `optional` and
+                // `dependencies` maps. A name only present in
+                // `dependencies` (not `optionalDependencies`) that
+                // happens to match the pattern is NOT removed —
+                // that's why the predicate is set-based ("name was
+                // in optionalDependencies AND matched") rather than
+                // pure pattern matching. `devDependencies` is
+                // untouched on purpose; the group gate inside
+                // `satisfies_package_manifest` enforces that.
+                let ignored_set: std::collections::HashSet<String> = config
+                    .ignored_optional_dependencies
+                    .as_deref()
+                    .filter(|patterns| !patterns.is_empty())
+                    .map(|patterns| {
+                        let matcher = pacquet_config::matcher::create_matcher(patterns);
+                        manifest
+                            .dependencies([pacquet_package_manifest::DependencyGroup::Optional])
+                            .filter(|(name, _)| matcher.matches(name))
+                            .map(|(name, _)| name.to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let is_ignored_optional: &dyn Fn(&str) -> bool =
+                    &|name: &str| ignored_set.contains(name);
+                satisfies_package_manifest(
+                    importer,
+                    manifest,
+                    Lockfile::ROOT_IMPORTER_KEY,
+                    is_ignored_optional,
+                )
+                .map_err(|reason| InstallError::OutdatedLockfile { reason })?;
 
                 let frozen_result = InstallFrozenLockfile {
                     http_client,
@@ -287,6 +353,7 @@ where
                     workspace_root: &workspace_root,
                     requester: &prefix,
                     supported_architectures: supported_architectures.as_ref(),
+                    skip_runtimes,
                 }
                 .run::<R>()
                 .await
@@ -374,7 +441,13 @@ where
         // tool) can detect a layout change and prune accordingly.
         write_modules_manifest::<Host>(
             &config.modules_dir,
-            build_modules_manifest(config, included, hoisted_dependencies, &frozen_skipped),
+            build_modules_manifest(
+                config,
+                node_linker,
+                included,
+                hoisted_dependencies,
+                &frozen_skipped,
+            ),
         )
         .map_err(InstallError::WriteModules)?;
 
@@ -396,7 +469,18 @@ where
         // (selected importers × engine filter) so the saved current
         // lockfile reflects only what was actually materialized.
         if frozen_lockfile && let Some(lockfile) = lockfile {
-            lockfile
+            // Filter the wanted lockfile down to the snapshots that
+            // were actually materialized: dep maps the user excluded
+            // (`--no-optional`, `--no-dev`) plus snapshots the
+            // install-time skip set dropped (installability, fetch
+            // failure, `--no-optional`-only entries). Ports
+            // upstream's
+            // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/index.ts#L687-L695>
+            // flow — `writeCurrentLockfile(filteredLockfile)`. The
+            // next install diffs against this filtered shape so
+            // dropped snapshots aren't mistaken for already-done
+            // work.
+            crate::filter_lockfile_for_current(lockfile, included, &frozen_skipped)
                 .save_current_to_virtual_store_dir(&config.virtual_store_dir)
                 .map_err(InstallError::SaveCurrentLockfile)?;
         }
@@ -451,6 +535,7 @@ fn map_node_linker(linker: &NodeLinker) -> ModulesNodeLinker {
 /// [`write_modules_manifest`]: pacquet_modules_yaml::write_modules_manifest
 fn build_modules_manifest(
     config: &Config,
+    node_linker: NodeLinker,
     included: IncludedDependencies,
     hoisted_dependencies: HoistedDependencies,
     skipped: &crate::SkippedSnapshots,
@@ -460,7 +545,7 @@ fn build_modules_manifest(
         hoisted_dependencies,
         included,
         layout_version: Some(LayoutVersion),
-        node_linker: Some(map_node_linker(&config.node_linker)),
+        node_linker: Some(map_node_linker(&node_linker)),
         // `${name}@${version}` per upstream. `CARGO_PKG_VERSION`
         // resolves at compile time to this crate's package version.
         package_manager: concat!("pacquet@", env!("CARGO_PKG_VERSION")).to_string(),
@@ -469,7 +554,11 @@ fn build_modules_manifest(
         // `new Date().toUTCString()` at line 1622.
         pruned_at: httpdate::fmt_http_date(SystemTime::now()),
         registries: Some(BTreeMap::from([("default".to_string(), config.registry.clone())])),
-        skipped: skipped.iter().map(ToString::to_string).collect(),
+        // `iter_installability` excludes fetch-failure entries so they
+        // don't get persisted across installs — matches upstream's
+        // silent swallow of optional fetch failures at
+        // <https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L294-L298>.
+        skipped: skipped.iter_installability().map(ToString::to_string).collect(),
         store_dir: config.store_dir.display().to_string(),
         virtual_store_dir: config.virtual_store_dir.to_string_lossy().into_owned(),
         virtual_store_dir_max_length: DEFAULT_VIRTUAL_STORE_DIR_MAX_LENGTH,

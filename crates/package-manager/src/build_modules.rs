@@ -659,7 +659,7 @@ fn build_one_snapshot<R: Reporter>(
                     R::emit(&LogEvent::SkippedOptionalDependency(SkippedOptionalDependencyLog {
                         level: LogLevel::Debug,
                         details: Some(err.to_string()),
-                        package: SkippedOptionalPackage {
+                        package: SkippedOptionalPackage::Installed {
                             id: pkg_dir.to_string_lossy().into_owned(),
                             name: name.clone(),
                             version: version.clone(),

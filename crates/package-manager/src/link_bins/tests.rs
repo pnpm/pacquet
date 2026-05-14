@@ -1,8 +1,16 @@
-use super::{LinkVirtualStoreBins, LinkVirtualStoreBinsError, link_direct_dep_bins};
+use super::{
+    LinkVirtualStoreBins, LinkVirtualStoreBinsError, build_has_bin_set, link_direct_dep_bins,
+};
 use crate::{SkippedSnapshots, VirtualStoreLayout};
 use pacquet_cmd_shim::is_shim_pointing_at;
+use pacquet_lockfile::{
+    BinaryArchive, BinaryResolution, BinarySpec, DirectoryResolution, LockfileResolution,
+    PackageKey, PackageMetadata, PlatformAssetResolution, PlatformAssetTarget, RegistryResolution,
+    VariationsResolution,
+};
 use serde_json::json;
 use std::{
+    collections::HashMap,
     fs::{create_dir_all, read_to_string, write as write_file},
     iter::{Empty, empty},
     path::{Path, PathBuf},
@@ -482,4 +490,116 @@ fn link_virtual_store_bins_propagates_read_error_via_di() {
     .run_with::<DenyVirtualStore>()
     .expect_err("read_dir error must propagate");
     assert!(matches!(err, LinkVirtualStoreBinsError::ReadVirtualStore { .. }));
+}
+
+/// Build a minimal [`PackageMetadata`] for the runtime-skip / bin-set
+/// tests. Only `resolution` and `has_bin` matter for these tests;
+/// every other field is `None`.
+fn metadata_with_resolution(
+    resolution: LockfileResolution,
+    has_bin: Option<bool>,
+) -> PackageMetadata {
+    PackageMetadata {
+        resolution,
+        engines: None,
+        cpu: None,
+        os: None,
+        libc: None,
+        deprecated: None,
+        has_bin,
+        prepare: None,
+        bundled_dependencies: None,
+        peer_dependencies: None,
+        peer_dependencies_meta: None,
+    }
+}
+
+fn dummy_binary_resolution() -> BinaryResolution {
+    BinaryResolution {
+        url: "https://example.test/node.tar.gz".to_string(),
+        integrity: "sha512-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa==".parse().expect("parse integrity"),
+        bin: BinarySpec::Single("bin/node".to_string()),
+        archive: BinaryArchive::Tarball,
+        prefix: None,
+    }
+}
+
+/// `build_has_bin_set` must include runtime resolutions
+/// (`Binary` / `Variations`) unconditionally, *regardless of*
+/// `meta.has_bin`. Pnpm v11 doesn't emit `hasBin: true` for
+/// runtime entries in `pnpm-lock.yaml` (the bin info lives on
+/// `resolution.bin`, not at the metadata level), so the existing
+/// `has_bin == Some(true)` filter would drop runtime slots from
+/// the bin-link dispatch and the synthesized `package.json`
+/// (from `install_package_by_snapshot::synthesize_runtime_manifest_bytes`)
+/// would go unread. Verified by removing the runtime-arm match —
+/// the test fails as expected.
+#[test]
+fn build_has_bin_set_includes_runtime_resolutions_even_when_has_bin_is_absent() {
+    let registry_with_bin: PackageKey = "react@18.0.0".parse().expect("parse react key");
+    let registry_no_bin: PackageKey = "lodash@4.17.0".parse().expect("parse lodash key");
+    let runtime_binary: PackageKey = "node@22.0.0".parse().expect("parse node key");
+    let runtime_variations: PackageKey = "node@20.0.0".parse().expect("parse node@20 key");
+    let directory: PackageKey = "@org/local@1.0.0".parse().expect("parse local key");
+
+    let mut packages = HashMap::new();
+    packages.insert(
+        registry_with_bin.clone(),
+        metadata_with_resolution(
+            LockfileResolution::Registry(RegistryResolution {
+                integrity: "sha512-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa==".parse().expect("parse integrity"),
+            }),
+            Some(true),
+        ),
+    );
+    packages.insert(
+        registry_no_bin.clone(),
+        metadata_with_resolution(
+            LockfileResolution::Registry(RegistryResolution {
+                integrity: "sha512-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa==".parse().expect("parse integrity"),
+            }),
+            None,
+        ),
+    );
+    packages.insert(
+        runtime_binary.clone(),
+        // Runtime entry without `has_bin: true` (pnpm v11 does
+        // not emit it for runtimes). Must still land in the set.
+        metadata_with_resolution(LockfileResolution::Binary(dummy_binary_resolution()), None),
+    );
+    packages.insert(
+        runtime_variations.clone(),
+        metadata_with_resolution(
+            LockfileResolution::Variations(VariationsResolution {
+                variants: vec![PlatformAssetResolution {
+                    resolution: LockfileResolution::Binary(dummy_binary_resolution()),
+                    targets: vec![PlatformAssetTarget {
+                        os: "linux".into(),
+                        cpu: "x64".into(),
+                        libc: Some("glibc".into()),
+                    }],
+                }],
+            }),
+            None,
+        ),
+    );
+    packages.insert(
+        directory.clone(),
+        metadata_with_resolution(
+            LockfileResolution::Directory(DirectoryResolution { directory: "fixture".into() }),
+            None,
+        ),
+    );
+
+    let set = build_has_bin_set(Some(&packages)).expect("packages map present");
+    dbg!(&set);
+
+    assert!(set.contains(&registry_with_bin), "registry+has_bin must be in the set");
+    assert!(!set.contains(&registry_no_bin), "registry without has_bin must be filtered out");
+    assert!(set.contains(&runtime_binary), "Binary runtime must be in the set unconditionally");
+    assert!(
+        set.contains(&runtime_variations),
+        "Variations runtime must be in the set unconditionally",
+    );
+    assert!(!set.contains(&directory), "directory without has_bin must be filtered out");
 }

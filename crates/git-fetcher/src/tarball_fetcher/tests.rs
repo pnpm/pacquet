@@ -350,6 +350,273 @@ async fn writes_index_row_when_writer_provided() {
     );
 }
 
+/// Fast path: when there's no sub-path, no build is needed, and the
+/// packlist returns every input file, the fetcher must skip
+/// `import_into_cas` and hand the input `cas_paths` straight back
+/// to the dispatcher. Mirrors upstream's
+/// [`gitHostedTarballFetcher.ts:88-100`](https://github.com/pnpm/pnpm/blob/94240bc046/fetching/tarball-fetcher/src/gitHostedTarballFetcher.ts#L88-L100)
+/// "raw → prepared" promotion.
+#[tokio::test(flavor = "multi_thread")]
+async fn fast_path_returns_input_cas_paths_when_no_build_needed() {
+    let store_root = tempdir().unwrap();
+    let store_dir = StoreDir::from(store_root.path().to_path_buf());
+
+    // No `files` field, no `prepare` script — packlist returns
+    // everything, `should_be_built` is false. All three input
+    // entries (package.json + index.js + README.md) survive
+    // packlist's always-included rules.
+    let cas_paths = write_to_cas(
+        &store_dir,
+        &[
+            ("package.json", br#"{"name":"x","version":"1.0.0","main":"index.js"}"#, false),
+            ("index.js", b"module.exports = 42;\n", false),
+            ("README.md", b"# x\n", false),
+        ],
+    );
+    let input_snapshot = cas_paths.clone();
+
+    let received = GitHostedTarballFetcher {
+        cas_paths,
+        path: None,
+        allow_build: deny_all_builds(),
+        ignore_scripts: false,
+        unsafe_perm: true,
+        user_agent: None,
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        script_shell: None,
+        node_execpath: None,
+        npm_execpath: None,
+        store_dir: &store_dir,
+        package_id: "x@1.0.0",
+        requester: "/test",
+        store_index_writer: None,
+        files_index_file: "x@1.0.0\tbuilt",
+    }
+    .run::<SilentReporter>()
+    .await
+    .unwrap();
+
+    // The returned map is the *exact* input — same keys, same CAS
+    // paths. The slow path would re-import and produce a fresh map
+    // that just happens to point at the same hashes; the fast path
+    // skips that work entirely.
+    assert!(!received.built);
+    assert_eq!(received.cas_paths, input_snapshot, "fast path returns input cas_paths verbatim");
+}
+
+/// When the fast path triggers and a writer is provided, the
+/// synthesized row must be queued at the final key with the same
+/// shape the slow path would have produced — same digests, same
+/// `requires_build: false`, same file set. A warm prefetch reading
+/// the row from `index.db` can't tell which path produced it.
+#[tokio::test(flavor = "multi_thread")]
+async fn fast_path_queues_synthesized_index_row() {
+    let store_root = tempdir().unwrap();
+    let store_dir = StoreDir::from(store_root.path().to_path_buf());
+    let (writer, writer_task) = StoreIndexWriter::spawn(&store_dir);
+
+    let cas_paths = write_to_cas(
+        &store_dir,
+        &[
+            ("package.json", br#"{"name":"x","version":"1.0.0","main":"index.js"}"#, false),
+            // Mark this one executable to confirm the synthesized
+            // row's `mode` bit round-trips through the `-exec` suffix.
+            ("bin/cli.js", b"#!/usr/bin/env node\nconsole.log('hi');\n", true),
+            ("index.js", b"module.exports = 42;\n", false),
+        ],
+    );
+    let bin_cas_path = cas_paths["bin/cli.js"].clone();
+
+    let key = "x@1.0.0\tbuilt";
+    let _received = GitHostedTarballFetcher {
+        cas_paths,
+        path: None,
+        allow_build: deny_all_builds(),
+        ignore_scripts: false,
+        unsafe_perm: true,
+        user_agent: None,
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        script_shell: None,
+        node_execpath: None,
+        npm_execpath: None,
+        store_dir: &store_dir,
+        package_id: "x@1.0.0",
+        requester: "/test",
+        store_index_writer: Some(&Arc::clone(&writer)),
+        files_index_file: key,
+    }
+    .run::<SilentReporter>()
+    .await
+    .unwrap();
+
+    drop(writer);
+    writer_task.await.unwrap().unwrap();
+
+    let index = StoreIndex::open_in(&store_dir).unwrap();
+    let row = index.get(key).unwrap().expect("fast path must still queue a row at the final key");
+    assert_eq!(row.requires_build, Some(false), "fast path implies no build needed");
+    assert_eq!(row.algo, "sha512");
+    let row_keys: Vec<&str> = row.files.keys().map(String::as_str).collect();
+    assert!(row_keys.contains(&"package.json"));
+    assert!(row_keys.contains(&"index.js"));
+    assert!(row_keys.contains(&"bin/cli.js"));
+
+    // The synthesized `bin/cli.js` entry must round-trip through
+    // `cas_file_path_by_mode` to the same path the input map points
+    // at — that's the property a warm prefetch relies on.
+    let bin_entry = row.files.get("bin/cli.js").expect("bin entry must exist");
+    assert_eq!(bin_entry.mode & 0o111, 0o111, "executable bit must survive the synthesis");
+    let resolved =
+        store_dir.cas_file_path_by_mode(&bin_entry.digest, bin_entry.mode).expect("valid digest");
+    assert_eq!(resolved, bin_cas_path, "synthesized digest must round-trip to the input CAS path");
+}
+
+/// Sub-path resolutions never qualify for the fast path: even when
+/// `cas_paths.len() == packlist.len()` (e.g. a tarball that only
+/// contains the sub-package's files), the keys themselves live
+/// under `packages/sub/...` while packlist runs *inside* `pkg_dir`
+/// and produces keys relative to that sub-dir. Returning the input
+/// `cas_paths` verbatim would surface monorepo-prefixed paths to
+/// the dispatcher and corrupt the virtual store. Pin the slow-path
+/// behavior to guard against a future refactor that loosens the
+/// `path.is_none()` guard.
+#[tokio::test(flavor = "multi_thread")]
+async fn sub_path_never_takes_fast_path() {
+    let store_root = tempdir().unwrap();
+    let store_dir = StoreDir::from(store_root.path().to_path_buf());
+    let (writer, writer_task) = StoreIndexWriter::spawn(&store_dir);
+
+    // Tarball contains *only* the sub-package's files, so the
+    // count check (`packlist.len() == cas_paths.len()`) would
+    // otherwise pass: both sides see exactly two files. The only
+    // thing keeping the fast path out is `path.is_none()`. If that
+    // guard ever weakens, the assertion below would flag the
+    // misshaped `packages/sub/...` keys in the row.
+    let cas_paths = write_to_cas(
+        &store_dir,
+        &[
+            (
+                "packages/sub/package.json",
+                br#"{"name":"sub","version":"1.0.0","main":"index.js"}"#,
+                false,
+            ),
+            ("packages/sub/index.js", b"module.exports = 1;\n", false),
+        ],
+    );
+
+    let key = "sub@1.0.0\tbuilt";
+    let received = GitHostedTarballFetcher {
+        cas_paths,
+        path: Some("packages/sub"),
+        allow_build: deny_all_builds(),
+        ignore_scripts: false,
+        unsafe_perm: true,
+        user_agent: None,
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        script_shell: None,
+        node_execpath: None,
+        npm_execpath: None,
+        store_dir: &store_dir,
+        package_id: "sub@1.0.0",
+        requester: "/test",
+        store_index_writer: Some(&Arc::clone(&writer)),
+        files_index_file: key,
+    }
+    .run::<SilentReporter>()
+    .await
+    .unwrap();
+
+    drop(writer);
+    writer_task.await.unwrap().unwrap();
+
+    // Output keys are relative to the sub-dir — never carrying the
+    // `packages/sub/` prefix. If the fast path had triggered
+    // (returning input `cas_paths` verbatim), the keys would still
+    // be the monorepo-prefixed paths.
+    let out_keys: Vec<&str> = received.cas_paths.keys().map(String::as_str).collect();
+    assert!(
+        !out_keys.iter().any(|k| k.contains("packages/")),
+        "slow path strips the sub-dir prefix: {out_keys:?}",
+    );
+    assert!(out_keys.contains(&"package.json"));
+    assert!(out_keys.contains(&"index.js"));
+
+    let index = StoreIndex::open_in(&store_dir).unwrap();
+    let row = index.get(key).unwrap().expect("sub-path takes slow path and writes a row");
+    let row_keys: Vec<&str> = row.files.keys().map(String::as_str).collect();
+    assert!(row_keys.contains(&"package.json"), "sub-dir manifest");
+    assert!(row_keys.contains(&"index.js"), "sub-dir main");
+    assert!(
+        !row_keys.iter().any(|k| k.contains("packages/")),
+        "no monorepo prefixes in {row_keys:?}",
+    );
+}
+
+/// `should_be_built && ignore_scripts` is the second fast-path
+/// branch: scripts were suppressed (a warning fired earlier), the
+/// materialized tree is still untouched, so re-import is wasted
+/// work. Upstream specifically does *not* queue a final-key row
+/// here — subsequent installs must re-check the build gate. This
+/// test pins both halves: the input `cas_paths` is returned
+/// verbatim, and no row lands at the final key.
+#[tokio::test(flavor = "multi_thread")]
+async fn fast_path_ignore_scripts_returns_input_without_queueing_row() {
+    let store_root = tempdir().unwrap();
+    let store_dir = StoreDir::from(store_root.path().to_path_buf());
+    let (writer, writer_task) = StoreIndexWriter::spawn(&store_dir);
+
+    // `prepare` script triggers `should_be_built = true`, but
+    // `ignore_scripts: true` skips the actual execution. With no
+    // `files` field, packlist returns every input file — fast-path
+    // eligible.
+    let cas_paths = write_to_cas(
+        &store_dir,
+        &[
+            (
+                "package.json",
+                br#"{"name":"x","version":"1.0.0","main":"index.js","scripts":{"prepare":"tsc"}}"#,
+                false,
+            ),
+            ("index.js", b"module.exports = 1;\n", false),
+        ],
+    );
+    let input_snapshot = cas_paths.clone();
+
+    let key = "x@1.0.0\tbuilt";
+    let received = GitHostedTarballFetcher {
+        cas_paths,
+        path: None,
+        allow_build: deny_all_builds(),
+        ignore_scripts: true,
+        unsafe_perm: true,
+        user_agent: None,
+        scripts_prepend_node_path: ScriptsPrependNodePath::Never,
+        script_shell: None,
+        node_execpath: None,
+        npm_execpath: None,
+        store_dir: &store_dir,
+        package_id: "x@1.0.0",
+        requester: "/test",
+        store_index_writer: Some(&Arc::clone(&writer)),
+        files_index_file: key,
+    }
+    .run::<SilentReporter>()
+    .await
+    .unwrap();
+
+    drop(writer);
+    writer_task.await.unwrap().unwrap();
+
+    assert!(received.built, "should_be_built stays true even when scripts were ignored");
+    assert_eq!(received.cas_paths, input_snapshot, "ignored-build fast path returns input as-is");
+
+    let index = StoreIndex::open_in(&store_dir).unwrap();
+    assert!(
+        index.get(key).unwrap().is_none(),
+        "ignored-build fast path must NOT queue a final-key row",
+    );
+}
+
 /// Ports pnpm's `prevent directory traversal attack when path is
 /// present` at
 /// <https://github.com/pnpm/pnpm/blob/94240bc046/fetching/tarball-fetcher/test/fetch.ts#L610>.

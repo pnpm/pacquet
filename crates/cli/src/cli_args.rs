@@ -129,8 +129,21 @@ impl CliArgs {
                 ReporterType::Silent => args.run::<SilentReporter>(state(false)?).await?,
             },
             CliCommand::Install(args) => {
+                // CLI overrides for `offline` / `prefer_offline` live
+                // alongside `--frozen-lockfile`: they upgrade an
+                // unset / `false` yaml value to `true`, but cannot
+                // turn an explicit yaml `true` back off. Matches
+                // pnpm's CLI semantics — the flags are "enable", not
+                // a toggle. Applied here (between `config()` and
+                // `State::init`) while the loaded `Config` is still
+                // mutable through `Config::leak`'s
+                // `&'static mut Config` return.
+                let cfg = config()?;
+                cfg.offline = cfg.offline || args.offline;
+                cfg.prefer_offline = cfg.prefer_offline || args.prefer_offline;
                 let require_lockfile = args.frozen_lockfile;
-                let state = state(require_lockfile)?;
+                let state = State::init(manifest_path(), cfg, require_lockfile)
+                    .wrap_err("initialize the state")?;
                 match reporter {
                     ReporterType::Ndjson => args.run::<NdjsonReporter>(state).await?,
                     ReporterType::Silent => args.run::<SilentReporter>(state).await?,

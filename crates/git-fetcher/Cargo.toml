@@ -28,4 +28,6 @@ tracing     = { workspace = true }
 walkdir     = { workspace = true }
 
 [dev-dependencies]
+pacquet-testing-utils = { workspace = true }
+
 pretty_assertions = { workspace = true }

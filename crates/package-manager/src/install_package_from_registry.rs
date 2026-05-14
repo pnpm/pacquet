@@ -162,6 +162,8 @@ impl<'a> InstallPackageFromRegistry<'a> {
             prefetched_cas_paths: None,
             retry_opts: retry_opts_from_config(config),
             auth_headers: &config.auth_headers,
+            ignore_file_pattern: None,
+            offline: config.offline,
         }
         .run_with_mem_cache::<R>(tarball_mem_cache)
         .await

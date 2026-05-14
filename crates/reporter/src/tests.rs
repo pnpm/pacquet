@@ -587,7 +587,7 @@ fn skipped_optional_dependency_event_matches_pnpm_wire_shape() {
     let event = LogEvent::SkippedOptionalDependency(SkippedOptionalDependencyLog {
         level: LogLevel::Debug,
         details: Some("build failed: exit code 1".to_string()),
-        package: SkippedOptionalPackage {
+        package: SkippedOptionalPackage::Installed {
             id: "/foo/1.0.0".to_string(),
             name: "foo".to_string(),
             version: "1.0.0".to_string(),
@@ -619,7 +619,7 @@ fn skipped_optional_omits_absent_details() {
     let event = LogEvent::SkippedOptionalDependency(SkippedOptionalDependencyLog {
         level: LogLevel::Debug,
         details: None,
-        package: SkippedOptionalPackage {
+        package: SkippedOptionalPackage::Installed {
             id: "/bar/2.0.0".to_string(),
             name: "bar".to_string(),
             version: "2.0.0".to_string(),
@@ -655,6 +655,70 @@ fn broken_modules_event_matches_pnpm_wire_shape() {
     assert_eq!(json["name"], "pnpm:_broken_node_modules");
     assert_eq!(json["level"], "debug");
     assert_eq!(json["missing"], "/proj/node_modules/.pacquet/react@18.0.0/node_modules/react");
+}
+
+/// `resolution_failure` payload uses the second upstream variant:
+/// no `id`, optional `name` / `version`, and a `bareSpecifier`
+/// (camelCase on the wire). Mirrors the `package` shape at
+/// <https://github.com/pnpm/pnpm/blob/94240bc046/core/core-loggers/src/skippedOptionalDependencyLogger.ts#L21-L29>:
+/// pnpm renders the resolver-time emit with whatever fields the
+/// resolver had at fail time — bare specifier always present;
+/// `name` / `version` only when the resolver advanced far enough
+/// to extract them.
+#[test]
+fn skipped_optional_resolution_failure_event_matches_pnpm_wire_shape() {
+    let event = LogEvent::SkippedOptionalDependency(SkippedOptionalDependencyLog {
+        level: LogLevel::Debug,
+        details: Some("ERR_PNPM_FETCH_404: tarball not found".to_string()),
+        package: SkippedOptionalPackage::ResolutionFailure {
+            name: Some("foo".to_string()),
+            version: Some("1.2.3".to_string()),
+            bare_specifier: "^1.2.0".to_string(),
+        },
+        prefix: "/projects/x".to_string(),
+        reason: SkippedOptionalReason::ResolutionFailure,
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+    dbg!(&json);
+    assert_eq!(json["name"], "pnpm:skipped-optional-dependency");
+    assert_eq!(json["reason"], "resolution_failure");
+    assert!(json["package"].get("id").is_none(), "id must NOT be present on resolution_failure");
+    assert_eq!(json["package"]["name"], "foo");
+    assert_eq!(json["package"]["version"], "1.2.3");
+    assert_eq!(json["package"]["bareSpecifier"], "^1.2.0");
+}
+
+/// `name` and `version` are upstream-optional on the
+/// resolution-failure variant and must be omitted from the wire
+/// when absent. `bareSpecifier` is required.
+#[test]
+fn skipped_optional_resolution_failure_omits_absent_name_and_version() {
+    let event = LogEvent::SkippedOptionalDependency(SkippedOptionalDependencyLog {
+        level: LogLevel::Debug,
+        details: None,
+        package: SkippedOptionalPackage::ResolutionFailure {
+            name: None,
+            version: None,
+            bare_specifier: "git+ssh://broken-url".to_string(),
+        },
+        prefix: "/projects/y".to_string(),
+        reason: SkippedOptionalReason::ResolutionFailure,
+    });
+    let envelope = Envelope { time: 1_700_000_000_000, hostname: "host", pid: 4242, event: &event };
+    let json: Value = envelope
+        .pipe_ref(serde_json::to_string)
+        .expect("serialize envelope")
+        .pipe_as_ref(serde_json::from_str)
+        .expect("parse JSON");
+    dbg!(&json);
+    assert!(json["package"].get("name").is_none(), "name omitted when absent, got {json:?}");
+    assert!(json["package"].get("version").is_none(), "version omitted when absent, got {json:?}");
+    assert_eq!(json["package"]["bareSpecifier"], "git+ssh://broken-url");
 }
 
 /// All four reason variants serialize as the snake_case strings

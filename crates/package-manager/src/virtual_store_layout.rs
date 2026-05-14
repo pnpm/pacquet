@@ -26,7 +26,8 @@ use pacquet_graph_hasher::{
     DepsGraphNode, DepsStateCache, calc_graph_node_hash, format_global_virtual_store_path,
 };
 use pacquet_lockfile::{
-    LockfileResolution, PackageKey, PackageMetadata, PkgName, SnapshotDepRef, SnapshotEntry,
+    LockfileResolution, PackageKey, PackageMetadata, PkgIdWithPatchHash, PkgName, SnapshotDepRef,
+    SnapshotEntry,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -252,7 +253,7 @@ fn lockfile_to_dep_graph(
         .map(|(snapshot_key, snapshot)| {
             let children = collect_children(snapshot);
             let metadata_key = snapshot_key.without_peer();
-            let pkg_id_with_patch_hash = metadata_key.to_string();
+            let pkg_id_with_patch_hash = PkgIdWithPatchHash::from(metadata_key.to_string());
             let resolution = packages.and_then(|m| m.get(&metadata_key)).map(|m| &m.resolution);
             let full_pkg_id = create_full_pkg_id(&pkg_id_with_patch_hash, resolution);
             (snapshot_key.clone(), DepsGraphNode { full_pkg_id, children })
@@ -293,7 +294,7 @@ fn merge_into_children(
 /// will need the `selectPlatformVariant` branch upstream uses to pick
 /// the right integrity.
 fn create_full_pkg_id(
-    pkg_id_with_patch_hash: &str,
+    pkg_id_with_patch_hash: &PkgIdWithPatchHash,
     resolution: Option<&LockfileResolution>,
 ) -> String {
     match resolution.and_then(LockfileResolution::integrity) {

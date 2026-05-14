@@ -99,7 +99,10 @@ pub struct WorkspaceSettings {
     pub symlink: Option<bool>,
     pub virtual_store_dir: Option<String>,
     /// `enableGlobalVirtualStore` from `pnpm-workspace.yaml`. Default
-    /// applied in [`Config`] is `true`, matching pnpm v11. See
+    /// applied in [`Config`] is `false` — matches pnpm v11's
+    /// effective default for non-`--global` installs (upstream's
+    /// `true` assignment lives only inside the `pnpm install --global`
+    /// branch, and pacquet has no `--global` flow). See
     /// [`Config::enable_global_virtual_store`].
     pub enable_global_virtual_store: Option<bool>,
     /// `globalVirtualStoreDir` from `pnpm-workspace.yaml`. Resolved
@@ -110,6 +113,8 @@ pub struct WorkspaceSettings {
     pub modules_cache_max_age: Option<u64>,
     pub lockfile: Option<bool>,
     pub prefer_frozen_lockfile: Option<bool>,
+    pub offline: Option<bool>,
+    pub prefer_offline: Option<bool>,
     pub lockfile_include_tarball_url: Option<bool>,
     pub registry: Option<String>,
     pub auto_install_peers: Option<bool>,
@@ -193,6 +198,16 @@ pub struct WorkspaceSettings {
     /// happens at the [`pacquet_package_is_installable::check_platform`]
     /// call site where the host triple is in scope).
     pub supported_architectures: Option<SupportedArchitectures>,
+
+    /// `ignoredOptionalDependencies` from `pnpm-workspace.yaml`: a
+    /// list of dep-name patterns whose matching entries get
+    /// stripped from every manifest's `optionalDependencies` (and
+    /// `dependencies`, when a package lists the same name in both)
+    /// before any consumer sees them. Mirrors upstream's
+    /// [`createOptionalDependenciesRemover`](https://github.com/pnpm/pnpm/blob/94240bc046/hooks/read-package-hook/src/createOptionalDependenciesRemover.ts)
+    /// and the lockfile-side drift check at
+    /// [`getOutdatedLockfileSetting.ts:58-60`](https://github.com/pnpm/pnpm/blob/94240bc046/lockfile/settings-checker/src/getOutdatedLockfileSetting.ts#L58-L60).
+    pub ignored_optional_dependencies: Option<Vec<String>>,
 }
 
 /// Basename of the file pnpm reads; exported for test use.
@@ -277,7 +292,8 @@ impl WorkspaceSettings {
         apply! {
             hoist, shamefully_hoist,
             node_linker, symlink, package_import_method, modules_cache_max_age,
-            lockfile, prefer_frozen_lockfile, lockfile_include_tarball_url,
+            lockfile, prefer_frozen_lockfile, offline, prefer_offline,
+            lockfile_include_tarball_url,
             auto_install_peers, dedupe_peer_dependents, strict_peer_dependencies,
             resolve_peers_from_workspace_root, verify_store_integrity,
             side_effects_cache, side_effects_cache_readonly,
@@ -372,6 +388,9 @@ impl WorkspaceSettings {
         }
         if let Some(v) = self.supported_architectures {
             config.supported_architectures = Some(v);
+        }
+        if let Some(v) = self.ignored_optional_dependencies {
+            config.ignored_optional_dependencies = Some(v);
         }
     }
 }

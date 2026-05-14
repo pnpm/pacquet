@@ -7,7 +7,8 @@ use pacquet_lockfile::{
     ResolvedDependencySpec, SnapshotEntry,
 };
 use pacquet_reporter::{
-    IgnoredScriptsLog, LogEvent, Reporter, SilentReporter, SkippedOptionalReason,
+    IgnoredScriptsLog, LogEvent, Reporter, SilentReporter, SkippedOptionalPackage,
+    SkippedOptionalReason,
 };
 use pretty_assertions::assert_eq;
 use std::{
@@ -525,8 +526,11 @@ fn do_not_fail_on_optional_dep_with_failing_postinstall() {
         })
         .expect("must emit pnpm:skipped-optional-dependency");
     assert_eq!(skipped_event.reason, SkippedOptionalReason::BuildFailure);
-    assert_eq!(skipped_event.package.name, "@pnpm.e2e/failing-postinstall");
-    assert_eq!(skipped_event.package.version, "1.0.0");
+    let SkippedOptionalPackage::Installed { name, version, .. } = &skipped_event.package else {
+        panic!("expected Installed payload for build_failure, got {:?}", skipped_event.package);
+    };
+    assert_eq!(name, "@pnpm.e2e/failing-postinstall");
+    assert_eq!(version, "1.0.0");
     assert!(skipped_event.details.is_some(), "details must carry the error toString");
 }
 

@@ -88,8 +88,10 @@ where
             lockfile,
             dependency_groups: list_dependency_groups(),
             frozen_lockfile: false,
+            skip_runtimes: config.skip_runtimes,
             resolved_packages,
             supported_architectures,
+            node_linker: config.node_linker,
         }
         .run::<R>()
         .await

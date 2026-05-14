@@ -53,7 +53,9 @@ async fn should_install_dependencies() {
         lockfile: None,
         dependency_groups: [DependencyGroup::Prod, DependencyGroup::Dev, DependencyGroup::Optional],
         frozen_lockfile: false,
+        skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -106,7 +108,9 @@ async fn should_error_when_frozen_lockfile_is_requested_but_none_exists() {
         lockfile: None,
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -142,7 +146,9 @@ async fn should_error_when_writable_lockfile_mode_is_used() {
         lockfile: None,
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: false,
+        skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -207,7 +213,9 @@ async fn frozen_lockfile_flag_overrides_config_lockfile_false() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -265,7 +273,9 @@ async fn npm_alias_dependency_installs_under_alias_key() {
         lockfile: None,
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: false,
+        skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -340,7 +350,9 @@ async fn unversioned_npm_alias_defaults_to_latest() {
         lockfile: None,
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: false,
+        skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -400,7 +412,9 @@ async fn frozen_lockfile_flag_with_no_lockfile_errors() {
         lockfile: None,
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -480,7 +494,9 @@ async fn install_emits_pnpm_event_sequence() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<RecordingReporter>()
@@ -617,7 +633,9 @@ async fn install_writes_modules_yaml() {
         // groups to the on-disk `included` field.
         dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -710,7 +728,9 @@ async fn install_optional_failing_postinstall_dep_via_registry_mock_succeeds() {
         lockfile: None,
         dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
         frozen_lockfile: false,
+        skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -825,7 +845,9 @@ async fn warm_reinstall_skips_snapshot_when_current_lockfile_matches() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -915,7 +937,9 @@ async fn warm_reinstall_emits_broken_modules_when_dir_is_missing() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<RecordingReporter>()
@@ -1013,7 +1037,9 @@ async fn context_log_reflects_current_lockfile_after_first_install() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<RecordingReporter>()
@@ -1055,7 +1081,9 @@ async fn context_log_reflects_current_lockfile_after_first_install() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<RecordingReporter>()
@@ -1139,7 +1167,9 @@ async fn warm_reinstall_reports_added_zero_and_emits_no_imported_events() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<RecordingReporter>()
@@ -1225,8 +1255,10 @@ async fn frozen_lockfile_errors_when_manifest_drifts_from_lockfile() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         resolved_packages: &Default::default(),
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
     }
     .run::<SilentReporter>()
     .await;
@@ -1275,8 +1307,10 @@ async fn frozen_lockfile_errors_when_lockfile_has_no_root_importer() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         resolved_packages: &Default::default(),
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
     }
     .run::<SilentReporter>()
     .await;
@@ -1291,9 +1325,10 @@ async fn frozen_lockfile_errors_when_lockfile_has_no_root_importer() {
 }
 
 /// GVS-on frozen-lockfile install. With
-/// `enable_global_virtual_store: true` (pacquet's default, matching
-/// upstream's
-/// [`config/reader/src/index.ts:392-394`](https://github.com/pnpm/pnpm/blob/94240bc046/config/reader/src/index.ts#L392-L394)),
+/// `enable_global_virtual_store: true` (an explicit opt-in;
+/// pacquet's default is `false`, matching pnpm v11's effective
+/// default for non-`--global` installs — see
+/// [`pacquet_config::default_enable_global_virtual_store`]),
 /// `Install::run` registers the project at
 /// `<store_dir>/projects/<short-hash>` (mirroring upstream's
 /// [`registerProject`](https://github.com/pnpm/pnpm/blob/94240bc046/store/controller/src/storeController/projectRegistry.ts))
@@ -1323,8 +1358,8 @@ async fn frozen_lockfile_under_gvs_registers_project_and_runs_clean() {
     let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
 
     let mut config = Config::new();
-    // Pacquet's default is `true`; pin it explicitly so the test
-    // doesn't silently degrade if the default flips someday.
+    // Pin GVS on explicitly — pacquet's default is `false`, so this
+    // test would test the wrong path otherwise.
     config.enable_global_virtual_store = true;
     config.lockfile = false;
     config.store_dir = store_dir.clone().into();
@@ -1354,8 +1389,10 @@ async fn frozen_lockfile_under_gvs_registers_project_and_runs_clean() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         resolved_packages: &Default::default(),
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
     }
     .run::<SilentReporter>()
     .await
@@ -1424,8 +1461,10 @@ async fn frozen_lockfile_with_gvs_off_skips_project_registry() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         resolved_packages: &Default::default(),
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
     }
     .run::<SilentReporter>()
     .await
@@ -1500,8 +1539,10 @@ async fn frozen_lockfile_under_gvs_registers_each_workspace_importer() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         resolved_packages: &Default::default(),
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
     }
     .run::<SilentReporter>()
     .await
@@ -1570,7 +1611,13 @@ fn build_modules_manifest_serializes_skipped_set() {
         dev_dependencies: false,
         optional_dependencies: true,
     };
-    let manifest = super::build_modules_manifest(config, included, Default::default(), &skipped);
+    let manifest = super::build_modules_manifest(
+        config,
+        pacquet_config::NodeLinker::default(),
+        included,
+        Default::default(),
+        &skipped,
+    );
 
     // Compare as sets — `build_modules_manifest` does not sort.
     // Sort-on-write happens later inside `write_modules_manifest`,
@@ -1601,6 +1648,7 @@ fn build_modules_manifest_skipped_is_empty_on_empty_set() {
 
     let manifest = super::build_modules_manifest(
         config,
+        pacquet_config::NodeLinker::default(),
         IncludedDependencies::default(),
         Default::default(),
         &SkippedSnapshots::new(),
@@ -1677,7 +1725,9 @@ async fn frozen_install_preserves_seeded_skipped_across_reinstall() {
         lockfile: Some(&lockfile),
         dependency_groups: [DependencyGroup::Prod],
         frozen_lockfile: true,
+        skip_runtimes: false,
         supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
         resolved_packages: &Default::default(),
     }
     .run::<SilentReporter>()
@@ -1701,6 +1751,477 @@ async fn frozen_install_preserves_seeded_skipped_across_reinstall() {
         sorted,
         ["@scope/also-skipped@2.3.4", "previously-skipped@1.0.0"],
         "write_modules_manifest must sort the list alphabetically",
+    );
+
+    drop(dir);
+}
+
+/// Port of upstream's
+/// [`deps-restorer/test/index.ts:340`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/test/index.ts#L340-L360)
+/// `skipping optional dependency if it cannot be fetched`. An
+/// `optional: true` snapshot whose tarball URL is unreachable must
+/// not abort the install — the failure is silently swallowed at
+/// the per-snapshot fetch dispatch in `CreateVirtualStore`, mirroring
+/// upstream's
+/// [`lockfileToDepGraph.ts:294-298`](https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L294-L298)
+/// catch site.
+///
+/// Asserts:
+/// 1. The install resolves `Ok` (no abort).
+/// 2. The broken snapshot's virtual-store slot was NOT created.
+/// 3. The on-disk `.modules.yaml.skipped` does NOT contain the
+///    broken snapshot — fetch failures are transient by upstream's
+///    convention (the catch site never updates `opts.skipped`), so
+///    a subsequent install retries the fetch.
+#[tokio::test]
+async fn frozen_install_silently_swallows_unreachable_optional_tarball() {
+    // Lockfile with one `optional: true` snapshot whose `tarball` URL
+    // dials `127.0.0.1:1` (a reserved port that always refuses) so
+    // the fetch reliably fails without a network round-trip. The
+    // integrity is arbitrary — we never get far enough to verify it.
+    const BROKEN_OPTIONAL_LOCKFILE: &str = text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    optionalDependencies:"
+        "      broken-pkg:"
+        "        specifier: 1.0.0"
+        "        version: 1.0.0"
+        "packages:"
+        "  broken-pkg@1.0.0:"
+        "    resolution: {integrity: sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA, tarball: 'http://127.0.0.1:1/broken.tgz'}"
+        "snapshots:"
+        "  broken-pkg@1.0.0:"
+        "    optional: true"
+    };
+
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let mut manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    // Manifest must match the lockfile importer entry so the
+    // freshness check (#447) doesn't reject the install before we
+    // reach the fetch site.
+    manifest.add_dependency("broken-pkg", "1.0.0", DependencyGroup::Optional).unwrap();
+    manifest.save().unwrap();
+
+    let mut config = Config::new();
+    config.lockfile = false;
+    // Opt out of the GVS layout so the assertion below can stat the
+    // legacy `<virtual_store_dir>/<flat-name>` slot directly. With
+    // GVS on, the slot lives under `<store_dir>/links/...` and the
+    // assertion would always pass regardless of whether the swallow
+    // path actually fired.
+    config.enable_global_virtual_store = false;
+    config.store_dir = store_dir.clone().into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    // Keep retries minimal — 127.0.0.1:1 fails immediately on every
+    // try, but a long retry schedule would dominate the test runtime.
+    config.fetch_retries = 0;
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(BROKEN_OPTIONAL_LOCKFILE)
+        .expect("parse broken-optional fixture lockfile");
+
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
+        frozen_lockfile: true,
+        skip_runtimes: false,
+        supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await
+    .expect("install must NOT abort when an optional snapshot fails to fetch");
+
+    // The broken snapshot's virtual-store slot must not have been
+    // created — the cold-batch dispatch failed before extraction.
+    let expected_slot = virtual_store_dir.join("broken-pkg@1.0.0").join("node_modules");
+    assert!(
+        !expected_slot.exists(),
+        "broken optional snapshot's slot must not exist, found {expected_slot:?}",
+    );
+
+    // The fetch-failure entry must NOT have been persisted to
+    // `.modules.yaml.skipped`. Mirrors upstream's silent catch site
+    // that never updates `opts.skipped`, so a future install retries
+    // the fetch (in case the URL becomes reachable again).
+    let written = modules_dir
+        .pipe_as_ref(read_modules_manifest::<Host>)
+        .expect("read .modules.yaml")
+        .expect("modules manifest exists");
+    assert!(
+        written.skipped.is_empty(),
+        "fetch-failure entries must not land in .modules.yaml.skipped, got {:?}",
+        written.skipped,
+    );
+
+    drop(dir);
+}
+
+/// The fetch-failure swallow is gated on `snapshot.optional`. A
+/// non-optional snapshot whose tarball is unreachable must still
+/// abort the install — mirrors upstream's `if (pkgSnapshot.optional)
+/// return; throw err;` at
+/// [`lockfileToDepGraph.ts:296-298`](https://github.com/pnpm/pnpm/blob/94240bc046/deps/graph-builder/src/lockfileToDepGraph.ts#L296-L298).
+/// Same fixture as the swallow test but with `optional: true`
+/// removed from the snapshot entry — confirms the polarity is
+/// correct.
+#[tokio::test]
+async fn frozen_install_propagates_non_optional_fetch_failure() {
+    const NON_OPTIONAL_BROKEN_LOCKFILE: &str = text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies:"
+        "      broken-pkg:"
+        "        specifier: 1.0.0"
+        "        version: 1.0.0"
+        "packages:"
+        "  broken-pkg@1.0.0:"
+        "    resolution: {integrity: sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA, tarball: 'http://127.0.0.1:1/broken.tgz'}"
+        "snapshots:"
+        "  broken-pkg@1.0.0: {}"
+    };
+
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let mut manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    manifest.add_dependency("broken-pkg", "1.0.0", DependencyGroup::Prod).unwrap();
+    manifest.save().unwrap();
+
+    let mut config = Config::new();
+    config.lockfile = false;
+    // Match the sister test's GVS-off setup so both swallow tests
+    // route through the same layout — sidesteps any GVS-routing
+    // path divergence affecting where the cold-batch dispatch even
+    // runs.
+    config.enable_global_virtual_store = false;
+    config.store_dir = store_dir.into();
+    config.modules_dir = modules_dir;
+    config.virtual_store_dir = virtual_store_dir;
+    config.fetch_retries = 0;
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(NON_OPTIONAL_BROKEN_LOCKFILE)
+        .expect("parse non-optional broken-fixture lockfile");
+
+    let result = Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        skip_runtimes: false,
+        supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await;
+
+    assert!(result.is_err(), "non-optional fetch failure must abort the install, got {result:?}");
+
+    drop(dir);
+}
+
+/// Ports the `--no-optional` shape of
+/// [`installing/deps-installer/test/install/optionalDependencies.ts:391`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/test/install/optionalDependencies.ts#L391)
+/// and the frozen-install side of
+/// [`installing/deps-restorer/test/index.ts:323`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/test/index.ts#L323).
+///
+/// The fixture is designed to discriminate slice 5 (`--no-optional`
+/// filter) from slice 4 (fetch-failure swallow): a snapshot with
+/// `optional: true` whose **metadata row is missing from
+/// `packages:`**. Slice 4's swallow only covers `DownloadTarball`
+/// and `GitFetch` — `MissingPackageMetadata` propagates even for
+/// optional snapshots. So if slice 5's filter doesn't fire, the
+/// missing-metadata error aborts the install regardless of slice
+/// 4. A successful install therefore proves the snapshot was
+/// dropped **before** cache-key derivation by the slice 5 gate.
+///
+/// Mirrors upstream's depNode filter at
+/// [`link.ts:109-111`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/src/install/link.ts#L109-L111):
+/// when `!include.optionalDependencies`, every depNode whose
+/// `optional` flag is true is dropped from the install graph
+/// before extraction / linking / building runs.
+///
+/// Also asserts that `--no-optional` exclusions are **not**
+/// persisted to `.modules.yaml.skipped` — same convention as the
+/// fetch-failure swallow (slice 4): the exclusion is transient,
+/// so a later install without `--no-optional` brings the snapshot
+/// back into the install graph.
+#[tokio::test]
+async fn frozen_install_no_optional_drops_optional_only_snapshots() {
+    // Lockfile with one `optional: true` snapshot whose metadata
+    // row is intentionally missing from `packages:`. Slice 4
+    // (fetch-failure swallow) does NOT cover `MissingPackageMetadata`,
+    // so reaching the cache-key derivation step would abort the
+    // install. The `--no-optional` filter must drop the snapshot
+    // before that step runs.
+    const OPTIONAL_NO_METADATA_LOCKFILE: &str = text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    optionalDependencies:"
+        "      drop-me:"
+        "        specifier: 1.0.0"
+        "        version: 1.0.0"
+        "packages: {}"
+        "snapshots:"
+        "  drop-me@1.0.0:"
+        "    optional: true"
+    };
+
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let mut manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    // Manifest matches the lockfile importer entry so the
+    // freshness check doesn't reject the install.
+    manifest.add_dependency("drop-me", "1.0.0", DependencyGroup::Optional).unwrap();
+    manifest.save().unwrap();
+
+    let mut config = Config::new();
+    config.lockfile = false;
+    // Opt out of GVS so the slot-path assertion targets the legacy
+    // `<virtual_store_dir>/<flat-name>` layout. Same pattern as the
+    // slice 4 swallow tests.
+    config.enable_global_virtual_store = false;
+    config.store_dir = store_dir.clone().into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(OPTIONAL_NO_METADATA_LOCKFILE)
+        .expect("parse optional-no-metadata fixture lockfile");
+
+    // The dispatch list excludes `DependencyGroup::Optional` — same
+    // shape `--no-optional` produces from
+    // `InstallDependencyOptions::dependency_groups()` in
+    // `crates/cli/src/cli_args/install.rs`.
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        skip_runtimes: false,
+        supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await
+    .expect("install must succeed with --no-optional despite missing optional metadata");
+
+    // The optional-only snapshot must not have been extracted.
+    let expected_slot = virtual_store_dir.join("drop-me@1.0.0").join("node_modules");
+    assert!(
+        !expected_slot.exists(),
+        "optional-only snapshot's slot must not exist, found {expected_slot:?}",
+    );
+
+    // Transient — must not bleed into the persistent
+    // `.modules.yaml.skipped` set.
+    let written = modules_dir
+        .pipe_as_ref(read_modules_manifest::<Host>)
+        .expect("read .modules.yaml")
+        .expect("modules manifest exists");
+    assert!(
+        written.skipped.is_empty(),
+        "--no-optional exclusions must not land in .modules.yaml.skipped, got {:?}",
+        written.skipped,
+    );
+
+    drop(dir);
+}
+
+/// Polarity test for [`frozen_install_no_optional_drops_optional_only_snapshots`].
+/// Same fixture, but the dispatch list **includes** `Optional`. With
+/// the snapshot's metadata missing from `packages:`, the install
+/// must now abort with `MissingPackageMetadata` — slice 4's
+/// fetch-failure swallow doesn't cover that variant, so the
+/// optional-ness alone doesn't save the install. Proves the
+/// slice 5 filter is gated on the dispatch list rather than firing
+/// unconditionally.
+#[tokio::test]
+async fn frozen_install_optional_included_surfaces_missing_metadata() {
+    const OPTIONAL_NO_METADATA_LOCKFILE: &str = text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    optionalDependencies:"
+        "      drop-me:"
+        "        specifier: 1.0.0"
+        "        version: 1.0.0"
+        "packages: {}"
+        "snapshots:"
+        "  drop-me@1.0.0:"
+        "    optional: true"
+    };
+
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let mut manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    manifest.add_dependency("drop-me", "1.0.0", DependencyGroup::Optional).unwrap();
+    manifest.save().unwrap();
+
+    let mut config = Config::new();
+    config.lockfile = false;
+    config.enable_global_virtual_store = false;
+    config.store_dir = store_dir.into();
+    config.modules_dir = modules_dir;
+    config.virtual_store_dir = virtual_store_dir;
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(OPTIONAL_NO_METADATA_LOCKFILE)
+        .expect("parse optional-no-metadata fixture lockfile");
+
+    let result = Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod, DependencyGroup::Optional],
+        frozen_lockfile: true,
+        skip_runtimes: false,
+        supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await;
+
+    let err =
+        result.expect_err("install must abort without --no-optional when metadata is missing");
+    assert!(
+        matches!(
+            err,
+            InstallError::FrozenLockfile(crate::InstallFrozenLockfileError::CreateVirtualStore(
+                crate::CreateVirtualStoreError::MissingPackageMetadata { .. },
+            ),),
+        ),
+        "expected FrozenLockfile(CreateVirtualStore(MissingPackageMetadata)), got {err:?}",
+    );
+
+    drop(dir);
+}
+
+/// Regression coverage for the shared-dependency case from
+/// [`installing/deps-installer/test/install/optionalDependencies.ts:712`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-installer/test/install/optionalDependencies.ts#L712)
+/// (`dependency that is both optional and non-optional is installed,
+/// when optional dependencies should be skipped`).
+///
+/// `SnapshotEntry::optional` is set by upstream's resolver only
+/// when a snapshot is reachable **exclusively** through optional
+/// edges. A snapshot reachable through any non-optional edge carries
+/// `optional: false` and **must not** be dropped by `--no-optional`.
+///
+/// Fixture: a single snapshot `shared@1.0.0` with `optional: false`
+/// (default) and metadata missing from `packages:`. With
+/// `--no-optional`, the filter must skip this snapshot only if it
+/// checks the `optional` flag — if it accidentally drops every
+/// snapshot listed under `optionalDependencies` regardless of the
+/// flag, the install would silently succeed (the missing-metadata
+/// error wouldn't surface). Conversely, if the filter is correct,
+/// the install aborts with `MissingPackageMetadata` because the
+/// non-optional snapshot reaches cache-key derivation.
+#[tokio::test]
+async fn frozen_install_no_optional_keeps_shared_non_optional_snapshot() {
+    const SHARED_NON_OPTIONAL_LOCKFILE: &str = text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    optionalDependencies:"
+        "      shared:"
+        "        specifier: 1.0.0"
+        "        version: 1.0.0"
+        "packages: {}"
+        "snapshots:"
+        "  shared@1.0.0: {}"
+    };
+
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    let manifest_path = dir.path().join("package.json");
+    let mut manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+    manifest.add_dependency("shared", "1.0.0", DependencyGroup::Optional).unwrap();
+    manifest.save().unwrap();
+
+    let mut config = Config::new();
+    config.lockfile = false;
+    config.enable_global_virtual_store = false;
+    config.store_dir = store_dir.into();
+    config.modules_dir = modules_dir;
+    config.virtual_store_dir = virtual_store_dir;
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(SHARED_NON_OPTIONAL_LOCKFILE)
+        .expect("parse shared-non-optional fixture lockfile");
+
+    let result = Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        // `--no-optional` shape: Optional NOT in the dispatch list.
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        skip_runtimes: false,
+        supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::default(),
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await;
+
+    let err =
+        result.expect_err("snapshot with optional:false must NOT be dropped by --no-optional");
+    assert!(
+        matches!(
+            err,
+            InstallError::FrozenLockfile(crate::InstallFrozenLockfileError::CreateVirtualStore(
+                crate::CreateVirtualStoreError::MissingPackageMetadata { .. },
+            ),),
+        ),
+        "expected FrozenLockfile(CreateVirtualStore(MissingPackageMetadata)) — \
+         proves the snapshot was kept; got {err:?}",
     );
 
     drop(dir);

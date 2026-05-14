@@ -37,7 +37,7 @@ impl PackageVersion {
         let url = format!("{registry}{name}/{tag}");
         let network_error = |error| NetworkError { error, url: url.clone() };
 
-        let mut request = http_client.acquire().await.get(&url).header(
+        let mut request = http_client.acquire_for_url(&url).await.get(&url).header(
             "accept",
             "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
         );
