@@ -184,7 +184,7 @@ pub struct LockfileToDepGraphResult {
 /// implemented today. Fields tied to the still-unported store
 /// controller, fetch concurrency, or workspace project list will
 /// be added when their consumers land.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct LockfileToHoistedDepGraphOptions {
     /// Project / workspace root. Used as the base for relativizing
     /// `hoisted_locations` entries and for placing the root's
@@ -231,6 +231,37 @@ pub struct LockfileToHoistedDepGraphOptions {
     /// node_modules for a Windows / macOS target. `None` means use
     /// only the current-host axes.
     pub supported_architectures: Option<SupportedArchitectures>,
+    /// Mirrors [`pacquet_real_hoist::HoistOpts::hoist_workspace_packages`].
+    /// When `true` (the default), every non-root workspace importer
+    /// becomes a `Workspace`-kind child of the virtual `.` root in
+    /// the hoist tree, and the walker emits per-importer subtrees
+    /// under `<lockfile_dir>/<importer_id>/node_modules`. When
+    /// `false`, only the root importer's subtree is emitted (the
+    /// hoister also skips adding the workspace children to its
+    /// shared tree). Pacquet's [`pacquet_config::Config::hoist_workspace_packages`]
+    /// drives this from the install pipeline.
+    pub hoist_workspace_packages: bool,
+}
+
+impl Default for LockfileToHoistedDepGraphOptions {
+    fn default() -> Self {
+        Self {
+            lockfile_dir: PathBuf::new(),
+            auto_install_peers: false,
+            skipped: BTreeSet::new(),
+            force: false,
+            engine_strict: false,
+            current_node_version: String::new(),
+            current_os: String::new(),
+            current_cpu: String::new(),
+            current_libc: String::new(),
+            supported_architectures: None,
+            // Match the hoister's default-on behavior so a
+            // `..Default::default()`-style construction at the call
+            // site doesn't silently disable workspace hoisting.
+            hoist_workspace_packages: true,
+        }
+    }
 }
 
 /// Failure modes of [`lockfile_to_hoisted_dep_graph`]. Marked
@@ -343,8 +374,11 @@ fn build_dep_graph(
     lockfile: &Lockfile,
     opts: &LockfileToHoistedDepGraphOptions,
 ) -> Result<LockfileToDepGraphResult, HoistedDepGraphError> {
-    let hoist_opts =
-        HoistOpts { auto_install_peers: opts.auto_install_peers, ..HoistOpts::default() };
+    let hoist_opts = HoistOpts {
+        auto_install_peers: opts.auto_install_peers,
+        hoist_workspace_packages: opts.hoist_workspace_packages,
+        ..HoistOpts::default()
+    };
     let hoister_result = hoist(lockfile, &hoist_opts)?;
 
     let modules_dir = opts.lockfile_dir.join("node_modules");
@@ -357,6 +391,8 @@ fn build_dep_graph(
         pkg_locations_by_dep_path: BTreeMap::new(),
         hoisted_locations: BTreeMap::new(),
         injection_targets_by_dep_path: BTreeMap::new(),
+        per_importer_hierarchies: BTreeMap::new(),
+        per_importer_direct_deps: BTreeMap::new(),
     };
     let root_deps = hoister_result.dependencies.borrow();
     let root_hierarchy = walk_deps(&mut state, &modules_dir, &root_deps)?;
@@ -383,6 +419,8 @@ fn build_dep_graph(
         injection_targets_by_dep_path,
         skipped,
         lockfile,
+        per_importer_hierarchies,
+        per_importer_direct_deps,
         ..
     } = state;
     let mut graph = graph;
@@ -402,8 +440,55 @@ fn build_dep_graph(
     direct_dependencies_by_importer_id
         .insert(Lockfile::ROOT_IMPORTER_KEY.to_string(), direct_deps_root);
 
+    // Per-non-root importer direct deps: iterate each importer's
+    // declared lockfile entries and look up the resolved depPath
+    // in `pkg_locations_by_dep_path`. The first recorded location
+    // wins (matches upstream's `pkgLocationsByDepPath[depPath][0]`
+    // pick at
+    // [`lockfileToHoistedDepGraph.ts:148`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/lockfileToHoistedDepGraph.ts#L148)).
+    // We can't read this off the workspace node's tree-children
+    // because the hoister moves dedupe-able deps up to root, leaving
+    // the workspace node's children empty even when the importer
+    // *declared* those deps.
+    //
+    // `link:` entries are skipped — they don't enter the hoist tree
+    // and have no `pkg_locations` entry. The install pipeline
+    // handles them via [`crate::SymlinkDirectDependencies`]'s
+    // `link_only` pass after the hoisted linker runs.
+    for importer_id in per_importer_direct_deps.keys() {
+        let Some(importer) = lockfile.importers.get(importer_id) else { continue };
+        let mut direct_deps: BTreeMap<String, PathBuf> = BTreeMap::new();
+        for dep_map in [
+            importer.dependencies.as_ref(),
+            importer.dev_dependencies.as_ref(),
+            importer.optional_dependencies.as_ref(),
+        ] {
+            let Some(dep_map) = dep_map else { continue };
+            for (alias, spec) in dep_map {
+                let Some(ver_peer) = spec.version.as_regular() else { continue };
+                let dep_key =
+                    pacquet_lockfile::PkgNameVerPeer::new(alias.clone(), ver_peer.clone());
+                let dep_path = dep_key.to_string();
+                if let Some(locations) = pkg_locations_by_dep_path.get(&dep_path)
+                    && let Some(first) = locations.first()
+                {
+                    direct_deps.insert(alias.to_string(), first.clone());
+                }
+            }
+        }
+        direct_dependencies_by_importer_id.insert(importer_id.clone(), direct_deps);
+    }
+
+    // Hierarchy: one entry per importer root. Root importer gets
+    // `lockfile_dir`; non-root workspace importers get
+    // `<lockfile_dir>/<importer_id>`. Mirrors upstream's
+    // `hierarchy` shape at
+    // [`lockfileToHoistedDepGraph.ts:170-180`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/lockfileToHoistedDepGraph.ts#L170-L180)
+    // — the linker walks each importer's subtree under its own
+    // root.
     let mut hierarchy = BTreeMap::new();
     hierarchy.insert(opts.lockfile_dir.clone(), root_hierarchy);
+    hierarchy.extend(per_importer_hierarchies);
 
     Ok(LockfileToDepGraphResult {
         graph,
@@ -460,6 +545,18 @@ struct WalkState<'a> {
     pkg_locations_by_dep_path: BTreeMap<String, Vec<PathBuf>>,
     hoisted_locations: BTreeMap<String, Vec<String>>,
     injection_targets_by_dep_path: BTreeMap<String, Vec<PathBuf>>,
+    /// Per-non-root-importer hierarchy emitted while walking
+    /// `Workspace`-kind nodes. Outer key is the importer's root
+    /// directory (`<lockfile_dir>/<importer_id>`). Folded into
+    /// [`LockfileToDepGraphResult::hierarchy`] alongside the root
+    /// importer's hierarchy by [`build_dep_graph`].
+    per_importer_hierarchies: BTreeMap<PathBuf, DepHierarchy>,
+    /// Per-non-root-importer direct dependencies emitted while
+    /// walking `Workspace`-kind nodes. Outer key is the importer
+    /// id from the lockfile (e.g. `packages/foo`). Folded into
+    /// [`LockfileToDepGraphResult::direct_dependencies_by_importer_id`]
+    /// alongside the root importer's entry by [`build_dep_graph`].
+    per_importer_direct_deps: DirectDependenciesByImporterId,
 }
 
 /// Recursive walker over `HoisterResult.dependencies`. Mirrors
@@ -488,7 +585,35 @@ fn walk_deps(
             None => continue,
         };
 
-        if state.skipped.contains(&reference) || reference.starts_with("workspace:") {
+        if state.skipped.contains(&reference) {
+            continue;
+        }
+
+        // Workspace-kind hoister children are non-root workspace
+        // importers. Recurse into their (post-hoist, often-empty)
+        // dependencies under `<lockfile_dir>/<importer_id>/node_modules`
+        // to capture any deps the hoister couldn't move up — those
+        // become nested entries in the per-importer hierarchy. The
+        // workspace node itself is *not* added to the graph or to
+        // the parent's hierarchy: it has no package contents to
+        // import. Per-importer `direct_dependencies_by_importer_id`
+        // is computed in [`build_dep_graph`] from the lockfile
+        // (not from the hoister tree) because hoisted siblings
+        // don't appear in the workspace node's children. Mirrors
+        // upstream's per-importer fan-out at
+        // [`lockfileToHoistedDepGraph.ts:113-180`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/lockfileToHoistedDepGraph.ts#L113-L180).
+        if let Some(importer_id) = reference.strip_prefix("workspace:") {
+            let importer_id = importer_id.to_string();
+            let importer_root = state.lockfile_dir.join(&importer_id);
+            let importer_modules = importer_root.join("node_modules");
+            let child_deps = dep.0.dependencies.borrow();
+            let importer_hierarchy = walk_deps(state, &importer_modules, &child_deps)?;
+            drop(child_deps);
+            state.per_importer_hierarchies.insert(importer_root, importer_hierarchy);
+            // Reserve the importer's slot so [`build_dep_graph`]'s
+            // post-walk loop knows the importer was visited, even
+            // when it ends up with zero direct deps.
+            state.per_importer_direct_deps.entry(importer_id).or_default();
             continue;
         }
 
@@ -1483,5 +1608,233 @@ mod tests {
         // The orphan must not appear in the wanted-walk's skipped
         // set either — its installability check was never run.
         assert!(result.skipped.is_empty(), "skipped from wanted walk only, not prev walk");
+    }
+
+    // --- Multi-importer (workspace) walker tests --------------------------
+
+    /// Build a multi-importer workspace fixture lockfile. Each
+    /// importer in `importer_deps` becomes a `ProjectSnapshot`
+    /// with the supplied direct deps. Root importer (`.`) takes
+    /// the first entry in `importer_deps`; remaining entries
+    /// become non-root workspace importers under their lockfile
+    /// keys.
+    fn workspace_lockfile(
+        importer_deps: Vec<(&str, ResolvedDependencyMap)>,
+        packages: HashMap<PackageKey, PackageMetadata>,
+        snapshots: HashMap<PackageKey, SnapshotEntry>,
+    ) -> Lockfile {
+        let mut importers = HashMap::new();
+        for (id, deps) in importer_deps {
+            importers.insert(
+                id.to_string(),
+                ProjectSnapshot { dependencies: Some(deps), ..ProjectSnapshot::default() },
+            );
+        }
+        Lockfile {
+            lockfile_version: lockfile_version(),
+            settings: Some(LockfileSettings::default()),
+            overrides: None,
+            ignored_optional_dependencies: None,
+            importers,
+            packages: Some(packages),
+            snapshots: Some(snapshots),
+        }
+    }
+
+    /// `root → a@1.0.0`, `packages/foo → b@1.0.0`. Both packages
+    /// hoist to the workspace root via the shared hoister tree
+    /// (slice 9's `hoist_workspace_packages: true` default), so
+    /// the walker emits one entry per importer in
+    /// `direct_dependencies_by_importer_id` — root sees `a`,
+    /// `packages/foo` sees `b` — both pointing at root-level
+    /// `node_modules/<dep>` directories.
+    #[test]
+    fn walker_multi_importer_emits_per_importer_direct_deps() {
+        let mut root_deps = ResolvedDependencyMap::new();
+        root_deps.insert(pkg_name("a"), resolved_dep("1.0.0"));
+
+        let mut foo_deps = ResolvedDependencyMap::new();
+        foo_deps.insert(pkg_name("b"), resolved_dep("1.0.0"));
+
+        let mut packages = HashMap::new();
+        packages.insert(dep_key("a", "1.0.0"), metadata_stub());
+        packages.insert(dep_key("b", "1.0.0"), metadata_stub());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(dep_key("a", "1.0.0"), SnapshotEntry::default());
+        snapshots.insert(dep_key("b", "1.0.0"), SnapshotEntry::default());
+
+        let lockfile = workspace_lockfile(
+            vec![(Lockfile::ROOT_IMPORTER_KEY, root_deps), ("packages/foo", foo_deps)],
+            packages,
+            snapshots,
+        );
+        let lockfile_dir = PathBuf::from("/repo");
+        let opts = LockfileToHoistedDepGraphOptions {
+            lockfile_dir: lockfile_dir.clone(),
+            ..LockfileToHoistedDepGraphOptions::default()
+        };
+        let result =
+            lockfile_to_hoisted_dep_graph(&lockfile, None, &opts).expect("walker succeeds");
+
+        let modules = lockfile_dir.join("node_modules");
+        // Both packages live at the workspace root because the
+        // shared hoister tree dedupes them with no conflict.
+        assert!(result.graph.contains_key(&modules.join("a")));
+        assert!(result.graph.contains_key(&modules.join("b")));
+        // Per-importer direct deps reflect each project's view.
+        assert_eq!(
+            result.direct_dependencies_by_importer_id[Lockfile::ROOT_IMPORTER_KEY]["a"],
+            modules.join("a"),
+        );
+        assert_eq!(
+            result.direct_dependencies_by_importer_id["packages/foo"]["b"],
+            modules.join("b"),
+        );
+        // Workspace nodes themselves are NOT graph entries; only
+        // their package-bearing descendants are.
+        assert!(!result.graph.values().any(|n| n.alias.as_deref() == Some("packages%2Ffoo")));
+    }
+
+    /// Hierarchy must include one entry per importer root: the
+    /// workspace root for `.` and `<lockfile_dir>/<importer>` for
+    /// each non-root importer. The slice 5 linker drives its
+    /// per-importer parallel fan-out off this map, so an importer
+    /// missing a hierarchy entry would be silently un-linked.
+    #[test]
+    fn walker_multi_importer_emits_per_importer_hierarchy() {
+        let mut root_deps = ResolvedDependencyMap::new();
+        root_deps.insert(pkg_name("a"), resolved_dep("1.0.0"));
+
+        let mut foo_deps = ResolvedDependencyMap::new();
+        foo_deps.insert(pkg_name("b"), resolved_dep("1.0.0"));
+
+        let mut packages = HashMap::new();
+        packages.insert(dep_key("a", "1.0.0"), metadata_stub());
+        packages.insert(dep_key("b", "1.0.0"), metadata_stub());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(dep_key("a", "1.0.0"), SnapshotEntry::default());
+        snapshots.insert(dep_key("b", "1.0.0"), SnapshotEntry::default());
+
+        let lockfile = workspace_lockfile(
+            vec![(Lockfile::ROOT_IMPORTER_KEY, root_deps), ("packages/foo", foo_deps)],
+            packages,
+            snapshots,
+        );
+        let lockfile_dir = PathBuf::from("/repo");
+        let opts = LockfileToHoistedDepGraphOptions {
+            lockfile_dir: lockfile_dir.clone(),
+            ..LockfileToHoistedDepGraphOptions::default()
+        };
+        let result =
+            lockfile_to_hoisted_dep_graph(&lockfile, None, &opts).expect("walker succeeds");
+
+        let importer_root = lockfile_dir.join("packages/foo");
+        assert!(result.hierarchy.contains_key(&lockfile_dir), "root importer hierarchy missing");
+        assert!(
+            result.hierarchy.contains_key(&importer_root),
+            "packages/foo hierarchy missing: {:?}",
+            result.hierarchy.keys().collect::<Vec<_>>(),
+        );
+    }
+
+    /// `hoist_workspace_packages: false` opts non-root importers
+    /// out of the shared hoister tree. The walker then sees no
+    /// `Workspace`-kind children to fan out into, so only the
+    /// root importer's direct deps + hierarchy are emitted.
+    /// Non-root importers stay absent from
+    /// `direct_dependencies_by_importer_id`. Mirrors upstream's
+    /// per-project independent hoist mode.
+    #[test]
+    fn walker_hoist_workspace_packages_false_emits_root_only() {
+        let mut root_deps = ResolvedDependencyMap::new();
+        root_deps.insert(pkg_name("a"), resolved_dep("1.0.0"));
+
+        let mut foo_deps = ResolvedDependencyMap::new();
+        foo_deps.insert(pkg_name("b"), resolved_dep("1.0.0"));
+
+        let mut packages = HashMap::new();
+        packages.insert(dep_key("a", "1.0.0"), metadata_stub());
+        packages.insert(dep_key("b", "1.0.0"), metadata_stub());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(dep_key("a", "1.0.0"), SnapshotEntry::default());
+        snapshots.insert(dep_key("b", "1.0.0"), SnapshotEntry::default());
+
+        let lockfile = workspace_lockfile(
+            vec![(Lockfile::ROOT_IMPORTER_KEY, root_deps), ("packages/foo", foo_deps)],
+            packages,
+            snapshots,
+        );
+        let lockfile_dir = PathBuf::from("/repo");
+        let opts = LockfileToHoistedDepGraphOptions {
+            lockfile_dir: lockfile_dir.clone(),
+            hoist_workspace_packages: false,
+            ..LockfileToHoistedDepGraphOptions::default()
+        };
+        let result =
+            lockfile_to_hoisted_dep_graph(&lockfile, None, &opts).expect("walker succeeds");
+
+        // Root importer's `a` survives; `b` (only reachable via
+        // `packages/foo`) does not show up in the graph.
+        assert!(result.graph.contains_key(&lockfile_dir.join("node_modules").join("a")));
+        assert!(!result.graph.contains_key(&lockfile_dir.join("node_modules").join("b")));
+        // `direct_dependencies_by_importer_id` carries only the
+        // root entry.
+        assert_eq!(result.direct_dependencies_by_importer_id.len(), 1);
+        assert!(
+            result.direct_dependencies_by_importer_id.contains_key(Lockfile::ROOT_IMPORTER_KEY),
+        );
+        assert!(!result.direct_dependencies_by_importer_id.contains_key("packages/foo"));
+        // Hierarchy carries only the workspace root.
+        assert_eq!(result.hierarchy.len(), 1);
+        assert!(result.hierarchy.contains_key(&lockfile_dir));
+    }
+
+    /// Version conflict across importers: root wants `a@1`,
+    /// `packages/foo` wants `a@2`. The hoister resolves the conflict
+    /// by hoisting one version to the root and nesting the other
+    /// under the losing importer's `node_modules`. The walker
+    /// emits both copies and each importer's direct-deps map
+    /// points at the version it actually depends on.
+    #[test]
+    fn walker_multi_importer_version_conflict_nests_loser() {
+        let mut root_deps = ResolvedDependencyMap::new();
+        root_deps.insert(pkg_name("a"), resolved_dep("1.0.0"));
+
+        let mut foo_deps = ResolvedDependencyMap::new();
+        foo_deps.insert(pkg_name("a"), resolved_dep("2.0.0"));
+
+        let mut packages = HashMap::new();
+        packages.insert(dep_key("a", "1.0.0"), metadata_stub());
+        packages.insert(dep_key("a", "2.0.0"), metadata_stub());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(dep_key("a", "1.0.0"), SnapshotEntry::default());
+        snapshots.insert(dep_key("a", "2.0.0"), SnapshotEntry::default());
+
+        let lockfile = workspace_lockfile(
+            vec![(Lockfile::ROOT_IMPORTER_KEY, root_deps), ("packages/foo", foo_deps)],
+            packages,
+            snapshots,
+        );
+        let lockfile_dir = PathBuf::from("/repo");
+        let opts = LockfileToHoistedDepGraphOptions {
+            lockfile_dir: lockfile_dir.clone(),
+            ..LockfileToHoistedDepGraphOptions::default()
+        };
+        let result =
+            lockfile_to_hoisted_dep_graph(&lockfile, None, &opts).expect("walker succeeds");
+
+        // Both versions land in the graph.
+        assert_eq!(result.graph.len(), 2);
+        // Root sees a@1 (or a@2 — depends on hoister's tie-break)
+        // and packages/foo sees the other version. Whichever wins
+        // the root slot, the *other* lives under that importer's
+        // own `node_modules/a`.
+        let root_a = &result.direct_dependencies_by_importer_id[Lockfile::ROOT_IMPORTER_KEY]["a"];
+        let foo_a = &result.direct_dependencies_by_importer_id["packages/foo"]["a"];
+        assert_ne!(root_a, foo_a, "conflict resolves to two distinct dirs");
     }
 }

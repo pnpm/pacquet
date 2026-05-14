@@ -37,6 +37,7 @@ fn create_config(store_dir: &Path, modules_dir: &Path, virtual_store_dir: &Path)
         lockfile_include_tarball_url: false,
         registry: "https://registry.npmjs.com/".to_string(),
         auto_install_peers: false,
+        hoist_workspace_packages: true,
         dedupe_peer_dependents: false,
         strict_peer_dependencies: false,
         resolve_peers_from_workspace_root: false,

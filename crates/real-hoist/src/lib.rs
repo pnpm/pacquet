@@ -142,7 +142,7 @@ pub type HoistingLimits = BTreeMap<String, BTreeSet<String>>;
 
 /// Options accepted by [`hoist`]. Mirrors the `opts` object of the
 /// pnpm wrapper.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct HoistOpts {
     pub hoisting_limits: HoistingLimits,
     pub external_dependencies: BTreeSet<String>,
@@ -152,6 +152,32 @@ pub struct HoistOpts {
     ///
     /// [auto]: https://github.com/pnpm/pnpm/blob/94240bc0464196bd52f7006b97f6d9a43df34633/installing/linking/real-hoist/src/index.ts#L124-L129
     pub auto_install_peers: bool,
+    /// When `true` (the default), every non-root workspace importer
+    /// is added to the hoister tree as a `Workspace`-kind child of
+    /// the virtual `.` root. This is the only way under hoisted
+    /// for workspace projects to participate in the shared
+    /// hoist-decisions pass — without this every project hoists
+    /// independently and conflicting versions don't dedupe across
+    /// the workspace. Mirrors pnpm's `hoistWorkspacePackages` at
+    /// [`installing/linking/real-hoist/src/index.ts`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/linking/real-hoist/src/index.ts#L51-L66).
+    /// Pacquet's `Config::hoist_workspace_packages` (in
+    /// `pacquet-config`) drives this for the install pipeline.
+    pub hoist_workspace_packages: bool,
+}
+
+impl Default for HoistOpts {
+    fn default() -> Self {
+        Self {
+            hoisting_limits: HoistingLimits::new(),
+            external_dependencies: BTreeSet::new(),
+            auto_install_peers: false,
+            // Match upstream's default-on behavior. Workspace-aware
+            // hoisting is the whole point of `nodeLinker: hoisted` in
+            // a workspace — opting out is a niche knob, never the
+            // expected starting point.
+            hoist_workspace_packages: true,
+        }
+    }
 }
 
 /// Failure modes of [`hoist`].
@@ -176,26 +202,6 @@ pub enum HoistError {
         /// The depPath (snapshot key) the lockfile failed to
         /// resolve.
         pkg_key: String,
-    },
-    /// The lockfile contains more than one importer. The hoist
-    /// algorithm doesn't yet support workspace projects (multi-
-    /// importer hoist trees with `workspace:` references). Refuse
-    /// upfront rather than build a single-importer layout that
-    /// pnpm would reject.
-    #[display("hoister cannot yet model workspace lockfiles; extra importers: {extra_importers:?}")]
-    #[diagnostic(
-        code(ERR_PACQUET_HOIST_UNSUPPORTED_WORKSPACE),
-        help(
-            "the hoister doesn't yet model multi-importer (workspace) lockfiles; \
-             pass a lockfile that carries only the `.` importer. \
-             pacquet's wider install path supports workspaces — see \
-             `SymlinkDirectDependencies` for the isolated-linker case."
-        )
-    )]
-    UnsupportedWorkspace {
-        /// The importer IDs the lockfile carries beyond the root
-        /// `.` importer.
-        extra_importers: Vec<String>,
     },
 }
 
@@ -261,21 +267,6 @@ impl<T> From<Rc<T>> for RcByPtr<T> {
 ///
 /// [upstream]: https://github.com/pnpm/pnpm/blob/94240bc0464196bd52f7006b97f6d9a43df34633/installing/linking/real-hoist/src/index.ts
 pub fn hoist(lockfile: &Lockfile, opts: &HoistOpts) -> Result<HoisterResult, HoistError> {
-    // Refuse upfront for inputs the algorithm doesn't yet model.
-    // Better an explicit error than a silently-invented layout
-    // pnpm would reject. `hoisting_limits` is enforced by the
-    // algorithm itself (see `hoist_into_root`), so no upfront
-    // guard is needed here.
-    let extra_importers: Vec<String> = lockfile
-        .importers
-        .keys()
-        .filter(|k| k.as_str() != Lockfile::ROOT_IMPORTER_KEY)
-        .cloned()
-        .collect();
-    if !extra_importers.is_empty() {
-        return Err(HoistError::UnsupportedWorkspace { extra_importers });
-    }
-
     let mut nodes: HashMap<String, Rc<HoisterTree>> = HashMap::new();
 
     let mut root_children: IndexSet<RcByPtr<HoisterTree>> = IndexSet::new();
@@ -303,33 +294,43 @@ pub fn hoist(lockfile: &Lockfile, opts: &HoistOpts) -> Result<HoisterResult, Hoi
     }
 
     // Non-root importers (workspace projects) become children of
-    // the virtual `.` root. Pacquet's install pipeline doesn't yet
-    // support workspaces, so the wrapper accepts them but the rest
-    // of the install code path will reject a multi-importer
-    // lockfile elsewhere.
-    let mut non_root: Vec<(&String, &ProjectSnapshot)> = lockfile
-        .importers
-        .iter()
-        .filter(|(id, _)| id.as_str() != Lockfile::ROOT_IMPORTER_KEY)
-        .collect();
-    // HashMap iteration order is non-deterministic; sort so the
-    // output tree is stable across runs (matters for snapshot
-    // tests).
-    non_root.sort_by(|a, b| a.0.cmp(b.0));
+    // the virtual `.` root when `hoist_workspace_packages` is on
+    // (the default). The hoister sees the whole workspace as one
+    // tree, which is what enables cross-project dedupe of
+    // conflicting versions and gives the layout `node_modules/<dep>`
+    // → `<lockfile_dir>/<importer>/node_modules/<dep>` shape that
+    // upstream's hoisted linker expects.
+    //
+    // When the knob is `false`, non-root importers don't enter the
+    // shared tree — each project hoists independently in the walk
+    // phase. Mirrors upstream's `hoistWorkspacePackages: false`
+    // path at
+    // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/linking/real-hoist/src/index.ts#L51-L66>.
+    if opts.hoist_workspace_packages {
+        let mut non_root: Vec<(&String, &ProjectSnapshot)> = lockfile
+            .importers
+            .iter()
+            .filter(|(id, _)| id.as_str() != Lockfile::ROOT_IMPORTER_KEY)
+            .collect();
+        // HashMap iteration order is non-deterministic; sort so the
+        // output tree is stable across runs (matters for snapshot
+        // tests).
+        non_root.sort_by(|a, b| a.0.cmp(b.0));
 
-    for (importer_id, importer) in non_root {
-        let mut importer_children: IndexSet<RcByPtr<HoisterTree>> = IndexSet::new();
-        collect_importer_deps(importer, lockfile, opts, &mut nodes, &mut importer_children)?;
-        let importer_node = Rc::new(HoisterTree {
-            name: percent_encode_path(importer_id),
-            ident_name: percent_encode_path(importer_id),
-            reference: format!("workspace:{importer_id}"),
-            peer_names: BTreeSet::new(),
-            dependency_kind: HoisterDependencyKind::Workspace,
-            hoist_priority: 0,
-            dependencies: RefCell::new(importer_children),
-        });
-        root_children.insert(RcByPtr(importer_node));
+        for (importer_id, importer) in non_root {
+            let mut importer_children: IndexSet<RcByPtr<HoisterTree>> = IndexSet::new();
+            collect_importer_deps(importer, lockfile, opts, &mut nodes, &mut importer_children)?;
+            let importer_node = Rc::new(HoisterTree {
+                name: percent_encode_path(importer_id),
+                ident_name: percent_encode_path(importer_id),
+                reference: format!("workspace:{importer_id}"),
+                peer_names: BTreeSet::new(),
+                dependency_kind: HoisterDependencyKind::Workspace,
+                hoist_priority: 0,
+                dependencies: RefCell::new(importer_children),
+            });
+            root_children.insert(RcByPtr(importer_node));
+        }
     }
 
     let root_node = Rc::new(HoisterTree {

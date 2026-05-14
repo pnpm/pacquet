@@ -69,6 +69,24 @@ where
     /// `linkDirectDeps` walk skipping entries whose `depPath` is
     /// in `skipPkgIds`.
     pub skipped: &'a SkippedSnapshots,
+
+    /// When `true`, skip every direct dep whose resolved version
+    /// is [`ImporterDepVersion::Regular`] and only materialize
+    /// [`ImporterDepVersion::Link`] entries — workspace siblings
+    /// resolved through `workspace:*` / `link:`. Used by the
+    /// hoisted linker to layer workspace-sibling symlinks on top
+    /// of the real-directory tree the slice 5 linker produced;
+    /// the regular deps already landed under
+    /// `<importer>/node_modules/<alias>/` as real directories
+    /// from the hoisted linker, and re-symlinking them would
+    /// either no-op or corrupt the layout.
+    ///
+    /// Mirrors upstream's hoisted branch at
+    /// [`installing/deps-restorer/src/index.ts:411-440`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/index.ts#L411-L440)
+    /// where `symlinkDirectDependencies` runs after
+    /// `linkHoistedModules` with a filtered `directDependenciesByImporterId`
+    /// containing only `link:`-shaped entries.
+    pub link_only: bool,
 }
 
 /// Error type of [`SymlinkDirectDependencies`].
@@ -125,6 +143,7 @@ where
             dependency_groups,
             workspace_root,
             skipped,
+            link_only,
         } = self;
 
         // Collect once so the same group order can drive every importer.
@@ -175,6 +194,7 @@ where
                 &modules_dir,
                 dependency_groups.iter().copied(),
                 skipped,
+                link_only,
             )?;
         }
 
@@ -254,6 +274,7 @@ pub(crate) fn importer_root_dir(workspace_root: &Path, importer_id: &str) -> Pat
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn link_one_importer<R: Reporter>(
     importer_id: &str,
     layout: &VirtualStoreLayout,
@@ -262,6 +283,7 @@ fn link_one_importer<R: Reporter>(
     modules_dir: &Path,
     dependency_groups: impl IntoIterator<Item = DependencyGroup>,
     skipped: &SkippedSnapshots,
+    link_only: bool,
 ) -> Result<(), SymlinkDirectDependenciesError> {
     // Iterate per group so each emit can label the dependency
     // with its [`DependencyType`]. pnpm's reporter renders the
@@ -294,34 +316,45 @@ fn link_one_importer<R: Reporter>(
     // `[Prod, Dev, Optional]`, matching pnpm's
     // dependencies-over-optional precedence.
     let mut seen: HashSet<&PkgName> = HashSet::new();
-    let entries: Vec<(&PkgName, &ResolvedDependencySpec, DependencyGroup)> = dependency_groups
-        .into_iter()
-        .filter(|group| !matches!(group, DependencyGroup::Peer))
-        .flat_map(|group| {
-            project_snapshot
-                .get_map_by_group(group)
-                .into_iter()
-                .flatten()
-                .map(move |(name, spec)| (name, spec, group))
-        })
-        .filter(|(name, _, _)| seen.insert(*name))
-        // Drop direct deps whose resolved snapshot landed in the
-        // skipped set. Without this filter, the symlink would
-        // either dangle (no virtual-store slot was created) or —
-        // worse — point at a half-installed slot from a prior
-        // install. Mirrors pnpm's `linkDirectDeps` walk skipping
-        // entries whose `depPath` is in `skipPkgIds`. `link:` deps
-        // never participate in the virtual store, so they are
-        // exempt from the skipped check (the resolved snapshot key
-        // wouldn't exist in the set anyway).
-        .filter(|(name, spec, _)| match &spec.version {
-            ImporterDepVersion::Regular(ver) => {
-                let resolved = PkgNameVerPeer::new(PkgName::clone(name), ver.clone());
-                !skipped.contains(&resolved)
-            }
-            ImporterDepVersion::Link(_) => true,
-        })
-        .collect();
+    let entries: Vec<(&PkgName, &ResolvedDependencySpec, DependencyGroup)> =
+        dependency_groups
+            .into_iter()
+            .filter(|group| !matches!(group, DependencyGroup::Peer))
+            .flat_map(|group| {
+                project_snapshot
+                    .get_map_by_group(group)
+                    .into_iter()
+                    .flatten()
+                    .map(move |(name, spec)| (name, spec, group))
+            })
+            .filter(|(name, _, _)| seen.insert(*name))
+            // Drop direct deps whose resolved snapshot landed in the
+            // skipped set. Without this filter, the symlink would
+            // either dangle (no virtual-store slot was created) or —
+            // worse — point at a half-installed slot from a prior
+            // install. Mirrors pnpm's `linkDirectDeps` walk skipping
+            // entries whose `depPath` is in `skipPkgIds`. `link:` deps
+            // never participate in the virtual store, so they are
+            // exempt from the skipped check (the resolved snapshot key
+            // wouldn't exist in the set anyway).
+            .filter(|(name, spec, _)| match &spec.version {
+                ImporterDepVersion::Regular(ver) => {
+                    let resolved = PkgNameVerPeer::new(PkgName::clone(name), ver.clone());
+                    !skipped.contains(&resolved)
+                }
+                ImporterDepVersion::Link(_) => true,
+            })
+            // Hoisted-mode filter: `link_only` keeps only `link:`
+            // entries (workspace siblings) and drops every regular
+            // dep. The hoisted linker (slice 5) already materialized
+            // those regular deps as real `<importer>/node_modules/<alias>/`
+            // directories; re-symlinking them here would either no-op
+            // or replace the real dir with a slot symlink that points
+            // at a slot that doesn't exist under hoisted.
+            .filter(|(_, spec, _)| {
+                if link_only { matches!(spec.version, ImporterDepVersion::Link(_)) } else { true }
+            })
+            .collect();
 
     // `prefix` for the `pnpm:root` envelope. Upstream uses the
     // project's `rootDir` so the JS reporter can scope progress to

@@ -592,6 +592,7 @@ where
                 dependency_groups: dependency_groups.iter().copied(),
                 workspace_root,
                 skipped: &skipped,
+                link_only: false,
             }
             .run::<R>()
             .map_err(InstallFrozenLockfileError::SymlinkDirectDependencies)?;
@@ -691,6 +692,7 @@ where
                 current_cpu: pacquet_graph_hasher::host_arch().to_string(),
                 current_libc: pacquet_graph_hasher::host_libc().to_string(),
                 supported_architectures: supported_architectures.cloned(),
+                hoist_workspace_packages: config.hoist_workspace_packages,
             };
             let walker_result =
                 lockfile_to_hoisted_dep_graph(lockfile, current_lockfile, &walker_opts)
@@ -731,6 +733,29 @@ where
             };
             link_hoisted_modules::<R>(&link_opts)
                 .map_err(InstallFrozenLockfileError::LinkHoistedModules)?;
+            // Workspace `link:` deps still need symlinks under
+            // each importer's `node_modules/<alias>` even though
+            // the regular deps now live as real directories. The
+            // hoisted dep-graph walker skips `workspace:`-prefixed
+            // references entirely (they're not in the hoist tree),
+            // so without this pass workspace siblings would be
+            // missing from each project's `node_modules/`.
+            // `link_only: true` filters every other dep out so
+            // the call doesn't try to re-create symlinks for
+            // packages that the hoisted linker already wrote as
+            // real dirs. Mirrors upstream's hoisted branch at
+            // [`installing/deps-restorer/src/index.ts:411-440`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/index.ts#L411-L440).
+            SymlinkDirectDependencies {
+                config,
+                layout: &layout,
+                importers,
+                dependency_groups: dependency_groups.iter().copied(),
+                workspace_root,
+                skipped: &skipped,
+                link_only: true,
+            }
+            .run::<R>()
+            .map_err(InstallFrozenLockfileError::SymlinkDirectDependencies)?;
             // Map snapshot key → first recorded directory. The
             // walker can emit multiple [`crate::DependenciesGraphNode`]s
             // with the same `dep_path` when the package nests under
