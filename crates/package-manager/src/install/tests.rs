@@ -2561,16 +2561,23 @@ async fn frozen_lockfile_install_skips_runtime_when_skip_runtimes_set() {
 
     // The runtime slot must NOT exist under the virtual store —
     // the snapshot was filtered out by the skip set.
+    //
+    // Use `symlink_metadata` rather than `Path::exists()` so a
+    // *dangling* symlink fails the assertion too: `exists()`
+    // follows symlinks and reports `false` for a broken one, but
+    // a broken symlink at `<modules_dir>/node` would still mean
+    // the install created an entry the skip set was supposed to
+    // suppress.
     let runtime_slot = virtual_store_dir.join("node@runtime:22.0.0");
     assert!(
-        !runtime_slot.exists(),
+        std::fs::symlink_metadata(&runtime_slot).is_err(),
         "runtime slot should not be materialized under --no-runtime, got {runtime_slot:?}",
     );
     // Neither should the direct-dep symlink under the project's
-    // `node_modules/`.
+    // `node_modules/`. Same `symlink_metadata` rationale.
     let direct_dep = modules_dir.join("node");
     assert!(
-        !direct_dep.exists(),
+        std::fs::symlink_metadata(&direct_dep).is_err(),
         "direct-dep symlink for node should not be created under --no-runtime, got {direct_dep:?}",
     );
 
