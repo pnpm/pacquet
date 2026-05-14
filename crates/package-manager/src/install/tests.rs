@@ -1616,6 +1616,7 @@ fn build_modules_manifest_serializes_skipped_set() {
         pacquet_config::NodeLinker::default(),
         included,
         Default::default(),
+        Default::default(),
         &skipped,
     );
 
@@ -1651,9 +1652,14 @@ fn build_modules_manifest_skipped_is_empty_on_empty_set() {
         pacquet_config::NodeLinker::default(),
         IncludedDependencies::default(),
         Default::default(),
+        Default::default(),
         &SkippedSnapshots::new(),
     );
     assert!(manifest.skipped.is_empty());
+    // Empty `hoisted_locations` is dropped to `None` so an
+    // isolated install doesn't write a `hoistedLocations: {}` key
+    // (which would falsely look like a stale hoisted-mode write).
+    assert!(manifest.hoisted_locations.is_none());
 }
 
 /// End-to-end read → seed → write loop. Pre-write
@@ -2225,4 +2231,165 @@ async fn frozen_install_no_optional_keeps_shared_non_optional_snapshot() {
     );
 
     drop(dir);
+}
+
+/// Wiring proof for the new `nodeLinker: hoisted` install branch
+/// (umbrella #438 slice 6). Empty lockfile drives the cheapest
+/// successful install path:
+///
+/// 1. `Install::run` dispatches into `InstallFrozenLockfile::run`.
+/// 2. `is_hoisted` flips on, the slot-creation in
+///    [`crate::CreateVirtualStore`] is skipped, and the
+///    [`crate::SymlinkDirectDependencies`] +
+///    [`crate::LinkVirtualStoreBins`] passes are bypassed.
+/// 3. [`crate::lockfile_to_hoisted_dep_graph`] returns an empty
+///    walker result against the empty `snapshots:` map.
+/// 4. [`crate::link_hoisted_modules()`] is called with an empty
+///    graph (no-op).
+/// 5. `BuildModules` is skipped under hoisted (slice 7 retargets
+///    it onto `hoistedLocations`).
+/// 6. `.modules.yaml` is written with `nodeLinker: hoisted` and
+///    `hoisted_locations: None` (the field is dropped when empty
+///    so an isolated install never produces a hoisted-only key).
+///
+/// The empty-lockfile shape exercises every branch on `is_hoisted`
+/// without needing a real package fetch — proving the wiring
+/// composes with the existing pipeline phases. End-to-end coverage
+/// against the registry-mock with a real package is left to a
+/// follow-up CLI integration test.
+#[tokio::test]
+async fn hoisted_node_linker_empty_lockfile_writes_modules_yaml() {
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    std::fs::create_dir_all(&project_root).expect("create project root");
+    let manifest_path = project_root.join("package.json");
+    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+    let mut config = Config::new();
+    config.lockfile = false;
+    config.store_dir = store_dir.into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir;
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies: {}"
+        "packages: {}"
+        "snapshots: {}"
+    })
+    .expect("parse minimal v9 lockfile");
+
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        skip_runtimes: false,
+        supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::Hoisted,
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await
+    .expect("hoisted-linker install with empty lockfile should succeed");
+
+    let written = modules_dir
+        .pipe_as_ref(read_modules_manifest::<RealApi>)
+        .expect("read .modules.yaml")
+        .expect("modules manifest exists");
+
+    assert_eq!(written.node_linker, Some(NodeLinker::Hoisted));
+    // Empty walker output → no hoisted_locations to persist. The
+    // field is `None`-when-empty so the isolated linker doesn't
+    // accidentally write a stale `hoistedLocations: {}` key.
+    assert!(
+        written.hoisted_locations.is_none(),
+        "empty lockfile produces no hoisted_locations: {:?}",
+        written.hoisted_locations,
+    );
+    assert!(
+        written.hoisted_dependencies.is_empty(),
+        "hoisted-linker leaves hoisted_dependencies empty (no isolated-mode adapter shape): {:?}",
+        written.hoisted_dependencies,
+    );
+
+    drop(dir);
+}
+
+/// Hoisted install must NOT create the virtual-store slot
+/// directories the isolated linker would write — that's the whole
+/// point of skipping [`crate::CreateVirtualDirBySnapshot`] under
+/// hoisted. With no snapshots in the lockfile the assertion is
+/// vacuous (the directory is empty regardless of linker choice),
+/// but pinning the absence here documents the contract so a
+/// future regression that re-enables slot writes under hoisted
+/// surfaces immediately.
+///
+/// `node_modules/.pacquet/` not being present is the proof: the
+/// virtual-store root only gets created on demand by
+/// [`CreateVirtualDirBySnapshot::run`]; under hoisted that helper
+/// is never called, so the directory is never materialized.
+#[tokio::test]
+async fn hoisted_node_linker_does_not_create_virtual_store_root() {
+    let dir = tempdir().unwrap();
+    let store_dir = dir.path().join("pacquet-store");
+    let project_root = dir.path().join("project");
+    let modules_dir = project_root.join("node_modules");
+    let virtual_store_dir = modules_dir.join(".pacquet");
+
+    std::fs::create_dir_all(&project_root).expect("create project root");
+    let manifest_path = project_root.join("package.json");
+    let manifest = PackageManifest::create_if_needed(manifest_path).unwrap();
+
+    let mut config = Config::new();
+    config.lockfile = false;
+    config.store_dir = store_dir.into();
+    config.modules_dir = modules_dir.clone();
+    config.virtual_store_dir = virtual_store_dir.clone();
+    let config = config.leak();
+
+    let lockfile: Lockfile = serde_saphyr::from_str(text_block! {
+        "lockfileVersion: '9.0'"
+        "importers:"
+        "  .:"
+        "    dependencies: {}"
+        "packages: {}"
+        "snapshots: {}"
+    })
+    .expect("parse minimal v9 lockfile");
+
+    Install {
+        tarball_mem_cache: &Default::default(),
+        http_client: &Default::default(),
+        config,
+        manifest: &manifest,
+        lockfile: Some(&lockfile),
+        dependency_groups: [DependencyGroup::Prod],
+        frozen_lockfile: true,
+        skip_runtimes: false,
+        supported_architectures: None,
+        node_linker: pacquet_config::NodeLinker::Hoisted,
+        resolved_packages: &Default::default(),
+    }
+    .run::<SilentReporter>()
+    .await
+    .expect("hoisted-linker install should succeed");
+
+    // `<project>/node_modules/.pacquet` only gets created when
+    // CreateVirtualDirBySnapshot lays down a slot. Hoisted skips
+    // that helper, so the dir must remain absent.
+    assert!(
+        !virtual_store_dir.exists(),
+        "hoisted install must not materialize the virtual-store root at {virtual_store_dir:?}",
+    );
 }
