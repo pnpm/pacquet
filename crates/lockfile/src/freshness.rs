@@ -336,8 +336,8 @@ pub fn satisfies_package_manifest(
             let parsed = crate::PkgName::parse(*name).ok();
             let importer_spec = parsed
                 .as_ref()
-                .and_then(|n| importer_field.and_then(|m| m.get(n)))
-                .map(|s| s.specifier.as_str());
+                .and_then(|name| importer_field.and_then(|map| map.get(name)))
+                .map(|entry| entry.specifier.as_str());
             match importer_spec {
                 Some(spec) if spec == *manifest_spec => continue,
                 Some(spec) => {
@@ -476,10 +476,10 @@ fn diff_flat_records(
         diff.added.insert((**k).clone(), manifest_specs[*k].clone());
     }
     for k in lhs_keys.intersection(&rhs_keys) {
-        let l = &lockfile_specs[*k];
-        let r = &manifest_specs[*k];
-        if l != r {
-            diff.modified.insert((**k).clone(), (l.clone(), r.clone()));
+        let lhs = &lockfile_specs[*k];
+        let rhs = &manifest_specs[*k];
+        if lhs != rhs {
+            diff.modified.insert((**k).clone(), (lhs.clone(), rhs.clone()));
         }
     }
     diff

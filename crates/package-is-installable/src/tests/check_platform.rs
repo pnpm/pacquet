@@ -17,8 +17,8 @@ const FAKE_X64: &str = "x64";
 const FAKE_MUSL: &str = "musl";
 
 fn wanted(os: Option<&[&str]>, cpu: Option<&[&str]>, libc: Option<&[&str]>) -> WantedPlatform {
-    fn vec_opt(v: Option<&[&str]>) -> Option<Vec<String>> {
-        v.map(|s| s.iter().map(|x| (*x).to_string()).collect())
+    fn vec_opt(input: Option<&[&str]>) -> Option<Vec<String>> {
+        input.map(|values| values.iter().map(|x| (*x).to_string()).collect())
     }
     WantedPlatform { os: vec_opt(os), cpu: vec_opt(cpu), libc: vec_opt(libc) }
 }
@@ -31,15 +31,18 @@ fn wanted(os: Option<&[&str]>, cpu: Option<&[&str]>, libc: Option<&[&str]>) -> W
 /// in one place.
 fn check_platform_w(
     pkg: &str,
-    w: &WantedPlatform,
+    wanted: &WantedPlatform,
     supp: Option<&SupportedArchitectures>,
     os: &str,
     cpu: &str,
     libc: &str,
 ) -> Option<UnsupportedPlatformError> {
-    let wanted =
-        WantedPlatformRef { os: w.os.as_deref(), cpu: w.cpu.as_deref(), libc: w.libc.as_deref() };
-    check_platform(pkg, wanted, supp, os, cpu, libc)
+    let wanted_ref = WantedPlatformRef {
+        os: wanted.os.as_deref(),
+        cpu: wanted.cpu.as_deref(),
+        libc: wanted.libc.as_deref(),
+    };
+    check_platform(pkg, wanted_ref, supp, os, cpu, libc)
 }
 
 fn supported(
@@ -47,8 +50,8 @@ fn supported(
     cpu: Option<&[&str]>,
     libc: Option<&[&str]>,
 ) -> SupportedArchitectures {
-    fn vec_opt(v: Option<&[&str]>) -> Option<Vec<String>> {
-        v.map(|s| s.iter().map(|x| (*x).to_string()).collect())
+    fn vec_opt(input: Option<&[&str]>) -> Option<Vec<String>> {
+        input.map(|values| values.iter().map(|x| (*x).to_string()).collect())
     }
     SupportedArchitectures { os: vec_opt(os), cpu: vec_opt(cpu), libc: vec_opt(libc) }
 }

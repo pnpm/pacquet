@@ -125,7 +125,11 @@ impl MatcherImpl {
             MatcherImpl::Single(s) => s.matches(input),
             MatcherImpl::AllInclude(patterns) => {
                 for (i, p) in patterns.iter().enumerate() {
-                    debug_assert!(!p.is_ignore);
+                    #[cfg(debug_assertions)]
+                    {
+                        let is_include = !p.is_ignore;
+                        debug_assert!(is_include);
+                    }
                     if p.matches(input) {
                         return Some(i);
                     }
@@ -278,8 +282,8 @@ impl Glob {
 mod tests {
     use super::{create_matcher, create_matcher_with_index};
 
-    fn pats<const N: usize>(p: [&str; N]) -> Vec<String> {
-        p.iter().map(|s| s.to_string()).collect()
+    fn pats<const N: usize>(patterns: [&str; N]) -> Vec<String> {
+        patterns.iter().map(|s| s.to_string()).collect()
     }
 
     /// Direct port of upstream's `matcher()` test at

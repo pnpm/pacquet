@@ -186,7 +186,7 @@ where
     /// hoist decisions, and `skipped` lets the next install seed
     /// the installability re-check against the previously skipped
     /// snapshots.
-    pub async fn run<R: Reporter>(
+    pub async fn run<Reporter: self::Reporter>(
         self,
     ) -> Result<InstallFrozenLockfileOutput, InstallFrozenLockfileError> {
         let InstallFrozenLockfile {
@@ -308,7 +308,7 @@ where
             if let Some(supp) = supported_architectures {
                 host.supported_architectures = Some(supp.clone());
             }
-            let s = compute_skipped_snapshots::<R>(
+            let skipped = compute_skipped_snapshots::<Reporter>(
                 snapshots.expect("guarded by needs_installability_check"),
                 packages.expect("guarded by needs_installability_check"),
                 &host,
@@ -319,7 +319,7 @@ where
             // Preserve `node_detected` + `node_version` for the
             // engine-name derivation below. Dropping the rest of the
             // host struct frees the allocations early.
-            (s, Some((host.node_detected, host.node_version)))
+            (skipped, Some((host.node_detected, host.node_version)))
         } else {
             // Constraint-free lockfile: keep the seed verbatim so a
             // snapshot recorded as skipped on the previous install
@@ -506,7 +506,7 @@ where
             allow_build_policy: &allow_build_policy,
             skipped: &skipped,
         }
-        .run::<R>()
+        .run::<Reporter>()
         .await
         .map_err(InstallFrozenLockfileError::CreateVirtualStore)?;
 
@@ -531,7 +531,7 @@ where
             workspace_root,
             skipped: &skipped,
         }
-        .run::<R>()
+        .run::<Reporter>()
         .map_err(InstallFrozenLockfileError::SymlinkDirectDependencies)?;
 
         // Link the bins of each virtual-store slot's children into the
@@ -698,7 +698,7 @@ where
         // phase. Reporters use it to close the import progress display so
         // subsequent `pnpm:lifecycle` events render in their own section.
         // <https://github.com/pnpm/pnpm/blob/80037699fb/installing/deps-installer/src/install/link.ts#L167>
-        R::emit(&LogEvent::Stage(StageLog {
+        Reporter::emit(&LogEvent::Stage(StageLog {
             level: LogLevel::Debug,
             prefix: requester.to_string(),
             stage: Stage::ImportingDone,
@@ -805,14 +805,14 @@ where
             child_concurrency: config.child_concurrency,
             skipped: &skipped,
         }
-        .run::<R>()
+        .run::<Reporter>()
         .map_err(InstallFrozenLockfileError::BuildModules)?;
 
         // Mirrors upstream's single emit at the end of the build phase:
         // <https://github.com/pnpm/pnpm/blob/80037699fb/installing/deps-installer/src/install/index.ts#L414>.
         // Always emitted (with an empty list when nothing was ignored), so
         // the reporter can display a consistent "no ignored scripts" state.
-        R::emit(&LogEvent::IgnoredScripts(IgnoredScriptsLog {
+        Reporter::emit(&LogEvent::IgnoredScripts(IgnoredScriptsLog {
             level: LogLevel::Debug,
             package_names: ignored_builds,
         }));

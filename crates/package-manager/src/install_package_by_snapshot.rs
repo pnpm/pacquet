@@ -158,7 +158,7 @@ pub enum InstallPackageBySnapshotError {
 
 impl<'a> InstallPackageBySnapshot<'a> {
     /// Execute the subroutine.
-    pub async fn run<R: Reporter>(self) -> Result<(), InstallPackageBySnapshotError> {
+    pub async fn run<Reporter: self::Reporter>(self) -> Result<(), InstallPackageBySnapshotError> {
         let InstallPackageBySnapshot {
             http_client,
             config,
@@ -177,7 +177,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
 
         // TODO: skip when already exists in store?
         let package_id = package_key.without_peer().to_string();
-        emit_progress_resolved::<R>(&package_id, requester);
+        emit_progress_resolved::<Reporter>(&package_id, requester);
 
         // Adapter shared between the `Git` arm below and the
         // `gitHosted: true` post-pass on tarballs. Named local so
@@ -220,7 +220,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
                     ignore_file_pattern: None,
                     offline: config.offline,
                 }
-                .run_without_mem_cache::<R>()
+                .run_without_mem_cache::<Reporter>()
                 .await
                 .map_err(InstallPackageBySnapshotError::DownloadTarball)?;
 
@@ -260,7 +260,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
                         store_index_writer,
                         files_index_file: &files_index_file,
                     }
-                    .run::<R>()
+                    .run::<Reporter>()
                     .await
                     .map_err(InstallPackageBySnapshotError::GitFetch)?;
                     cas_paths
@@ -286,7 +286,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             // `BinaryResolution` extractor (mirrors upstream's
             // [`binary-fetcher/src/index.ts`](https://github.com/pnpm/pnpm/blob/94240bc046/fetching/binary-fetcher/src/index.ts)).
             LockfileResolution::Binary(binary) => {
-                fetch_binary_resolution_to_cas::<R>(
+                fetch_binary_resolution_to_cas::<Reporter>(
                     binary,
                     http_client,
                     config,
@@ -341,7 +341,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
                         },
                     });
                 };
-                fetch_binary_resolution_to_cas::<R>(
+                fetch_binary_resolution_to_cas::<Reporter>(
                     binary,
                     http_client,
                     config,
@@ -380,7 +380,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
                     files_index_file: &files_index_file,
                     git_bin: None,
                 }
-                .run::<R>()
+                .run::<Reporter>()
                 .await
                 .map_err(InstallPackageBySnapshotError::GitFetch)?;
                 cas_paths
@@ -397,7 +397,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             package_key,
             snapshot,
         }
-        .run::<R>()
+        .run::<Reporter>()
         .map_err(InstallPackageBySnapshotError::CreateVirtualDir)?;
 
         Ok(())
@@ -544,8 +544,8 @@ fn archive_filter_for(package_key: &PackageKey) -> Option<Arc<IgnoreEntryFilter>
         // `Arc<dyn Fn(...) + Send + Sync>` (the trait-object type
         // `IgnoreEntryFilter` aliases). The explicit type
         // annotation drives the unsizing coercion.
-        let f: Arc<IgnoreEntryFilter> = Arc::new(node_extras_filter);
-        f
+        let filter: Arc<IgnoreEntryFilter> = Arc::new(node_extras_filter);
+        filter
     });
     Some(Arc::clone(filter))
 }
@@ -572,7 +572,7 @@ fn archive_filter_for(package_key: &PackageKey) -> Option<Arc<IgnoreEntryFilter>
     clippy::too_many_arguments,
     reason = "matches the field set DownloadTarballToStore / DownloadZipArchiveToStore need"
 )]
-async fn fetch_binary_resolution_to_cas<R: Reporter>(
+async fn fetch_binary_resolution_to_cas<Reporter: self::Reporter>(
     binary: &BinaryResolution,
     http_client: &ThrottledClient,
     config: &'static Config,
@@ -604,7 +604,7 @@ async fn fetch_binary_resolution_to_cas<R: Reporter>(
             ignore_file_pattern,
             offline: config.offline,
         }
-        .run_without_mem_cache::<R>()
+        .run_without_mem_cache::<Reporter>()
         .await
         .map_err(InstallPackageBySnapshotError::DownloadTarball)?,
         BinaryArchive::Zip => DownloadZipArchiveToStore {
@@ -625,7 +625,7 @@ async fn fetch_binary_resolution_to_cas<R: Reporter>(
             ignore_file_pattern,
             offline: config.offline,
         }
-        .run_without_mem_cache::<R>()
+        .run_without_mem_cache::<Reporter>()
         .await
         .map_err(InstallPackageBySnapshotError::DownloadTarball)?,
     };
@@ -729,8 +729,8 @@ fn render_variant_targets(variants: &[pacquet_lockfile::PlatformAssetResolution]
 /// event-construction code is unit-testable; the call site itself
 /// only fires when a non-empty cold-batch lockfile install runs,
 /// which the existing test suite doesn't cover.
-fn emit_progress_resolved<R: Reporter>(package_id: &str, requester: &str) {
-    R::emit(&LogEvent::Progress(ProgressLog {
+fn emit_progress_resolved<Reporter: self::Reporter>(package_id: &str, requester: &str) {
+    Reporter::emit(&LogEvent::Progress(ProgressLog {
         level: LogLevel::Debug,
         message: ProgressMessage::Resolved {
             package_id: package_id.to_owned(),

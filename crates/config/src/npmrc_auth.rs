@@ -246,7 +246,7 @@ impl NpmrcAuth {
                     };
                     contents
                 } else {
-                    value.replace("\\n", "\n")
+                    value.replace(r"\n", "\n")
                 };
                 let entry = auth.tls_by_uri.entry(uri.to_owned()).or_default();
                 apply_tls_field(entry, field, resolved);
@@ -471,7 +471,7 @@ fn parse_no_proxy(raw: &str) -> NoProxySetting {
         return NoProxySetting::Bypass;
     }
     NoProxySetting::List(
-        raw.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect(),
+        raw.split(',').map(str::trim).filter(|item| !item.is_empty()).map(String::from).collect(),
     )
 }
 

@@ -118,9 +118,9 @@ pub fn find_workspace_dir_from_env() -> Option<PathBuf> {
 /// Threading an accessor through here lets the test exercise the
 /// "empty value falls through" branch without touching the
 /// process-wide env at all.
-pub(crate) fn find_workspace_dir_from_env_with<F>(mut env: F) -> Option<PathBuf>
+pub(crate) fn find_workspace_dir_from_env_with<Lookup>(mut env: Lookup) -> Option<PathBuf>
 where
-    F: FnMut(&str) -> Option<OsString>,
+    Lookup: FnMut(&str) -> Option<OsString>,
 {
     env(WORKSPACE_DIR_ENV_VAR)
         .or_else(|| env(&WORKSPACE_DIR_ENV_VAR.to_lowercase()))

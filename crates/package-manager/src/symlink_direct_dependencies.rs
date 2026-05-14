@@ -117,7 +117,7 @@ where
     DependencyGroupList: IntoIterator<Item = DependencyGroup>,
 {
     /// Execute the subroutine.
-    pub fn run<R: Reporter>(self) -> Result<(), SymlinkDirectDependenciesError> {
+    pub fn run<Reporter: self::Reporter>(self) -> Result<(), SymlinkDirectDependenciesError> {
         let SymlinkDirectDependencies {
             config,
             layout,
@@ -167,7 +167,7 @@ where
             let project_dir = importer_root_dir(workspace_root, importer_id);
             let modules_dir = project_dir.join(modules_dir_name);
 
-            link_one_importer::<R>(
+            link_one_importer::<Reporter>(
                 importer_id,
                 layout,
                 project_snapshot,
@@ -254,7 +254,7 @@ pub(crate) fn importer_root_dir(workspace_root: &Path, importer_id: &str) -> Pat
     }
 }
 
-fn link_one_importer<R: Reporter>(
+fn link_one_importer<Reporter: self::Reporter>(
     importer_id: &str,
     layout: &VirtualStoreLayout,
     project_snapshot: &ProjectSnapshot,
@@ -414,7 +414,7 @@ fn link_one_importer<R: Reporter>(
             // the same value. Clone the already-built string
             // instead of formatting `name` a second time.
             let real_name = name_str.clone();
-            R::emit(&LogEvent::Root(RootLog {
+            Reporter::emit(&LogEvent::Root(RootLog {
                 level: LogLevel::Debug,
                 message: RootMessage::Added {
                     prefix: prefix.clone(),
