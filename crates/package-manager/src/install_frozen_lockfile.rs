@@ -648,7 +648,19 @@ where
         //
         // Mirrors upstream's hoisted branch at
         // [`installing/deps-restorer/src/index.ts:369-427`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/index.ts#L369-L427).
-        let hoisted_locations: BTreeMap<String, Vec<String>> = if is_hoisted {
+        // `pkg_root_by_key` is a per-snapshot override for
+        // `BuildModules`'s `pkgRoot` lookup. Populated from the
+        // walker's [`crate::DependenciesGraphNode::dir`] values so
+        // the build phase can `cd` into the on-disk hoisted
+        // directory instead of computing a virtual-store slot path
+        // that doesn't exist under hoisted. The first recorded
+        // location wins for snapshots the walker emitted multiple
+        // times (a single physical package nested under siblings),
+        // matching upstream's
+        // [`pkgRoots[0]`](https://github.com/pnpm/pnpm/blob/94240bc046/building/after-install/src/index.ts#L348)
+        // pick. `None` (and an empty `hoisted_locations`) for the
+        // isolated linker.
+        let HoistedLinkerOutput { hoisted_locations, hoisted_pkg_root_by_key } = if is_hoisted {
             // Walker installability inputs come straight from the
             // optional `host_node` we built earlier for the
             // `compute_skipped_snapshots` pass. When `host_node` is
@@ -719,9 +731,27 @@ where
             };
             link_hoisted_modules::<R>(&link_opts)
                 .map_err(InstallFrozenLockfileError::LinkHoistedModules)?;
-            walker_result.hoisted_locations
+            // Map snapshot key → first recorded directory. The
+            // walker can emit multiple [`crate::DependenciesGraphNode`]s
+            // with the same `dep_path` when the package nests under
+            // a sibling (version conflict). Postinstall scripts and
+            // the side-effects-cache key both depend only on the
+            // package contents (identical across locations), so
+            // running once at the first dir matches upstream's
+            // `pkgRoots[0]` pick at
+            // [`after-install:348`](https://github.com/pnpm/pnpm/blob/94240bc046/building/after-install/src/index.ts#L348).
+            let mut pkg_root_by_key: HashMap<PackageKey, std::path::PathBuf> = HashMap::new();
+            for node in walker_result.graph.values() {
+                if let Ok(key) = node.dep_path.as_str().parse::<PackageKey>() {
+                    pkg_root_by_key.entry(key).or_insert_with(|| node.dir.clone());
+                }
+            }
+            HoistedLinkerOutput {
+                hoisted_locations: walker_result.hoisted_locations,
+                hoisted_pkg_root_by_key: Some(pkg_root_by_key),
+            }
         } else {
-            BTreeMap::new()
+            HoistedLinkerOutput::default()
         };
 
         // Hoist transitive deps into `<virtual_store>/node_modules`
@@ -966,47 +996,43 @@ where
             None => engine_name,
         };
 
-        // BuildModules walks the virtual-store layout to run
-        // `preinstall` / `install` / `postinstall` lifecycle scripts
-        // for each snapshot's slot. Under hoisted there's no
-        // virtual store: the build phase has to walk the
-        // `hoistedLocations` from the slice 4 walker instead, with
-        // `extraBinPaths` gathered from every `node_modules/.bin`
-        // up the ancestor chain (per upstream's `binDirsInAllParentDirs`
-        // helper at
-        // [`building/after-install/src/index.ts:357`](https://github.com/pnpm/pnpm/blob/94240bc046/building/after-install/src/index.ts#L357)).
-        // That retargeting is umbrella #438 slice 7; this slice
-        // skips the build phase entirely when `is_hoisted` so the
-        // install completes without trying to walk a virtual store
-        // that was never written. `ignored_builds` falls back to
-        // empty so the `pnpm:ignored-scripts` event below still
-        // fires with a consistent shape.
-        let ignored_builds = if is_hoisted {
-            Default::default()
-        } else {
-            BuildModules {
-                layout: &layout,
-                modules_dir: &config.modules_dir,
-                lockfile_dir: manifest_dir,
-                snapshots,
-                packages,
-                importers,
-                allow_build_policy: &allow_build_policy,
-                side_effects_maps_by_snapshot: Some(&side_effects_maps_by_snapshot),
-                engine_name: engine_name.as_deref(),
-                side_effects_cache: config.side_effects_cache_read(),
-                side_effects_cache_write: config.side_effects_cache_write(),
-                store_dir: Some(&config.store_dir),
-                store_index_writer: Some(&store_index_writer),
-                patches: patches.as_ref(),
-                scripts_prepend_node_path,
-                unsafe_perm: config.unsafe_perm,
-                child_concurrency: config.child_concurrency,
-                skipped: &skipped,
-            }
-            .run::<R>()
-            .map_err(InstallFrozenLockfileError::BuildModules)?
-        };
+        // BuildModules walks per-snapshot package directories and
+        // runs `preinstall` / `install` / `postinstall` lifecycle
+        // scripts. Under isolated, the directories live under the
+        // virtual-store slot layout; under hoisted, they live at
+        // the project-tree paths the slice 4 walker assigned —
+        // threaded in via `pkg_root_by_key`. `gather_ancestor_bin_paths`
+        // additionally reroutes `extra_bin_paths` through
+        // `bin_dirs_in_all_parent_dirs` for the hoisted case so
+        // lifecycle scripts can resolve binaries from every
+        // ancestor `node_modules/.bin` up to `lockfile_dir` —
+        // mirrors upstream's
+        // [`after-install:357`](https://github.com/pnpm/pnpm/blob/94240bc046/building/after-install/src/index.ts#L357)
+        // call into `binDirsInAllParentDirs`.
+        let ignored_builds = BuildModules {
+            layout: &layout,
+            modules_dir: &config.modules_dir,
+            lockfile_dir: manifest_dir,
+            snapshots,
+            packages,
+            importers,
+            allow_build_policy: &allow_build_policy,
+            side_effects_maps_by_snapshot: Some(&side_effects_maps_by_snapshot),
+            engine_name: engine_name.as_deref(),
+            side_effects_cache: config.side_effects_cache_read(),
+            side_effects_cache_write: config.side_effects_cache_write(),
+            store_dir: Some(&config.store_dir),
+            store_index_writer: Some(&store_index_writer),
+            patches: patches.as_ref(),
+            scripts_prepend_node_path,
+            unsafe_perm: config.unsafe_perm,
+            child_concurrency: config.child_concurrency,
+            skipped: &skipped,
+            pkg_root_by_key: hoisted_pkg_root_by_key.as_ref(),
+            gather_ancestor_bin_paths: is_hoisted,
+        }
+        .run::<R>()
+        .map_err(InstallFrozenLockfileError::BuildModules)?;
 
         // Mirrors upstream's single emit at the end of the build phase:
         // <https://github.com/pnpm/pnpm/blob/80037699fb/installing/deps-installer/src/install/index.ts#L414>.
@@ -1067,6 +1093,25 @@ pub struct InstallFrozenLockfileOutput {
     /// and augmented with snapshots that newly failed the
     /// installability check.
     pub skipped: SkippedSnapshots,
+}
+
+/// Internal handoff between the hoisted-linker walker/linker pass
+/// and the downstream `BuildModules` + `.modules.yaml` writes. Bundled
+/// as a struct so the hoisted branch in [`InstallFrozenLockfile::run`]
+/// can return both fields in one binding without tripping
+/// `clippy::type_complexity`. Always [`Default`]-empty for the
+/// isolated linker.
+#[derive(Debug, Default)]
+struct HoistedLinkerOutput {
+    /// `LockfileToDepGraphResult::hoisted_locations` from the slice
+    /// 4 walker. Persisted into `.modules.yaml.hoisted_locations`
+    /// when non-empty.
+    hoisted_locations: BTreeMap<String, Vec<String>>,
+    /// Per-snapshot `pkgRoot` override for the build phase —
+    /// snapshot key → its first recorded directory in the hoisted
+    /// graph. `None` for the isolated linker (the layout-based
+    /// lookup in `BuildModules` is used instead).
+    hoisted_pkg_root_by_key: Option<HashMap<PackageKey, std::path::PathBuf>>,
 }
 
 /// Pull the leading major-version digits out of a semver string like
