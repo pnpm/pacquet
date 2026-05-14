@@ -4,7 +4,7 @@ use crate::{
 };
 use derive_more::{Display, Error};
 use miette::Diagnostic;
-use pacquet_config::Config;
+use pacquet_config::{Config, NodeLinker};
 use pacquet_executor::ScriptsPrependNodePath as ExecScriptsPrependNodePath;
 use pacquet_git_fetcher::{GitFetchOutput, GitFetcher, GitFetcherError, GitHostedTarballFetcher};
 use pacquet_graph_hasher::{host_arch, host_libc, host_platform};
@@ -68,6 +68,18 @@ pub struct InstallPackageBySnapshot<'a> {
     /// [`crate::InstallFrozenLockfile::run`] and threaded through
     /// [`crate::CreateVirtualStore`].
     pub allow_build_policy: &'a AllowBuildPolicy,
+    /// Selects between the isolated and hoisted install layouts.
+    /// `Isolated` runs [`CreateVirtualDirBySnapshot`] at the end of
+    /// the per-snapshot fetch to populate the virtual-store slot;
+    /// `Hoisted` skips that step because the hoisted linker
+    /// ([`crate::link_hoisted_modules()`]) consumes the returned
+    /// `cas_paths` directly and writes them into project-tree
+    /// `node_modules/<alias>` directories. Either way the CAS files
+    /// land in the store, so this is purely about whether the
+    /// virtual-store slot gets materialized. Mirrors upstream's
+    /// [`nodeLinker === 'hoisted'`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/index.ts#L411-L425)
+    /// branch in `headlessInstall`.
+    pub node_linker: NodeLinker,
 }
 
 /// Error type of [`InstallPackageBySnapshot`].
@@ -157,8 +169,23 @@ pub enum InstallPackageBySnapshotError {
 }
 
 impl<'a> InstallPackageBySnapshot<'a> {
-    /// Execute the subroutine.
-    pub async fn run<R: Reporter>(self) -> Result<(), InstallPackageBySnapshotError> {
+    /// Execute the subroutine. Returns the CAS file index for the
+    /// fetched package — the map relative-archive-path →
+    /// absolute-store-path that downstream consumers use to either
+    /// populate a virtual-store slot (isolated) or import into a
+    /// hoisted `node_modules/<alias>/` directly (hoisted).
+    ///
+    /// Under [`NodeLinker::Isolated`] the slot has already been
+    /// materialized by the time this returns (via
+    /// [`CreateVirtualDirBySnapshot`]); the returned map is still
+    /// useful to the caller for assembling the
+    /// [`crate::CasPathsByPkgId`] index when a workspace mixes
+    /// linkers in the future. Under [`NodeLinker::Hoisted`] no slot
+    /// is created — the returned map is the only output the caller
+    /// gets, and it's threaded into [`crate::link_hoisted_modules()`].
+    pub async fn run<R: Reporter>(
+        self,
+    ) -> Result<HashMap<String, PathBuf>, InstallPackageBySnapshotError> {
         let InstallPackageBySnapshot {
             http_client,
             config,
@@ -173,6 +200,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
             metadata,
             snapshot,
             allow_build_policy,
+            node_linker,
         } = self;
 
         // TODO: skip when already exists in store?
@@ -387,20 +415,31 @@ impl<'a> InstallPackageBySnapshot<'a> {
             }
         };
 
-        CreateVirtualDirBySnapshot {
-            layout,
-            cas_paths: &cas_paths,
-            import_method: config.package_import_method,
-            logged_methods,
-            requester,
-            package_id: &package_id,
-            package_key,
-            snapshot,
+        // Under hoisted, the virtual-store slot would be unused —
+        // [`crate::link_hoisted_modules()`] consumes the CAS paths
+        // directly to materialize project-tree `node_modules/`
+        // directories, so any slot we'd write here would only waste
+        // disk. Mirrors upstream's branch at
+        // <https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/index.ts#L411-L425>:
+        // hoisted skips both `linkAllModules` (slot symlinks) and
+        // `linkAllPkgs` (slot file imports), and runs
+        // `linkHoistedModules` over the CAS paths instead.
+        if matches!(node_linker, NodeLinker::Isolated | NodeLinker::Pnp) {
+            CreateVirtualDirBySnapshot {
+                layout,
+                cas_paths: &cas_paths,
+                import_method: config.package_import_method,
+                logged_methods,
+                requester,
+                package_id: &package_id,
+                package_key,
+                snapshot,
+            }
+            .run::<R>()
+            .map_err(InstallPackageBySnapshotError::CreateVirtualDir)?;
         }
-        .run::<R>()
-        .map_err(InstallPackageBySnapshotError::CreateVirtualDir)?;
 
-        Ok(())
+        Ok(cas_paths)
     }
 }
 
