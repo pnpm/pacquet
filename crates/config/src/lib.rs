@@ -13,7 +13,11 @@ use pacquet_store_dir::StoreDir;
 use pipe_trait::Pipe;
 use serde::Deserialize;
 use smart_default::SmartDefault;
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    fs,
+    path::PathBuf,
+};
 
 pub use crate::defaults::{
     available_parallelism, default_git_shallow_hosts, default_unsafe_perm, is_unsafe_perm_posix,
@@ -362,6 +366,39 @@ pub struct Config {
     /// per-importer subtrees by construction.
     #[default = true]
     pub hoist_workspace_packages: bool,
+
+    /// Per-importer block-list of package aliases that may NOT be
+    /// hoisted past that importer's slot. Outer key is the
+    /// importer locator (e.g. `'.@'` for the root project, or the
+    /// percent-encoded importer id with the `@` slot suffix);
+    /// inner set is the alias names whose hoisting is bordered.
+    ///
+    /// Programmatic-only upstream — pnpm exposes it through the
+    /// embedded API and Bit CLI rather than `pnpm-workspace.yaml`,
+    /// because the ergonomics of the locator-keyed map don't
+    /// translate cleanly to a yaml setting. Pacquet exposes it
+    /// via `HoistOpts::hoisting_limits` (in `pacquet-real-hoist`)
+    /// and reads the same yaml shape (`hoistingLimits: { ".@": [...] }`)
+    /// for parity.
+    ///
+    /// Default empty (no aliases bordered). Mirrors upstream's
+    /// [`hoistingLimits`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/linking/real-hoist/src/index.ts#L10).
+    /// No effect under `nodeLinker: isolated`.
+    pub hoisting_limits: BTreeMap<String, BTreeSet<String>>,
+
+    /// Name slots reserved at the root for an external linker
+    /// (the Bit CLI is the only known consumer upstream). Any
+    /// dependency whose alias matches one of these names is
+    /// stripped from the hoist tree's top-level entries — the
+    /// external linker materializes those slots itself.
+    ///
+    /// Programmatic-only upstream; pacquet exposes the same yaml
+    /// shape (`externalDependencies: ["bit-bin"]`) for parity.
+    ///
+    /// Default empty. Mirrors upstream's
+    /// [`externalDependencies`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/linking/real-hoist/src/index.ts#L18).
+    /// No effect under `nodeLinker: isolated`.
+    pub external_dependencies: BTreeSet<String>,
 
     /// When this setting is set to true, packages with peer dependencies will be deduplicated after peers resolution.
     #[default = true]

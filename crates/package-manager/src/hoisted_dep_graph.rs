@@ -238,9 +238,24 @@ pub struct LockfileToHoistedDepGraphOptions {
     /// under `<lockfile_dir>/<importer_id>/node_modules`. When
     /// `false`, only the root importer's subtree is emitted (the
     /// hoister also skips adding the workspace children to its
-    /// shared tree). Pacquet's [`pacquet_config::Config::hoist_workspace_packages`]
-    /// drives this from the install pipeline.
+    /// shared tree). Pacquet's `Config::hoist_workspace_packages`
+    /// (in `pacquet-config`) drives this from the install pipeline.
     pub hoist_workspace_packages: bool,
+
+    /// Per-importer block-list passed straight through to
+    /// [`pacquet_real_hoist::HoistOpts::hoisting_limits`]. See the
+    /// hoister's doc-comment for the locator-keyed shape and
+    /// `Config::hoisting_limits` in `pacquet-config` for how the
+    /// install pipeline derives this from `pnpm-workspace.yaml`.
+    pub hoisting_limits: pacquet_real_hoist::HoistingLimits,
+
+    /// Reserved-name list passed straight through to
+    /// [`pacquet_real_hoist::HoistOpts::external_dependencies`].
+    /// See the hoister's doc-comment for the strip semantics and
+    /// `Config::external_dependencies` in `pacquet-config` for how
+    /// the install pipeline derives this from
+    /// `pnpm-workspace.yaml`.
+    pub external_dependencies: BTreeSet<String>,
 }
 
 impl Default for LockfileToHoistedDepGraphOptions {
@@ -260,6 +275,8 @@ impl Default for LockfileToHoistedDepGraphOptions {
             // `..Default::default()`-style construction at the call
             // site doesn't silently disable workspace hoisting.
             hoist_workspace_packages: true,
+            hoisting_limits: pacquet_real_hoist::HoistingLimits::new(),
+            external_dependencies: BTreeSet::new(),
         }
     }
 }
@@ -377,7 +394,8 @@ fn build_dep_graph(
     let hoist_opts = HoistOpts {
         auto_install_peers: opts.auto_install_peers,
         hoist_workspace_packages: opts.hoist_workspace_packages,
-        ..HoistOpts::default()
+        hoisting_limits: opts.hoisting_limits.clone(),
+        external_dependencies: opts.external_dependencies.clone(),
     };
     let hoister_result = hoist(lockfile, &hoist_opts)?;
 
@@ -1836,5 +1854,44 @@ mod tests {
         let root_a = &result.direct_dependencies_by_importer_id[Lockfile::ROOT_IMPORTER_KEY]["a"];
         let foo_a = &result.direct_dependencies_by_importer_id["packages/foo"]["a"];
         assert_ne!(root_a, foo_a, "conflict resolves to two distinct dirs");
+    }
+
+    /// `external_dependencies` flows through to the hoister and
+    /// strips matching aliases from the post-hoist result. Pins
+    /// the slice 10 plumbing end-to-end: the walker observes an
+    /// empty graph for the `external` alias because the hoister
+    /// stripped it, even though the lockfile listed it as a
+    /// direct dep.
+    #[test]
+    fn walker_forwards_external_dependencies_to_hoister() {
+        let mut root_deps = ResolvedDependencyMap::new();
+        root_deps.insert(pkg_name("a"), resolved_dep("1.0.0"));
+
+        let mut packages = HashMap::new();
+        packages.insert(dep_key("a", "1.0.0"), metadata_stub());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(dep_key("a", "1.0.0"), SnapshotEntry::default());
+
+        let lockfile = lockfile_with(root_deps, packages, snapshots);
+        let lockfile_dir = PathBuf::from("/repo");
+        let mut externals = BTreeSet::new();
+        externals.insert("a".to_string());
+        let opts = LockfileToHoistedDepGraphOptions {
+            lockfile_dir: lockfile_dir.clone(),
+            external_dependencies: externals,
+            ..LockfileToHoistedDepGraphOptions::default()
+        };
+        let result =
+            lockfile_to_hoisted_dep_graph(&lockfile, None, &opts).expect("walker succeeds");
+
+        // `a` was reserved as an external; hoister stripped it
+        // from the top-level result, so the walker emits an
+        // empty graph and an empty root direct-deps map.
+        assert!(result.graph.is_empty(), "external strips the alias from the hoist result");
+        assert!(
+            result.direct_dependencies_by_importer_id[Lockfile::ROOT_IMPORTER_KEY].is_empty(),
+            "root direct deps drop the externalised alias",
+        );
     }
 }

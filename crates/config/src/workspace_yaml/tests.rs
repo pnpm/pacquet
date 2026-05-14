@@ -649,3 +649,67 @@ fn omitting_ignored_optional_dependencies_keeps_default() {
     settings.apply_to(&mut config, Path::new("/irrelevant"));
     assert!(config.ignored_optional_dependencies.is_none());
 }
+
+/// `hoistingLimits` deserializes as a map keyed by importer
+/// locator (e.g. `'.@'`); inner value is a list of alias names.
+/// Mirrors upstream's [`HoistingLimits`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/linking/real-hoist/src/index.ts#L10)
+/// shape and threads straight into [`pacquet_real_hoist::HoistOpts`]
+/// via the install pipeline. Yaml-empty / missing keeps the
+/// `Config` field at its `BTreeMap::default()` empty value.
+#[test]
+fn parses_hoisting_limits_from_yaml_and_applies() {
+    let yaml = r#"
+hoistingLimits:
+  ".@":
+    - foo
+    - bar
+"#;
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    let raw = settings.hoisting_limits.clone().expect("field present");
+    let aliases = raw.get(".@").expect("locator present");
+    assert!(aliases.contains("foo") && aliases.contains("bar"));
+
+    let mut config = Config::new();
+    assert!(config.hoisting_limits.is_empty(), "default is empty");
+    settings.apply_to(&mut config, Path::new("/irrelevant"));
+    let aliases = config.hoisting_limits.get(".@").expect("locator present in config");
+    assert!(aliases.contains("foo") && aliases.contains("bar"));
+}
+
+/// `externalDependencies` deserializes as a flat list of names.
+/// Yaml-empty / missing keeps the `Config` field at its
+/// `BTreeSet::default()` empty value.
+#[test]
+fn parses_external_dependencies_from_yaml_and_applies() {
+    let yaml = r#"
+externalDependencies:
+  - bit-bin
+  - some-other-external
+"#;
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    let raw = settings.external_dependencies.clone().expect("field present");
+    assert!(raw.contains("bit-bin") && raw.contains("some-other-external"));
+
+    let mut config = Config::new();
+    assert!(config.external_dependencies.is_empty(), "default is empty");
+    settings.apply_to(&mut config, Path::new("/irrelevant"));
+    assert!(config.external_dependencies.contains("bit-bin"));
+    assert!(config.external_dependencies.contains("some-other-external"));
+}
+
+/// Both knobs absent → both `Config` fields stay at their empty
+/// defaults. Pins the `apply_to` skip-on-None branch so future
+/// edits don't accidentally overwrite with empty when the yaml
+/// just doesn't mention these settings.
+#[test]
+fn omitting_hoisting_limits_and_external_dependencies_keeps_defaults() {
+    let yaml = "";
+    let settings: WorkspaceSettings = serde_saphyr::from_str(yaml).unwrap();
+    assert!(settings.hoisting_limits.is_none());
+    assert!(settings.external_dependencies.is_none());
+
+    let mut config = Config::new();
+    settings.apply_to(&mut config, Path::new("/irrelevant"));
+    assert!(config.hoisting_limits.is_empty());
+    assert!(config.external_dependencies.is_empty());
+}

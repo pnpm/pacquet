@@ -9,7 +9,7 @@ use pacquet_store_dir::StoreDir;
 use pipe_trait::Pipe;
 use serde::{Deserialize, Deserializer};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs,
     io::{self, ErrorKind},
     path::{Path, PathBuf},
@@ -119,6 +119,18 @@ pub struct WorkspaceSettings {
     pub registry: Option<String>,
     pub auto_install_peers: Option<bool>,
     pub hoist_workspace_packages: Option<bool>,
+    /// `hoistingLimits` from `pnpm-workspace.yaml`. Outer key is
+    /// the importer locator (e.g. `'.@'`); inner list is the
+    /// alias names whose hoisting is bordered. Mirrors upstream's
+    /// programmatic-only knob shape, exposed here as yaml for
+    /// parity. Empty / missing → no limits.
+    pub hoisting_limits: Option<BTreeMap<String, BTreeSet<String>>>,
+    /// `externalDependencies` from `pnpm-workspace.yaml`. Names
+    /// whose top-level slot is reserved for an external linker
+    /// and stripped from the hoist tree. Mirrors upstream's
+    /// programmatic-only knob shape, exposed here as yaml for
+    /// parity. Empty / missing → no externals.
+    pub external_dependencies: Option<BTreeSet<String>>,
     pub dedupe_peer_dependents: Option<bool>,
     pub strict_peer_dependencies: Option<bool>,
     pub resolve_peers_from_workspace_root: Option<bool>,
@@ -296,6 +308,7 @@ impl WorkspaceSettings {
             lockfile, prefer_frozen_lockfile, offline, prefer_offline,
             lockfile_include_tarball_url,
             auto_install_peers, hoist_workspace_packages,
+            hoisting_limits, external_dependencies,
             dedupe_peer_dependents, strict_peer_dependencies,
             resolve_peers_from_workspace_root, verify_store_integrity,
             side_effects_cache, side_effects_cache_readonly,
