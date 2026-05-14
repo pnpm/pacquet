@@ -662,7 +662,8 @@ fn extract_tarball_entries(
         // explicit. If the clock ever reports something
         // unrepresentable, drop the timestamp — the `checkedAt` field
         // is optional and pnpm tolerates `None`.
-        let checked_at = UNIX_EPOCH.elapsed().ok().and_then(|dur| u64::try_from(dur.as_millis()).ok());
+        let checked_at =
+            UNIX_EPOCH.elapsed().ok().and_then(|dur| u64::try_from(dur.as_millis()).ok());
         let file_size = entry.header().size().map_err(TarballError::ReadTarballEntries)?;
         let file_attrs = CafsFileInfo {
             digest: format!("{file_hash:x}"),
@@ -860,7 +861,8 @@ fn extract_zip_entries(
             .map_err(TarballError::WriteCasFile)?;
 
         let file_size = u64::try_from(buffer.len()).unwrap_or(u64::MAX);
-        let checked_at = UNIX_EPOCH.elapsed().ok().and_then(|dur| u64::try_from(dur.as_millis()).ok());
+        let checked_at =
+            UNIX_EPOCH.elapsed().ok().and_then(|dur| u64::try_from(dur.as_millis()).ok());
         let file_attrs = CafsFileInfo {
             digest: format!("{file_hash:x}"),
             mode: file_mode,

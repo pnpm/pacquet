@@ -65,7 +65,9 @@ pub fn build_sequence(
         .map(|key| {
             let edges = children
                 .get(key)
-                .map(|kids| kids.iter().filter(|kid| nodes_to_build_set.contains(kid)).cloned().collect())
+                .map(|kids| {
+                    kids.iter().filter(|kid| nodes_to_build_set.contains(kid)).cloned().collect()
+                })
                 .unwrap_or_default();
             (key.clone(), edges)
         })

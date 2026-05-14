@@ -226,13 +226,19 @@ fn packlist_inner(
     // (a `tracing::debug!` would be lost in install logs).
     if let Some(main) = main_path {
         let main_path = normalize_field_path(main);
-        if !main_path.is_empty() && !should_always_exclude(&main_path) && pkg_dir.join(&main_path).is_file() {
+        if !main_path.is_empty()
+            && !should_always_exclude(&main_path)
+            && pkg_dir.join(&main_path).is_file()
+        {
             out.insert(main_path);
         }
     }
     for bin in &bin_paths {
         let bin_path = normalize_field_path(bin);
-        if !bin_path.is_empty() && !should_always_exclude(&bin_path) && pkg_dir.join(&bin_path).is_file() {
+        if !bin_path.is_empty()
+            && !should_always_exclude(&bin_path)
+            && pkg_dir.join(&bin_path).is_file()
+        {
             out.insert(bin_path);
         }
     }

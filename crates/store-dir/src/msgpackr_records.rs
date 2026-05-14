@@ -509,8 +509,14 @@ const U64_MAX_EXCLUSIVE_AS_F64: f64 = 18_446_744_073_709_551_616.0;
 /// unchanged. The strict upper bound (`< 2^64`, not `<= u64::MAX as f64`)
 /// prevents silent value corruption at the representable-but-overflowing
 /// edge.
-fn maybe_narrow_float_to_uint(writer: &mut Vec<u8>, value: f64, original_head: u8, original_bytes: &[u8]) {
-    if value.is_finite() && (0.0..U64_MAX_EXCLUSIVE_AS_F64).contains(&value) && value.fract() == 0.0 {
+fn maybe_narrow_float_to_uint(
+    writer: &mut Vec<u8>,
+    value: f64,
+    original_head: u8,
+    original_bytes: &[u8],
+) {
+    if value.is_finite() && (0.0..U64_MAX_EXCLUSIVE_AS_F64).contains(&value) && value.fract() == 0.0
+    {
         writer.push(0xcf);
         writer.extend_from_slice(&(value as u64).to_be_bytes());
     } else {

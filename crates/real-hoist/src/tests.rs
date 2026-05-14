@@ -190,7 +190,8 @@ fn diamond_dep_hoists_once_to_root() {
     // of pointers we collect has exactly one entry.
     let mut b_ptrs: std::collections::HashSet<*const HoisterResult> =
         std::collections::HashSet::new();
-    let mut stack: Vec<Rc<HoisterResult>> = root_children.iter().map(|dep| Rc::clone(&dep.0)).collect();
+    let mut stack: Vec<Rc<HoisterResult>> =
+        root_children.iter().map(|dep| Rc::clone(&dep.0)).collect();
     let mut walked: std::collections::HashSet<*const HoisterResult> =
         std::collections::HashSet::new();
     while let Some(node) = stack.pop() {
@@ -361,7 +362,8 @@ fn external_dependencies_are_stripped_from_the_result() {
         ..HoistOpts::default()
     };
     let result = hoist(&lockfile, &opts).expect("hoist should succeed");
-    let names: Vec<String> = result.dependencies.borrow().iter().map(|dep| dep.name.clone()).collect();
+    let names: Vec<String> =
+        result.dependencies.borrow().iter().map(|dep| dep.name.clone()).collect();
     assert_eq!(names, ["real"], "external dep is stripped, real dep remains: {names:?}");
 }
 

@@ -223,8 +223,9 @@ fn get_many_mixed_hit_and_miss_returns_only_hits() {
     let payload = sample_index();
     let hit_keys: Vec<String> =
         (0..3).map(|idx_val| store_index_key("sha512-h", &format!("hit{idx_val}@1.0.0"))).collect();
-    let miss_keys: Vec<String> =
-        (0..3).map(|idx_val| store_index_key("sha512-m", &format!("miss{idx_val}@1.0.0"))).collect();
+    let miss_keys: Vec<String> = (0..3)
+        .map(|idx_val| store_index_key("sha512-m", &format!("miss{idx_val}@1.0.0")))
+        .collect();
     for key in &hit_keys {
         idx.set(key, &payload).unwrap();
     }
@@ -281,8 +282,9 @@ fn get_many_handles_more_keys_than_chunk_size() {
     let mut idx = StoreIndex::open(dir.path()).unwrap();
     let payload = sample_index();
     let total = GET_MANY_CHUNK + 100;
-    let keys: Vec<String> =
-        (0..total).map(|idx_val| store_index_key("sha512-c", &format!("chunked{idx_val}@1.0.0"))).collect();
+    let keys: Vec<String> = (0..total)
+        .map(|idx_val| store_index_key("sha512-c", &format!("chunked{idx_val}@1.0.0")))
+        .collect();
     let entries = keys.iter().map(|key| (key.clone(), sample_index()));
     idx.set_many(entries).unwrap();
 

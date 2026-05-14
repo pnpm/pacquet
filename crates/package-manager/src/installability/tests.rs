@@ -59,8 +59,9 @@ fn synthetic_metadata(
             git_hosted: None,
             path: None,
         }),
-        engines: engines
-            .map(|engines| engines.iter().map(|(k, v)| ((*k).to_string(), (*v).to_string())).collect()),
+        engines: engines.map(|engines| {
+            engines.iter().map(|(k, v)| ((*k).to_string(), (*v).to_string())).collect()
+        }),
         cpu: cpu.map(|values| values.iter().map(|s| (*s).to_string()).collect()),
         os: os.map(|values| values.iter().map(|s| (*s).to_string()).collect()),
         libc: libc.map(|values| values.iter().map(|s| (*s).to_string()).collect()),

@@ -32,7 +32,9 @@ use std::{
 ///
 /// Stand-alone helper rather than reaching for `serde_with` (not in
 /// the workspace deps) — the body is one line.
-fn deserialize_double_option<'de, Inner, De>(deserializer: De) -> Result<Option<Option<Inner>>, De::Error>
+fn deserialize_double_option<'de, Inner, De>(
+    deserializer: De,
+) -> Result<Option<Option<Inner>>, De::Error>
 where
     Inner: Deserialize<'de>,
     De: Deserializer<'de>,

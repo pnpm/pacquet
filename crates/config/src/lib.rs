@@ -85,7 +85,11 @@ impl<'de> serde::Deserialize<'de> for ScriptsPrependNodePath {
                 f.write_str(r#"a boolean or the string "warn-only""#)
             }
             fn visit_bool<DeError: de::Error>(self, value: bool) -> Result<Self::Value, DeError> {
-                Ok(if value { ScriptsPrependNodePath::Always } else { ScriptsPrependNodePath::Never })
+                Ok(if value {
+                    ScriptsPrependNodePath::Always
+                } else {
+                    ScriptsPrependNodePath::Never
+                })
             }
             fn visit_str<DeError: de::Error>(self, value: &str) -> Result<Self::Value, DeError> {
                 match value {

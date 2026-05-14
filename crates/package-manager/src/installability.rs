@@ -475,17 +475,22 @@ fn platform_axis_meaningful(axis: Option<&[String]>) -> bool {
 
 fn manifest_from_metadata(metadata: &PackageMetadata) -> PackageInstallabilityManifest {
     PackageInstallabilityManifest {
-        engines: metadata
-            .engines
-            .as_ref()
-            .map(|engines| WantedEngine { node: engines.get("node").cloned(), pnpm: engines.get("pnpm").cloned() }),
+        engines: metadata.engines.as_ref().map(|engines| WantedEngine {
+            node: engines.get("node").cloned(),
+            pnpm: engines.get("pnpm").cloned(),
+        }),
         cpu: metadata.cpu.clone(),
         os: metadata.os.clone(),
         libc: metadata.libc.clone(),
     }
 }
 
-fn emit_skipped<Reporter: self::Reporter>(pkg_id: &str, reason: SkipReason, details: String, prefix: &str) {
+fn emit_skipped<Reporter: self::Reporter>(
+    pkg_id: &str,
+    reason: SkipReason,
+    details: String,
+    prefix: &str,
+) {
     let (name, version) = split_name_version(pkg_id);
     let wire_reason = match reason {
         SkipReason::UnsupportedEngine => SkippedOptionalReason::UnsupportedEngine,

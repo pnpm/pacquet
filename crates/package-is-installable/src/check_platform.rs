@@ -202,7 +202,10 @@ pub fn check_platform(
 /// concrete host value. Ports upstream's `dedupeCurrent` at
 /// <https://github.com/pnpm/pnpm/blob/94240bc046/config/package-is-installable/src/checkPlatform.ts#L88-L90>.
 fn dedupe_current(current: &str, supported: &[String]) -> Vec<String> {
-    supported.iter().map(|entry| if entry == "current" { current.to_string() } else { entry.clone() }).collect()
+    supported
+        .iter()
+        .map(|entry| if entry == "current" { current.to_string() } else { entry.clone() })
+        .collect()
 }
 
 /// Decide whether any element of `value` is allowed by `list`.
