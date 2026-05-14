@@ -1,3 +1,5 @@
+> ⚠️**This project has been moved to the main [pnpm](https://github.com/pnpm/pnpm/tree/main/pacquet) repository.**
+
 # pacquet
 
 > [!WARNING]
