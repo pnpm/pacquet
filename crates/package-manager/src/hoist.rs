@@ -18,9 +18,7 @@
 //! alias-list inputs that pass needs.
 
 use pacquet_config::matcher::Matcher;
-use pacquet_lockfile::{
-    PackageKey, PackageMetadata, PkgName, PkgNameVerPeer, ProjectSnapshot, SnapshotEntry,
-};
+use pacquet_lockfile::{PackageKey, PackageMetadata, PkgName, ProjectSnapshot, SnapshotEntry};
 use pacquet_modules_yaml::HoistKind;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
@@ -153,9 +151,11 @@ where
                 // in the snapshot graph and aren't candidates for the
                 // private/public hoist (upstream handles them via the
                 // separate `hoistedWorkspacePackages` shape, which is
-                // out of scope for this issue per #431).
-                let Some(ver) = spec.version.as_regular() else { continue };
-                let key = PkgNameVerPeer::new(name.clone(), ver.clone());
+                // out of scope for this issue per #431). For aliased
+                // deps, [`ImporterDepVersion::resolved_key`] returns
+                // the alias's own (name, suffix), matching the
+                // snapshot key under which the package lives.
+                let Some(key) = spec.version.resolved_key(name) else { continue };
                 // First-wins per alias: same precedence as
                 // `SymlinkDirectDependencies` (Prod beats Dev beats
                 // Optional with the CLI's group order).

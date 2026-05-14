@@ -458,20 +458,15 @@ where
                 ] {
                     let Some(dep_map) = dep_map else { continue };
                     for (alias, spec) in dep_map {
-                        let Some(version) = spec.version.as_regular() else { continue };
-                        // Build the candidate snapshot key from
-                        // (alias, version). For non-aliased deps
-                        // this is the depPath verbatim; aliased
-                        // runtime deps (unusual) won't match
-                        // `packages` here, matching pnpm's lookup
-                        // by depPath rather than by alias.
-                        let candidate = format!("{alias}@{version}");
-                        if !candidate.contains("@runtime:") {
+                        // Build the candidate snapshot key. For
+                        // non-aliased deps this is `(alias, version)`;
+                        // for aliased deps it's the alias's own
+                        // (name, suffix). `link:` deps are skipped.
+                        // Matches pnpm's lookup by resolved depPath.
+                        let Some(key) = spec.version.resolved_key(alias) else { continue };
+                        if !key.to_string().contains("@runtime:") {
                             continue;
                         }
-                        let Ok(key) = candidate.parse::<pacquet_lockfile::PackageKey>() else {
-                            continue;
-                        };
                         if let Some(meta) = pkgs.get(&key)
                             && matches!(
                                 &meta.resolution,

@@ -283,12 +283,11 @@ where
         .filter(|group| !matches!(group, DependencyGroup::Peer))
         .flat_map(|group| snapshot.get_map_by_group(group).into_iter().flatten())
         .filter(|(name, _)| seen.insert(*name))
-        .filter(|(name, spec)| match &spec.version {
-            ImporterDepVersion::Regular(ver) => {
-                let resolved = PkgNameVerPeer::new(PkgName::clone(name), ver.clone());
-                !skipped.contains(&resolved)
-            }
-            ImporterDepVersion::Link(_) => true,
+        .filter(|(name, spec)| match spec.version.resolved_key(name) {
+            Some(resolved) => !skipped.contains(&resolved),
+            // `link:` deps have no virtual-store slot and so cannot be
+            // in `skipped` — keep them.
+            None => true,
         })
         .filter(
             |(_, spec)| {
@@ -382,12 +381,11 @@ fn link_one_importer<R: Reporter>(
             // never participate in the virtual store, so they are
             // exempt from the skipped check (the resolved snapshot key
             // wouldn't exist in the set anyway).
-            .filter(|(name, spec, _)| match &spec.version {
-                ImporterDepVersion::Regular(ver) => {
-                    let resolved = PkgNameVerPeer::new(PkgName::clone(name), ver.clone());
-                    !skipped.contains(&resolved)
-                }
-                ImporterDepVersion::Link(_) => true,
+            .filter(|(name, spec, _)| match spec.version.resolved_key(name) {
+                Some(resolved) => !skipped.contains(&resolved),
+                // `link:` deps have no virtual-store slot and so
+                // cannot be in `skipped` — keep them.
+                None => true,
             })
             // Hoisted-mode filter: `link_only` keeps only `link:`
             // entries (workspace siblings) and drops every regular
@@ -430,6 +428,17 @@ fn link_one_importer<R: Reporter>(
                     // separately.
                     let dep_key = PkgNameVerPeer::new(PkgName::clone(name), ver_peer.clone());
                     layout.slot_dir(&dep_key).join("node_modules").join(&name_str)
+                }
+                ImporterDepVersion::Alias(alias) => {
+                    // For an alias, the snapshot key carries the
+                    // resolved package's real name + version-with-peer,
+                    // and the inner `node_modules/<real-name>` directory
+                    // is named after that real name (not the
+                    // importer-map key). The on-disk symlink at
+                    // `<modules_dir>/<importer-key>` still uses
+                    // `name_str` as the link name. Mirrors pnpm's
+                    // `linkDirectDeps` behavior for aliased deps.
+                    layout.slot_dir(alias).join("node_modules").join(alias.name.to_string())
                 }
                 ImporterDepVersion::Link(target) => {
                     // `link:<path>` values are relative to the
@@ -481,17 +490,23 @@ fn link_one_importer<R: Reporter>(
             // resolved `link:<path>` payload (re-prepended on the
             // wire) so reporters can render the link target. Pacquet
             // mirrors that here; for `Regular` deps we keep the
-            // semver-only formatting upstream uses on the wire.
+            // semver-only formatting upstream uses on the wire. For
+            // an `Alias`, the wire shape is the same as `Regular`
+            // (the version-without-peer of the alias's resolved
+            // suffix); the resolved package name surfaces via
+            // `real_name` below.
             let version = match &spec.version {
                 ImporterDepVersion::Regular(ver) => Some(ver.version().to_string()),
+                ImporterDepVersion::Alias(alias) => Some(alias.suffix.version().to_string()),
                 ImporterDepVersion::Link(target) => Some(format!("link:{target}")),
             };
-            // Pacquet's lockfile snapshot doesn't track the
-            // npm-alias key separately from the resolved package
-            // name at this layer, so `name` and `real_name` carry
-            // the same value. Clone the already-built string
-            // instead of formatting `name` a second time.
-            let real_name = name_str.clone();
+            // For aliases, `real_name` is the resolved package's true
+            // name (different from the importer-map key). For
+            // `Regular` and `Link` deps, the two match.
+            let real_name = match &spec.version {
+                ImporterDepVersion::Alias(alias) => alias.name.to_string(),
+                ImporterDepVersion::Regular(_) | ImporterDepVersion::Link(_) => name_str.clone(),
+            };
             R::emit(&LogEvent::Root(RootLog {
                 level: LogLevel::Debug,
                 message: RootMessage::Added {

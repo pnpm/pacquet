@@ -385,22 +385,20 @@ fn collect_importer_deps(
     let mut entries: Vec<_> = merged.into_iter().collect();
     entries.sort_by_key(|(alias, _)| alias.to_string());
     for (alias, spec) in entries {
-        // Pacquet's `ResolvedDependencySpec.version` doesn't carry an
-        // alternate package name, so importer-level npm-aliases
-        // aren't modelled here today — assume the alias is the
-        // registry name. Transitive npm-aliases (modelled via
-        // `SnapshotDepRef::Alias`) are handled in
-        // `collect_snapshot_deps`.
+        // For an aliased importer dep (`ImporterDepVersion::Alias`),
+        // the snapshot key is the alias's own (name, suffix);
+        // [`ImporterDepVersion::resolved_key`] returns that.
+        // Transitive npm-aliases (modelled via `SnapshotDepRef::Alias`)
+        // are handled in `collect_snapshot_deps`.
         //
         // `link:` deps (cross-importer `workspace:*` resolutions, see
         // [`ImporterDepVersion::Link`]) don't live in the virtual
         // store — they're directory symlinks materialised by
         // [`pacquet_package_manager::SymlinkDirectDependencies`] —
         // so they have no snapshot to hoist and we skip them here.
-        let Some(ver_peer) = spec.version.as_regular() else {
+        let Some(dep_key) = spec.version.resolved_key(alias) else {
             continue;
         };
-        let dep_key = PkgNameVerPeer::new(alias.clone(), ver_peer.clone());
         let node = build_dep_node(alias, &dep_key, lockfile, opts, nodes)?;
         out.insert(RcByPtr(node));
     }

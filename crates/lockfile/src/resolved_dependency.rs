@@ -1,4 +1,4 @@
-use crate::{ParsePkgVerPeerError, PkgName, PkgVerPeer};
+use crate::{ParsePkgNameSuffixError, ParsePkgVerPeerError, PkgName, PkgNameVerPeer, PkgVerPeer};
 use derive_more::{Display, Error};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -24,10 +24,19 @@ pub struct ResolvedDependencySpec {
 /// Resolved `version` of an importer-level dependency.
 ///
 /// Importer dependencies (the values inside `importers.<id>.dependencies`
-/// in a pnpm v9 lockfile) carry one of two shapes for `version:`:
+/// in a pnpm v9 lockfile) carry one of three shapes for `version:`:
 ///
 /// - A bare semver-with-peer string like `4.0.0` or `17.0.2(react@17.0.2)`,
-///   meaning the dependency is in the shared virtual store.
+///   meaning the dependency is in the shared virtual store under a
+///   snapshot key built from the importer-map key and the version.
+/// - An npm-alias of the form `<target-name>@<version>` (with optional
+///   peer suffix), meaning the dependency resolves to a snapshot whose
+///   package name differs from the importer-map key. Pnpm writes this
+///   shape when a `catalog:` (or other) specifier resolves to an alias.
+///   Detection mirrors upstream's `refToRelative`
+///   (`deps/path/src/index.ts` at `pnpm/pnpm@8a80235c7b`): a reference
+///   is an alias when it begins with `@` or when the first `@` occurs
+///   before any `(` and `:`.
 /// - A `link:<path>` value, meaning the dependency is a workspace
 ///   sibling at `<path>` relative to the importer's `rootDir`. The
 ///   workspace project is not duplicated in the virtual store — pnpm
@@ -38,13 +47,20 @@ pub struct ResolvedDependencySpec {
 /// shape without re-parsing the raw string at every call site.
 ///
 /// Snapshot-level dependencies (the values inside `snapshots.*.dependencies`)
-/// use [`crate::SnapshotDepRef`] instead, which carries a different
-/// distinction (plain vs. alias) and never holds a `link:` value —
-/// `link:` only appears at the importer level.
+/// use [`crate::SnapshotDepRef`] instead, which carries the same
+/// plain/alias distinction but never holds a `link:` value — `link:`
+/// only appears at the importer level.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ImporterDepVersion {
-    /// Bare semver-with-peer; resolves to a snapshot in `snapshots:`.
+    /// Bare semver-with-peer; resolves to a snapshot in `snapshots:`
+    /// keyed by `(importer-map key, version)`.
     Regular(PkgVerPeer),
+
+    /// `<name>@<version-with-peer>`; resolves to a snapshot in
+    /// `snapshots:` keyed by `(alias.name, alias.suffix)`. The
+    /// importer-map key is only used as the directory name inside
+    /// `node_modules`.
+    Alias(PkgNameVerPeer),
 
     /// `link:<path>` value; resolves to a workspace sibling. The path
     /// is stored verbatim from the lockfile (relative to the
@@ -55,12 +71,28 @@ pub enum ImporterDepVersion {
 
 impl ImporterDepVersion {
     /// `Some(ver)` when this dependency resolves through the virtual
-    /// store; `None` when it's a `link:` sibling. Mirrors upstream's
-    /// `if (depPath.startsWith('link:'))` checks at the install layer.
+    /// store under the importer-map key (no alias rename); `None`
+    /// otherwise. Mirrors upstream's `if (depPath.startsWith('link:'))`
+    /// checks at the install layer.
+    ///
+    /// Use [`Self::resolved_key`] when you need a snapshot key that's
+    /// also correct for [`Self::Alias`] entries — `as_regular` returns
+    /// `None` for aliases, so callers that only handle the regular
+    /// branch would silently drop aliased deps.
     pub fn as_regular(&self) -> Option<&'_ PkgVerPeer> {
         match self {
             ImporterDepVersion::Regular(v) => Some(v),
-            ImporterDepVersion::Link(_) => None,
+            ImporterDepVersion::Alias(_) | ImporterDepVersion::Link(_) => None,
+        }
+    }
+
+    /// `Some(alias)` when this dependency resolves through the virtual
+    /// store under a name different from the importer-map key; `None`
+    /// otherwise.
+    pub fn as_alias(&self) -> Option<&'_ PkgNameVerPeer> {
+        match self {
+            ImporterDepVersion::Alias(alias) => Some(alias),
+            ImporterDepVersion::Regular(_) | ImporterDepVersion::Link(_) => None,
         }
     }
 
@@ -70,8 +102,36 @@ impl ImporterDepVersion {
     /// prefix.
     pub fn as_link_target(&self) -> Option<&'_ str> {
         match self {
-            ImporterDepVersion::Regular(_) => None,
+            ImporterDepVersion::Regular(_) | ImporterDepVersion::Alias(_) => None,
             ImporterDepVersion::Link(target) => Some(target.as_str()),
+        }
+    }
+
+    /// `Some(key)` with the snapshot-map key this dependency resolves
+    /// to; `None` for `link:` siblings. `importer_key` is the key of
+    /// the entry in `importers.<id>.dependencies` (the directory name
+    /// inside `node_modules`). For [`Self::Regular`] the resolved key
+    /// is `(importer_key, version)`; for [`Self::Alias`] it's the
+    /// alias's own `(name, suffix)` pair, mirroring upstream's
+    /// `refToRelative`.
+    pub fn resolved_key(&self, importer_key: &PkgName) -> Option<PkgNameVerPeer> {
+        match self {
+            ImporterDepVersion::Regular(ver) => {
+                Some(PkgNameVerPeer::new(importer_key.clone(), ver.clone()))
+            }
+            ImporterDepVersion::Alias(alias) => Some(alias.clone()),
+            ImporterDepVersion::Link(_) => None,
+        }
+    }
+
+    /// The version-with-peer portion of this dependency, or `None` for
+    /// `link:` siblings. For [`Self::Alias`] this returns the alias's
+    /// suffix, matching the version present in the snapshot key.
+    pub fn ver_peer(&self) -> Option<&'_ PkgVerPeer> {
+        match self {
+            ImporterDepVersion::Regular(ver) => Some(ver),
+            ImporterDepVersion::Alias(alias) => Some(&alias.suffix),
+            ImporterDepVersion::Link(_) => None,
         }
     }
 }
@@ -86,17 +146,52 @@ pub enum ParseImporterDepVersionError {
         #[error(source)]
         source: ParsePkgVerPeerError,
     },
+    #[display("Failed to parse importer dependency version {value:?}: {source}")]
+    ParseAlias {
+        value: String,
+        #[error(source)]
+        source: ParsePkgNameSuffixError<ParsePkgVerPeerError>,
+    },
+}
+
+/// Returns `true` when `value` is the npm-alias shape `<name>@<version>`
+/// rather than a bare semver-with-peer. Mirrors upstream's
+/// `refToRelative` (`deps/path/src/index.ts` at
+/// `pnpm/pnpm@8a80235c7b`, lines 96-110): an `@` before any `(` or `:`
+/// — or a leading `@` — means the reference is a full dep-path with
+/// the name encoded in front. The shared helper inside
+/// [`crate::SnapshotDepRef`] does the same check; the duplicated copy
+/// here keeps the two parsers self-contained.
+fn looks_like_alias(value: &str) -> bool {
+    if value.starts_with('@') {
+        return true;
+    }
+    let Some(at_idx) = value.find('@') else {
+        return false;
+    };
+    let before_paren = value.find('(').is_none_or(|idx| at_idx < idx);
+    let before_colon = value.find(':').is_none_or(|idx| at_idx < idx);
+    before_paren && before_colon
 }
 
 impl FromStr for ImporterDepVersion {
     type Err = ParseImporterDepVersionError;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        // `link:` keeps the path verbatim; everything else parses as a
+        // `link:` keeps the path verbatim; the alias shape parses to
+        // `PkgNameVerPeer`; everything else parses as a bare
         // semver-with-peer. The `link:` discriminator is upstream's
         // own — pnpm itself looks for the literal `link:` prefix at
         // install time (see `installDepsResolve` / `lockfileToDepGraph`).
         if let Some(target) = value.strip_prefix("link:") {
             return Ok(ImporterDepVersion::Link(target.to_string()));
+        }
+        if looks_like_alias(value) {
+            return value.parse::<PkgNameVerPeer>().map(ImporterDepVersion::Alias).map_err(
+                |source| ParseImporterDepVersionError::ParseAlias {
+                    value: value.to_string(),
+                    source,
+                },
+            );
         }
         value.parse::<PkgVerPeer>().map(ImporterDepVersion::Regular).map_err(|source| {
             ParseImporterDepVersionError::Parse { value: value.to_string(), source }
@@ -115,6 +210,7 @@ impl From<ImporterDepVersion> for String {
     fn from(value: ImporterDepVersion) -> Self {
         match value {
             ImporterDepVersion::Regular(v) => v.to_string(),
+            ImporterDepVersion::Alias(alias) => alias.to_string(),
             ImporterDepVersion::Link(target) => format!("link:{target}"),
         }
     }
@@ -127,6 +223,7 @@ impl Serialize for ImporterDepVersion {
     {
         match self {
             ImporterDepVersion::Regular(v) => v.serialize(serializer),
+            ImporterDepVersion::Alias(alias) => serializer.serialize_str(&alias.to_string()),
             ImporterDepVersion::Link(target) => {
                 let formatted = format!("link:{target}");
                 serializer.serialize_str(&formatted)
@@ -151,10 +248,17 @@ impl From<PkgVerPeer> for ImporterDepVersion {
     }
 }
 
+impl From<PkgNameVerPeer> for ImporterDepVersion {
+    fn from(value: PkgNameVerPeer) -> Self {
+        ImporterDepVersion::Alias(value)
+    }
+}
+
 impl Display for ImporterDepVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ImporterDepVersion::Regular(v) => Display::fmt(v, f),
+            ImporterDepVersion::Alias(alias) => Display::fmt(alias, f),
             ImporterDepVersion::Link(target) => write!(f, "link:{target}"),
         }
     }
