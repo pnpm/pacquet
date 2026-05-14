@@ -176,7 +176,7 @@ impl<'a> CreateVirtualStore<'a> {
     /// recovered from `index.db` for the warm-batch slots — the
     /// bin linker uses these to avoid re-reading `package.json` per
     /// child. See [`PackageManifests`].
-    pub async fn run<R: Reporter>(
+    pub async fn run<Reporter: self::Reporter>(
         self,
     ) -> Result<CreateVirtualStoreOutput, CreateVirtualStoreError> {
         let CreateVirtualStore {
@@ -377,7 +377,7 @@ impl<'a> CreateVirtualStore<'a> {
                 if dir.is_dir() {
                     false
                 } else {
-                    R::emit(&LogEvent::BrokenModules(BrokenModulesLog {
+                    Reporter::emit(&LogEvent::BrokenModules(BrokenModulesLog {
                         level: LogLevel::Debug,
                         missing: dir.to_string_lossy().into_owned(),
                     }));
@@ -460,14 +460,14 @@ impl<'a> CreateVirtualStore<'a> {
         // so consumers don't render a stale "removed" count from a
         // previous install. Pacquet has no pruning pipeline yet, so
         // the placeholder is the truthful value today.
-        R::emit(&LogEvent::Stats(StatsLog {
+        Reporter::emit(&LogEvent::Stats(StatsLog {
             level: LogLevel::Debug,
             message: StatsMessage::Added {
                 prefix: requester.to_owned(),
                 added: snapshot_entries.len() as u64,
             },
         }));
-        R::emit(&LogEvent::Stats(StatsLog {
+        Reporter::emit(&LogEvent::Stats(StatsLog {
             level: LogLevel::Debug,
             message: StatsMessage::Removed { prefix: requester.to_owned(), removed: 0 },
         }));
@@ -586,7 +586,7 @@ impl<'a> CreateVirtualStore<'a> {
                 side_effects_maps_by_snapshot
                     .insert((*snapshot_key).clone(), std::sync::Arc::clone(maps));
             }
-            match cache_key.as_deref().and_then(|k| prefetched.get(k)) {
+            match cache_key.as_deref().and_then(|key| prefetched.get(key)) {
                 Some(cas_paths) => warm.push((snapshot_key, snapshot, cas_paths)),
                 None => cold.push((snapshot_key, snapshot)),
             }
@@ -636,7 +636,7 @@ impl<'a> CreateVirtualStore<'a> {
             let warm_work = move || {
                 warm.par_iter().try_for_each(|(snapshot_key, snapshot, cas_paths)| {
                     let package_id = snapshot_key.without_peer().to_string();
-                    emit_warm_snapshot_progress::<R>(&package_id, requester);
+                    emit_warm_snapshot_progress::<Reporter>(&package_id, requester);
 
                     crate::CreateVirtualDirBySnapshot {
                         layout,
@@ -648,16 +648,17 @@ impl<'a> CreateVirtualStore<'a> {
                         package_key: snapshot_key,
                         snapshot,
                     }
-                    .run::<R>()
-                    .map_err(|e| {
+                    .run::<Reporter>()
+                    .map_err(|error| {
                         CreateVirtualStoreError::InstallPackageBySnapshot(
-                            InstallPackageBySnapshotError::CreateVirtualDir(e),
+                            InstallPackageBySnapshotError::CreateVirtualDir(error),
                         )
                     })
                 })
             };
-            let on_multi_thread = tokio::runtime::Handle::try_current()
-                .is_ok_and(|h| h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread);
+            let on_multi_thread = tokio::runtime::Handle::try_current().is_ok_and(|handle| {
+                handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread
+            });
             if on_multi_thread {
                 tokio::task::block_in_place(warm_work)?;
             } else {
@@ -670,7 +671,7 @@ impl<'a> CreateVirtualStore<'a> {
             // `link_hoisted_modules`.
             for (snapshot_key, _, _) in &warm {
                 let package_id = snapshot_key.without_peer().to_string();
-                emit_warm_snapshot_progress::<R>(&package_id, requester);
+                emit_warm_snapshot_progress::<Reporter>(&package_id, requester);
             }
         }
 
@@ -727,7 +728,7 @@ impl<'a> CreateVirtualStore<'a> {
                         allow_build_policy,
                         node_linker,
                     }
-                    .run::<R>()
+                    .run::<Reporter>()
                     .await;
                     match result {
                         Ok(cas_paths) => {
@@ -960,15 +961,18 @@ fn snapshot_cache_key(
 /// optional-deps check is the `isEmpty(...) && isEmpty(...) ||
 /// equals(...)` arm folded together.
 fn snapshot_deps_equal(current: &SnapshotEntry, wanted: &SnapshotEntry) -> bool {
-    fn maps_equal<K, V>(a: Option<&HashMap<K, V>>, b: Option<&HashMap<K, V>>) -> bool
+    fn maps_equal<Key, Value>(
+        lhs: Option<&HashMap<Key, Value>>,
+        rhs: Option<&HashMap<Key, Value>>,
+    ) -> bool
     where
-        K: std::cmp::Eq + std::hash::Hash,
-        V: PartialEq,
+        Key: std::cmp::Eq + std::hash::Hash,
+        Value: PartialEq,
     {
-        match (a, b) {
+        match (lhs, rhs) {
             (None, None) => true,
-            (Some(m), None) | (None, Some(m)) => m.is_empty(),
-            (Some(x), Some(y)) => x == y,
+            (Some(only), None) | (None, Some(only)) => only.is_empty(),
+            (Some(left), Some(right)) => left == right,
         }
     }
     maps_equal(current.dependencies.as_ref(), wanted.dependencies.as_ref())
@@ -982,8 +986,8 @@ fn snapshot_deps_equal(current: &SnapshotEntry, wanted: &SnapshotEntry) -> bool 
 /// check; directory and git resolutions yield `None` on both sides,
 /// which we treat as "unchanged" so the existing slot is reused.
 fn integrity_equal(current: Option<&PackageMetadata>, wanted: Option<&PackageMetadata>) -> bool {
-    let current_integrity = current.and_then(|m| m.resolution.integrity());
-    let wanted_integrity = wanted.and_then(|m| m.resolution.integrity());
+    let current_integrity = current.and_then(|meta| meta.resolution.integrity());
+    let wanted_integrity = wanted.and_then(|meta| meta.resolution.integrity());
     current_integrity == wanted_integrity
 }
 
@@ -1030,15 +1034,15 @@ fn is_fetch_side_failure(err: &InstallPackageBySnapshotError) -> bool {
     )
 }
 
-fn emit_warm_snapshot_progress<R: Reporter>(package_id: &str, requester: &str) {
-    R::emit(&LogEvent::Progress(ProgressLog {
+fn emit_warm_snapshot_progress<Reporter: self::Reporter>(package_id: &str, requester: &str) {
+    Reporter::emit(&LogEvent::Progress(ProgressLog {
         level: LogLevel::Debug,
         message: ProgressMessage::Resolved {
             package_id: package_id.to_owned(),
             requester: requester.to_owned(),
         },
     }));
-    R::emit(&LogEvent::Progress(ProgressLog {
+    Reporter::emit(&LogEvent::Progress(ProgressLog {
         level: LogLevel::Debug,
         message: ProgressMessage::FoundInStore {
             package_id: package_id.to_owned(),

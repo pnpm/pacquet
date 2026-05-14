@@ -32,12 +32,14 @@ use std::{
 ///
 /// Stand-alone helper rather than reaching for `serde_with` (not in
 /// the workspace deps) — the body is one line.
-fn deserialize_double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+fn deserialize_double_option<'de, Inner, De>(
+    deserializer: De,
+) -> Result<Option<Option<Inner>>, De::Error>
 where
-    T: Deserialize<'de>,
-    D: Deserializer<'de>,
+    Inner: Deserialize<'de>,
+    De: Deserializer<'de>,
 {
-    Option::<T>::deserialize(deserializer).map(Some)
+    Option::<Inner>::deserialize(deserializer).map(Some)
 }
 
 /// Settings readable from `pnpm-workspace.yaml`.

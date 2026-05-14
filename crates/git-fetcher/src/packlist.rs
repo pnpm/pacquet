@@ -225,15 +225,21 @@ fn packlist_inner(
     // does the same and emits no warning, so we stay silent too
     // (a `tracing::debug!` would be lost in install logs).
     if let Some(main) = main_path {
-        let m = normalize_field_path(main);
-        if !m.is_empty() && !should_always_exclude(&m) && pkg_dir.join(&m).is_file() {
-            out.insert(m);
+        let main_path = normalize_field_path(main);
+        if !main_path.is_empty()
+            && !should_always_exclude(&main_path)
+            && pkg_dir.join(&main_path).is_file()
+        {
+            out.insert(main_path);
         }
     }
     for bin in &bin_paths {
-        let b = normalize_field_path(bin);
-        if !b.is_empty() && !should_always_exclude(&b) && pkg_dir.join(&b).is_file() {
-            out.insert(b);
+        let bin_path = normalize_field_path(bin);
+        if !bin_path.is_empty()
+            && !should_always_exclude(&bin_path)
+            && pkg_dir.join(&bin_path).is_file()
+        {
+            out.insert(bin_path);
         }
     }
 
@@ -379,7 +385,7 @@ fn should_always_exclude(rel: &str) -> bool {
     if rel.split('/').any(|seg| ALWAYS_EXCLUDED_DIR_SEGMENTS.contains(&seg)) {
         return true;
     }
-    ALWAYS_EXCLUDED_SUFFIXES.iter().any(|s| basename.ends_with(s))
+    ALWAYS_EXCLUDED_SUFFIXES.iter().any(|suffix| basename.ends_with(suffix))
 }
 
 /// True when `name` is a safe `bundleDependencies` entry — the join
@@ -429,7 +435,7 @@ fn bundle_dep_names(manifest: &Value) -> Vec<String> {
             manifest
                 .get("dependencies")
                 .and_then(Value::as_object)
-                .map(|m| m.keys().cloned().collect::<Vec<_>>())
+                .map(|map| map.keys().cloned().collect::<Vec<_>>())
                 .unwrap_or_default()
         }
         _ => Vec::new(),

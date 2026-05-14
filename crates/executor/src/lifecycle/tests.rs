@@ -100,8 +100,8 @@ fn lifecycle_emits_script_stdio_and_exit_in_order() {
     // race-y (each pumps from its own thread).
     let stdio: Vec<_> = captured
         .iter()
-        .filter_map(|e| match e {
-            LogEvent::Lifecycle(l) => match &l.message {
+        .filter_map(|event| match event {
+            LogEvent::Lifecycle(lifecycle) => match &lifecycle.message {
                 LifecycleMessage::Stdio { line, stdio, .. } => Some((stdio, line.as_str())),
                 _ => None,
             },
@@ -110,11 +110,11 @@ fn lifecycle_emits_script_stdio_and_exit_in_order() {
         .collect();
     dbg!(&stdio);
     assert!(
-        stdio.iter().any(|(s, l)| **s == LifecycleStdio::Stdout && *l == "HELLO"),
+        stdio.iter().any(|(stream, line)| **stream == LifecycleStdio::Stdout && *line == "HELLO"),
         "stdout 'HELLO' must be emitted: {stdio:?}",
     );
     assert!(
-        stdio.iter().any(|(s, l)| **s == LifecycleStdio::Stderr && *l == "BAD"),
+        stdio.iter().any(|(stream, line)| **stream == LifecycleStdio::Stderr && *line == "BAD"),
         "stderr 'BAD' must be emitted: {stdio:?}",
     );
 }
@@ -173,15 +173,15 @@ fn lifecycle_events_carry_optional_flag() {
     let captured = EVENTS.lock().expect("lock").clone();
     let lifecycle_events: Vec<_> = captured
         .iter()
-        .filter_map(|e| match e {
-            LogEvent::Lifecycle(l) => Some(&l.message),
+        .filter_map(|event| match event {
+            LogEvent::Lifecycle(lifecycle) => Some(&lifecycle.message),
             _ => None,
         })
         .collect();
     dbg!(&lifecycle_events);
     let script_optional = lifecycle_events
         .iter()
-        .find_map(|m| match m {
+        .find_map(|msg| match msg {
             LifecycleMessage::Script { optional, .. } => Some(*optional),
             _ => None,
         })
@@ -189,7 +189,7 @@ fn lifecycle_events_carry_optional_flag() {
     assert!(script_optional, "Script event must carry optional=true");
     let exit_optional = lifecycle_events
         .iter()
-        .find_map(|m| match m {
+        .find_map(|msg| match msg {
             LifecycleMessage::Exit { optional, .. } => Some(*optional),
             _ => None,
         })

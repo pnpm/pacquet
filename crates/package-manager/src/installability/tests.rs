@@ -59,11 +59,12 @@ fn synthetic_metadata(
             git_hosted: None,
             path: None,
         }),
-        engines: engines
-            .map(|e| e.iter().map(|(k, v)| ((*k).to_string(), (*v).to_string())).collect()),
-        cpu: cpu.map(|v| v.iter().map(|s| (*s).to_string()).collect()),
-        os: os.map(|v| v.iter().map(|s| (*s).to_string()).collect()),
-        libc: libc.map(|v| v.iter().map(|s| (*s).to_string()).collect()),
+        engines: engines.map(|engines| {
+            engines.iter().map(|(k, v)| ((*k).to_string(), (*v).to_string())).collect()
+        }),
+        cpu: cpu.map(|values| values.iter().map(|s| (*s).to_string()).collect()),
+        os: os.map(|values| values.iter().map(|s| (*s).to_string()).collect()),
+        libc: libc.map(|values| values.iter().map(|s| (*s).to_string()).collect()),
         deprecated: None,
         has_bin: None,
         prepare: None,
@@ -182,7 +183,7 @@ fn compatible_snapshots_are_not_skipped() {
     assert!(skipped.is_empty());
     let events = take_events();
     assert!(
-        events.iter().all(|e| !matches!(e, LogEvent::SkippedOptionalDependency(_))),
+        events.iter().all(|event| !matches!(event, LogEvent::SkippedOptionalDependency(_))),
         "expected no skipped-optional events, got {events:?}",
     );
 }
@@ -212,7 +213,7 @@ fn non_optional_incompatible_is_not_skipped() {
     assert!(skipped.is_empty());
     let events = take_events();
     assert!(
-        events.iter().all(|e| !matches!(e, LogEvent::SkippedOptionalDependency(_))),
+        events.iter().all(|event| !matches!(event, LogEvent::SkippedOptionalDependency(_))),
         "non-optional must not fire skipped-optional events",
     );
 }
@@ -245,7 +246,7 @@ fn no_constraints_skips_the_per_snapshot_pass() {
     assert!(skipped.is_empty());
     let events = take_events();
     assert!(
-        events.iter().all(|e| !matches!(e, LogEvent::SkippedOptionalDependency(_))),
+        events.iter().all(|event| !matches!(event, LogEvent::SkippedOptionalDependency(_))),
         "fast path must not fire skipped-optional events",
     );
 }
@@ -275,7 +276,7 @@ fn platform_any_sentinel_does_not_count_as_constraint() {
     packages.insert(key, synthetic_metadata(None, Some(&["any"]), Some(&["any"]), Some(&["any"])));
     assert!(
         !any_installability_constraint(&packages),
-        "cpu/os/libc = [\"any\"] should not block the fast path",
+        r#"cpu/os/libc = ["any"] should not block the fast path"#,
     );
 }
 
@@ -396,7 +397,7 @@ fn supported_architectures_widens_accept_set_so_optional_stays() {
     assert!(skipped.is_empty(), "supportedArchitectures.os=['darwin'] should keep the package");
     let events = take_events();
     assert!(
-        events.iter().all(|e| !matches!(e, LogEvent::SkippedOptionalDependency(_))),
+        events.iter().all(|event| !matches!(event, LogEvent::SkippedOptionalDependency(_))),
         "no skipped-optional event expected, got {events:?}",
     );
 }
@@ -472,7 +473,7 @@ fn seeded_snapshot_short_circuits_recheck() {
     assert!(skipped.contains(&key), "seeded key must survive the recompute");
     let events = take_events();
     assert!(
-        events.iter().all(|e| !matches!(e, LogEvent::SkippedOptionalDependency(_))),
+        events.iter().all(|event| !matches!(event, LogEvent::SkippedOptionalDependency(_))),
         "no SkippedOptionalDependency event must fire for a seeded snapshot, got {events:?}",
     );
 }

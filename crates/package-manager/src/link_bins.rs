@@ -584,10 +584,10 @@ fn read_package<Api: FsReadFile>(
     Ok(Some(PackageBinSource { location: location.to_path_buf(), manifest: Arc::new(manifest) }))
 }
 
-fn paths_eq(a: &Path, b: &Path) -> bool {
+fn paths_eq(lhs: &Path, rhs: &Path) -> bool {
     // Lexical comparison is enough; both paths come from the same
     // `node_modules` walk and don't go through canonicalisation.
-    a == b
+    lhs == rhs
 }
 
 #[cfg(test)]

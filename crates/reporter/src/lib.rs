@@ -666,7 +666,7 @@ pub enum LogLevel {
 ///
 /// Implementations are unit structs; any implementation-internal state
 /// lives in module-level `static`s. Emitting code is generic over
-/// `R: Reporter` and calls `R::emit(...)`; the production entry point
+/// `R: Reporter` and calls `Reporter::emit(...)`; the production entry point
 /// monomorphises with the chosen sink.
 ///
 /// [`Reporter::emit`] must not panic. A serialization or I/O failure is
@@ -681,6 +681,11 @@ pub enum LogLevel {
 /// production sinks satisfy this: `SilentReporter` is a no-op, and
 /// `NdjsonReporter` serializes per-event then writes under
 /// `std::io::stderr().lock()`.
+// TODO: every generic-fn site that takes a `Reporter` bound is currently
+// written `<Reporter: self::Reporter>` because `perfectionist::single_letter_generic`
+// has no allowlist for conventional short names. Switch back to the
+// shorter `<R: Reporter>` once perfectionist grows an
+// `extra_allowed_idents` knob (or equivalent) for generic parameters.
 pub trait Reporter {
     fn emit(event: &LogEvent);
 }

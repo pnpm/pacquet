@@ -59,6 +59,8 @@ The same procedure applies when a perfectionist rule itself is wrong — for exa
 
 You can run the same check locally with `just dylint` (requires `cargo-dylint` and `dylint-link`; install with `cargo binstall cargo-dylint dylint-link`).
 
+If you cannot run `cargo dylint` in your environment — for example, an AI agent in a sandbox without the dylint toolchain installed — read the rule descriptions out of [perfectionist](https://github.com/KSXGitHub/perfectionist)'s `rules/` directory at the same git ref that `dylint.toml` pins. The directory contains one Markdown file per implemented rule (auto-generated from the rule sources by `gen-docs`), so the documentation always matches the rule behavior at the pinned ref. Browse the directory at `https://github.com/KSXGitHub/perfectionist/tree/<tag>/rules` (substituting the tag from `dylint.toml`) to see what each rule does, when it fires, and how to configure it.
+
 ## Setup
 
 ### Prerequisites

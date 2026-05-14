@@ -8,5 +8,55 @@
 # or via the `just dylint` recipe.
 [workspace.metadata.dylint]
 libraries = [
-    { git = "https://github.com/KSXGitHub/perfectionist", tag = "0.0.0-rc.7" },
+    { git = "https://github.com/KSXGitHub/perfectionist", tag = "0.0.0-rc.12" },
+]
+
+# Macros that look "non-trivial" to perfectionist but are actually
+# compile-time DSLs or constructors that cannot be hoisted to a `let`:
+#
+# - `serde_json::json!`: body is JSON-like syntax, not a Rust expression
+#   to bind. Perfectionist's docs treat curly-brace macro bodies as
+#   DSLs, but the common `json!({ ... })` shape (parens around a block)
+#   still trips the rule.
+# - `concat!`: a compile-time string concatenator. Its arguments must
+#   be const expressions; binding `env!("...")` to a `let` would turn
+#   a `&'static str` into a runtime `String` and the macro stops type-
+#   checking.
+# - `assert_*_snapshot` (insta): the macro captures its argument's
+#   *source text* to seed snapshot names. Hoisting the expression to a
+#   `let` renames the snapshot file and breaks existing fixtures.
+["perfectionist::macro_argument_binding"]
+ignore = [
+    "json",
+    "concat",
+    "assert_debug_snapshot",
+    "assert_snapshot",
+    "assert_yaml_snapshot",
+    "assert_json_snapshot",
+    "assert_ron_snapshot",
+    "assert_compact_debug_snapshot",
+    "assert_compact_json_snapshot",
+    "assert_csv_snapshot",
+    "assert_toml_snapshot",
+    # `pacquet_testing_utils::allow_known_failure!` binds its argument
+    # to a `let` internally before the match, so the expression is
+    # evaluated exactly once. The rule cannot peer through the macro
+    # body to see that.
+    "allow_known_failure",
+    # Test-local `static_env!` (in `npmrc_auth/tests.rs`) generates an
+    # `EnvVar` impl. The `&[(...)]` slice expression it receives binds
+    # to a local inside the impl, evaluated once on each `var(name)`
+    # call.
+    "static_env",
+    # Test-local `case!` (in `pkg_ver_peer/tests.rs`) takes
+    # `$input:expr, $message:expr, $variant:pat`. The lint sees the
+    # `$variant` slot's token stream as a non-trivial expression even
+    # though it's parsed as a pattern. The macro binds `$input` to a
+    # local on entry, so the exactly-once contract holds.
+    "case",
+    # `rusqlite::params!` is a DSL macro that wraps each arg as a
+    # `&dyn ToSql` reference. Args carry no side effects (they are
+    # already references / borrows that the macro forwards once);
+    # hoisting to a `let` is purely noise.
+    "params",
 ]
