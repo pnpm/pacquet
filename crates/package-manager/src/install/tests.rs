@@ -2244,7 +2244,7 @@ async fn frozen_install_no_optional_keeps_shared_non_optional_snapshot() {
 ///    [`crate::LinkVirtualStoreBins`] passes are bypassed.
 /// 3. [`crate::lockfile_to_hoisted_dep_graph`] returns an empty
 ///    walker result against the empty `snapshots:` map.
-/// 4. [`crate::link_hoisted_modules`] is called with an empty
+/// 4. [`crate::link_hoisted_modules()`] is called with an empty
 ///    graph (no-op).
 /// 5. `BuildModules` is skipped under hoisted (slice 7 retargets
 ///    it onto `hoistedLocations`).

@@ -83,7 +83,7 @@ pub struct CreateVirtualStoreOutput {
     /// Per-package CAS index, populated only when
     /// [`CreateVirtualStore::node_linker`] is
     /// [`NodeLinker::Hoisted`]. Threaded into
-    /// [`crate::link_hoisted_modules`] which materializes the
+    /// [`crate::link_hoisted_modules()`] which materializes the
     /// hoisted `node_modules/` tree directly from these CAS paths
     /// — there is no virtual store under hoisted, so this is the
     /// only output that survives into the link phase. `None` for
@@ -144,7 +144,7 @@ pub struct CreateVirtualStore<'a> {
     /// populate per-snapshot virtual-store slot directories. Under
     /// [`NodeLinker::Hoisted`] the slot writes are skipped entirely
     /// — the hoisted linker
-    /// ([`crate::link_hoisted_modules`]) consumes the per-package
+    /// ([`crate::link_hoisted_modules()`]) consumes the per-package
     /// CAS index threaded through
     /// [`CreateVirtualStoreOutput::cas_paths_by_pkg_id`] instead.
     /// Tarball downloads and CAS writes still happen for both
@@ -784,7 +784,7 @@ impl<'a> CreateVirtualStore<'a> {
         // [`linkHoistedModules`](https://github.com/pnpm/pnpm/blob/94240bc046/installing/deps-restorer/src/linkHoistedModules.ts)
         // awaits it at link time. Pacquet's fetcher and walker run
         // independently, so the CAS index is collected here and
-        // handed to the linker in [`crate::link_hoisted_modules`]
+        // handed to the linker in [`crate::link_hoisted_modules()`]
         // through this output field.
         //
         // Key shape: [`PkgIdWithPatchHash`] mirrors the

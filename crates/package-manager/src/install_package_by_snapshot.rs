@@ -72,7 +72,7 @@ pub struct InstallPackageBySnapshot<'a> {
     /// `Isolated` runs [`CreateVirtualDirBySnapshot`] at the end of
     /// the per-snapshot fetch to populate the virtual-store slot;
     /// `Hoisted` skips that step because the hoisted linker
-    /// ([`crate::link_hoisted_modules`]) consumes the returned
+    /// ([`crate::link_hoisted_modules()`]) consumes the returned
     /// `cas_paths` directly and writes them into project-tree
     /// `node_modules/<alias>` directories. Either way the CAS files
     /// land in the store, so this is purely about whether the
@@ -182,7 +182,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
     /// [`crate::CasPathsByPkgId`] index when a workspace mixes
     /// linkers in the future. Under [`NodeLinker::Hoisted`] no slot
     /// is created — the returned map is the only output the caller
-    /// gets, and it's threaded into [`crate::link_hoisted_modules`].
+    /// gets, and it's threaded into [`crate::link_hoisted_modules()`].
     pub async fn run<R: Reporter>(
         self,
     ) -> Result<HashMap<String, PathBuf>, InstallPackageBySnapshotError> {
@@ -415,7 +415,7 @@ impl<'a> InstallPackageBySnapshot<'a> {
         };
 
         // Under hoisted, the virtual-store slot would be unused —
-        // [`crate::link_hoisted_modules`] consumes the CAS paths
+        // [`crate::link_hoisted_modules()`] consumes the CAS paths
         // directly to materialize project-tree `node_modules/`
         // directories, so any slot we'd write here would only waste
         // disk. Mirrors upstream's branch at

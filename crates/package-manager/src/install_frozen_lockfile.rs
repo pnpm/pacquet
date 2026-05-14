@@ -123,7 +123,7 @@ where
     ///
     /// Under [`NodeLinker::Hoisted`] the install pipeline routes
     /// through [`crate::lockfile_to_hoisted_dep_graph`] +
-    /// [`crate::link_hoisted_modules`] instead of the isolated
+    /// [`crate::link_hoisted_modules()`] instead of the isolated
     /// linker's [`crate::SymlinkDirectDependencies`] +
     /// [`crate::LinkVirtualStoreBins`] + [`crate::get_hoisted_dependencies`]
     /// chain. Mirrors upstream's
@@ -218,7 +218,7 @@ pub enum InstallFrozenLockfileError {
     #[diagnostic(transparent)]
     HoistedDepGraph(#[error(source)] HoistedDepGraphError),
 
-    /// Surfaces failures from [`crate::link_hoisted_modules`]
+    /// Surfaces failures from [`crate::link_hoisted_modules()`]
     /// while materializing the on-disk hoisted tree. Includes
     /// missing CAS-paths entries for required packages,
     /// hierarchy/graph mismatches, file-import I/O failures, and
@@ -612,7 +612,7 @@ where
             // (`CreateVirtualStore` skipped slot writes), and the
             // bin links go into `<parent>/node_modules/.bin` for
             // every hoist location instead. The hoisted linker
-            // ([`crate::link_hoisted_modules`], called below) does
+            // ([`crate::link_hoisted_modules()`], called below) does
             // its own per-`node_modules` bin pass while walking the
             // hierarchy. Mirrors upstream's `nodeLinker === 'hoisted'`
             // branch at
@@ -661,7 +661,7 @@ where
             let walker_opts = LockfileToHoistedDepGraphOptions {
                 lockfile_dir: workspace_root.to_path_buf(),
                 auto_install_peers: config.auto_install_peers,
-                skipped: walker_skipped,
+                skipped: walker_skipped.clone(),
                 force: false,
                 // Pacquet's [`Config`] does not yet expose
                 // `engineStrict` (tracked separately); default to
@@ -683,11 +683,22 @@ where
             let walker_result =
                 lockfile_to_hoisted_dep_graph(lockfile, current_lockfile, &walker_opts)
                     .map_err(InstallFrozenLockfileError::HoistedDepGraph)?;
-            // Augment the live skip set with anything the walker
-            // newly skipped (optional + unsupported platform) so
-            // `.modules.yaml.skipped` reflects the union of the
-            // installability passes both paths ran.
-            for skipped_dep_path in &walker_result.skipped {
+            // Augment the live skip set with the walker's *new*
+            // skips only — entries already in `walker_skipped` came
+            // from the input `SkippedSnapshots`, where each one
+            // already lives in its proper subset
+            // (installability / fetch-failed / optional-excluded).
+            // Re-inserting them as installability would promote
+            // transient `fetch_failed` / `optional_excluded`
+            // entries into the persisted-on-disk
+            // `.modules.yaml.skipped` set, which would survive into
+            // the next install — exactly the contract those
+            // subsets exist to prevent. Diffing against the input
+            // set keeps the persistence boundary intact: only
+            // walker-discovered installability skips (optional +
+            // unsupported platform) flow into
+            // [`SkippedSnapshots::insert_installability`].
+            for skipped_dep_path in walker_result.skipped.difference(&walker_skipped) {
                 if let Ok(key) = skipped_dep_path.parse::<PackageKey>() {
                     skipped.insert_installability(key);
                 }
